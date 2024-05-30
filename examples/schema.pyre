@@ -1,0 +1,17 @@
+
+// Comments
+record User {
+    id:   Int
+    name: String
+}
+
+// My status type
+type Status
+    = Active
+    | Inactive
+    | Special { reason: String }
+    | Inactive
+    | Special2 {
+        reason2: String
+        error: String
+      }
