@@ -1,8 +1,9 @@
 
-// Comments
+// User table
 record User {
     id:   Int
     name: String
+    status: Status
 }
 
 // My status type
@@ -15,3 +16,10 @@ type Status
         reason2: String
         error: String
       }
+
+
+record Account {
+    id:   Int
+    name: String
+    status: Status
+}

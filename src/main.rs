@@ -27,5 +27,24 @@ fn main() -> io::Result<()> {
         Err(err) => eprintln!("{:?}", err),
     }
 
+    // Read the content of the file
+    let mut query_file = fs::File::open("examples/query.pyre")?;
+    let mut input_query = String::new();
+    query_file.read_to_string(&mut input_query)?;
+
+    match parser::parse_query(&input_query) {
+        Ok(parsed) => {
+            println!("{:?}", parsed);
+            // let formatted = generate::format::to_string(&parsed);
+
+            // let path = Path::new("examples/formatted.pyre");
+            // let mut output = fs::File::create(path).expect("Failed to create file");
+            // output
+            //     .write_all(formatted.as_bytes())
+            //     .expect("Failed to write to file");
+        }
+        Err(err) => eprintln!("{:?}", err),
+    }
+
     Ok(())
 }

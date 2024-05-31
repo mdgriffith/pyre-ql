@@ -27,7 +27,6 @@ pub fn run(input: &str) -> Result<ast::Schema, String> {
 
 fn parse_schema(input: &str) -> IResult<&str, ast::Schema> {
     let (input, _) = multispace0(input)?;
-    // let (input, definitions) = separated_list0(multispace0, parse_definition)(input)?;
     let (input, definitions) = many0(parse_definition)(input)?;
     let (input, _) = multispace0(input)?;
     Ok((input, ast::Schema { definitions }))
@@ -151,6 +150,98 @@ fn parse_variant(input: &str) -> IResult<&str, ast::Variant> {
         ast::Variant {
             name: name.to_string(),
             data: optionalFields,
+        },
+    ))
+}
+
+// Parse Query
+//
+
+pub fn parse_query(input: &str) -> Result<ast::QueryList, String> {
+    match parse_query_list(input) {
+        Ok((remaining, query_list)) => {
+            if !remaining.is_empty() {
+                return Err(format!("Error: Unparsed input: {:?}", remaining));
+            } else {
+                return Ok(query_list);
+            }
+        }
+        Err(e) => Err(format!("Error: {:?}", e)),
+    }
+}
+
+fn parse_query_list(input: &str) -> IResult<&str, ast::QueryList> {
+    let (input, _) = multispace0(input)?;
+    let (input, queries) = many0(parse_query_def)(input)?;
+    let (input, _) = multispace0(input)?;
+    Ok((input, ast::QueryList { queries }))
+}
+
+fn parse_query_def(input: &str) -> IResult<&str, ast::QueryDef> {
+    alt((parse_query_comment, parse_query_details, parse_query_lines))(input)
+}
+
+fn parse_query_comment(input: &str) -> IResult<&str, ast::QueryDef> {
+    let (input, _) = tag("//")(input)?;
+    let (input, text) = take_until("\n")(input)?;
+    let (input, _) = newline(input)?;
+    Ok((
+        input,
+        ast::QueryDef::QueryComment {
+            text: text.to_string(),
+        },
+    ))
+}
+
+fn parse_query_lines(input: &str) -> IResult<&str, ast::QueryDef> {
+    // Parse any whitespace (spaces, tabs, or newlines)
+    let (input, whitespaces) = many1(one_of(" \t\n"))(input)?;
+
+    // Count the newlines
+    let count = whitespaces.iter().filter(|&&c| c == '\n').count();
+
+    Ok((input, ast::QueryDef::QueryLines { count }))
+}
+
+fn parse_query_details(input: &str) -> IResult<&str, ast::QueryDef> {
+    let (input, _) = tag("query")(input)?;
+    let (input, _) = multispace1(input)?;
+    let (input, name) = parse_typename(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, fields) = parse_query_fieldblock(input)?;
+
+    Ok((
+        input,
+        ast::QueryDef::Query(ast::Query {
+            name: name.to_string(),
+            args: vec![],
+            fields,
+        }),
+    ))
+}
+
+fn parse_query_fieldblock(input: &str) -> IResult<&str, Vec<ast::QueryField>> {
+    let (input, _) = tag("{")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, fields) = many0(parse_query_field)(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("}")(input)?;
+    Ok((input, fields))
+}
+
+fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
+    let (input, _) = multispace0(input)?;
+    let (input, name) = parse_fieldname(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, fieldsOrNone) = opt(parse_query_fieldblock)(input)?;
+
+    Ok((
+        input,
+        ast::QueryField {
+            name: name.to_string(),
+            args: vec![],
+            directives: vec![],
+            fields: fieldsOrNone.unwrap_or_else(Vec::new),
         },
     ))
 }
