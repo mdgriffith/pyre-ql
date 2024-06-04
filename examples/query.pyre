@@ -12,9 +12,9 @@
 //     }
 // }
 
-query MyQuery {
+query MyQuery($id: ID) {
     fieldOne
-    fieldTwo {
+    fieldTwo(id = $id) {
         subfield {
             subsubfield
         }

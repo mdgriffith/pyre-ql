@@ -16,7 +16,7 @@ fn main() -> io::Result<()> {
     match parser::run(&input) {
         Ok(parsed) => {
             println!("{:?}", parsed);
-            let formatted = generate::format::to_string(&parsed);
+            let formatted = generate::format::schema(&parsed);
 
             let path = Path::new("examples/formatted.pyre");
             let mut output = fs::File::create(path).expect("Failed to create file");
@@ -35,13 +35,13 @@ fn main() -> io::Result<()> {
     match parser::parse_query(&input_query) {
         Ok(parsed) => {
             println!("{:?}", parsed);
-            // let formatted = generate::format::to_string(&parsed);
+            let formatted = generate::format::query(&parsed);
 
-            // let path = Path::new("examples/formatted.pyre");
-            // let mut output = fs::File::create(path).expect("Failed to create file");
-            // output
-            //     .write_all(formatted.as_bytes())
-            //     .expect("Failed to write to file");
+            let path = Path::new("examples/query_formatted.pyre");
+            let mut output = fs::File::create(path).expect("Failed to create file");
+            output
+                .write_all(formatted.as_bytes())
+                .expect("Failed to write to file");
         }
         Err(err) => eprintln!("{:?}", err),
     }

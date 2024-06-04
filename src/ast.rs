@@ -58,12 +58,12 @@ pub enum QueryDef {
 #[derive(Debug)]
 pub struct Query {
     pub name: String,
-    pub args: Vec<QueryArgDefinition>,
+    pub args: Vec<QueryParamDefinition>,
     pub fields: Vec<QueryField>,
 }
 
 #[derive(Debug)]
-pub struct QueryArgDefinition {
+pub struct QueryParamDefinition {
     pub name: String,
     pub type_: String,
 }
@@ -71,18 +71,19 @@ pub struct QueryArgDefinition {
 #[derive(Debug)]
 pub struct QueryField {
     pub name: String,
-    pub args: Vec<QueryArg>,
+    pub params: Vec<QueryParam>,
     pub directives: Vec<String>,
     pub fields: Vec<QueryField>,
 }
 
 #[derive(Debug)]
-pub struct QueryArg {
+pub struct QueryParam {
     pub name: String,
+    pub operator: Operator,
     pub value: QueryValue,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum QueryValue {
     Variable(String),
     String(String),
@@ -90,4 +91,18 @@ pub enum QueryValue {
     Float(f32),
     Bool(bool),
     Null,
+}
+
+#[derive(Debug, Clone)]
+pub enum Operator {
+    Equal,
+    NotEqual,
+    GreaterThan,
+    LessThan,
+    GreaterThanOrEqual,
+    LessThanOrEqual,
+    In,
+    NotIn,
+    Like,
+    NotLike,
 }
