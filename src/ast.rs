@@ -4,7 +4,7 @@ pub struct Schema {
 }
 
 #[repr(u8)]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Definition {
     Lines {
         count: usize,
@@ -22,7 +22,7 @@ pub enum Definition {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Variant {
     pub name: String,
     pub data: Option<Vec<Field>>,
@@ -34,7 +34,7 @@ pub struct RecordDetails {
     pub fields: Vec<Field>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Field {
     pub name: String,
     pub type_: String,

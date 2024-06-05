@@ -4,6 +4,7 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 
 mod ast;
+mod diff;
 mod generate;
 mod parser;
 
@@ -42,6 +43,8 @@ fn main() -> io::Result<()> {
             output
                 .write_all(formatted.as_bytes())
                 .expect("Failed to write to file");
+
+            println!("{}", formatted);
         }
         Err(err) => eprintln!("{:?}", err),
     }
