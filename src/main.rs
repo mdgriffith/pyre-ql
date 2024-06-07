@@ -3,6 +3,8 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
+use generate::migration;
+
 mod ast;
 mod diff;
 mod generate;
@@ -15,14 +17,25 @@ fn main() -> io::Result<()> {
     file.read_to_string(&mut input)?;
 
     match parser::run(&input) {
-        Ok(parsed) => {
-            println!("{:?}", parsed);
-            let formatted = generate::format::schema(&parsed);
+        Ok(schema) => {
+            println!("{:?}", schema);
+            let formatted = generate::format::schema(&schema);
 
             let path = Path::new("examples/formatted.pyre");
             let mut output = fs::File::create(path).expect("Failed to create file");
             output
                 .write_all(formatted.as_bytes())
+                .expect("Failed to write to file");
+
+            let schema_diff = diff::diff(&ast::empty_schema(), &schema);
+
+            let sql = migration::to_sql(&schema_diff);
+
+            let migration_path = Path::new("examples/migration.sql");
+            let mut migration_output =
+                fs::File::create(migration_path).expect("Failed to create file");
+            migration_output
+                .write_all(sql.as_bytes())
                 .expect("Failed to write to file");
         }
         Err(err) => eprintln!("{:?}", err),
