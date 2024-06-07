@@ -29,8 +29,9 @@ fn to_string_definition(definition: &ast::Definition) -> String {
         }
         ast::Definition::Record { name, fields } => {
             let mut result = format!("record {} {{\n", name);
+
             for field in fields {
-                result.push_str(&to_string_field(4, field));
+                result.push_str(&to_string_field(4, &field));
             }
             result.push_str("}\n");
             result
@@ -44,8 +45,9 @@ fn to_string_variant(is_first: bool, variant: &ast::Variant) -> String {
     match &variant.data {
         Some(fields) => {
             let mut result = format!("  {}{} {{\n", prefix, variant.name);
+
             for field in fields {
-                result.push_str(&to_string_field(8, field));
+                result.push_str(&to_string_field(8, &field));
             }
             result.push_str("     }\n");
             result
@@ -55,14 +57,72 @@ fn to_string_variant(is_first: bool, variant: &ast::Variant) -> String {
 }
 
 fn to_string_field(indent: usize, field: &ast::Field) -> String {
+    match field {
+        ast::Field::ColumnLines { count } => {
+            if (*count > 2) {
+                "\n\n".to_string()
+            } else {
+                "\n".repeat(*count as usize)
+            }
+        }
+        ast::Field::Column(column) => to_string_column(indent, column),
+        ast::Field::ColumnComment { text } => format!("{}// {}\n", " ".repeat(indent), text),
+        ast::Field::FieldDirective(directive) => to_string_field_directive(indent, directive),
+    }
+}
+
+fn to_string_column(indent: usize, column: &ast::Column) -> String {
     let spaces = " ".repeat(indent);
     format!(
         "{}{}: {}{}\n",
         spaces,
-        field.name,
-        field.type_,
-        to_string_directives(&field.directives)
+        column.name,
+        column.type_,
+        to_string_directives(&column.directives)
     )
+}
+
+fn to_string_field_directive(indent: usize, directive: &ast::FieldDirective) -> String {
+    let spaces = " ".repeat(indent);
+    match directive {
+        ast::FieldDirective::TableName(name) => format!("{}@tablename \"{}\"\n", spaces, name),
+        ast::FieldDirective::Link(details) => {
+            let mut result = format!("{}@link ", spaces);
+            result.push_str(&to_string_link_details(details));
+            result.push_str(")\n");
+            result
+        }
+    }
+}
+
+fn to_string_link_details(details: &ast::LinkDetails) -> String {
+    let mut result = format!("{} {{ from: ", details.link_name);
+
+    if (*&details.local_ids.len() > 1) {
+        for id in &details.local_ids {
+            result.push_str(id);
+            result.push_str(", ");
+        }
+    } else {
+        for id in &details.local_ids {
+            result.push_str(id);
+        }
+    }
+
+    result.push_str(", to: ");
+    if (*&details.foreign_ids.len() > 1) {
+        for id in &details.foreign_ids {
+            result.push_str(id);
+            result.push_str(", ");
+        }
+    } else {
+        for id in &details.foreign_ids {
+            result.push_str(id);
+        }
+    }
+    result.push_str(" }");
+
+    result
 }
 
 fn to_string_directives(directives: &Vec<ast::ColumnDirective>) -> String {

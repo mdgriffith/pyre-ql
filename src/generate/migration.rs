@@ -1,4 +1,7 @@
-use crate::ast::{ColumnDirective, Definition, Field, SerializationType, Variant};
+use crate::ast::{
+    collect_columns, get_tablename, ColumnDirective, Definition, Field, FieldDirective,
+    SerializationType, Variant,
+};
 use crate::diff::{DetailedRecordDiff, DetailedTaggedDiff, RecordChange, SchemaDiff, TaggedChange};
 
 pub fn to_sql(diff: &SchemaDiff) -> String {
@@ -30,7 +33,8 @@ pub fn to_sql(diff: &SchemaDiff) -> String {
 fn add_definition_sql(definition: &Definition) -> String {
     match definition {
         Definition::Record { name, fields } => {
-            let fields_sql: Vec<String> = fields
+            let name = get_tablename(&name, &fields);
+            let fields_sql: Vec<String> = collect_columns(fields)
                 .iter()
                 .map(|f| {
                     format!(
@@ -44,7 +48,7 @@ fn add_definition_sql(definition: &Definition) -> String {
                 })
                 .collect();
             format!(
-                "CREATE TABLE {} (\n    {}\n);",
+                "create table {} (\n    {}\n);",
                 name,
                 fields_sql.join(",\n    ")
             )
@@ -66,17 +70,17 @@ fn column_directive_list_to_string(directives: &Vec<ColumnDirective>) -> String 
 
 fn columne_directive_to_string(directive: &ColumnDirective) -> String {
     match directive {
-        ColumnDirective::PrimaryKey => "PRIMARY KEY".to_string(),
-        ColumnDirective::Unique => "UNIQUE".to_string(),
+        ColumnDirective::PrimaryKey => "primary key".to_string(),
+        ColumnDirective::Unique => "unique".to_string(),
     }
 }
 
 fn serialization_to_string(serialization_type: &SerializationType) -> String {
     match serialization_type {
-        SerializationType::Integer => "INTEGER".to_string(),
-        SerializationType::Real => "REAL".to_string(),
-        SerializationType::Text => "TEXT".to_string(),
-        SerializationType::BlobWithSchema(schema) => "BLOB".to_string(),
+        SerializationType::Integer => "integer".to_string(),
+        SerializationType::Real => "real".to_string(),
+        SerializationType::Text => "text".to_string(),
+        SerializationType::BlobWithSchema(schema) => "blob".to_string(),
     }
 }
 
@@ -89,7 +93,7 @@ fn serialization_comment_to_string(serialization_type: &SerializationType) -> St
 
 fn remove_definition_sql(definition: &Definition) -> String {
     match definition {
-        Definition::Record { name, .. } => format!("DROP TABLE IF EXISTS {};", name),
+        Definition::Record { name, .. } => format!("drop table if exists {};", name),
         _ => "".to_string(),
     }
 }
@@ -101,7 +105,7 @@ fn handle_modified_record(record_diff: &DetailedRecordDiff) -> String {
         match change {
             RecordChange::AddedField(field) => {
                 sql_statements.push(format!(
-                    "ALTER TABLE {} ADD COLUMN {} {};",
+                    "alter table {} add column {} {};",
                     record_diff.name, field.name, field.type_
                 ));
             }

@@ -113,7 +113,7 @@ fn check_schema_definitions(context: Context, schem: &ast::Schema) -> Vec<Error>
         match definition {
             ast::Definition::Record { name, fields } => {
                 let mut field_names = HashSet::new();
-                for field in fields {
+                for field in ast::collect_columns(fields) {
                     // Type exists check
                     if !context.types.contains_key(&field.type_) {
                         errors.push(Error {
@@ -164,7 +164,7 @@ fn check_schema_definitions(context: Context, schem: &ast::Schema) -> Vec<Error>
                                 });
                             }
                             if let Some(fields) = data {
-                                for field in fields {
+                                for field in ast::collect_columns(fields) {
                                     if !context.types.contains_key(&field.type_) {
                                         errors.push(Error {
                                             error_type: ErrorType::UnknownType(field.type_.clone()),

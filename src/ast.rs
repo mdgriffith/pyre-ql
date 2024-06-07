@@ -29,19 +29,79 @@ pub enum Definition {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Variant {
-    pub name: String,
-    pub data: Option<Vec<Field>>,
-}
-
-#[derive(Debug)]
 pub struct RecordDetails {
     pub name: String,
     pub fields: Vec<Field>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Field {
+pub struct Variant {
+    pub name: String,
+    pub data: Option<Vec<Field>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Field {
+    Column(Column),
+    ColumnLines { count: usize },
+    ColumnComment { text: String },
+    FieldDirective(FieldDirective),
+}
+
+pub fn get_tablename(name: &str, fields: &Vec<Field>) -> String {
+    for field in fields.iter() {
+        match field {
+            Field::FieldDirective(FieldDirective::TableName(name)) => return name.to_string(),
+            _ => {}
+        }
+    }
+    name.to_string()
+}
+
+pub fn is_field_directive(field: &Field) -> bool {
+    match field {
+        Field::FieldDirective(_) => true,
+        _ => false,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldDirective {
+    TableName(String),
+    Link(LinkDetails),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkDetails {
+    pub link_name: String,
+    pub local_ids: Vec<String>,
+
+    pub foreign_tablename: String,
+    pub foreign_ids: Vec<String>,
+}
+
+pub fn collect_columns(fields: &Vec<Field>) -> Vec<Column> {
+    let mut columns = Vec::new();
+    for field in fields {
+        match field {
+            Field::Column(column) => columns.push(column.clone()),
+            _ => {}
+        }
+    }
+    columns
+}
+
+pub fn column_order(a: &Field, b: &Field) -> std::cmp::Ordering {
+    match (a, b) {
+        (Field::FieldDirective(_), Field::FieldDirective(_)) => std::cmp::Ordering::Equal,
+        (Field::FieldDirective(_), _) => std::cmp::Ordering::Less,
+        (_, Field::FieldDirective(_)) => std::cmp::Ordering::Greater,
+        _ => std::cmp::Ordering::Equal,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Column {
     pub name: String,
     pub type_: String,
     pub serialization_type: SerializationType,

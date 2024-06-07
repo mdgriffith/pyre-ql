@@ -81,9 +81,17 @@ fn parse_record(input: &str) -> IResult<&str, ast::Definition> {
     let (input, _) = multispace1(input)?;
     let (input, name) = parse_typename(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, fields) = parse_record_fields(input)?;
+    let (input, unsorted_fields) = parse_record_fields(input)?;
     let (input, _) = newline(input)?;
 
+    let mut fields = unsorted_fields.clone();
+
+    fields.sort_by(ast::column_order);
+    insert_after_first_instance(
+        &mut fields,
+        ast::is_field_directive,
+        ast::Field::ColumnLines { count: 1 },
+    );
     Ok((
         input,
         ast::Definition::Record {
@@ -91,6 +99,15 @@ fn parse_record(input: &str) -> IResult<&str, ast::Definition> {
             fields,
         },
     ))
+}
+
+fn insert_after_first_instance<T, F>(vec: &mut Vec<T>, predicate: F, value: T)
+where
+    F: Fn(&T) -> bool,
+{
+    if let Some(pos) = vec.iter().position(predicate) {
+        vec.insert(pos + 1, value);
+    }
 }
 
 fn parse_record_fields(input: &str) -> IResult<&str, Vec<ast::Field>> {
@@ -103,6 +120,54 @@ fn parse_record_fields(input: &str) -> IResult<&str, Vec<ast::Field>> {
 }
 
 fn parse_field(input: &str) -> IResult<&str, ast::Field> {
+    alt((
+        parse_field_comment,
+        parse_column_field,
+        parse_field_directive,
+    ))(input)
+}
+
+fn parse_field_comment(input: &str) -> IResult<&str, ast::Field> {
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("//")(input)?;
+    let (input, text) = take_until("\n")(input)?;
+    let (input, _) = newline(input)?;
+    Ok((
+        input,
+        ast::Field::ColumnComment {
+            text: text.to_string(),
+        },
+    ))
+}
+
+fn parse_field_directive(input: &str) -> IResult<&str, ast::Field> {
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("@")(input)?;
+    let (input, name) = parse_typename(input)?;
+    match name {
+        "tablename" => {
+            let (input, _) = multispace1(input)?;
+            let (input, tablename) = parse_string_literal(input)?;
+            let (input, _) = multispace0(input)?;
+
+            let directive = ast::FieldDirective::TableName(tablename.to_string());
+            return Ok((input, ast::Field::FieldDirective(directive)));
+        }
+        _ => {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            )));
+        }
+    }
+}
+
+fn parse_column_field(input: &str) -> IResult<&str, ast::Field> {
+    let (input, column) = parse_column(input)?;
+    Ok((input, ast::Field::Column(column)))
+}
+
+fn parse_column(input: &str) -> IResult<&str, ast::Column> {
     let (input, _) = multispace0(input)?;
     let (input, name) = parse_fieldname(input)?;
     let (input, _) = multispace0(input)?;
@@ -115,7 +180,7 @@ fn parse_field(input: &str) -> IResult<&str, ast::Field> {
 
     Ok((
         input,
-        ast::Field {
+        ast::Column {
             name: name.to_string(),
             type_: type_.to_string(),
             nullable: is_nullable,
@@ -397,10 +462,15 @@ fn parse_number(input: &str) -> IResult<&str, ast::QueryValue> {
 }
 
 fn parse_string(input: &str) -> IResult<&str, ast::QueryValue> {
+    let (input, value) = parse_string_literal(input)?;
+    Ok((input, ast::QueryValue::String(value.to_string())))
+}
+
+fn parse_string_literal(input: &str) -> IResult<&str, &str> {
     let (input, _) = tag("\"")(input)?;
     let (input, value) = take_until("\"")(input)?;
     let (input, _) = tag("\"")(input)?;
-    Ok((input, ast::QueryValue::String(value.to_string())))
+    Ok((input, value))
 }
 
 fn parse_token<'a, T>(tag_str: &'a str, value: T) -> impl Fn(&'a str) -> IResult<&'a str, T> + 'a

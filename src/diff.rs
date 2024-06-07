@@ -34,12 +34,12 @@ pub enum TaggedChange {
 
 #[derive(Debug)]
 pub enum RecordChange {
-    AddedField(crate::ast::Field),
-    RemovedField(crate::ast::Field),
+    AddedField(crate::ast::Column),
+    RemovedField(crate::ast::Column),
     ModifiedField {
         name: String,
-        old: crate::ast::Field,
-        new: crate::ast::Field,
+        old: crate::ast::Column,
+        new: crate::ast::Column,
     },
 }
 
@@ -157,13 +157,16 @@ fn find_record_changes(
         (
             crate::ast::Definition::Record { fields: f1, .. },
             crate::ast::Definition::Record { fields: f2, .. },
-        ) => diff_fields(f1, f2),
+        ) => diff_fields(&ast::collect_columns(f1), &ast::collect_columns(f2)),
         _ => vec![],
     }
 }
 
 // Function to find changes between two lists of fields
-fn diff_fields(fields1: &[crate::ast::Field], fields2: &[crate::ast::Field]) -> Vec<RecordChange> {
+fn diff_fields(
+    fields1: &[crate::ast::Column],
+    fields2: &[crate::ast::Column],
+) -> Vec<RecordChange> {
     let mut changes = Vec::new();
 
     for field2 in fields2 {
