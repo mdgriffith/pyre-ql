@@ -3,6 +3,12 @@ pub struct Schema {
     pub definitions: Vec<Definition>,
 }
 
+pub fn empty_schema() -> Schema {
+    Schema {
+        definitions: Vec::new(),
+    }
+}
+
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Definition {
@@ -38,7 +44,32 @@ pub struct RecordDetails {
 pub struct Field {
     pub name: String,
     pub type_: String,
-    pub directives: Vec<String>,
+    pub serialization_type: SerializationType,
+    pub nullable: bool,
+    pub directives: Vec<ColumnDirective>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ColumnDirective {
+    PrimaryKey,
+    Unique,
+    // Default(String),
+    // Check(String),
+    // ForeignKey(String),
+}
+
+// https://sqlite.org/datatype3.html
+// NULL. The value is a NULL value.
+// INTEGER. The value is a signed integer, stored in 0, 1, 2, 3, 4, 6, or 8 bytes depending on the magnitude of the value.
+// REAL. The value is a floating point value, stored as an 8-byte IEEE floating point number.
+// TEXT. The value is a text string, stored using the database encoding (UTF-8, UTF-16BE or UTF-16LE).
+// BLOB. The value is a blob of data, stored exactly as it was input.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SerializationType {
+    Integer,
+    Real,
+    Text,
+    BlobWithSchema(String),
 }
 
 // Queries

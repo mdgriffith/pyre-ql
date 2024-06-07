@@ -56,7 +56,29 @@ fn to_string_variant(is_first: bool, variant: &ast::Variant) -> String {
 
 fn to_string_field(indent: usize, field: &ast::Field) -> String {
     let spaces = " ".repeat(indent);
-    format!("{}{}: {}\n", spaces, field.name, field.type_)
+    format!(
+        "{}{}: {}{}\n",
+        spaces,
+        field.name,
+        field.type_,
+        to_string_directives(&field.directives)
+    )
+}
+
+fn to_string_directives(directives: &Vec<ast::ColumnDirective>) -> String {
+    let mut result = String::new();
+    for directive in directives {
+        result.push_str(" ");
+        result.push_str(&to_string_directive(directive));
+    }
+    result
+}
+
+fn to_string_directive(directive: &ast::ColumnDirective) -> String {
+    match directive {
+        ast::ColumnDirective::PrimaryKey => "@id".to_string(),
+        ast::ColumnDirective::Unique => "@unique".to_string(),
+    }
 }
 
 //

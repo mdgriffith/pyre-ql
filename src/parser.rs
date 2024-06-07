@@ -109,14 +109,56 @@ fn parse_field(input: &str) -> IResult<&str, ast::Field> {
     let (input, _) = tag(":")(input)?;
     let (input, _) = multispace0(input)?;
     let (input, type_) = parse_typename(input)?;
+    let (input, is_nullable) = parse_nullable(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, directives) = many0(parse_column_directive)(input)?;
+
     Ok((
         input,
         ast::Field {
             name: name.to_string(),
             type_: type_.to_string(),
-            directives: vec![],
+            nullable: is_nullable,
+            serialization_type: to_serialization_type(type_),
+            directives,
         },
     ))
+}
+
+fn parse_nullable(input: &str) -> IResult<&str, bool> {
+    let (input, maybeNullable) = opt(char('?'))(input)?;
+    Ok((input, maybeNullable != None))
+}
+
+fn parse_column_directive(input: &str) -> IResult<&str, ast::ColumnDirective> {
+    alt((
+        parse_directive_named("id", ast::ColumnDirective::PrimaryKey),
+        parse_directive_named("unique", ast::ColumnDirective::Unique),
+    ))(input)
+}
+
+fn parse_directive_named<'a, T>(
+    tag_str: &'a str,
+    value: T,
+) -> impl Fn(&'a str) -> IResult<&'a str, T> + 'a
+where
+    T: Clone + 'a,
+{
+    move |input: &'a str| {
+        let (input, _) = tag("@")(input)?;
+        let (input, _) = tag(tag_str)(input)?;
+        Ok((input, value.clone()))
+    }
+}
+
+fn to_serialization_type(type_: &str) -> ast::SerializationType {
+    match type_ {
+        "String" => ast::SerializationType::Text,
+        "Int" => ast::SerializationType::Integer,
+        "Float" => ast::SerializationType::Real,
+        "Bool" => ast::SerializationType::Integer,
+        _ => ast::SerializationType::BlobWithSchema(type_.to_string()),
+    }
 }
 
 fn parse_type_separator(input: &str) -> IResult<&str, char> {
