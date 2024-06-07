@@ -9,6 +9,7 @@ mod ast;
 mod diff;
 mod generate;
 mod parser;
+mod typecheck;
 
 fn main() -> io::Result<()> {
     // Read the content of the file
