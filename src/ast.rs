@@ -72,6 +72,20 @@ pub fn is_column_comment(field: &Field) -> bool {
     }
 }
 
+pub fn is_column(field: &Field) -> bool {
+    match field {
+        Field::Column { .. } => true,
+        _ => false,
+    }
+}
+
+pub fn is_column_space(field: &Field) -> bool {
+    match field {
+        Field::ColumnLines { .. } => true,
+        _ => false,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldDirective {
     TableName(String),
@@ -174,6 +188,8 @@ pub struct QueryField {
     pub params: Vec<QueryParam>,
     pub directives: Vec<String>,
     pub fields: Vec<QueryField>,
+    // Typecheck info
+    // pub type_: Option<String>,
 }
 
 #[derive(Debug)]

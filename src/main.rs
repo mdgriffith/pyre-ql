@@ -19,7 +19,7 @@ fn main() -> io::Result<()> {
 
     match parser::run(&input) {
         Ok(schema) => {
-            println!("{:?}", schema);
+            // println!("{:?}", schema);
             let formatted = generate::format::schema(&schema);
 
             let path = Path::new("examples/formatted.pyre");
@@ -27,6 +27,28 @@ fn main() -> io::Result<()> {
             output
                 .write_all(formatted.as_bytes())
                 .expect("Failed to write to file");
+
+            // Elm Generation
+
+            let formatted_elm = generate::elm::schema(&schema);
+
+            let elm_file = Path::new("examples/elm/Db.elm");
+            let mut output = fs::File::create(elm_file).expect("Failed to create file");
+            output
+                .write_all(formatted_elm.as_bytes())
+                .expect("Failed to write to file");
+
+            // Elm Decoders
+
+            let elm_decoders = generate::elm::to_schema_decoders(&schema);
+
+            let elm_decoder_file = Path::new("examples/elm/Db/Decode.elm");
+            let mut output = fs::File::create(elm_decoder_file).expect("Failed to create file");
+            output
+                .write_all(elm_decoders.as_bytes())
+                .expect("Failed to write to file");
+
+            // Migration Generation
 
             let schema_diff = diff::diff(&ast::empty_schema(), &schema);
 
