@@ -215,7 +215,101 @@ fn to_field_decoder(is_first: bool, indent: usize, field: &ast::Field) -> String
 fn to_type_decoder(type_: &str) -> String {
     match type_ {
         "String" => "Decode.string".to_string(),
+        "Int" => "Decode.int".to_string(),
+        "Float" => "Decode.float".to_string(),
         _ => format!("Db.decoder{}", type_).to_string(),
+    }
+}
+
+// Encoders!
+//
+
+pub fn to_schema_encoders(schem: &ast::Schema) -> String {
+    let mut result = String::new();
+
+    result
+        .push_str("module Db.Encode exposing(..)\n\nimport Db\nimport Json.Encode as Encode\n\n\n");
+
+    for definition in &schem.definitions {
+        result.push_str(&to_encoder_definition(definition));
+    }
+    result
+}
+
+fn to_encoder_definition(definition: &ast::Definition) -> String {
+    match definition {
+        ast::Definition::Lines { count } => "".to_string(),
+        ast::Definition::Comment { text } => "".to_string(),
+        ast::Definition::Tagged { name, variants } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!("encode{} : Db.{} -> Encode.Value\n", name, name));
+            result.push_str(&format!("encode{} input_ =\n", name));
+            result.push_str("    case input_ of\n");
+            let mut is_first = true;
+            for variant in variants {
+                result.push_str(&to_encoder_variant(is_first, 8, name, variant));
+                is_first = false;
+            }
+            result
+        }
+        ast::Definition::Record { name, fields } => "".to_string(),
+    }
+}
+
+fn to_encoder_variant(
+    is_first: bool,
+    indent_size: usize,
+    typename: &str,
+    variant: &ast::Variant,
+) -> String {
+    let outer_indent = " ".repeat(indent_size);
+    let indent = " ".repeat(indent_size + 4);
+    let inner_indent = " ".repeat(indent_size + 8);
+    match &variant.data {
+        Some(fields) => {
+            let mut result = format!(
+                "{}Db.{} inner_details__ ->\n{}Encode.object\n{}[ ( \"type\", Encode.string \"{}\" )\n",
+                outer_indent, variant.name, indent, inner_indent, variant.name
+            );
+
+            let mut is_first_field = true;
+            for field in fields {
+                result.push_str(&to_field_encoder(is_first_field, indent_size + 8, &field));
+                is_first_field = false
+            }
+            result.push_str(&format!("{}]\n\n", inner_indent));
+
+            result
+        }
+        None => format!(
+            "{}Db.{} ->\n{}Encode.object [ ( \"type\", Encode.string \"{}\" ) ]\n\n",
+            outer_indent, variant.name, indent, variant.name
+        ),
+    }
+}
+
+fn to_field_encoder(is_first: bool, indent: usize, field: &ast::Field) -> String {
+    match field {
+        ast::Field::Column(column) => {
+            let spaces = " ".repeat(indent);
+            return format!(
+                "{}, ( \"{}\", {} inner_details__.{})\n",
+                spaces,
+                column.name,
+                to_type_encoder(&column.name, &column.type_),
+                column.name
+            );
+        }
+
+        _ => "".to_string(),
+    }
+}
+
+fn to_type_encoder(fieldname: &str, type_: &str) -> String {
+    match type_ {
+        "String" => "Encode.string".to_string(),
+        _ => format!("Db.encode{}", type_).to_string(),
     }
 }
 

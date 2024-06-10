@@ -48,6 +48,16 @@ fn main() -> io::Result<()> {
                 .write_all(elm_decoders.as_bytes())
                 .expect("Failed to write to file");
 
+            // Elm Encoders
+            //
+            let elm_encoders = generate::elm::to_schema_encoders(&schema);
+
+            let elm_encoder_file = Path::new("examples/elm/Db/Encode.elm");
+            let mut output = fs::File::create(elm_encoder_file).expect("Failed to create file");
+            output
+                .write_all(elm_encoders.as_bytes())
+                .expect("Failed to write to file");
+
             // Migration Generation
 
             let schema_diff = diff::diff(&ast::empty_schema(), &schema);
