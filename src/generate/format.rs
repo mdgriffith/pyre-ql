@@ -17,7 +17,7 @@ fn to_string_definition(definition: &ast::Definition) -> String {
                 "\n".repeat(*count as usize)
             }
         }
-        ast::Definition::Comment { text } => format!("// {}\n", text),
+        ast::Definition::Comment { text } => format!("//{}\n", text),
         ast::Definition::Tagged { name, variants } => {
             let mut result = format!("type {}\n", name);
             let mut is_first = true;
@@ -66,7 +66,7 @@ fn to_string_field(indent: usize, field: &ast::Field) -> String {
             }
         }
         ast::Field::Column(column) => to_string_column(indent, column),
-        ast::Field::ColumnComment { text } => format!("{}// {}\n", " ".repeat(indent), text),
+        ast::Field::ColumnComment { text } => format!("{}//{}\n", " ".repeat(indent), text),
         ast::Field::FieldDirective(directive) => to_string_field_directive(indent, directive),
     }
 }
@@ -112,11 +112,15 @@ fn to_string_link_details(details: &ast::LinkDetails) -> String {
     result.push_str(", to: ");
     if (*&details.foreign_ids.len() > 1) {
         for id in &details.foreign_ids {
+            result.push_str(&details.foreign_tablename);
+            result.push_str(".");
             result.push_str(id);
             result.push_str(", ");
         }
     } else {
         for id in &details.foreign_ids {
+            result.push_str(&details.foreign_tablename);
+            result.push_str(".");
             result.push_str(id);
         }
     }
@@ -153,7 +157,7 @@ pub fn query(query_list: &ast::QueryList) -> String {
 fn to_string_query_definition(definition: &ast::QueryDef) -> String {
     match definition {
         ast::QueryDef::Query(q) => to_string_query(q),
-        ast::QueryDef::QueryComment { text } => format!("// {}\n", text),
+        ast::QueryDef::QueryComment { text } => format!("//{}\n", text),
         ast::QueryDef::QueryLines { count } => {
             if (*count > 2) {
                 "\n\n".to_string()

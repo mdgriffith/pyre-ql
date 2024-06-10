@@ -65,6 +65,13 @@ pub fn is_field_directive(field: &Field) -> bool {
     }
 }
 
+pub fn is_column_comment(field: &Field) -> bool {
+    match field {
+        Field::ColumnComment { .. } => true,
+        _ => false,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldDirective {
     TableName(String),
@@ -94,6 +101,8 @@ pub fn collect_columns(fields: &Vec<Field>) -> Vec<Column> {
 pub fn column_order(a: &Field, b: &Field) -> std::cmp::Ordering {
     match (a, b) {
         (Field::FieldDirective(_), Field::FieldDirective(_)) => std::cmp::Ordering::Equal,
+        (Field::ColumnComment { .. }, Field::FieldDirective(_)) => std::cmp::Ordering::Equal,
+        (Field::FieldDirective(_), Field::ColumnComment { .. }) => std::cmp::Ordering::Equal,
         (Field::FieldDirective(_), _) => std::cmp::Ordering::Less,
         (_, Field::FieldDirective(_)) => std::cmp::Ordering::Greater,
         _ => std::cmp::Ordering::Equal,

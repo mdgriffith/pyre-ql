@@ -87,11 +87,12 @@ fn parse_record(input: &str) -> IResult<&str, ast::Definition> {
     let mut fields = unsorted_fields.clone();
 
     fields.sort_by(ast::column_order);
-    insert_after_first_instance(
+    insert_after_last_instance(
         &mut fields,
         ast::is_field_directive,
         ast::Field::ColumnLines { count: 1 },
     );
+
     Ok((
         input,
         ast::Definition::Record {
@@ -107,6 +108,49 @@ where
 {
     if let Some(pos) = vec.iter().position(predicate) {
         vec.insert(pos + 1, value);
+    }
+}
+
+fn insert_after_last_instance<T, F>(vec: &mut Vec<T>, predicate: F, value: T)
+where
+    F: Fn(&T) -> bool,
+{
+    if let Some(pos) = vec.iter().rev().position(predicate) {
+        vec.insert(vec.len() - pos, value);
+    }
+}
+
+fn insert_after_first_instance_continuous<T, F, IfPrevious>(
+    vec: &mut Vec<T>,
+    predicate: F,
+    insert_if_previous: IfPrevious,
+    value: T,
+) where
+    F: Fn(&T) -> bool,
+    IfPrevious: Fn(Option<&T>) -> bool,
+    T: Clone,
+{
+    let mut in_sequence = false;
+    let mut indices: Vec<usize> = vec![];
+    let mut target_index = 0;
+    let mut previous_item: Option<&T> = None;
+
+    for (i, item) in vec.iter().enumerate() {
+        if predicate(item) {
+            if !in_sequence & insert_if_previous(previous_item) {
+                in_sequence = true;
+                indices.push(target_index);
+                target_index = target_index + 1;
+            }
+        } else {
+            in_sequence = false;
+        }
+        previous_item = Some(item);
+        target_index = target_index + 1;
+    }
+
+    for index in indices {
+        vec.insert(index, value.clone());
     }
 }
 
@@ -153,11 +197,135 @@ fn parse_field_directive(input: &str) -> IResult<&str, ast::Field> {
             let directive = ast::FieldDirective::TableName(tablename.to_string());
             return Ok((input, ast::Field::FieldDirective(directive)));
         }
+        "link" => {
+            let (input, _) = multispace1(input)?;
+            let (input, linkname) = parse_fieldname(input)?;
+
+            // link details
+            // { from: userId, to: User.id }
+
+            let (input, _) = multispace1(input)?;
+            let (input, _) = tag("{")(input)?;
+            let (input, fields) = many0(parse_link_field)(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = tag("}")(input)?;
+            let (input, _) = multispace0(input)?;
+
+            // gather into link details
+            let (input, link_details) = link_field_to_details(input, linkname, fields)?;
+
+            let (input, _) = multispace0(input)?;
+
+            return Ok((
+                input,
+                ast::Field::FieldDirective(ast::FieldDirective::Link(link_details)),
+            ));
+        }
         _ => {
             return Err(nom::Err::Error(nom::error::Error::new(
                 input,
                 nom::error::ErrorKind::Tag,
             )));
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum LinkField {
+    From(Vec<String>),
+    To { table: String, id: Vec<String> },
+}
+
+struct ToDetails {
+    table: String,
+    id: Vec<String>,
+}
+
+fn link_field_to_details<'a, 'b>(
+    input: &'a str,
+    linkname: &'b str,
+    link_fields: Vec<LinkField>,
+) -> IResult<&'a str, ast::LinkDetails> {
+    let mut details = ast::LinkDetails {
+        link_name: linkname.to_string(),
+        local_ids: vec![],
+        foreign_tablename: "".to_string(),
+        foreign_ids: vec![],
+    };
+    let mut has_from = false;
+    let mut has_to = false;
+    for link in link_fields {
+        match link {
+            LinkField::From(idList) => {
+                if has_from {
+                    return Err(nom::Err::Error(nom::error::Error::new(
+                        input,
+                        nom::error::ErrorKind::Tag,
+                    )));
+                } else {
+                    has_from = true;
+                    details.local_ids = idList
+                }
+            }
+            LinkField::To { table, id } => {
+                if has_to {
+                    return Err(nom::Err::Error(nom::error::Error::new(
+                        input,
+                        nom::error::ErrorKind::Tag,
+                    )));
+                } else {
+                    has_to = true;
+                    details.foreign_tablename = table;
+                    details.foreign_ids = id;
+                }
+            }
+        }
+    }
+    if (has_to & has_from) {
+        return Ok((input, details));
+    }
+
+    Err(nom::Err::Error(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::Tag,
+    )))
+}
+
+fn parse_link_field(input: &str) -> IResult<&str, LinkField> {
+    let (input, _) = multispace0(input)?;
+    let (input, name) = parse_fieldname(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag(":")(input)?;
+    let (input, _) = multispace0(input)?;
+
+    match name {
+        "to" => {
+            let (input, to_table) = parse_typename(input)?;
+            let (input, _) = tag(".")(input)?;
+            let (input, to_id) = parse_fieldname(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = opt(tag(","))(input)?;
+            let (input, _) = multispace0(input)?;
+            return Ok((
+                input,
+                LinkField::To {
+                    table: to_table.to_string(),
+                    id: vec![to_id.to_string()],
+                },
+            ));
+        }
+        "from" => {
+            let (input, from_field) = parse_fieldname(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = opt(tag(","))(input)?;
+            let (input, _) = multispace0(input)?;
+            return Ok((input, LinkField::From(vec![from_field.to_string()])));
+        }
+        _ => {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            )))
         }
     }
 }
