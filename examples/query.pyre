@@ -1,22 +1,14 @@
 
-// query MyQuery($id: ID) {
-//     user(id = $id) {
-//         id
-//         name
-//         email
-//         posts {
-//             id
-//             title
-//             body
-//         }
-//     }
-// }
 
+// My Query
 query MyQuery($id: ID) {
-    fieldOne
-    fieldTwo(id = $id) {
-        subfield {
-            subsubfield
+    User(id = $id) {
+        id
+        name
+        accounts {
+            id
+            name
+            status
         }
     }
 }

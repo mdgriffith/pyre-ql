@@ -11,7 +11,32 @@ mod generate;
 mod parser;
 mod typecheck;
 
-fn main() -> io::Result<()> {
+fn check_all() -> io::Result<()> {
+    let mut file = fs::File::open("examples/schema.pyre")?;
+    let mut input = String::new();
+    file.read_to_string(&mut input)?;
+
+    match parser::run(&input) {
+        Ok(schema) => {
+            let mut query_file = fs::File::open("examples/query.pyre")?;
+            let mut input_query = String::new();
+            query_file.read_to_string(&mut input_query)?;
+
+            match parser::parse_query(&input_query) {
+                Ok(query_list) => {
+                    let result = typecheck::check_queries(&schema, query_list);
+                    println!("{:?}", result);
+                }
+                Err(err) => eprintln!("{:?}", err),
+            }
+        }
+
+        Err(err) => eprintln!("{:?}", err),
+    }
+    Ok(())
+}
+
+fn full_run() -> io::Result<()> {
     // Read the content of the file
     let mut file = fs::File::open("examples/schema.pyre")?;
     let mut input = String::new();
@@ -96,4 +121,9 @@ fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn main() -> io::Result<()> {
+    full_run();
+    check_all()
 }

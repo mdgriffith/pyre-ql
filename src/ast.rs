@@ -157,42 +157,43 @@ pub enum SerializationType {
 
 // Queries
 //
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QueryList {
     pub queries: Vec<QueryDef>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum QueryDef {
     Query(Query),
     QueryComment { text: String },
     QueryLines { count: usize },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Query {
     pub name: String,
     pub args: Vec<QueryParamDefinition>,
     pub fields: Vec<QueryField>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QueryParamDefinition {
     pub name: String,
     pub type_: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QueryField {
     pub name: String,
     pub params: Vec<QueryParam>,
     pub directives: Vec<String>,
     pub fields: Vec<QueryField>,
+
     // Typecheck info
-    // pub type_: Option<String>,
+    pub type_: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QueryParam {
     pub name: String,
     pub operator: Operator,

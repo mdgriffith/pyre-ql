@@ -547,6 +547,7 @@ fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
             params: paramsOrNone.unwrap_or_else(Vec::new),
             directives: vec![],
             fields: fieldsOrNone.unwrap_or_else(Vec::new),
+            type_: None,
         },
     ))
 }
