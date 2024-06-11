@@ -1,4 +1,8 @@
 use crate::ast;
+use crate::typecheck;
+use std::fs;
+use std::io::{self, Read, Write};
+use std::path::Path;
 
 pub fn schema(schem: &ast::Schema) -> String {
     let mut result = String::new();
@@ -62,7 +66,7 @@ fn to_string_variant(is_first: bool, indent_size: usize, variant: &ast::Variant)
     match &variant.data {
         Some(fields) => {
             let indent = " ".repeat(indent_size + 2);
-            let mut result = format!("  {}{}\n{}{{ ", prefix, variant.name, indent);
+            let mut result = format!("   {}{}\n{}{{ ", prefix, variant.name, indent);
 
             let mut is_first_field = true;
             for field in fields {
@@ -72,7 +76,7 @@ fn to_string_variant(is_first: bool, indent_size: usize, variant: &ast::Variant)
             result.push_str("      }\n");
             result
         }
-        None => format!("  {}{}\n", prefix, variant.name),
+        None => format!("   {}{}\n", prefix, variant.name),
     }
 }
 
@@ -217,7 +221,7 @@ fn to_type_decoder(type_: &str) -> String {
         "String" => "Decode.string".to_string(),
         "Int" => "Decode.int".to_string(),
         "Float" => "Decode.float".to_string(),
-        _ => format!("Db.decoder{}", type_).to_string(),
+        _ => format!("Db.decode{}", type_).to_string(),
     }
 }
 
@@ -315,51 +319,184 @@ fn to_type_encoder(fieldname: &str, type_: &str) -> String {
 
 //  QUERIES
 //
-pub fn query(query_list: &ast::QueryList) -> String {
-    let mut result = String::new();
+pub fn write_queries(context: &typecheck::Context, query_list: &ast::QueryList) -> io::Result<()> {
     for operation in &query_list.queries {
-        result.push_str(&to_string_query_definition(operation));
-    }
-    result
-}
-
-fn to_string_query_definition(definition: &ast::QueryDef) -> String {
-    match definition {
-        ast::QueryDef::Query(q) => to_string_query(q),
-        ast::QueryDef::QueryComment { text } => format!("--{}\n", text),
-        ast::QueryDef::QueryLines { count } => {
-            if (*count > 2) {
-                "\n\n".to_string()
-            } else {
-                "\n".repeat(*count as usize)
+        match operation {
+            ast::QueryDef::Query(q) => {
+                let path = &format!("examples/elm/Query/{}.elm", q.name.to_string());
+                let target_path = Path::new(path);
+                let mut output = fs::File::create(target_path).expect("Failed to create file");
+                output
+                    .write_all(to_query_file(&context, &q).as_bytes())
+                    .expect("Failed to write to file");
             }
+            _ => continue,
         }
     }
+    Ok(())
 }
 
-fn to_string_query(query: &ast::Query) -> String {
-    let mut result = format!("query {}", query.name);
+fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
+    let mut result = format!("module Query.{} exposing (..)\n\n\n", query.name);
 
-    if (query.args.len() > 0) {
-        result.push_str("(");
-    }
-    let mut first = true;
-    for param in &query.args {
-        result.push_str(&to_string_param_definition(first, &param));
-        first = false;
-    }
-    if (query.args.len() > 0) {
-        result.push_str(")");
-    }
+    result.push_str("import Db\n");
+    result.push_str("import Db.Decode\n");
+    result.push_str("import Db.Encode\n");
+    result.push_str("import Json.Decode as Decode\n");
+    result.push_str("import Json.Encode as Encode\n");
 
-    // Fields
-    result.push_str(" {\n");
+    result.push_str("\n\n");
 
+    //
+    //
     for field in &query.fields {
-        result.push_str(&to_string_query_field(4, &field));
+        let table = context.tables.get(&field.name).unwrap();
+        result.push_str(&to_query_type_alias(
+            context,
+            table,
+            &field.name,
+            &field.fields,
+        ));
     }
-    result.push_str("}\n");
+
     result
+}
+
+fn to_query_type_alias(
+    context: &typecheck::Context,
+    table: &ast::RecordDetails,
+    name: &str,
+    fields: &Vec<ast::QueryField>,
+) -> String {
+    let mut result = format!("type alias {} =\n", capitalize(name));
+
+    let mut is_first = true;
+
+    for field in fields {
+        if is_first {
+            result.push_str(&format!("    {{ ",))
+        }
+
+        let table_field = &table
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
+            .unwrap();
+
+        match table_field {
+            ast::Field::Column(col) => {
+                result.push_str(&to_string_query_field(is_first, 4, &field, col));
+            }
+            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                result.push_str(&to_string_query_field_link(is_first, 4, &field, link));
+            }
+            _ => {}
+        }
+
+        if is_first {
+            is_first = false;
+        }
+    }
+    result.push_str("    }\n");
+
+    for field in fields {
+        if field.fields.is_empty() {
+            continue;
+        }
+
+        let fieldname_match = table
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(f, &field.name));
+
+        match fieldname_match {
+            Some(ast::Field::FieldDirective(ast::FieldDirective::Link(link))) => {
+                let link_table = context.tables.get(&link.foreign_tablename).unwrap();
+                result.push_str("\n\n");
+                result.push_str(&to_query_type_alias(
+                    context,
+                    link_table,
+                    &field.name,
+                    &field.fields,
+                ));
+            }
+            _ => continue,
+        }
+    }
+
+    result
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+    }
+}
+
+fn decapitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_lowercase().collect::<String>() + c.as_str(),
+    }
+}
+
+fn to_string_query_field_link(
+    is_first: bool,
+    indent: usize,
+    field: &ast::QueryField,
+    link_details: &ast::LinkDetails,
+) -> String {
+    if is_first {
+        return format!(
+            "{} : {}\n",
+            decapitalize(&field.name),
+            (format!("List {}", capitalize(&link_details.link_name)))
+        );
+    } else {
+        let spaces = " ".repeat(indent);
+        return format!(
+            "{}, {} : {}\n",
+            spaces,
+            decapitalize(&field.name),
+            (format!("List {}", capitalize(&link_details.link_name)))
+        );
+    }
+}
+
+fn to_string_query_field(
+    is_first: bool,
+    indent: usize,
+    field: &ast::QueryField,
+    table_column: &ast::Column,
+) -> String {
+    if is_first {
+        return format!(
+            "{} : {}\n",
+            decapitalize(&field.name),
+            to_elm_typename(&table_column.type_)
+        );
+    } else {
+        let spaces = " ".repeat(indent);
+        return format!(
+            "{}, {} : {}\n",
+            spaces,
+            decapitalize(&field.name),
+            to_elm_typename(&table_column.type_)
+        );
+    }
+}
+
+fn to_elm_typename(type_: &str) -> String {
+    match type_ {
+        "String" => type_.to_string(),
+        "Int" => type_.to_string(),
+        "Float" => type_.to_string(),
+        "Bool" => type_.to_string(),
+        _ => format!("Db.{}", type_).to_string(),
+    }
 }
 
 // Example: ($arg: String)
@@ -369,38 +506,6 @@ fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition)
     } else {
         format!(", {}: {}", param.name, param.type_)
     }
-}
-
-fn to_string_query_field(indent: usize, field: &ast::QueryField) -> String {
-    let spaces = " ".repeat(indent);
-    let mut result = format!("{}{}", spaces, field.name);
-
-    // Args
-    if (field.params.len() > 0) {
-        result.push_str("(");
-    }
-    let mut first = true;
-    for param in &field.params {
-        result.push_str(&to_string_param(first, &param));
-        first = false;
-    }
-    if (field.params.len() > 0) {
-        result.push_str(")");
-    }
-
-    // Fields
-    if (field.fields.len() > 0) {
-        result.push_str(" {\n");
-    }
-    for inner_field in &field.fields {
-        result.push_str(&to_string_query_field(indent + 4, &inner_field));
-    }
-    if (field.fields.len() > 0) {
-        result.push_str(&spaces);
-        result.push_str("}");
-    }
-    result.push_str("\n");
-    result
 }
 
 // Example: (arg = $id)

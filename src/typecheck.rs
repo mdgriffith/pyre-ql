@@ -72,8 +72,8 @@ enum DefType {
 
 #[derive(Debug)]
 pub struct Context {
-    types: HashMap<String, DefType>,
-    tables: HashMap<String, ast::RecordDetails>,
+    pub types: HashMap<String, DefType>,
+    pub tables: HashMap<String, ast::RecordDetails>,
 }
 
 fn empty_context() -> Context {
@@ -327,8 +327,8 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
 
 pub fn check_queries<'a>(
     schem: &ast::Schema,
-    query_list: ast::QueryList,
-) -> Result<ast::QueryList, Vec<Error>> {
+    query_list: &ast::QueryList,
+) -> Result<Context, Vec<Error>> {
     let mut context = empty_context();
     let population_errors = populate_context(schem, &mut context);
     if !population_errors.is_empty() {
@@ -348,7 +348,7 @@ pub fn check_queries<'a>(
         return Err(errors);
     }
 
-    Ok(query_list)
+    Ok(context)
 }
 
 fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Query) {

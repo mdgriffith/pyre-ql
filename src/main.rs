@@ -24,8 +24,17 @@ fn check_all() -> io::Result<()> {
 
             match parser::parse_query(&input_query) {
                 Ok(query_list) => {
-                    let result = typecheck::check_queries(&schema, query_list);
+                    let result = typecheck::check_queries(&schema, &query_list);
                     println!("{:?}", result);
+
+                    match result {
+                        Ok(typecheck_context) => {
+                            println!("Typecheck passed");
+
+                            generate::elm::write_queries(&typecheck_context, &query_list);
+                        }
+                        Err(err) => eprintln!("{:?}", err),
+                    }
                 }
                 Err(err) => eprintln!("{:?}", err),
             }

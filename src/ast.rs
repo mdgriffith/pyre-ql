@@ -65,6 +65,14 @@ pub fn has_fieldname(field: &Field, desired_name: &str) -> bool {
     }
 }
 
+pub fn has_field_or_linkname(field: &Field, desired_name: &str) -> bool {
+    match field {
+        Field::Column(Column { name, .. }) => name == desired_name,
+        Field::FieldDirective(FieldDirective::Link(link)) => link.link_name == desired_name,
+        _ => false,
+    }
+}
+
 pub fn is_field_directive(field: &Field) -> bool {
     match field {
         Field::FieldDirective(_) => true,
