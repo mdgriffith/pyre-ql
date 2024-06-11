@@ -110,7 +110,12 @@ fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> Stri
 pub fn to_schema_decoders(schem: &ast::Schema) -> String {
     let mut result = String::new();
 
-    result.push_str("module Db.Decode exposing(..)\n\nimport Db\nimport Json.Decode as Decode\n\n");
+    result
+        .push_str("module Db.Decode exposing(..)\n\nimport Db\nimport Json.Decode as Decode\n\n\n");
+
+    result.push_str("field : String -> Decode.Decoder a -> Decode.Decoder (a -> b) -> Decode.Decoder b\nfield fieldName_ fieldDecoder_ decoder_ =\n    decoder_ |> Decode.andThen (\\func -> Decode.field fieldName_ fieldDecoder_ |> Decode.map func)");
+
+    result.push_str("\n");
 
     for definition in &schem.definitions {
         result.push_str(&to_decoder_definition(definition));
@@ -144,8 +149,12 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
                 }
             }
 
-            result.push_str(&format!("decode{} : Decode.Decoder Db.{}\n", name, name));
-            result.push_str(&format!("decode{} =\n", name));
+            result.push_str(&format!(
+                "{} : Decode.Decoder Db.{}\n",
+                decapitalize(name),
+                name
+            ));
+            result.push_str(&format!("{} =\n", decapitalize(name)));
             result.push_str("    Decode.field \"type\" Decode.string\n");
             result.push_str("        |> Decode.andThen\n");
             result.push_str("            (\\variant_name ->\n");
@@ -184,10 +193,8 @@ fn to_decoder_variant(
                 variant.name
             );
 
-            let mut is_first_field = true;
             for field in fields {
-                result.push_str(&to_field_decoder(is_first_field, indent_size + 12, &field));
-                is_first_field = false
+                result.push_str(&to_field_decoder(indent_size + 12, &field));
             }
             result.push_str(&format!("{})\n\n", inner_indent));
 
@@ -200,7 +207,7 @@ fn to_decoder_variant(
     }
 }
 
-fn to_field_decoder(is_first: bool, indent: usize, field: &ast::Field) -> String {
+fn to_field_decoder(indent: usize, field: &ast::Field) -> String {
     match field {
         ast::Field::Column(column) => {
             let spaces = " ".repeat(indent);
@@ -209,6 +216,15 @@ fn to_field_decoder(is_first: bool, indent: usize, field: &ast::Field) -> String
                 spaces,
                 column.name,
                 to_type_decoder(&column.type_)
+            );
+        }
+        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+            let spaces = " ".repeat(indent);
+            return format!(
+                "{}|> Db.Decode.field \"{}\" (Decode.list decode{})\n",
+                spaces,
+                link.link_name,
+                (capitalize(&link.link_name))
             );
         }
 
@@ -221,7 +237,7 @@ fn to_type_decoder(type_: &str) -> String {
         "String" => "Decode.string".to_string(),
         "Int" => "Decode.int".to_string(),
         "Float" => "Decode.float".to_string(),
-        _ => format!("Db.decode{}", type_).to_string(),
+        _ => format!("Db.Decode.{}", decapitalize(type_)).to_string(),
     }
 }
 
@@ -347,8 +363,10 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     result.push_str("\n\n");
 
+    // TODO:: Input types
+
     //
-    //
+    // Type Alisaes
     for field in &query.fields {
         let table = context.tables.get(&field.name).unwrap();
         result.push_str(&to_query_type_alias(
@@ -357,6 +375,71 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
             &field.name,
             &field.fields,
         ));
+    }
+
+    // TODO:: HTTP Sender
+
+    result.push_str("\n\n");
+    // TODO:: Decoder
+    for field in &query.fields {
+        let table = context.tables.get(&field.name).unwrap();
+        result.push_str(&to_query_decoder(
+            context,
+            table,
+            &field.name,
+            &field.fields,
+        ));
+    }
+
+    result
+}
+
+fn to_query_decoder(
+    context: &typecheck::Context,
+    table: &ast::RecordDetails,
+    name: &str,
+    fields: &Vec<ast::QueryField>,
+) -> String {
+    let mut result = format!(
+        "decode{} : Decode.Decoder {}\n",
+        capitalize(name),
+        capitalize(name)
+    );
+    result.push_str(&format!("decode{} =\n", capitalize(name)));
+    result.push_str(&format!("    Decode.succeed {}\n", capitalize(name)));
+    for field in fields {
+        let table_field = &table
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
+            .unwrap();
+
+        result.push_str(&to_field_decoder(8, &table_field));
+    }
+
+    for field in fields {
+        if field.fields.is_empty() {
+            continue;
+        }
+
+        let fieldname_match = table
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(f, &field.name));
+
+        match fieldname_match {
+            Some(ast::Field::FieldDirective(ast::FieldDirective::Link(link))) => {
+                let link_table = context.tables.get(&link.foreign_tablename).unwrap();
+                result.push_str("\n\n");
+                result.push_str(&to_query_decoder(
+                    context,
+                    link_table,
+                    &field.name,
+                    &field.fields,
+                ));
+            }
+            _ => continue,
+        }
     }
 
     result
