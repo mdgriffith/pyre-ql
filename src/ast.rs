@@ -58,6 +58,13 @@ pub fn get_tablename(name: &str, fields: &Vec<Field>) -> String {
     name.to_string()
 }
 
+pub fn has_fieldname(field: &Field, desired_name: &str) -> bool {
+    match field {
+        Field::Column(Column { name, .. }) => name == desired_name,
+        _ => false,
+    }
+}
+
 pub fn is_field_directive(field: &Field) -> bool {
     match field {
         Field::FieldDirective(_) => true,

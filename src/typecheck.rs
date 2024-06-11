@@ -46,6 +46,21 @@ pub enum ErrorType {
     UnknownField {
         found: String,
     },
+
+    LinkToUnknownTable {
+        link_name: String,
+        unknown_table: String,
+    },
+
+    LinkToUnknownField {
+        link_name: String,
+        unknown_local_field: String,
+    },
+
+    LinkToUnknownForeignField {
+        link_name: String,
+        unknown_foreign_field: String,
+    },
 }
 
 #[derive(Debug)]
@@ -80,8 +95,8 @@ pub fn check_schema(schem: &ast::Schema) -> Result<&ast::Schema, Vec<Error>> {
     if !population_errors.is_empty() {
         return Err(population_errors);
     }
-
-    check_schema_definitions(context, schem);
+    let mut errors: Vec<Error> = Vec::new();
+    check_schema_definitions(&context, schem, &mut errors);
 
     Ok(schem)
 }
@@ -132,12 +147,103 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
         }
     }
 
+    for definition in &schem.definitions {
+        match definition {
+            ast::Definition::Record { name, fields } => {
+                for field in fields {
+                    match field {
+                        // ast::Field::Column(ast::Column { name, type_, .. }) => {
+                        //     if context.tables[name] {
+                        //         errors.push(Error {
+                        //             error_type: ErrorType::DuplicateField {
+                        //                 record: name.clone(),
+                        //                 field: name.clone(),
+                        //             },
+                        //             location: Location {
+                        //                 highlight: None,
+                        //                 area: Range {
+                        //                     start: Coord { line: 0, column: 0 },
+                        //                     end: Coord { line: 0, column: 0 },
+                        //                 },
+                        //             },
+                        //         });
+                        //     }
+                        // }
+                        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                            let maybe_foreign_table = context.tables.get(&link.foreign_tablename);
+                            match maybe_foreign_table {
+                                Some(foreign_table) => {
+                                    for foreign_id in &link.foreign_ids {
+                                        if !foreign_table
+                                            .fields
+                                            .iter()
+                                            .any(|f| ast::has_fieldname(f, foreign_id))
+                                        {
+                                            errors.push(Error {
+                                                error_type: ErrorType::LinkToUnknownForeignField {
+                                                    link_name: link.link_name.clone(),
+                                                    unknown_foreign_field: foreign_id.clone(),
+                                                },
+                                                location: Location {
+                                                    highlight: None,
+                                                    area: Range {
+                                                        start: Coord { line: 0, column: 0 },
+                                                        end: Coord { line: 0, column: 0 },
+                                                    },
+                                                },
+                                            });
+                                        }
+                                    }
+                                }
+                                None => {
+                                    errors.push(Error {
+                                        error_type: ErrorType::LinkToUnknownTable {
+                                            link_name: link.link_name.clone(),
+                                            unknown_table: link.foreign_tablename.clone(),
+                                        },
+                                        location: Location {
+                                            highlight: None,
+                                            area: Range {
+                                                start: Coord { line: 0, column: 0 },
+                                                end: Coord { line: 0, column: 0 },
+                                            },
+                                        },
+                                    });
+                                }
+                            }
+
+                            // Check that the local ids exist
+                            for local_id in &link.local_ids {
+                                if !fields.iter().any(|f| ast::has_fieldname(f, local_id)) {
+                                    errors.push(Error {
+                                        error_type: ErrorType::LinkToUnknownField {
+                                            link_name: link.link_name.clone(),
+                                            unknown_local_field: local_id.clone(),
+                                        },
+                                        location: Location {
+                                            highlight: None,
+                                            area: Range {
+                                                start: Coord { line: 0, column: 0 },
+                                                end: Coord { line: 0, column: 0 },
+                                            },
+                                        },
+                                    });
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            _ => {}
+        }
+    }
+
     errors
 }
 
-fn check_schema_definitions(context: Context, schem: &ast::Schema) -> Vec<Error> {
-    let mut errors = Vec::new();
-
+fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: &mut Vec<Error>) {
     for definition in &schem.definitions {
         match definition {
             ast::Definition::Record { name, fields } => {
@@ -215,8 +321,6 @@ fn check_schema_definitions(context: Context, schem: &ast::Schema) -> Vec<Error>
             _ => {}
         }
     }
-
-    errors
 }
 
 // Check query
@@ -232,6 +336,7 @@ pub fn check_queries<'a>(
     }
 
     let mut errors: Vec<Error> = Vec::new();
+    check_schema_definitions(&context, schem, &mut errors);
 
     for mut query in &query_list.queries {
         match query {
@@ -342,8 +447,20 @@ fn check_field(
     column: &ast::Column,
     field: &ast::QueryField,
 ) {
-    //
-    //
+    if (!field.fields.is_empty()) {
+        errors.push(Error {
+            error_type: ErrorType::UnknownField {
+                found: field.name.clone(),
+            },
+            location: Location {
+                highlight: None,
+                area: Range {
+                    start: Coord { line: 0, column: 0 },
+                    end: Coord { line: 0, column: 0 },
+                },
+            },
+        })
+    }
 }
 
 fn check_link(
@@ -352,6 +469,36 @@ fn check_link(
     link: &ast::LinkDetails,
     field: &ast::QueryField,
 ) {
-    //
-    //
+    if (field.fields.is_empty()) {
+        errors.push(Error {
+            error_type: ErrorType::UnknownField {
+                found: field.name.clone(),
+            },
+            location: Location {
+                highlight: None,
+                area: Range {
+                    start: Coord { line: 0, column: 0 },
+                    end: Coord { line: 0, column: 0 },
+                },
+            },
+        })
+    } else {
+        let table = context.tables.get(&link.foreign_tablename);
+        match table {
+            None => errors.push(Error {
+                error_type: ErrorType::UnknownTable {
+                    found: link.foreign_tablename.clone(),
+                    existing: vec![],
+                },
+                location: Location {
+                    highlight: None,
+                    area: Range {
+                        start: Coord { line: 0, column: 0 },
+                        end: Coord { line: 0, column: 0 },
+                    },
+                },
+            }),
+            Some(table) => check_table_query(context, errors, table, field),
+        }
+    }
 }
