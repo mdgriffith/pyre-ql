@@ -197,15 +197,32 @@ pub struct QueryParamDefinition {
     pub type_: String,
 }
 
+// The "Select Alias" is the value that is in the JSON payload
+pub fn get_select_alias(
+    table_alias: &str,
+    table_field: &Field,
+    query_field: &QueryField,
+) -> String {
+    let field_alias = get_aliased_name(query_field);
+
+    format!("{}__{}", table_alias, field_alias)
+}
+
+//
+pub fn get_aliased_name(field: &QueryField) -> String {
+    match &field.alias {
+        Some(alias) => alias.to_string(),
+        None => field.name.to_string(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct QueryField {
     pub name: String,
+    pub alias: Option<String>,
     pub params: Vec<QueryParam>,
     pub directives: Vec<String>,
     pub fields: Vec<QueryField>,
-
-    // Typecheck info
-    pub type_: Option<String>,
 }
 
 #[derive(Debug, Clone)]

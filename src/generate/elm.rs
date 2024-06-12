@@ -7,7 +7,7 @@ use std::path::Path;
 pub fn schema(schem: &ast::Schema) -> String {
     let mut result = String::new();
 
-    result.push_str("module Db exposing(..)\n\n");
+    result.push_str("module Db exposing (..)\n\n");
 
     for definition in &schem.definitions {
         result.push_str(&to_string_definition(definition));
@@ -110,12 +110,13 @@ fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> Stri
 pub fn to_schema_decoders(schem: &ast::Schema) -> String {
     let mut result = String::new();
 
-    result
-        .push_str("module Db.Decode exposing(..)\n\nimport Db\nimport Json.Decode as Decode\n\n\n");
+    result.push_str(
+        "module Db.Decode exposing (..)\n\nimport Db\nimport Db.Read\nimport Json.Decode as Decode\n\n\n",
+    );
 
     result.push_str("field : String -> Decode.Decoder a -> Decode.Decoder (a -> b) -> Decode.Decoder b\nfield fieldName_ fieldDecoder_ decoder_ =\n    decoder_ |> Decode.andThen (\\func -> Decode.field fieldName_ fieldDecoder_ |> Decode.map func)");
 
-    result.push_str("\n");
+    result.push_str("\n\n");
 
     for definition in &schem.definitions {
         result.push_str(&to_decoder_definition(definition));
@@ -150,7 +151,7 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
             }
 
             result.push_str(&format!(
-                "{} : Decode.Decoder Db.{}\n",
+                "{} : Db.Read.Decoder Db.{}\n",
                 decapitalize(name),
                 name
             ));
@@ -165,6 +166,7 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
                 is_first = false;
             }
             result.push_str("            )\n");
+            result.push_str("        |> Db.Read.custom\n");
             result
         }
         ast::Definition::Record { name, fields } => "".to_string(),
@@ -194,49 +196,63 @@ fn to_decoder_variant(
             );
 
             for field in fields {
-                result.push_str(&to_field_decoder(indent_size + 12, &field));
+                result.push_str(&to_variant_field_json_decoder(indent_size + 12, &field));
             }
             result.push_str(&format!("{})\n\n", inner_indent));
 
             result
         }
         None => format!(
-            "{}\"{}\" ->\n{}Decode.succeed Db.{}\n\n",
-            outer_indent, variant.name, indent, variant.name
+            "{}\"{}\" ->\n{}Decode.succeed Db.{} {}\n\n",
+            outer_indent, variant.name, indent, variant.name, "[]"
         ),
     }
 }
 
-fn to_field_decoder(indent: usize, field: &ast::Field) -> String {
+fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
     match field {
         ast::Field::Column(column) => {
             let spaces = " ".repeat(indent);
             return format!(
-                "{}|> Decode.field \"{}\" {}\n",
+                "{}|> field \"{}\" {}\n",
                 spaces,
                 column.name,
-                to_type_decoder(&column.type_)
+                to_json_type_decoder(&column.type_)
             );
         }
-        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let spaces = " ".repeat(indent);
-            return format!(
-                "{}|> Db.Decode.field \"{}\" (Decode.list decode{})\n",
-                spaces,
-                link.link_name,
-                (capitalize(&link.link_name))
-            );
-        }
-
+        // ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+        //     let spaces = " ".repeat(indent);
+        //     return format!(
+        //         "{}|> Db.Read.nested \"{}\"\n{}(Db.Read.id \"{}\")\n{}(Db.Read.id \"{}\")\n{}decode{}\n",
+        //         spaces,
+        //         link.link_name,
+        //         // ID columns
+        //         " ".repeat(indent + 4),
+        //         link.link_name,
+        //         " ".repeat(indent + 4),
+        //         link.link_name,
+        //         " ".repeat(indent + 4),
+        //         (capitalize(&link.link_name))
+        //     );
+        // }
         _ => "".to_string(),
+    }
+}
+
+fn to_json_type_decoder(type_: &str) -> String {
+    match type_ {
+        "String" => "Decode.string".to_string(),
+        "Int" => "Decode.int".to_string(),
+        "Float" => "Decode.float".to_string(),
+        _ => decapitalize(type_).to_string(),
     }
 }
 
 fn to_type_decoder(type_: &str) -> String {
     match type_ {
-        "String" => "Decode.string".to_string(),
-        "Int" => "Decode.int".to_string(),
-        "Float" => "Decode.float".to_string(),
+        "String" => "Db.Read.string".to_string(),
+        "Int" => "Db.Read.int".to_string(),
+        "Float" => "Db.Read.float".to_string(),
         _ => format!("Db.Decode.{}", decapitalize(type_)).to_string(),
     }
 }
@@ -247,8 +263,9 @@ fn to_type_decoder(type_: &str) -> String {
 pub fn to_schema_encoders(schem: &ast::Schema) -> String {
     let mut result = String::new();
 
-    result
-        .push_str("module Db.Encode exposing(..)\n\nimport Db\nimport Json.Encode as Encode\n\n\n");
+    result.push_str(
+        "module Db.Encode exposing (..)\n\nimport Db\nimport Json.Encode as Encode\n\n\n",
+    );
 
     for definition in &schem.definitions {
         result.push_str(&to_encoder_definition(definition));
@@ -356,6 +373,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     let mut result = format!("module Query.{} exposing (..)\n\n\n", query.name);
 
     result.push_str("import Db\n");
+    result.push_str("import Db.Read\n");
     result.push_str("import Db.Decode\n");
     result.push_str("import Db.Encode\n");
     result.push_str("import Json.Decode as Decode\n");
@@ -385,8 +403,9 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         let table = context.tables.get(&field.name).unwrap();
         result.push_str(&to_query_decoder(
             context,
+            &ast::get_aliased_name(&field),
             table,
-            &field.name,
+            // &field.name,
             &field.fields,
         ));
     }
@@ -396,17 +415,24 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
 fn to_query_decoder(
     context: &typecheck::Context,
+    table_alias: &str,
     table: &ast::RecordDetails,
-    name: &str,
     fields: &Vec<ast::QueryField>,
 ) -> String {
     let mut result = format!(
-        "decode{} : Decode.Decoder {}\n",
-        capitalize(name),
-        capitalize(name)
+        "decode{} : Db.Read.Query {}\n",
+        capitalize(table_alias),
+        capitalize(table_alias)
     );
-    result.push_str(&format!("decode{} =\n", capitalize(name)));
-    result.push_str(&format!("    Decode.succeed {}\n", capitalize(name)));
+
+    let identifiers = format!("[]");
+
+    result.push_str(&format!("decode{} =\n", capitalize(table_alias)));
+    result.push_str(&format!(
+        "    Db.Read.query {} {}\n",
+        capitalize(table_alias),
+        identifiers
+    ));
     for field in fields {
         let table_field = &table
             .fields
@@ -414,7 +440,12 @@ fn to_query_decoder(
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
             .unwrap();
 
-        result.push_str(&to_field_decoder(8, &table_field));
+        result.push_str(&to_table_field_decoder(
+            8,
+            table_alias,
+            &table_field,
+            &field,
+        ));
     }
 
     for field in fields {
@@ -433,8 +464,8 @@ fn to_query_decoder(
                 result.push_str("\n\n");
                 result.push_str(&to_query_decoder(
                     context,
+                    &ast::get_aliased_name(&field),
                     link_table,
-                    &field.name,
                     &field.fields,
                 ));
             }
@@ -443,6 +474,41 @@ fn to_query_decoder(
     }
 
     result
+}
+
+fn to_table_field_decoder(
+    indent: usize,
+    table_alias: &str,
+    table_field: &ast::Field,
+    query_field: &ast::QueryField,
+) -> String {
+    match table_field {
+        ast::Field::Column(column) => {
+            let spaces = " ".repeat(indent);
+            return format!(
+                "{}|> Db.Read.field \"{}\" {}\n",
+                spaces,
+                ast::get_select_alias(table_alias, table_field, query_field),
+                to_type_decoder(&column.type_)
+            );
+        }
+        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+            let spaces = " ".repeat(indent);
+            return format!(
+                "{}|> Db.Read.nested\n{}(Db.Read.id \"{}\")\n{}(Db.Read.id \"{}\")\n{}decode{}\n",
+                spaces,
+                // ID columns
+                " ".repeat(indent + 4),
+                link.link_name,
+                " ".repeat(indent + 4),
+                link.link_name,
+                " ".repeat(indent + 4),
+                (capitalize(&ast::get_aliased_name(query_field))) // (capitalize(&link.link_name)) // ast::get_select_alias(table_alias, table_field, query_field),
+            );
+        }
+
+        _ => "".to_string(),
+    }
 }
 
 fn to_query_type_alias(
@@ -499,7 +565,7 @@ fn to_query_type_alias(
                 result.push_str(&to_query_type_alias(
                     context,
                     link_table,
-                    &field.name,
+                    &ast::get_aliased_name(field),
                     &field.fields,
                 ));
             }
@@ -532,19 +598,21 @@ fn to_string_query_field_link(
     field: &ast::QueryField,
     link_details: &ast::LinkDetails,
 ) -> String {
+    let field_name = ast::get_aliased_name(field);
+
     if is_first {
         return format!(
             "{} : {}\n",
-            decapitalize(&field.name),
-            (format!("List {}", capitalize(&link_details.link_name)))
+            decapitalize(&field_name),
+            (format!("List {}", capitalize(&field_name)))
         );
     } else {
         let spaces = " ".repeat(indent);
         return format!(
             "{}, {} : {}\n",
             spaces,
-            decapitalize(&field.name),
-            (format!("List {}", capitalize(&link_details.link_name)))
+            decapitalize(&field_name),
+            (format!("List {}", capitalize(&field_name)))
         );
     }
 }
@@ -555,10 +623,11 @@ fn to_string_query_field(
     field: &ast::QueryField,
     table_column: &ast::Column,
 ) -> String {
+    let field_name = ast::get_aliased_name(field);
     if is_first {
         return format!(
             "{} : {}\n",
-            decapitalize(&field.name),
+            decapitalize(&field_name),
             to_elm_typename(&table_column.type_)
         );
     } else {
@@ -566,7 +635,7 @@ fn to_string_query_field(
         return format!(
             "{}, {} : {}\n",
             spaces,
-            decapitalize(&field.name),
+            decapitalize(&field_name),
             to_elm_typename(&table_column.type_)
         );
     }

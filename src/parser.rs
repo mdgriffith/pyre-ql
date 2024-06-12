@@ -532,22 +532,35 @@ fn parse_query_fieldblock(input: &str) -> IResult<&str, Vec<ast::QueryField>> {
     Ok((input, fields))
 }
 
+fn parse_alias(input: &str) -> IResult<&str, String> {
+    let (input, _) = tag(":")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, alias) = parse_fieldname(input)?;
+    Ok((input, alias.to_string()))
+}
+
 fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
     let (input, _) = multispace0(input)?;
-    let (input, name) = parse_fieldname(input)?;
+    let (input, name_or_alias) = parse_fieldname(input)?;
+    let (input, alias_or_name) = opt(parse_alias)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, paramsOrNone) = opt(parse_query_paramblock)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, fieldsOrNone) = opt(parse_query_fieldblock)(input)?;
 
+    let (name, alias) = match alias_or_name {
+        Some(alias) => (alias, Some(name_or_alias.to_string())),
+        None => (name_or_alias.to_string(), None),
+    };
+
     Ok((
         input,
         ast::QueryField {
             name: name.to_string(),
+            alias,
             params: paramsOrNone.unwrap_or_else(Vec::new),
             directives: vec![],
             fields: fieldsOrNone.unwrap_or_else(Vec::new),
-            type_: None,
         },
     ))
 }
