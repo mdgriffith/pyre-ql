@@ -25,7 +25,7 @@ import Set exposing (Set)
 
 
 type Decoder a
-    = Decoder (Json.Value -> Json.Decoder a)
+    = Decoder (Int -> Json.Value -> Json.Decoder a)
 
 
 type Query a
@@ -37,7 +37,7 @@ type Query a
 
 decodeValue : Query selected -> Json.Value -> Result Json.Error (List selected)
 decodeValue (Query queryDetails) json =
-    runDecoderWith queryDetails.identity queryDetails.decoder (Json.succeed True) json
+    runDecoderWith 0 queryDetails.identity queryDetails.decoder (Json.succeed True) json
 
 
 query : a -> List (IdField Id) -> Query a
@@ -50,35 +50,39 @@ query decoder identity =
 
 succeed : a -> Decoder a
 succeed a =
-    Decoder (\_ -> Json.succeed a)
+    Decoder (\_ _ -> Json.succeed a)
 
 
 nullable : Decoder a -> Decoder (Maybe a)
 nullable (Decoder toInner) =
-    Decoder (\json -> Json.nullable (toInner json))
+    Decoder (\index json -> Json.nullable (toInner index json))
 
 
 int : Decoder Int
 int =
-    Decoder (\_ -> Json.int)
+    Decoder (\_ _ -> Json.int)
 
 
 string : Decoder String
 string =
-    Decoder (\_ -> Json.string)
+    Decoder (\_ _ -> Json.string)
 
 
 bool : Decoder Bool
 bool =
     Decoder
-        (\_ ->
-            Json.map (\i -> i /= 0) Json.int
+        (\_ _ ->
+            Json.oneOf
+              [ Json.map (\i -> i /= 0) Json.int
+              , Json.bool
+              ]
+
         )
 
 
 float : Decoder Float
 float =
-    Decoder (\_ -> Json.float)
+    Decoder (\_ _ -> Json.float)
 
 
 field : String -> Decoder a -> Query (a -> b) -> Query b
@@ -91,11 +95,11 @@ field fieldName_ (Decoder toFieldDecoder) (Query q) =
         { identity = q.identity
         , decoder =
             Decoder
-                (\json ->
-                    toBuilder json
+                (\index json ->
+                    toBuilder index json
                         |> Json.andThen
                             (\func ->
-                                Json.field fieldName_ (toFieldDecoder json)
+                                Json.field fieldName_ (toFieldDecoder index json)
                                     |> Json.map func
                             )
                 )
@@ -119,9 +123,9 @@ id name =
     }
 
 
-toJsonDecoder : Json.Value -> Decoder a -> Json.Decoder a
-toJsonDecoder json (Decoder toInner) =
-    toInner json
+toJsonDecoder : Int -> Json.Value -> Decoder a -> Json.Decoder a
+toJsonDecoder index json (Decoder toInner) =
+    toInner index json
 
 
 nested : String -> IdField Id -> IdField Id -> Query innerSelected -> Query (List innerSelected -> selected) -> Query selected
@@ -130,7 +134,7 @@ nested fieldName topLevelIdField innerId (Query innerQ) (Query topQ) =
         { identity = topQ.identity
         , decoder =
             Decoder
-                (\fullJson ->
+                (\topLevelIndex fullJson ->
                     Json.oneOf
                         [ topLevelIdField.decoder
                             |> Json.andThen
@@ -143,13 +147,13 @@ nested fieldName topLevelIdField innerId (Query innerQ) (Query topQ) =
                                                 )
                                                 topLevelIdField.decoder
                                     in
-                                    case runDecoderWith innerQ.identity innerQ.decoder rowCheck fullJson of
+                                    case runDecoderWith topLevelIndex innerQ.identity innerQ.decoder rowCheck fullJson of
                                         Ok captured ->
                                             Json.map
                                                 (\fn ->
                                                     fn captured
                                                 )
-                                                (toJsonDecoder fullJson topQ.decoder)
+                                                (toJsonDecoder topLevelIndex fullJson topQ.decoder)
 
                                         Err err ->
                                             Json.fail "Failed decoding nested columns"
@@ -158,23 +162,23 @@ nested fieldName topLevelIdField innerId (Query innerQ) (Query topQ) =
                             (\fn ->
                                 fn []
                             )
-                            (toJsonDecoder fullJson topQ.decoder)
+                            (toJsonDecoder topLevelIndex fullJson topQ.decoder)
                         ]
                 )
         }
 
 
-runDecoderWith : List (Json.Decoder Id) -> Decoder selected -> Json.Decoder Bool -> Json.Value -> Result Json.Error (List selected)
-runDecoderWith uniqueBy (Decoder toDecoder) rowCheckDecoder json =
+runDecoderWith : Int -> List (Json.Decoder Id) -> Decoder selected -> Json.Decoder Bool -> Json.Value -> Result Json.Error (List selected)
+runDecoderWith startingIndex uniqueBy (Decoder toDecoder) rowCheckDecoder json =
     Json.decodeValue
-        (uniqueListDecoder uniqueBy rowCheckDecoder (toDecoder json))
+        (uniqueListDecoder startingIndex uniqueBy rowCheckDecoder (toDecoder startingIndex json))
         json
         |> Result.map List.reverse
 
 
-uniqueListDecoder : List (Json.Decoder Id) -> Json.Decoder Bool -> Json.Decoder selected -> Json.Decoder (List selected)
-uniqueListDecoder uniqueBy rowCheck decoder =
-    uniqueListDecoderHelper 0 Set.empty uniqueBy rowCheck [] decoder
+uniqueListDecoder : Int -> List (Json.Decoder Id) -> Json.Decoder Bool -> Json.Decoder selected -> Json.Decoder (List selected)
+uniqueListDecoder startingIndex uniqueBy rowCheck decoder =
+    uniqueListDecoderHelper startingIndex Set.empty uniqueBy rowCheck [] decoder
 
 
 uniqueListDecoderHelper : Int -> Set String -> List (Json.Decoder Id) -> Json.Decoder Bool -> List selected -> Json.Decoder selected -> Json.Decoder (List selected)
