@@ -1,3 +1,4 @@
+use crate::ext::string;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -76,6 +77,15 @@ pub struct Context {
     pub tables: HashMap<String, ast::RecordDetails>,
 }
 
+pub fn get_linked_table<'a>(
+    context: &'a Context,
+    link: &'a ast::LinkDetails,
+) -> Option<&'a ast::RecordDetails> {
+    context
+        .tables
+        .get(&crate::ext::string::decapitalize(&link.foreign_tablename))
+}
+
 fn empty_context() -> Context {
     let mut context = Context {
         types: HashMap::new(),
@@ -121,7 +131,7 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                 }
                 context.types.insert(name.clone(), DefType::Record);
                 context.tables.insert(
-                    name.clone(),
+                    crate::ext::string::decapitalize(&name),
                     ast::RecordDetails {
                         name: name.clone(),
                         fields: fields.clone(),
@@ -170,7 +180,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                         //     }
                         // }
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                            let maybe_foreign_table = context.tables.get(&link.foreign_tablename);
+                            let maybe_foreign_table = get_linked_table(context, link);
+
                             match maybe_foreign_table {
                                 Some(foreign_table) => {
                                     for foreign_id in &link.foreign_ids {
@@ -483,7 +494,9 @@ fn check_link(
             },
         })
     } else {
-        let table = context.tables.get(&link.foreign_tablename);
+        let table = context
+            .tables
+            .get(&crate::ext::string::decapitalize(&link.foreign_tablename));
         match table {
             None => errors.push(Error {
                 error_type: ErrorType::UnknownTable {

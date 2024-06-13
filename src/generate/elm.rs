@@ -1,4 +1,5 @@
 use crate::ast;
+use crate::ext::string;
 use crate::typecheck;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -152,10 +153,10 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
 
             result.push_str(&format!(
                 "{} : Db.Read.Decoder Db.{}\n",
-                decapitalize(name),
+                crate::ext::string::decapitalize(name),
                 name
             ));
-            result.push_str(&format!("{} =\n", decapitalize(name)));
+            result.push_str(&format!("{} =\n", crate::ext::string::decapitalize(name)));
             result.push_str("    Decode.field \"type\" Decode.string\n");
             result.push_str("        |> Decode.andThen\n");
             result.push_str("            (\\variant_name ->\n");
@@ -209,6 +210,7 @@ fn to_decoder_variant(
     }
 }
 
+// Field directives(specifically @link) is not allowed within a type at the moment
 fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
     match field {
         ast::Field::Column(column) => {
@@ -220,21 +222,6 @@ fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
                 to_json_type_decoder(&column.type_)
             );
         }
-        // ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-        //     let spaces = " ".repeat(indent);
-        //     return format!(
-        //         "{}|> Db.Read.nested \"{}\"\n{}(Db.Read.id \"{}\")\n{}(Db.Read.id \"{}\")\n{}decode{}\n",
-        //         spaces,
-        //         link.link_name,
-        //         // ID columns
-        //         " ".repeat(indent + 4),
-        //         link.link_name,
-        //         " ".repeat(indent + 4),
-        //         link.link_name,
-        //         " ".repeat(indent + 4),
-        //         (capitalize(&link.link_name))
-        //     );
-        // }
         _ => "".to_string(),
     }
 }
@@ -244,7 +231,7 @@ fn to_json_type_decoder(type_: &str) -> String {
         "String" => "Decode.string".to_string(),
         "Int" => "Decode.int".to_string(),
         "Float" => "Decode.float".to_string(),
-        _ => decapitalize(type_).to_string(),
+        _ => crate::ext::string::decapitalize(type_).to_string(),
     }
 }
 
@@ -253,7 +240,7 @@ fn to_type_decoder(type_: &str) -> String {
         "String" => "Db.Read.string".to_string(),
         "Int" => "Db.Read.int".to_string(),
         "Float" => "Db.Read.float".to_string(),
-        _ => format!("Db.Decode.{}", decapitalize(type_)).to_string(),
+        _ => format!("Db.Decode.{}", crate::ext::string::decapitalize(type_)).to_string(),
     }
 }
 
@@ -421,16 +408,19 @@ fn to_query_decoder(
 ) -> String {
     let mut result = format!(
         "decode{} : Db.Read.Query {}\n",
-        capitalize(table_alias),
-        capitalize(table_alias)
+        crate::ext::string::capitalize(table_alias),
+        crate::ext::string::capitalize(table_alias)
     );
 
     let identifiers = format!("[]");
 
-    result.push_str(&format!("decode{} =\n", capitalize(table_alias)));
+    result.push_str(&format!(
+        "decode{} =\n",
+        crate::ext::string::capitalize(table_alias)
+    ));
     result.push_str(&format!(
         "    Db.Read.query {} {}\n",
-        capitalize(table_alias),
+        crate::ext::string::capitalize(table_alias),
         identifiers
     ));
     for field in fields {
@@ -460,7 +450,7 @@ fn to_query_decoder(
 
         match fieldname_match {
             Some(ast::Field::FieldDirective(ast::FieldDirective::Link(link))) => {
-                let link_table = context.tables.get(&link.foreign_tablename).unwrap();
+                let link_table = typecheck::get_linked_table(context, &link).unwrap();
                 result.push_str("\n\n");
                 result.push_str(&to_query_decoder(
                     context,
@@ -473,6 +463,15 @@ fn to_query_decoder(
         }
     }
 
+    result
+}
+
+fn format_db_id(table_alias: &str, ids: &Vec<String>) -> String {
+    let mut result = String::new();
+    for id in ids {
+        let formatted = format!("{}__{}", table_alias, id);
+        result.push_str(&format!("Db.Read.id \"{}\"", formatted));
+    }
     result
 }
 
@@ -494,16 +493,22 @@ fn to_table_field_decoder(
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
             let spaces = " ".repeat(indent);
+
+            let foreign_table_alias = match query_field.alias {
+                Some(ref alias) => &alias,
+                None => &link.foreign_tablename,
+            };
+
             return format!(
-                "{}|> Db.Read.nested\n{}(Db.Read.id \"{}\")\n{}(Db.Read.id \"{}\")\n{}decode{}\n",
+                "{}|> Db.Read.nested\n{}({})\n{}({})\n{}decode{}\n",
                 spaces,
                 // ID columns
                 " ".repeat(indent + 4),
-                link.link_name,
+                format_db_id(table_alias, &link.local_ids),
                 " ".repeat(indent + 4),
-                link.link_name,
+                format_db_id(foreign_table_alias, &link.foreign_ids),
                 " ".repeat(indent + 4),
-                (capitalize(&ast::get_aliased_name(query_field))) // (capitalize(&link.link_name)) // ast::get_select_alias(table_alias, table_field, query_field),
+                (crate::ext::string::capitalize(&ast::get_aliased_name(query_field))) // (capitalize(&link.link_name)) // ast::get_select_alias(table_alias, table_field, query_field),
             );
         }
 
@@ -517,7 +522,7 @@ fn to_query_type_alias(
     name: &str,
     fields: &Vec<ast::QueryField>,
 ) -> String {
-    let mut result = format!("type alias {} =\n", capitalize(name));
+    let mut result = format!("type alias {} =\n", crate::ext::string::capitalize(name));
 
     let mut is_first = true;
 
@@ -560,7 +565,8 @@ fn to_query_type_alias(
 
         match fieldname_match {
             Some(ast::Field::FieldDirective(ast::FieldDirective::Link(link))) => {
-                let link_table = context.tables.get(&link.foreign_tablename).unwrap();
+                let link_table = typecheck::get_linked_table(context, &link).unwrap();
+
                 result.push_str("\n\n");
                 result.push_str(&to_query_type_alias(
                     context,
@@ -576,22 +582,6 @@ fn to_query_type_alias(
     result
 }
 
-fn capitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-    }
-}
-
-fn decapitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_lowercase().collect::<String>() + c.as_str(),
-    }
-}
-
 fn to_string_query_field_link(
     is_first: bool,
     indent: usize,
@@ -603,16 +593,16 @@ fn to_string_query_field_link(
     if is_first {
         return format!(
             "{} : {}\n",
-            decapitalize(&field_name),
-            (format!("List {}", capitalize(&field_name)))
+            crate::ext::string::decapitalize(&field_name),
+            (format!("List {}", crate::ext::string::capitalize(&field_name)))
         );
     } else {
         let spaces = " ".repeat(indent);
         return format!(
             "{}, {} : {}\n",
             spaces,
-            decapitalize(&field_name),
-            (format!("List {}", capitalize(&field_name)))
+            crate::ext::string::decapitalize(&field_name),
+            (format!("List {}", crate::ext::string::capitalize(&field_name)))
         );
     }
 }
@@ -627,7 +617,7 @@ fn to_string_query_field(
     if is_first {
         return format!(
             "{} : {}\n",
-            decapitalize(&field_name),
+            crate::ext::string::decapitalize(&field_name),
             to_elm_typename(&table_column.type_)
         );
     } else {
@@ -635,7 +625,7 @@ fn to_string_query_field(
         return format!(
             "{}, {} : {}\n",
             spaces,
-            decapitalize(&field_name),
+            crate::ext::string::decapitalize(&field_name),
             to_elm_typename(&table_column.type_)
         );
     }
