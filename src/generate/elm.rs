@@ -392,7 +392,6 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
             context,
             &ast::get_aliased_name(&field),
             table,
-            // &field.name,
             &field.fields,
         ));
     }

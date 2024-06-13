@@ -33,6 +33,7 @@ fn check_all() -> io::Result<()> {
                             println!("Typecheck passed");
 
                             generate::elm::write_queries(&typecheck_context, &query_list);
+                            generate::sql::write_queries(&typecheck_context, &query_list);
                         }
                         Err(err) => eprintln!("{:?}", err),
                     }
