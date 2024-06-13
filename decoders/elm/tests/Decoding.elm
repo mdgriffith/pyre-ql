@@ -117,7 +117,7 @@ suite =
                 Db.Read.query UserWithPosts  [ Db.Read.id "id" ]
                     |> Db.Read.field "id" Db.Read.int
                     |> Db.Read.field "email" Db.Read.string
-                    |> Db.Read.nested "post"
+                    |> Db.Read.nested
                         (Db.Read.id "id")
                         (Db.Read.id "postId")
                         (Db.Read.query Post [ Db.Read.id "postId" ]
@@ -126,7 +126,7 @@ suite =
                             |> Db.Read.field "postContent" Db.Read.string
                         )
                     |> Db.Read.field "rating" Db.Read.float
-                    |> Db.Read.nested "account"
+                    |> Db.Read.nested
                         (Db.Read.id "id")
                         (Db.Read.id "accountId")
                         (Db.Read.query Account [ Db.Read.id "accountId" ]

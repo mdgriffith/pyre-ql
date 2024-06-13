@@ -1,7 +1,8 @@
 module Db.Read exposing
     ( Query, query
-    , Decoder(..), succeed, field
+    , Decoder, succeed, field
     , bool, string, int, float
+    , custom
     , id, nested
     , decodeValue
     )
@@ -13,6 +14,8 @@ module Db.Read exposing
 @docs Decoder, succeed, field
 
 @docs bool, string, int, float
+
+@docs custom
 
 @docs id, nested
 
@@ -56,6 +59,13 @@ succeed a =
 nullable : Decoder a -> Decoder (Maybe a)
 nullable (Decoder toInner) =
     Decoder (\index json -> Json.nullable (toInner index json))
+
+
+
+custom : Json.Decoder a -> Decoder a
+custom decoder =
+    Decoder (\_ _ -> decoder)
+
 
 
 int : Decoder Int
@@ -128,8 +138,8 @@ toJsonDecoder index json (Decoder toInner) =
     toInner index json
 
 
-nested : String -> IdField Id -> IdField Id -> Query innerSelected -> Query (List innerSelected -> selected) -> Query selected
-nested fieldName topLevelIdField innerId (Query innerQ) (Query topQ) =
+nested : IdField Id -> IdField Id -> Query innerSelected -> Query (List innerSelected -> selected) -> Query selected
+nested topLevelIdField innerId (Query innerQ) (Query topQ) =
     Query
         { identity = topQ.identity
         , decoder =
