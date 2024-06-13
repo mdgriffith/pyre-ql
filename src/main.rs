@@ -7,6 +7,7 @@ use generate::migration;
 
 mod ast;
 mod diff;
+mod ext;
 mod generate;
 mod parser;
 mod typecheck;
