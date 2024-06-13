@@ -220,9 +220,53 @@ pub fn get_aliased_name(field: &QueryField) -> String {
 pub struct QueryField {
     pub name: String,
     pub alias: Option<String>,
-    pub args: Vec<Arg>,
     pub directives: Vec<String>,
-    pub fields: Vec<QueryField>,
+    pub fields: Vec<ArgField>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ArgField {
+    Field(QueryField),
+    Arg(Arg),
+    Line { count: usize },
+}
+
+pub fn is_query_field_arg(field: &ArgField) -> bool {
+    match field {
+        ArgField::Arg(_) => true,
+        _ => false,
+    }
+}
+
+pub fn query_field_order(a: &ArgField, b: &ArgField) -> std::cmp::Ordering {
+    match (a, b) {
+        (ArgField::Arg(_), ArgField::Arg(_)) => std::cmp::Ordering::Equal,
+        (ArgField::Arg(_), _) => std::cmp::Ordering::Less,
+        (_, ArgField::Arg(_)) => std::cmp::Ordering::Greater,
+        _ => std::cmp::Ordering::Equal,
+    }
+}
+
+pub fn collect_query_fields(fields: &Vec<ArgField>) -> Vec<&QueryField> {
+    let mut args = Vec::new();
+    for field in fields {
+        match field {
+            ArgField::Field(arg) => args.push(arg),
+            _ => {}
+        }
+    }
+    args
+}
+
+pub fn collect_query_args(fields: &Vec<ArgField>) -> Vec<&Arg> {
+    let mut args = Vec::new();
+    for field in fields {
+        match field {
+            ArgField::Arg(arg) => args.push(arg),
+            _ => {}
+        }
+    }
+    args
 }
 
 #[derive(Debug, Clone)]
@@ -233,7 +277,7 @@ pub enum Arg {
     Where(WhereArg),
 }
 
-pub fn collect_where_args(args: &Vec<Arg>) -> Vec<&WhereArg> {
+pub fn collect_where_args<'a>(args: &'a Vec<&'a Arg>) -> Vec<&'a WhereArg> {
     let mut wheres = Vec::new();
     for arg in args {
         match arg {

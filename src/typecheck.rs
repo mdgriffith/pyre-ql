@@ -412,7 +412,7 @@ fn check_table_query(
 
     // We've already checked that the top-level query field name is valid
     // we want to make sure that every field queried exists in `table` as a column
-    for field in &query.fields {
+    for field in ast::collect_query_fields(&query.fields) {
         let mut is_known_field = false;
         for col in &table.fields {
             if is_known_field {

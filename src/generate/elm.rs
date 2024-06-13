@@ -378,7 +378,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
             context,
             table,
             &field.name,
-            &field.fields,
+            &ast::collect_query_fields(&field.fields),
         ));
     }
 
@@ -392,7 +392,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
             context,
             &ast::get_aliased_name(&field),
             table,
-            &field.fields,
+            &ast::collect_query_fields(&field.fields),
         ));
     }
 
@@ -403,7 +403,7 @@ fn to_query_decoder(
     context: &typecheck::Context,
     table_alias: &str,
     table: &ast::RecordDetails,
-    fields: &Vec<ast::QueryField>,
+    fields: &Vec<&ast::QueryField>,
 ) -> String {
     let mut result = format!(
         "decode{} : Db.Read.Query {}\n",
@@ -455,7 +455,7 @@ fn to_query_decoder(
                     context,
                     &ast::get_aliased_name(&field),
                     link_table,
-                    &field.fields,
+                    &ast::collect_query_fields(&field.fields),
                 ));
             }
             _ => continue,
@@ -519,7 +519,7 @@ fn to_query_type_alias(
     context: &typecheck::Context,
     table: &ast::RecordDetails,
     name: &str,
-    fields: &Vec<ast::QueryField>,
+    fields: &Vec<&ast::QueryField>,
 ) -> String {
     let mut result = format!("type alias {} =\n", crate::ext::string::capitalize(name));
 
@@ -571,7 +571,7 @@ fn to_query_type_alias(
                     context,
                     link_table,
                     &ast::get_aliased_name(field),
-                    &field.fields,
+                    &ast::collect_query_fields(&field.fields),
                 ));
             }
             _ => continue,
@@ -648,65 +648,6 @@ fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition)
         format!(", {}: {}", param.name, param.type_)
     }
 }
-
-// Example: (arg = $id)
-//
-//
-// #[derive(Debug, Clone)]
-// pub enum Arg {
-//     Limit(usize),
-//     Offset(usize),
-//     OrderBy(Direction, String),
-//     Where(WhereArg),
-// }
-
-// #[derive(Debug, Clone)]
-// pub enum Direction {
-//     Asc,
-//     Desc,
-// }
-// fn to_string_arg(is_first: bool, arg: &ast::Arg) -> String {
-//   match arg {
-//     ast::Arg::Limit(value) => {
-
-//         format!("@limit {}", value)
-
-//     },
-//     ast::Arg::Offset(value) => {
-//       if (is_first) {
-//         format!("Offset({})", value)
-//       } else {
-//         format!(", Offset({})", value)
-//       }
-//     },
-//     ast::Arg::OrderBy(direction, field) => {
-//       if (is_first) {
-//         format!("OrderBy({}, {})", direction, field)
-//       } else {
-//         format!(", OrderBy({}, {})", direction, field)
-//       }
-//     },
-//     ast::Arg::Where(where_arg) => {
-//       if (is_first) {
-//         format!("Where({})", where_arg)
-//       } else {
-//         format!(", Where({})", where_arg)
-//       }
-//     },
-//   }
-// }
-
-// // Example: (arg = $id)
-// fn to_string_param(is_first: bool, param: &ast::QueryParam) -> String {
-//     let operator = operator_to_string(&param.operator);
-//     let value = value_to_string(&param.value);
-
-//     if (is_first) {
-//         format!("{} {} {}", param.name, operator, value)
-//     } else {
-//         format!(", {} {} {}", param.name, operator, value)
-//     }
-// }
 
 fn value_to_string(value: &ast::QueryValue) -> String {
     match value {

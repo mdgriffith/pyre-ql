@@ -34,7 +34,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
             context,
             &ast::get_aliased_name(&field),
             table,
-            &field.fields,
+            &ast::collect_query_fields(&field.fields),
         );
         // result.push_str(&format!("  {}", quote(&field.name)));
         result.push_str("  ");
@@ -48,7 +48,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
             context,
             &ast::get_aliased_name(&field),
             table,
-            &field.fields,
+            &ast::collect_query_fields(&field.fields),
         );
         result.push_str(&format!("  {}", quote(&field.name)));
         if (from_vals.is_empty()) {
@@ -66,11 +66,17 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         let table = context.tables.get(&query_field.name).unwrap();
         let table_alias = &ast::get_aliased_name(&query_field);
 
-        let new_params = render_where_params(&query_field.args, table_alias);
+        let new_params =
+            render_where_params(&ast::collect_query_args(&query_field.fields), table_alias);
 
         where_vals.extend(new_params);
 
-        let new_where_vals = to_where(context, table_alias, table, &query_field.fields);
+        let new_where_vals = to_where(
+            context,
+            table_alias,
+            table,
+            &ast::collect_query_fields(&query_field.fields),
+        );
 
         where_vals.extend(new_where_vals);
     }
@@ -97,7 +103,7 @@ fn to_selection(
     context: &typecheck::Context,
     table_alias: &str,
     table: &ast::RecordDetails,
-    fields: &Vec<ast::QueryField>,
+    fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
     let mut result = vec![];
 
@@ -156,7 +162,7 @@ fn to_subselection(
                 context,
                 &ast::get_aliased_name(&query_field),
                 link_table,
-                &query_field.fields,
+                &ast::collect_query_fields(&query_field.fields),
             );
         }
 
@@ -170,7 +176,7 @@ fn to_from(
     context: &typecheck::Context,
     table_alias: &str,
     table: &ast::RecordDetails,
-    fields: &Vec<ast::QueryField>,
+    fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
     let mut result: Vec<String> = vec![];
 
@@ -213,7 +219,7 @@ fn to_subfrom(
                 context,
                 &ast::get_aliased_name(&query_field),
                 link_table,
-                &query_field.fields,
+                &ast::collect_query_fields(&query_field.fields),
             );
             let join = format!(
                 "left join {} on \"{}\".\"{}\" = {}.\"{}\"\n",
@@ -237,7 +243,7 @@ fn to_where(
     context: &typecheck::Context,
     table_alias: &str,
     table: &ast::RecordDetails,
-    fields: &Vec<ast::QueryField>,
+    fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
     let mut result: Vec<String> = vec![];
 
@@ -269,7 +275,7 @@ fn to_subwhere(
 ) -> Vec<String> {
     match table_field {
         ast::Field::Column(column) => {
-            return render_where_params(&query_field.args, table_alias);
+            return render_where_params(&ast::collect_query_args(&query_field.fields), table_alias);
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
             let spaces = " ".repeat(indent);
@@ -283,7 +289,7 @@ fn to_subwhere(
                 context,
                 &ast::get_aliased_name(&query_field),
                 link_table,
-                &query_field.fields,
+                &ast::collect_query_fields(&query_field.fields),
             );
 
             return inner_list;
@@ -293,7 +299,7 @@ fn to_subwhere(
     }
 }
 
-fn render_where_params(args: &Vec<ast::Arg>, table_alias: &str) -> Vec<String> {
+fn render_where_params(args: &Vec<&ast::Arg>, table_alias: &str) -> Vec<String> {
     let mut result = vec![];
     for where_arg in ast::collect_where_args(args) {
         result.push(render_where_arg(&where_arg, table_alias));

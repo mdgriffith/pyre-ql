@@ -532,6 +532,24 @@ fn parse_query_fieldblock(input: &str) -> IResult<&str, Vec<ast::QueryField>> {
     Ok((input, fields))
 }
 
+fn parse_query_arg_fieldblock(input: &str) -> IResult<&str, Vec<ast::ArgField>> {
+    let (input, _) = tag("{")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, mut fields) = many0(parse_arg_field)(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("}")(input)?;
+
+    fields.sort_by(ast::query_field_order);
+
+    insert_after_last_instance(
+        &mut fields,
+        ast::is_query_field_arg,
+        ast::ArgField::Line { count: 1 },
+    );
+
+    Ok((input, fields))
+}
+
 fn parse_alias(input: &str) -> IResult<&str, String> {
     let (input, _) = tag(":")(input)?;
     let (input, _) = multispace0(input)?;
@@ -539,14 +557,26 @@ fn parse_alias(input: &str) -> IResult<&str, String> {
     Ok((input, alias.to_string()))
 }
 
+fn parse_arg_field(input: &str) -> IResult<&str, ast::ArgField> {
+    alt((parse_query_arg_field, parse_arg))(input)
+}
+
+fn parse_arg(input: &str) -> IResult<&str, ast::ArgField> {
+    let (input, arg) = parse_query_arg(input)?;
+    Ok((input, ast::ArgField::Arg(arg)))
+}
+
+fn parse_query_arg_field(input: &str) -> IResult<&str, ast::ArgField> {
+    let (input, q) = parse_query_field(input)?;
+    Ok((input, ast::ArgField::Field(q)))
+}
+
 fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
     let (input, _) = multispace0(input)?;
     let (input, name_or_alias) = parse_fieldname(input)?;
     let (input, alias_or_name) = opt(parse_alias)(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, argsOrNone) = opt(parse_query_argblock)(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, fieldsOrNone) = opt(parse_query_fieldblock)(input)?;
+    let (input, fieldsOrNone) = opt(parse_query_arg_fieldblock)(input)?;
 
     let (name, alias) = match alias_or_name {
         Some(alias) => (alias, Some(name_or_alias.to_string())),
@@ -558,20 +588,10 @@ fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
         ast::QueryField {
             name: name.to_string(),
             alias,
-            args: argsOrNone.unwrap_or_else(Vec::new),
             directives: vec![],
             fields: fieldsOrNone.unwrap_or_else(Vec::new),
         },
     ))
-}
-
-fn parse_query_argblock(input: &str) -> IResult<&str, Vec<ast::Arg>> {
-    let (input, _) = tag("(")(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, fields) = many0(parse_query_arg)(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag(")")(input)?;
-    Ok((input, fields))
 }
 
 fn parse_query_arg(input: &str) -> IResult<&str, ast::Arg> {
@@ -620,6 +640,9 @@ fn parse_and_or(input: &str) -> IResult<&str, AndOr> {
 }
 
 fn parse_where(input: &str) -> IResult<&str, ast::Arg> {
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("@where")(input)?;
+    let (input, _) = multispace1(input)?;
     let (input, where_arg) = parse_where_arg(input)?;
     Ok((input, ast::Arg::Where(where_arg)))
 }
