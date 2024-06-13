@@ -207,21 +207,20 @@ fn to_string_query_field(indent: usize, field: &ast::QueryField) -> String {
     let mut result = format!("{}{}", spaces, field.name);
 
     // Args
-    if (field.params.len() > 0) {
-        result.push_str("(");
+
+    if (field.fields.len() > 0 || field.args.len() > 0) {
+        result.push_str(" {\n");
     }
-    let mut first = true;
-    for param in &field.params {
-        result.push_str(&to_string_param(first, &param));
-        first = false;
-    }
-    if (field.params.len() > 0) {
-        result.push_str(")");
+
+    for arg in &field.args {
+        result.push_str("        ");
+        result.push_str(&to_string_param(&arg));
+        result.push_str("\n");
     }
 
     // Fields
-    if (field.fields.len() > 0) {
-        result.push_str(" {\n");
+    if (field.fields.len() > 0 && field.args.len() > 0) {
+        result.push_str("\n");
     }
     for inner_field in &field.fields {
         result.push_str(&to_string_query_field(indent + 4, &inner_field));
@@ -235,14 +234,54 @@ fn to_string_query_field(indent: usize, field: &ast::QueryField) -> String {
 }
 
 // Example: (arg = $id)
-fn to_string_param(is_first: bool, param: &ast::QueryParam) -> String {
-    let operator = operator_to_string(&param.operator);
-    let value = value_to_string(&param.value);
+fn to_string_param(arg: &ast::Arg) -> String {
+    match arg {
+        ast::Arg::Limit(lim) => {
+            format!("@limit {}", value_to_string(lim))
+        }
+        ast::Arg::Offset(off) => {
+            format!("@offset {}", value_to_string(off))
+        }
+        ast::Arg::OrderBy(direction, column) => {
+            format!(
+                "@order_by {} {}",
+                ast::direction_to_string(direction),
+                column
+            )
+        }
+        ast::Arg::Where(where_arg) => format!("@where {}", format_where(where_arg)),
+    }
+}
 
-    if (is_first) {
-        format!("{} {} {}", param.name, operator, value)
-    } else {
-        format!(", {} {} {}", param.name, operator, value)
+fn format_where(where_arg: &ast::WhereArg) -> String {
+    match where_arg {
+        ast::WhereArg::Column(column, operator, value) => {
+            let operator = operator_to_string(&operator);
+            let value = value_to_string(&value);
+            format!("{} {} {}", column, operator, value)
+        }
+        ast::WhereArg::And(and) => {
+            let mut result = String::new();
+            let last_index = and.len() - 1;
+            for (i, arg) in and.iter().enumerate() {
+                result.push_str(&format_where(arg));
+                if i != last_index {
+                    result.push_str(" && ");
+                }
+            }
+            result
+        }
+        ast::WhereArg::Or(or) => {
+            let mut result = String::new();
+            let last_index = or.len() - 1;
+            for (i, arg) in or.iter().enumerate() {
+                result.push_str(&format_where(arg));
+                if i != last_index {
+                    result.push_str(" || ");
+                }
+            }
+            result
+        }
     }
 }
 

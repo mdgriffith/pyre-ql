@@ -64,10 +64,9 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     for query_field in &query.fields {
         let table = context.tables.get(&query_field.name).unwrap();
-        println!("Field {:?}", query_field);
         let table_alias = &ast::get_aliased_name(&query_field);
 
-        let new_params = render_param_list(&query_field.params, table_alias);
+        let new_params = render_where_params(&query_field.args, table_alias);
 
         where_vals.extend(new_params);
 
@@ -268,10 +267,9 @@ fn to_subwhere(
     table_field: &ast::Field,
     query_field: &ast::QueryField,
 ) -> Vec<String> {
-    println!("Q {:?}", query_field);
     match table_field {
         ast::Field::Column(column) => {
-            return render_param_list(&query_field.params, table_alias);
+            return render_where_params(&query_field.args, table_alias);
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
             let spaces = " ".repeat(indent);
@@ -294,71 +292,57 @@ fn to_subwhere(
         _ => vec![],
     }
 }
-//
-//
-// #[derive(Debug, Clone)]
-// pub struct QueryParam {
-//     pub name: String,
-//     pub operator: Operator,
-//     pub value: QueryValue,
-// }
 
-// #[derive(Debug, Clone)]
-// pub enum QueryValue {
-//     Variable(String),
-//     String(String),
-//     Int(i32),
-//     Float(f32),
-//     Bool(bool),
-//     Null,
-// }
-
-// #[derive(Debug, Clone)]
-// pub enum Operator {
-//     Equal,
-//     NotEqual,
-//     GreaterThan,
-//     LessThan,
-//     GreaterThanOrEqual,
-//     LessThanOrEqual,
-//     In,
-//     NotIn,
-//     Like,
-//     NotLike,
-// }
-//
-//
-fn render_param_list(params: &Vec<ast::QueryParam>, table_alias: &str) -> Vec<String> {
+fn render_where_params(args: &Vec<ast::Arg>, table_alias: &str) -> Vec<String> {
     let mut result = vec![];
-    for param in params {
-        let str = render_param(&param, table_alias);
-        result.push(str);
+    for where_arg in ast::collect_where_args(args) {
+        result.push(render_where_arg(&where_arg, table_alias));
     }
     result
 }
-fn render_param(param: &ast::QueryParam, table_alias: &str) -> String {
-    let qualified_column_name = format!("{}.{}", format_tablename(table_alias), quote(&param.name));
-    let operator = match &param.operator {
-        ast::Operator::Equal => "=",
-        ast::Operator::NotEqual => "!=",
-        ast::Operator::GreaterThan => ">",
-        ast::Operator::LessThan => "<",
-        ast::Operator::GreaterThanOrEqual => ">=",
-        ast::Operator::LessThanOrEqual => "<=",
-        ast::Operator::In => "in",
-        ast::Operator::NotIn => "not in",
-        ast::Operator::Like => "like",
-        ast::Operator::NotLike => "not like",
-    };
-    let value = match &param.value {
-        ast::QueryValue::Variable(v) => format!("${}", &v),
-        ast::QueryValue::String(v) => format!("'{}'", v),
-        ast::QueryValue::Int(v) => v.to_string(),
-        ast::QueryValue::Float(v) => v.to_string(),
-        ast::QueryValue::Bool(v) => v.to_string(),
-        ast::QueryValue::Null => "null".to_string(),
-    };
-    format!("{} {} {}", qualified_column_name, operator, value)
+
+fn render_where_arg(arg: &ast::WhereArg, table_alias: &str) -> String {
+    match arg {
+        ast::WhereArg::Column(name, operator, value) => {
+            let qualified_column_name =
+                format!("{}.{}", format_tablename(table_alias), quote(name));
+            let operator = match operator {
+                ast::Operator::Equal => "=",
+                ast::Operator::NotEqual => "!=",
+                ast::Operator::GreaterThan => ">",
+                ast::Operator::LessThan => "<",
+                ast::Operator::GreaterThanOrEqual => ">=",
+                ast::Operator::LessThanOrEqual => "<=",
+                ast::Operator::In => "in",
+                ast::Operator::NotIn => "not in",
+                ast::Operator::Like => "like",
+                ast::Operator::NotLike => "not like",
+            };
+            let value = match value {
+                ast::QueryValue::Variable(v) => format!("${}", v),
+                ast::QueryValue::String(s) => format!("'{}'", s),
+                ast::QueryValue::Int(i) => i.to_string(),
+                ast::QueryValue::Float(f) => f.to_string(),
+                ast::QueryValue::Bool(b) => b.to_string(),
+                ast::QueryValue::Null => "null".to_string(),
+            };
+            format!("{} {} {}", qualified_column_name, operator, value)
+        }
+        ast::WhereArg::And(args) => {
+            let mut inner_list = vec![];
+            for arg in args {
+                inner_list.push(render_where_arg(arg, table_alias));
+            }
+            format!("({})", inner_list.join(" and "))
+        }
+        ast::WhereArg::Or(args) => {
+            let mut inner_list = vec![];
+            for arg in args {
+                inner_list.push(render_where_arg(arg, table_alias));
+            }
+            format!("({})", inner_list.join(" or "))
+        }
+    }
 }
 
 fn quote(s: &str) -> String {

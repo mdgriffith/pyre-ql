@@ -220,16 +220,48 @@ pub fn get_aliased_name(field: &QueryField) -> String {
 pub struct QueryField {
     pub name: String,
     pub alias: Option<String>,
-    pub params: Vec<QueryParam>,
+    pub args: Vec<Arg>,
     pub directives: Vec<String>,
     pub fields: Vec<QueryField>,
 }
 
 #[derive(Debug, Clone)]
-pub struct QueryParam {
-    pub name: String,
-    pub operator: Operator,
-    pub value: QueryValue,
+pub enum Arg {
+    Limit(QueryValue),
+    Offset(QueryValue),
+    OrderBy(Direction, String),
+    Where(WhereArg),
+}
+
+pub fn collect_where_args(args: &Vec<Arg>) -> Vec<&WhereArg> {
+    let mut wheres = Vec::new();
+    for arg in args {
+        match arg {
+            Arg::Where(wher) => wheres.push(wher),
+            _ => {}
+        }
+    }
+    wheres
+}
+
+#[derive(Debug, Clone)]
+pub enum Direction {
+    Asc,
+    Desc,
+}
+
+pub fn direction_to_string(direction: &Direction) -> String {
+    match direction {
+        Direction::Asc => "asc".to_string(),
+        Direction::Desc => "desc".to_string(),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum WhereArg {
+    Column(String, Operator, QueryValue),
+    And(Vec<WhereArg>),
+    Or(Vec<WhereArg>),
 }
 
 #[derive(Debug, Clone)]

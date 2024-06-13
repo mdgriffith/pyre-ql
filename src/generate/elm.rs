@@ -650,16 +650,63 @@ fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition)
 }
 
 // Example: (arg = $id)
-fn to_string_param(is_first: bool, param: &ast::QueryParam) -> String {
-    let operator = operator_to_string(&param.operator);
-    let value = value_to_string(&param.value);
+//
+//
+// #[derive(Debug, Clone)]
+// pub enum Arg {
+//     Limit(usize),
+//     Offset(usize),
+//     OrderBy(Direction, String),
+//     Where(WhereArg),
+// }
 
-    if (is_first) {
-        format!("{} {} {}", param.name, operator, value)
-    } else {
-        format!(", {} {} {}", param.name, operator, value)
-    }
-}
+// #[derive(Debug, Clone)]
+// pub enum Direction {
+//     Asc,
+//     Desc,
+// }
+// fn to_string_arg(is_first: bool, arg: &ast::Arg) -> String {
+//   match arg {
+//     ast::Arg::Limit(value) => {
+
+//         format!("@limit {}", value)
+
+//     },
+//     ast::Arg::Offset(value) => {
+//       if (is_first) {
+//         format!("Offset({})", value)
+//       } else {
+//         format!(", Offset({})", value)
+//       }
+//     },
+//     ast::Arg::OrderBy(direction, field) => {
+//       if (is_first) {
+//         format!("OrderBy({}, {})", direction, field)
+//       } else {
+//         format!(", OrderBy({}, {})", direction, field)
+//       }
+//     },
+//     ast::Arg::Where(where_arg) => {
+//       if (is_first) {
+//         format!("Where({})", where_arg)
+//       } else {
+//         format!(", Where({})", where_arg)
+//       }
+//     },
+//   }
+// }
+
+// // Example: (arg = $id)
+// fn to_string_param(is_first: bool, param: &ast::QueryParam) -> String {
+//     let operator = operator_to_string(&param.operator);
+//     let value = value_to_string(&param.value);
+
+//     if (is_first) {
+//         format!("{} {} {}", param.name, operator, value)
+//     } else {
+//         format!(", {} {} {}", param.name, operator, value)
+//     }
+// }
 
 fn value_to_string(value: &ast::QueryValue) -> String {
     match value {

@@ -544,7 +544,7 @@ fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
     let (input, name_or_alias) = parse_fieldname(input)?;
     let (input, alias_or_name) = opt(parse_alias)(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, paramsOrNone) = opt(parse_query_paramblock)(input)?;
+    let (input, argsOrNone) = opt(parse_query_argblock)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, fieldsOrNone) = opt(parse_query_fieldblock)(input)?;
 
@@ -558,23 +558,91 @@ fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
         ast::QueryField {
             name: name.to_string(),
             alias,
-            params: paramsOrNone.unwrap_or_else(Vec::new),
+            args: argsOrNone.unwrap_or_else(Vec::new),
             directives: vec![],
             fields: fieldsOrNone.unwrap_or_else(Vec::new),
         },
     ))
 }
 
-fn parse_query_paramblock(input: &str) -> IResult<&str, Vec<ast::QueryParam>> {
+fn parse_query_argblock(input: &str) -> IResult<&str, Vec<ast::Arg>> {
     let (input, _) = tag("(")(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, fields) = many0(parse_query_param)(input)?;
+    let (input, fields) = many0(parse_query_arg)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag(")")(input)?;
     Ok((input, fields))
 }
 
-fn parse_query_param(input: &str) -> IResult<&str, ast::QueryParam> {
+fn parse_query_arg(input: &str) -> IResult<&str, ast::Arg> {
+    alt((parse_limit, parse_offset, parse_sort, parse_where))(input)
+}
+
+fn parse_limit(input: &str) -> IResult<&str, ast::Arg> {
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("@limit")(input)?;
+    let (input, _) = multispace1(input)?;
+    let (input, val) = parse_value(input)?;
+
+    Ok((input, ast::Arg::Limit(val)))
+}
+
+fn parse_offset(input: &str) -> IResult<&str, ast::Arg> {
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("@offset")(input)?;
+    let (input, _) = multispace1(input)?;
+    let (input, val) = parse_value(input)?;
+    Ok((input, ast::Arg::Limit(val)))
+}
+
+fn parse_sort(input: &str) -> IResult<&str, ast::Arg> {
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("@sort")(input)?;
+    let (input, _) = multispace1(input)?;
+    let (input, field) = parse_fieldname(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, direction) = alt((
+        parse_token("asc", ast::Direction::Asc),
+        parse_token("desc", ast::Direction::Desc),
+    ))(input)?;
+
+    Ok((input, ast::Arg::OrderBy(direction, field.to_string())))
+}
+
+#[derive(Debug, Clone)]
+enum AndOr {
+    And,
+    Or,
+}
+
+fn parse_and_or(input: &str) -> IResult<&str, AndOr> {
+    alt((parse_token("&&", AndOr::And), parse_token("||", AndOr::Or)))(input)
+}
+
+fn parse_where(input: &str) -> IResult<&str, ast::Arg> {
+    let (input, where_arg) = parse_where_arg(input)?;
+    Ok((input, ast::Arg::Where(where_arg)))
+}
+
+fn parse_where_arg(input: &str) -> IResult<&str, ast::WhereArg> {
+    let (input, _) = multispace0(input)?;
+    let (input, where_col) = parse_query_where(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, maybe_and_or) = opt(parse_and_or)(input)?;
+    match maybe_and_or {
+        Some(AndOr::And) => {
+            let (input, where_col2) = parse_query_where(input)?;
+            Ok((input, ast::WhereArg::And(vec![where_col, where_col2])))
+        }
+        Some(AndOr::Or) => {
+            let (input, where_col2) = parse_query_where(input)?;
+            Ok((input, ast::WhereArg::Or(vec![where_col, where_col2])))
+        }
+        None => Ok((input, where_col)),
+    }
+}
+
+fn parse_query_where(input: &str) -> IResult<&str, ast::WhereArg> {
     let (input, _) = multispace0(input)?;
     let (input, name) = parse_fieldname(input)?;
     let (input, _) = multispace0(input)?;
@@ -584,11 +652,7 @@ fn parse_query_param(input: &str) -> IResult<&str, ast::QueryParam> {
 
     Ok((
         input,
-        ast::QueryParam {
-            name: name.to_string(),
-            operator: operator,
-            value: value,
-        },
+        ast::WhereArg::Column(name.to_string(), operator, value),
     ))
 }
 
@@ -641,6 +705,11 @@ fn parse_number(input: &str) -> IResult<&str, ast::QueryValue> {
     } else {
         Ok((input, ast::QueryValue::Int(value.parse().unwrap())))
     }
+}
+
+fn parse_int(input: &str) -> IResult<&str, usize> {
+    let (input, value) = digit1(input)?;
+    Ok((input, value.parse().unwrap()))
 }
 
 fn parse_string(input: &str) -> IResult<&str, ast::QueryValue> {
