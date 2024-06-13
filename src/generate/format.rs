@@ -247,11 +247,7 @@ fn to_string_param(arg: &ast::Arg) -> String {
             format!("@offset {}\n", value_to_string(off))
         }
         ast::Arg::OrderBy(direction, column) => {
-            format!(
-                "@order_by {} {}\n",
-                ast::direction_to_string(direction),
-                column
-            )
+            format!("@sort {} {}\n", ast::direction_to_string(direction), column)
         }
         ast::Arg::Where(where_arg) => format!("@where {}\n", format_where(where_arg)),
     }
