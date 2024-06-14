@@ -612,7 +612,7 @@ fn parse_offset(input: &str) -> IResult<&str, ast::Arg> {
     let (input, _) = tag("@offset")(input)?;
     let (input, _) = multispace1(input)?;
     let (input, val) = parse_value(input)?;
-    Ok((input, ast::Arg::Limit(val)))
+    Ok((input, ast::Arg::Offset(val)))
 }
 
 fn parse_sort(input: &str) -> IResult<&str, ast::Arg> {
