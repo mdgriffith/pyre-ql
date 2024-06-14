@@ -41,6 +41,8 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         result.push_str(&selected.join(",\n  "));
         result.push_str("\n");
     }
+
+    // FROM
     result.push_str("from\n");
     for field in &query.fields {
         let table = context.tables.get(&field.name).unwrap();
@@ -60,8 +62,8 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         result.push_str(&from_vals.join(",\n  "));
     }
 
+    // WHERE
     let mut where_vals = vec![];
-
     for query_field in &query.fields {
         let table = context.tables.get(&query_field.name).unwrap();
         let table_alias = &ast::get_aliased_name(&query_field);
@@ -81,17 +83,74 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         where_vals.extend(new_where_vals);
     }
     if (!&where_vals.is_empty()) {
-        result.push_str("where\n  (");
+        result.push_str("where\n  ");
         let mut first = true;
         for wher in &where_vals {
             if (first) {
-                result.push_str(&format!(" {}\n", wher));
+                result.push_str(&format!("{}\n", wher));
                 first = false;
             } else {
-                result.push_str(&format!("  {}\n", wher));
+                result.push_str(&format!(" {}\n", wher));
             }
         }
-        result.push_str("  )");
+    }
+
+    // Order by
+    let mut order_vals = vec![];
+    for query_field in &query.fields {
+        let table = context.tables.get(&query_field.name).unwrap();
+        let table_alias = &ast::get_aliased_name(&query_field);
+
+        for field in &query_field.fields {
+            match field {
+                ast::ArgField::Arg(ast::Arg::OrderBy(dir, col)) => {
+                    let dir_str = ast::direction_to_string(dir);
+                    order_vals.push(format!("{}.{} {}", quote(table_alias), quote(col), dir_str));
+                }
+                _ => continue,
+            }
+        }
+    }
+    if (!&order_vals.is_empty()) {
+        result.push_str("order by ");
+
+        let mut first = true;
+
+        for (i, order) in order_vals.iter().enumerate() {
+            if (first) {
+                result.push_str(order);
+                first = false;
+            } else {
+                result.push_str(&format!(", {}", order));
+            }
+        }
+        result.push_str("\n");
+    }
+
+    // LIMIT
+    for query_field in &query.fields {
+        for field in &query_field.fields {
+            match field {
+                ast::ArgField::Arg(ast::Arg::Limit(val)) => {
+                    result.push_str(&format!("limit {}\n", render_value(val)));
+                    break;
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    // OFFSET
+    for query_field in &query.fields {
+        for field in &query_field.fields {
+            match field {
+                ast::ArgField::Arg(ast::Arg::Offset(val)) => {
+                    result.push_str(&format!("offset {}\n", render_value(val)));
+                    break;
+                }
+                _ => continue,
+            }
+        }
     }
 
     result.push_str("\n\n");
@@ -307,6 +366,17 @@ fn render_where_params(args: &Vec<&ast::Arg>, table_alias: &str) -> Vec<String> 
     result
 }
 
+fn render_value(value: &ast::QueryValue) -> String {
+    match value {
+        ast::QueryValue::Variable(v) => format!("${}", v),
+        ast::QueryValue::String(s) => format!("'{}'", s),
+        ast::QueryValue::Int(i) => i.to_string(),
+        ast::QueryValue::Float(f) => f.to_string(),
+        ast::QueryValue::Bool(b) => b.to_string(),
+        ast::QueryValue::Null => "null".to_string(),
+    }
+}
+
 fn render_where_arg(arg: &ast::WhereArg, table_alias: &str) -> String {
     match arg {
         ast::WhereArg::Column(name, operator, value) => {
@@ -324,14 +394,7 @@ fn render_where_arg(arg: &ast::WhereArg, table_alias: &str) -> String {
                 ast::Operator::Like => "like",
                 ast::Operator::NotLike => "not like",
             };
-            let value = match value {
-                ast::QueryValue::Variable(v) => format!("${}", v),
-                ast::QueryValue::String(s) => format!("'{}'", s),
-                ast::QueryValue::Int(i) => i.to_string(),
-                ast::QueryValue::Float(f) => f.to_string(),
-                ast::QueryValue::Bool(b) => b.to_string(),
-                ast::QueryValue::Null => "null".to_string(),
-            };
+            let value = render_value(value);
             format!("{} {} {}", qualified_column_name, operator, value)
         }
         ast::WhereArg::And(args) => {
