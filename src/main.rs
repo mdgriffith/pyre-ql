@@ -47,6 +47,56 @@ fn check_all() -> io::Result<()> {
     Ok(())
 }
 
+fn generate_elm_schema(schema: &ast::Schema) -> io::Result<()> {
+    let formatted_elm = generate::elm::schema(&schema);
+
+    // Top level Elm files
+    let elm_file = Path::new("examples/elm/Db.elm");
+    let mut output = fs::File::create(elm_file).expect("Failed to create file");
+    output
+        .write_all(formatted_elm.as_bytes())
+        .expect("Failed to write to file");
+
+    // Elm Decoders
+    let elm_decoders = generate::elm::to_schema_decoders(&schema);
+    let elm_decoder_file = Path::new("examples/elm/Db/Decode.elm");
+    let mut output = fs::File::create(elm_decoder_file).expect("Failed to create file");
+    output
+        .write_all(elm_decoders.as_bytes())
+        .expect("Failed to write to file");
+
+    // Elm Encoders
+    let elm_encoders = generate::elm::to_schema_encoders(&schema);
+    let elm_encoder_file = Path::new("examples/elm/Db/Encode.elm");
+    let mut output = fs::File::create(elm_encoder_file).expect("Failed to create file");
+    output
+        .write_all(elm_encoders.as_bytes())
+        .expect("Failed to write to file");
+
+    Ok(())
+}
+
+fn generate_typescript_schema(schema: &ast::Schema) -> io::Result<()> {
+    let formatted_ts = generate::typescript::schema(&schema);
+
+    // Top level TS files
+    let ts_file = Path::new("examples/typescript/db.ts");
+    let mut output = fs::File::create(ts_file).expect("Failed to create file");
+    output
+        .write_all(formatted_ts.as_bytes())
+        .expect("Failed to write to file");
+
+    // TS Decoders
+    let ts_decoders = generate::typescript::to_schema_decoders(&schema);
+    let ts_decoder_file = Path::new("examples/typescript/db/decode.ts");
+    let mut output = fs::File::create(ts_decoder_file).expect("Failed to create file");
+    output
+        .write_all(ts_decoders.as_bytes())
+        .expect("Failed to write to file");
+
+    Ok(())
+}
+
 fn full_run() -> io::Result<()> {
     // Read the content of the file
     let mut file = fs::File::open("examples/schema.pyre")?;
@@ -56,46 +106,10 @@ fn full_run() -> io::Result<()> {
     match parser::run(&input) {
         Ok(schema) => {
             // println!("{:?}", schema);
-            let formatted = generate::format::schema(&schema);
-
-            let path = Path::new("examples/formatted.pyre");
-            let mut output = fs::File::create(path).expect("Failed to create file");
-            output
-                .write_all(formatted.as_bytes())
-                .expect("Failed to write to file");
-
-            // Elm Generation
-
-            let formatted_elm = generate::elm::schema(&schema);
-
-            let elm_file = Path::new("examples/elm/Db.elm");
-            let mut output = fs::File::create(elm_file).expect("Failed to create file");
-            output
-                .write_all(formatted_elm.as_bytes())
-                .expect("Failed to write to file");
-
-            // Elm Decoders
-
-            let elm_decoders = generate::elm::to_schema_decoders(&schema);
-
-            let elm_decoder_file = Path::new("examples/elm/Db/Decode.elm");
-            let mut output = fs::File::create(elm_decoder_file).expect("Failed to create file");
-            output
-                .write_all(elm_decoders.as_bytes())
-                .expect("Failed to write to file");
-
-            // Elm Encoders
-            //
-            let elm_encoders = generate::elm::to_schema_encoders(&schema);
-
-            let elm_encoder_file = Path::new("examples/elm/Db/Encode.elm");
-            let mut output = fs::File::create(elm_encoder_file).expect("Failed to create file");
-            output
-                .write_all(elm_encoders.as_bytes())
-                .expect("Failed to write to file");
+            generate_elm_schema(&schema);
+            generate_typescript_schema(&schema);
 
             // Migration Generation
-
             let schema_diff = diff::diff(&ast::empty_schema(), &schema);
 
             let sql = migration::to_sql(&schema_diff);

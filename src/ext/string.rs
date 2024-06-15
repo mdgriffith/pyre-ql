@@ -13,3 +13,7 @@ pub fn decapitalize(s: &str) -> String {
         Some(f) => f.to_lowercase().collect::<String>() + c.as_str(),
     }
 }
+
+pub fn quote(s: &str) -> String {
+    format!("\"{}\"", s)
+}
