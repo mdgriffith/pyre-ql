@@ -15,7 +15,7 @@ pub fn write_queries(context: &typecheck::Context, query_list: &ast::QueryList) 
                 let target_path = Path::new(path);
                 let mut output = fs::File::create(target_path).expect("Failed to create file");
                 output
-                    .write_all(to_query_file(&context, &q).as_bytes())
+                    .write_all(to_string(&context, &q).as_bytes())
                     .expect("Failed to write to file");
             }
             _ => continue,
@@ -24,8 +24,8 @@ pub fn write_queries(context: &typecheck::Context, query_list: &ast::QueryList) 
     Ok(())
 }
 
-fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
-    let mut result = "\n\nselect\n".to_string();
+pub fn to_string(context: &typecheck::Context, query: &ast::Query) -> String {
+    let mut result = "select\n".to_string();
 
     // Selection
     for field in &query.fields {
@@ -124,7 +124,6 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
                 result.push_str(&format!(", {}", order));
             }
         }
-        result.push_str("\n");
     }
 
     // LIMIT
@@ -132,7 +131,8 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         for field in &query_field.fields {
             match field {
                 ast::ArgField::Arg(ast::Arg::Limit(val)) => {
-                    result.push_str(&format!("limit {}\n", render_value(val)));
+                    result.push_str("\n");
+                    result.push_str(&format!("limit {}", render_value(val)));
                     break;
                 }
                 _ => continue,
@@ -145,7 +145,8 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         for field in &query_field.fields {
             match field {
                 ast::ArgField::Arg(ast::Arg::Offset(val)) => {
-                    result.push_str(&format!("offset {}\n", render_value(val)));
+                    result.push_str("\n");
+                    result.push_str(&format!("offset {}", render_value(val)));
                     break;
                 }
                 _ => continue,
@@ -153,7 +154,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         }
     }
 
-    result.push_str("\n\n");
+    result.push_str(";");
 
     result
 }

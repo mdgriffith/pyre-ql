@@ -479,7 +479,12 @@ fn parse_query_lines(input: &str) -> IResult<&str, ast::QueryDef> {
 }
 
 fn parse_query_details(input: &str) -> IResult<&str, ast::QueryDef> {
-    let (input, _) = tag("query")(input)?;
+    let (input, op) = alt((
+        parse_token("query", ast::QueryOperation::Select),
+        parse_token("insert", ast::QueryOperation::Insert),
+        parse_token("update", ast::QueryOperation::Update),
+        parse_token("delete", ast::QueryOperation::Delete),
+    ))(input)?;
     let (input, _) = multispace1(input)?;
     let (input, name) = parse_typename(input)?;
     let (input, paramDefinitionsOrNone) = opt(parse_query_param_definitions)(input)?;
@@ -489,6 +494,7 @@ fn parse_query_details(input: &str) -> IResult<&str, ast::QueryDef> {
     Ok((
         input,
         ast::QueryDef::Query(ast::Query {
+            operation: op,
             name: name.to_string(),
             args: paramDefinitionsOrNone.unwrap_or(vec![]),
             fields,

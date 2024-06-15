@@ -186,9 +186,18 @@ pub enum QueryDef {
 
 #[derive(Debug, Clone)]
 pub struct Query {
+    pub operation: QueryOperation,
     pub name: String,
     pub args: Vec<QueryParamDefinition>,
     pub fields: Vec<QueryField>,
+}
+
+#[derive(Debug, Clone)]
+pub enum QueryOperation {
+    Select,
+    Insert,
+    Update,
+    Delete,
 }
 
 #[derive(Debug, Clone)]

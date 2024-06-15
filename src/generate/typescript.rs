@@ -1,5 +1,6 @@
 use crate::ast;
 use crate::ext::string;
+use crate::generate::sql;
 use crate::typecheck;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -236,12 +237,17 @@ fn to_type_decoder(type_: &str) -> String {
 
 //  QUERIES
 //
-pub fn write_queries(context: &typecheck::Context, query_list: &ast::QueryList) -> io::Result<()> {
+pub fn write_queries(
+    dir: &str,
+    context: &typecheck::Context,
+    query_list: &ast::QueryList,
+) -> io::Result<()> {
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
                 let path = &format!(
-                    "examples/typescript/Query/{}.ts",
+                    "{}/query/{}.ts",
+                    dir,
                     crate::ext::string::decapitalize(&q.name)
                 );
                 let target_path = Path::new(path);
@@ -256,14 +262,43 @@ pub fn write_queries(context: &typecheck::Context, query_list: &ast::QueryList) 
     Ok(())
 }
 
+pub fn literal_quote(s: &str) -> String {
+    format!("`\n{}`", s)
+}
+
 fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     let mut result = "".to_string();
     result.push_str("import * as Ark from 'arktype';\n");
     result.push_str("import * as Db from '../db.ts';\n");
+    result.push_str("import * as Run from '../db/run.ts';\n");
     result.push_str("import * as Decode from '../db/decode.ts';\n\n");
 
     // Input args decoder
     to_query_input_decoder(context, &query, &mut result);
+
+    let validate = r#"
+
+type Input = typeof Input.infer
+
+type Failure = { error: Ark.ArkError }
+
+type Success = { sql: string, args: any }
+
+export const check = (input: any): Success | Failure => {
+    const parsed = Input(input);
+    if (parsed instanceof Ark.type.errors) {
+    	return { error: parsed }
+    } else {
+       	return { sql: sql, args: parsed }
+    }
+})"#;
+
+    result.push_str(validate);
+
+    let sql = crate::generate::sql::to_string(context, query);
+    result.push_str("\n\nconst sql = ");
+    result.push_str(&literal_quote(&sql));
+    result.push_str(";\n\n");
 
     // Type Alisaes
     // result.push_str("// Return data\n");
