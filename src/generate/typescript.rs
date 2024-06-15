@@ -131,7 +131,7 @@ fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> Stri
 pub fn to_schema_decoders(schem: &ast::Schema) -> String {
     let mut result = String::new();
 
-    result.push_str("import { object, string, number, union, type, literal } from 'arktype';");
+    result.push_str("import * as Ark from 'arktype';");
 
     result.push_str("\n\n");
 
@@ -154,7 +154,7 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
         ast::Definition::Tagged { name, variants } => {
             let mut result = "".to_string();
 
-            result.push_str(&format!("export const {} = union(\n", name));
+            result.push_str(&format!("export const {} = Ark.union(\n", name));
             let mut is_first = true;
             for variant in variants {
                 result.push_str(&to_decoder_variant(is_first, 2, name, variant));
@@ -180,7 +180,7 @@ fn to_decoder_variant(
     match &variant.data {
         Some(fields) => {
             let mut result = format!(
-                "{}object({{\n    type_: literal({}),\n",
+                "{}Ark.object({{\n    \"type_\": Ark.literal({}),\n",
                 outer_indent,
                 crate::ext::string::quote(&variant.name),
             );
@@ -193,7 +193,7 @@ fn to_decoder_variant(
             result
         }
         None => format!(
-            "{}object({{ type_: literal({}) }}),\n",
+            "{}Ark.object({{ \"type_\": Ark.literal({}) }}),\n",
             outer_indent,
             crate::ext::string::quote(&variant.name),
         ),
@@ -209,7 +209,7 @@ fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
                 "{}{}: {},\n",
                 spaces,
                 crate::ext::string::quote(&column.name),
-                to_ts_typename(true, &column.type_)
+                to_ts_type_decoder(true, &column.type_)
             );
         }
         _ => "".to_string(),
@@ -240,7 +240,10 @@ pub fn write_queries(context: &typecheck::Context, query_list: &ast::QueryList) 
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
-                let path = &format!("examples/elm/Query/{}.elm", q.name.to_string());
+                let path = &format!(
+                    "examples/typescript/Query/{}.ts",
+                    crate::ext::string::decapitalize(&q.name)
+                );
                 let target_path = Path::new(path);
                 let mut output = fs::File::create(target_path).expect("Failed to create file");
                 output
@@ -254,46 +257,158 @@ pub fn write_queries(context: &typecheck::Context, query_list: &ast::QueryList) 
 }
 
 fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
-    let mut result = format!("module Query.{} exposing (..)\n\n\n", query.name);
+    let mut result = "".to_string();
+    result.push_str("import * as Ark from 'arktype';\n");
+    result.push_str("import * as Db from '../db.ts';\n");
+    result.push_str("import * as Decode from '../db/decode.ts';\n\n");
 
-    result.push_str("import Db\n");
-    result.push_str("import Db.Read\n");
-    result.push_str("import Db.Decode\n");
-    result.push_str("import Db.Encode\n");
-    result.push_str("import Json.Decode as Decode\n");
-    result.push_str("import Json.Encode as Encode\n");
+    // Input args decoder
+    to_query_input_decoder(context, &query, &mut result);
 
-    result.push_str("\n\n");
-
-    // TODO:: Input types
-
-    //
     // Type Alisaes
-    for field in &query.fields {
-        let table = context.tables.get(&field.name).unwrap();
-        result.push_str(&to_query_type_alias(
-            context,
-            table,
-            &field.name,
-            &ast::collect_query_fields(&field.fields),
-        ));
-    }
+    // result.push_str("// Return data\n");
+    // for field in &query.fields {
+    //     let table = context.tables.get(&field.name).unwrap();
+    //     result.push_str(&to_query_type_alias(
+    //         context,
+    //         table,
+    //         &field.name,
+    //         &ast::collect_query_fields(&field.fields),
+    //     ));
+    // }
 
     // TODO:: HTTP Sender
 
-    result.push_str("\n\n");
-    // TODO:: Decoder
+    // Nested Return data decoders
+    // result.push_str("\n\n");
+    // for field in &query.fields {
+    //     let table = context.tables.get(&field.name).unwrap();
+    //     result.push_str(&to_query_decoder(
+    //         context,
+    //         &ast::get_aliased_name(&field),
+    //         table,
+    //         &ast::collect_query_fields(&field.fields),
+    //     ));
+    // }
+    //
+
+    // Rectangle data decoder
+    result.push_str("\n");
+    result.push_str("export const ReturnRectangle = Ark.object({\n");
     for field in &query.fields {
         let table = context.tables.get(&field.name).unwrap();
-        result.push_str(&to_query_decoder(
+
+        to_flat_query_decoder(
             context,
             &ast::get_aliased_name(&field),
             table,
             &ast::collect_query_fields(&field.fields),
-        ));
+            &mut result,
+        );
     }
+    result.push_str("});");
 
     result
+}
+
+fn to_query_input_decoder(context: &typecheck::Context, query: &ast::Query, result: &mut String) {
+    result.push_str("export const Input = Ark.object({{");
+    for arg in &query.args {
+        result.push_str(&format!(
+            "\n  {}: {},",
+            crate::ext::string::quote(&arg.name),
+            to_ts_type_decoder(true, &arg.type_)
+        ));
+    }
+    result.push_str("\n});\n");
+}
+
+fn to_flat_query_decoder(
+    context: &typecheck::Context,
+    table_alias: &str,
+    table: &ast::RecordDetails,
+    fields: &Vec<&ast::QueryField>,
+    result: &mut String,
+) {
+    // let mut result = format!(
+    //     "decode{} : Db.Read.Query {}\n",
+    //     crate::ext::string::capitalize(table_alias),
+    //     crate::ext::string::capitalize(table_alias)
+    // );
+
+    let identifiers = format!("[]");
+
+    // result.push_str(&format!(
+    //     "decode{} =\n",
+    //     crate::ext::string::capitalize(table_alias)
+    // ));
+    // result.push_str(&format!(
+    //     "    Db.Read.query {} {}\n",
+    //     crate::ext::string::capitalize(table_alias),
+    //     identifiers
+    // ));
+    for field in fields {
+        let table_field = &table
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
+            .unwrap();
+
+        to_table_field_flat_decoder(2, context, table_alias, table_field, field, result)
+    }
+}
+
+fn to_table_field_flat_decoder(
+    indent: usize,
+    context: &typecheck::Context,
+    table_alias: &str,
+    table_field: &ast::Field,
+    query_field: &ast::QueryField,
+    result: &mut String,
+) {
+    match table_field {
+        ast::Field::Column(column) => {
+            let spaces = " ".repeat(indent);
+            result.push_str(&format!(
+                "{}\"{}\": {},\n",
+                spaces,
+                ast::get_select_alias(table_alias, table_field, query_field),
+                to_ts_type_decoder(true, &column.type_)
+            ));
+        }
+        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+            let spaces = " ".repeat(indent);
+
+            let foreign_table_alias = match query_field.alias {
+                Some(ref alias) => &alias,
+                None => &link.foreign_tablename,
+            };
+
+            let table = typecheck::get_linked_table(context, &link).unwrap();
+
+            to_flat_query_decoder(
+                context,
+                foreign_table_alias,
+                table,
+                &ast::collect_query_fields(&query_field.fields),
+                result,
+            )
+
+            // result.push_str(&format!(
+            //     "{}|> Db.Read.nested\n{}({})\n{}({})\n{}decode{}\n",
+            //     spaces,
+            //     // ID columns
+            //     " ".repeat(indent + 4),
+            //     format_db_id(table_alias, &link.local_ids),
+            //     " ".repeat(indent + 4),
+            //     format_db_id(foreign_table_alias, &link.foreign_ids),
+            //     " ".repeat(indent + 4),
+            //     (crate::ext::string::capitalize(&ast::get_aliased_name(query_field))) // (capitalize(&link.link_name)) // ast::get_select_alias(table_alias, table_field, query_field),
+            // ));
+        }
+
+        _ => (),
+    }
 }
 
 fn to_query_decoder(
@@ -418,7 +533,7 @@ fn to_query_type_alias(
     name: &str,
     fields: &Vec<&ast::QueryField>,
 ) -> String {
-    let mut result = format!("type alias {} =\n", crate::ext::string::capitalize(name));
+    let mut result = format!("type {} =\n", crate::ext::string::capitalize(name));
 
     let mut is_first = true;
 
@@ -535,6 +650,19 @@ fn to_ts_typename(qualified: bool, type_: &str) -> String {
         "Bool" => "boolean".to_string(),
         _ => {
             let qualification = if qualified { "Db." } else { "" };
+            return format!("{}{}", qualification, type_).to_string();
+        }
+    }
+}
+
+fn to_ts_type_decoder(qualified: bool, type_: &str) -> String {
+    match type_ {
+        "String" => "Ark.string".to_string(),
+        "Int" => "Ark.number".to_string(),
+        "Float" => "Ark.number".to_string(),
+        "Bool" => "Ark.boolean".to_string(),
+        _ => {
+            let qualification = if qualified { "Decode." } else { "" };
             return format!("{}{}", qualification, type_).to_string();
         }
     }
