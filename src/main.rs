@@ -36,11 +36,11 @@ enum Commands {
     /// Format files
     Format {
         /// The input directory to read from
-        #[arg(long)]
-        r#in: String,
+        // #[arg(long)]
+        // r#in: String,
+        #[arg(required = false)]
+        files: Vec<String>,
     },
-    /// Verify files
-    Verify,
     /// Migrate files
     Migrate {
         /// The database connection string
@@ -52,49 +52,6 @@ enum Commands {
         out: String,
     },
 }
-
-// fn check_all() -> io::Result<()> {
-//     let mut file = fs::File::open("examples/schema.pyre")?;
-//     let mut input = String::new();
-//     file.read_to_string(&mut input)?;
-
-//     match parser::run(&input) {
-//         Ok(schema) => {
-//             let mut query_file = fs::File::open("examples/query.pyre")?;
-//             let mut input_query = String::new();
-//             query_file.read_to_string(&mut input_query)?;
-
-//             match parser::parse_query(&input_query) {
-//                 Ok(query_list) => {
-//                     let result = typecheck::check_queries(&schema, &query_list);
-//                     println!("{:?}", result);
-
-//                     match result {
-//                         Ok(typecheck_context) => {
-//                             println!("Typecheck passed");
-
-//                             generate::elm::write_queries(
-//                                 "examples/elm",
-//                                 &typecheck_context,
-//                                 &query_list,
-//                             );
-//                             generate::typescript::write_queries(
-//                                 "examples/typescript",
-//                                 &typecheck_context,
-//                                 &query_list,
-//                             );
-//                         }
-//                         Err(err) => eprintln!("{:?}", err),
-//                     }
-//                 }
-//                 Err(err) => eprintln!("{:?}", err),
-//             }
-//         }
-
-//         Err(err) => eprintln!("{:?}", err),
-//     }
-//     Ok(())
-// }
 
 fn out(options: &Options, file: &str) -> String {
     format!("{}/{}", options.out_dir, file)
@@ -161,57 +118,6 @@ fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Re
     Ok(())
 }
 
-// fn full_run() -> io::Result<()> {
-//     // Read the content of the file
-//     let mut file = fs::File::open("examples/schema.pyre")?;
-//     let mut input = String::new();
-//     file.read_to_string(&mut input)?;
-
-//     match parser::run(&input) {
-//         Ok(schema) => {
-//             // println!("{:?}", schema);
-//             generate_elm_schema(&schema);
-//             generate_typescript_schema(&schema);
-
-//             // Migration Generation
-//             let schema_diff = diff::diff(&ast::empty_schema(), &schema);
-
-//             let sql = migration::to_sql(&schema_diff);
-
-//             let migration_path = Path::new("examples/migration.sql");
-//             let mut migration_output =
-//                 fs::File::create(migration_path).expect("Failed to create file");
-//             migration_output
-//                 .write_all(sql.as_bytes())
-//                 .expect("Failed to write to file");
-//         }
-//         Err(err) => eprintln!("{:?}", err),
-//     }
-
-//     // Read the content of the file
-//     let mut query_file = fs::File::open("examples/query.pyre")?;
-//     let mut input_query = String::new();
-//     query_file.read_to_string(&mut input_query)?;
-
-//     match parser::parse_query(&input_query) {
-//         Ok(parsed) => {
-//             println!("{:?}", parsed);
-//             let formatted = generate::format::query(&parsed);
-
-//             let path = Path::new("examples/query_formatted.pyre");
-//             let mut output = fs::File::create(path).expect("Failed to create file");
-//             output
-//                 .write_all(formatted.as_bytes())
-//                 .expect("Failed to write to file");
-
-//             println!("{}", formatted);
-//         }
-//         Err(err) => eprintln!("{:?}", err),
-//     }
-
-//     Ok(())
-// }
-
 #[derive(Debug)]
 struct Options {
     in_dir: String,
@@ -226,26 +132,35 @@ fn main() -> io::Result<()> {
         out_dir: cli.out.unwrap_or_else(|| "generated".to_string()),
     };
 
-    print!("{:?}", options);
-
     match &cli.command {
-        Some(Commands::Format { r#in }) => {
-            println!("Formatting files in directory: {}", r#in);
-            // Implement your format logic here
-        }
-        Some(Commands::Verify) => {
-            println!("Verifying files");
-            // Implement your verify logic here
-        }
+        Some(Commands::Format { files }) => match files.len() {
+            0 => {
+                println!("Formatting all files in {}", options.in_dir);
+                format_all(&options, collect_filepaths(&options.in_dir));
+            }
+            _ => {
+                println!("Formatting files: {:?}", files);
+
+                for file_path in files {
+                    if !file_path.ends_with(".pyre") {
+                        println!("{} doesn't end in .pyre, skipping", file_path);
+                        continue;
+                    }
+
+                    if is_schema_file(file_path) {
+                        format_schema(&options, file_path);
+                    } else {
+                        format_query(&options, file_path);
+                    }
+                }
+            }
+        },
         Some(Commands::Migrate { from, out }) => {
             println!("Migrating from: {} to {}", from, out);
             // Implement your migrate logic here
         }
         None => {
-            // recursively walk the input directory
-            let found = collect_filepaths(&options.in_dir);
-            print!("{:?}", found);
-            execute(options, found);
+            execute(&options, collect_filepaths(&options.in_dir));
         }
     }
     Ok(())
@@ -272,11 +187,66 @@ fn create_dir_if_not_exists(path: &str) -> io::Result<()> {
     }
 }
 
-fn execute(options: Options, paths: Found) -> io::Result<()> {
+fn format_all(options: &Options, paths: Found) -> io::Result<()> {
+    for schema_file_path in paths.schema_files {
+        format_schema(&options, &schema_file_path);
+    }
+
+    // Format queries
+    for query_file_path in paths.query_files {
+        format_query(&options, &query_file_path);
+    }
+
+    Ok(())
+}
+
+fn format_schema(options: &Options, schema_file_path: &str) -> io::Result<()> {
+    let mut schema_file = fs::File::open(schema_file_path)?;
+    let mut schema_source_str = String::new();
+    schema_file.read_to_string(&mut schema_source_str)?;
+
+    match parser::run(&schema_source_str) {
+        Ok(schema) => {
+            // Format schema
+            let formatted = generate::format::schema(&schema);
+            let path = Path::new(&schema_file_path);
+            let mut output = fs::File::create(path).expect("Failed to create file");
+            output
+                .write_all(formatted.as_bytes())
+                .expect("Failed to write to file");
+        }
+        Err(err) => eprintln!("{:?}", err),
+    }
+
+    Ok(())
+}
+
+fn format_query(options: &Options, query_file_path: &str) -> io::Result<()> {
+    let mut query_file = fs::File::open(query_file_path)?;
+    let mut query_source_str = String::new();
+    query_file.read_to_string(&mut query_source_str)?;
+
+    match parser::parse_query(&query_source_str) {
+        Ok(query_list) => {
+            // Format query
+            let formatted = generate::format::query(&query_list);
+            let path = Path::new(&query_file_path);
+            let mut output = fs::File::create(path).expect("Failed to create file");
+            output
+                .write_all(formatted.as_bytes())
+                .expect("Failed to write to file");
+        }
+        Err(err) => eprintln!("{:?}", err),
+    }
+
+    Ok(())
+}
+
+fn execute(options: &Options, paths: Found) -> io::Result<()> {
     match paths.schema_files.as_slice() {
         [] => eprintln!("No schema files found!"),
-        [single] => {
-            let mut file = fs::File::open(single)?;
+        [schema_path] => {
+            let mut file = fs::File::open(schema_path.clone())?;
             let mut input = String::new();
             file.read_to_string(&mut input)?;
 
@@ -286,13 +256,14 @@ fn execute(options: Options, paths: Found) -> io::Result<()> {
                     generate_elm_schema(&options, &schema);
                     generate_typescript_schema(&options, &schema);
 
-                    for query_file in paths.query_files {
-                        let mut query_file = fs::File::open(query_file)?;
+                    for query_file_path in paths.query_files {
+                        let mut query_file = fs::File::open(query_file_path.clone())?;
                         let mut query_source_str = String::new();
                         query_file.read_to_string(&mut query_source_str)?;
 
                         match parser::parse_query(&query_source_str) {
                             Ok(query_list) => {
+                                // Typecheck and generate
                                 let typecheck_result =
                                     typecheck::check_queries(&schema, &query_list);
 
@@ -338,6 +309,10 @@ struct Found {
     query_files: Vec<String>,
 }
 
+fn is_schema_file(file_path: &str) -> bool {
+    file_path == "schema.pyre" || file_path.ends_with(".schema.pyre")
+}
+
 fn collect_filepaths(dir: &str) -> Found {
     let mut schema_files: Vec<String> = vec![];
     let mut query_files: Vec<String> = vec![];
@@ -365,7 +340,7 @@ fn collect_filepaths(dir: &str) -> Found {
                         None => continue,
                         Some(file_name) => {
                             // Check if the file is `schema.pyre`
-                            if file_name == "schema.pyre" || file_name.ends_with(".schema.pyre") {
+                            if is_schema_file(file_name) {
                                 schema_files.push(file_str.to_string());
                             } else {
                                 query_files.push(file_str.to_string());
