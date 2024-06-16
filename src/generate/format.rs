@@ -89,7 +89,7 @@ fn to_string_field_directive(indent: usize, directive: &ast::FieldDirective) -> 
         ast::FieldDirective::Link(details) => {
             let mut result = format!("{}@link ", spaces);
             result.push_str(&to_string_link_details(details));
-            result.push_str(")\n");
+            result.push_str("\n");
             result
         }
     }
@@ -196,9 +196,9 @@ fn to_string_query(query: &ast::Query) -> String {
 // Example: ($arg: String)
 fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition) -> String {
     if (is_first) {
-        format!("{}: {}", param.name, param.type_)
+        format!("${}: {}", param.name, param.type_)
     } else {
-        format!(", {}: {}", param.name, param.type_)
+        format!(", ${}: {}", param.name, param.type_)
     }
 }
 
@@ -208,18 +208,19 @@ fn to_string_field_arg(indent: usize, field_arg: &ast::ArgField) -> String {
             let spaces = " ".repeat(indent);
             format!("{}{}", spaces, &to_string_param(&arg))
         }
-        ast::ArgField::Field(field) => {
-            // let spaces = " ".repeat(indent);
-            // format!("{}{}", spaces, name, type_)
-            to_string_query_field(indent, field)
-        }
+        ast::ArgField::Field(field) => to_string_query_field(indent, field),
         ast::ArgField::Line { count } => "\n".repeat(count.clone()),
     }
 }
 
 fn to_string_query_field(indent: usize, field: &ast::QueryField) -> String {
     let spaces = " ".repeat(indent);
-    let mut result = format!("{}{}", spaces, field.name);
+    let alias_string = match &field.alias {
+        Some(alias) => format!("{}: ", alias),
+        None => "".to_string(),
+    };
+
+    let mut result = format!("{}{}{}", spaces, alias_string, field.name);
 
     if (field.fields.len() > 0) {
         result.push_str(" {\n");
@@ -247,7 +248,7 @@ fn to_string_param(arg: &ast::Arg) -> String {
             format!("@offset {}\n", value_to_string(off))
         }
         ast::Arg::OrderBy(direction, column) => {
-            format!("@sort {} {}\n", ast::direction_to_string(direction), column)
+            format!("@sort {} {}\n", column, ast::direction_to_string(direction))
         }
         ast::Arg::Where(where_arg) => format!("@where {}\n", format_where(where_arg)),
     }
