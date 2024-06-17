@@ -1,3 +1,5 @@
+use crate::ext::string;
+
 #[derive(Debug)]
 pub struct Schema {
     pub definitions: Vec<Definition>,
@@ -46,6 +48,13 @@ pub enum Field {
     ColumnLines { count: usize },
     ColumnComment { text: String },
     FieldDirective(FieldDirective),
+}
+
+pub fn is_link(field: &Field) -> bool {
+    match field {
+        Field::FieldDirective(FieldDirective::Link(_)) => true,
+        _ => false,
+    }
 }
 
 pub fn get_tablename(name: &str, fields: &Vec<Field>) -> String {
@@ -105,6 +114,15 @@ pub fn is_column_space(field: &Field) -> bool {
 pub enum FieldDirective {
     TableName(String),
     Link(LinkDetails),
+}
+
+pub fn to_reciprocal(local_table: &str, link: &LinkDetails) -> LinkDetails {
+    LinkDetails {
+        link_name: string::pluralize(&string::decapitalize(local_table)),
+        local_ids: link.foreign_ids.clone(),
+        foreign_tablename: local_table.to_string(),
+        foreign_ids: link.local_ids.clone(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
