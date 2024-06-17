@@ -10,19 +10,19 @@ pub struct Error {
     pub location: Location,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Location {
     pub highlight: Option<Range>,
     pub area: Range,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Range {
     pub start: Coord,
     pub end: Coord,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Coord {
     pub line: usize,
     pub column: usize,
@@ -35,19 +35,23 @@ pub enum ErrorType {
         record: String,
         field: String,
     },
-    DuplicateVariant(String),
+    DuplicateVariant {
+        base_variant: VariantDef,
+        duplicates: Vec<VariantDef>,
+    },
     UnknownType(String),
-
-    // Query Validation Errors
-    UnknownTable {
-        found: String,
-        existing: Vec<String>,
+    NoPrimaryKey {
+        record: String,
     },
-    NoFieldsSelected,
-    UnknownField {
-        found: String,
+    MultiplePrimaryKeys {
+        record: String,
+        field: String,
     },
-
+    MultipleTableNames {
+        record: String,
+        tablenames: Vec<String>,
+    },
+    // Schema Link errors
     LinkToUnknownTable {
         link_name: String,
         unknown_table: String,
@@ -62,6 +66,29 @@ pub enum ErrorType {
         link_name: String,
         unknown_foreign_field: String,
     },
+
+    // Query Validation Errors
+    UnknownTable {
+        found: String,
+        existing: Vec<String>,
+    },
+    DuplicateQueryField {
+        query: String,
+        field: String,
+    },
+    NoFieldsSelected,
+    UnknownField {
+        found: String,
+    },
+    MultipleLimits {
+        query: String,
+    },
+    MultipleOffsets {
+        query: String,
+    },
+    MultipleWheres {
+        query: String,
+    },
 }
 
 #[derive(Debug)]
@@ -75,6 +102,14 @@ enum DefType {
 pub struct Context {
     pub types: HashMap<String, DefType>,
     pub tables: HashMap<String, ast::RecordDetails>,
+    pub variants: HashMap<String, Vec<VariantDef>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct VariantDef {
+    pub typename: String,
+    pub variant_name: String,
+    pub location: Location,
 }
 
 pub fn get_linked_table<'a>(
@@ -90,6 +125,7 @@ fn empty_context() -> Context {
     let mut context = Context {
         types: HashMap::new(),
         tables: HashMap::new(),
+        variants: HashMap::new(),
     };
     context.types.insert("String".to_string(), DefType::Builtin);
     context.types.insert("Int".to_string(), DefType::Builtin);
@@ -138,7 +174,7 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                     },
                 );
             }
-            ast::Definition::Tagged { name, .. } => {
+            ast::Definition::Tagged { name, variants, .. } => {
                 if context.types.contains_key(name) {
                     errors.push(Error {
                         error_type: ErrorType::DuplicateDefinition(name.clone()),
@@ -152,6 +188,27 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                     });
                 }
                 context.types.insert(name.clone(), DefType::Tagged);
+
+                for mut variant in variants {
+                    let location = Location {
+                        highlight: None,
+                        area: Range {
+                            start: Coord { line: 0, column: 0 },
+                            end: Coord { line: 0, column: 0 },
+                        },
+                    };
+                    let variant_def = VariantDef {
+                        typename: name.clone(),
+                        variant_name: variant.name.clone(),
+                        location,
+                    };
+
+                    context
+                        .variants
+                        .entry(variant.name.clone())
+                        .or_insert_with(Vec::new)
+                        .push(variant_def);
+                }
             }
             _ => {}
         }
@@ -160,27 +217,78 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
     for definition in &schem.definitions {
         match definition {
             ast::Definition::Record { name, fields } => {
+                let mut tablenames: Vec<String> = Vec::new();
+                let mut has_primary_id = false;
+                let mut field_names = HashSet::new();
+
                 for field in fields {
                     match field {
-                        // ast::Field::Column(ast::Column { name, type_, .. }) => {
-                        //     if context.tables[name] {
-                        //         errors.push(Error {
-                        //             error_type: ErrorType::DuplicateField {
-                        //                 record: name.clone(),
-                        //                 field: name.clone(),
-                        //             },
-                        //             location: Location {
-                        //                 highlight: None,
-                        //                 area: Range {
-                        //                     start: Coord { line: 0, column: 0 },
-                        //                     end: Coord { line: 0, column: 0 },
-                        //                 },
-                        //             },
-                        //         });
-                        //     }
-                        // }
+                        ast::Field::Column(ast::Column {
+                            name,
+                            type_,
+                            directives,
+                            ..
+                        }) => {
+                            if field_names.contains(name) {
+                                errors.push(Error {
+                                    error_type: ErrorType::DuplicateField {
+                                        record: name.clone(),
+                                        field: name.clone(),
+                                    },
+                                    location: Location {
+                                        highlight: None,
+                                        area: Range {
+                                            start: Coord { line: 0, column: 0 },
+                                            end: Coord { line: 0, column: 0 },
+                                        },
+                                    },
+                                });
+                            }
+                            if (directives
+                                .iter()
+                                .any(|item| *item == ast::ColumnDirective::PrimaryKey))
+                            {
+                                if has_primary_id {
+                                    errors.push(Error {
+                                        error_type: ErrorType::MultiplePrimaryKeys {
+                                            record: name.clone(),
+                                            field: name.clone(),
+                                        },
+                                        location: Location {
+                                            highlight: None,
+                                            area: Range {
+                                                start: Coord { line: 0, column: 0 },
+                                                end: Coord { line: 0, column: 0 },
+                                            },
+                                        },
+                                    });
+                                }
+                                has_primary_id = true;
+                            }
+
+                            field_names.insert(name.clone());
+                        }
+                        ast::Field::FieldDirective(ast::FieldDirective::TableName(tablename)) => {
+                            tablenames.push(tablename.to_string())
+                        }
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                             let maybe_foreign_table = get_linked_table(context, link);
+
+                            if field_names.contains(&link.link_name) {
+                                errors.push(Error {
+                                    error_type: ErrorType::DuplicateField {
+                                        record: name.clone(),
+                                        field: link.link_name.clone(),
+                                    },
+                                    location: Location {
+                                        highlight: None,
+                                        area: Range {
+                                            start: Coord { line: 0, column: 0 },
+                                            end: Coord { line: 0, column: 0 },
+                                        },
+                                    },
+                                });
+                            }
 
                             match maybe_foreign_table {
                                 Some(foreign_table) => {
@@ -245,6 +353,37 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                         _ => {}
                     }
                 }
+
+                if tablenames.len() > 1 {
+                    errors.push(Error {
+                        error_type: ErrorType::MultipleTableNames {
+                            record: name.clone(),
+                            tablenames: tablenames.clone(),
+                        },
+                        location: Location {
+                            highlight: None,
+                            area: Range {
+                                start: Coord { line: 0, column: 0 },
+                                end: Coord { line: 0, column: 0 },
+                            },
+                        },
+                    });
+                }
+
+                if !has_primary_id {
+                    errors.push(Error {
+                        error_type: ErrorType::NoPrimaryKey {
+                            record: name.clone(),
+                        },
+                        location: Location {
+                            highlight: None,
+                            area: Range {
+                                start: Coord { line: 0, column: 0 },
+                                end: Coord { line: 0, column: 0 },
+                            },
+                        },
+                    });
+                }
             }
 
             _ => {}
@@ -255,6 +394,29 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
 }
 
 fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: &mut Vec<Error>) {
+    let vars = context.variants.clone();
+    for (variant_name, mut instances) in vars {
+        if instances.len() > 1 {
+            let base_variant = instances.remove(0); // remove and use the first variant as the base
+            let duplicates = instances; // the rest are duplicates
+
+            errors.push(Error {
+                error_type: ErrorType::DuplicateVariant {
+                    base_variant,
+                    duplicates,
+                },
+                location: Location {
+                    highlight: None,
+                    area: Range {
+                        start: Coord { line: 0, column: 0 },
+                        end: Coord { line: 0, column: 0 },
+                    },
+                },
+            });
+        }
+    }
+
+    // Check definitions
     for definition in &schem.definitions {
         match definition {
             ast::Definition::Record { name, fields } => {
@@ -297,18 +459,6 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                 for variant in variants {
                     match variant {
                         ast::Variant { name, data } => {
-                            if context.types.contains_key(name) {
-                                errors.push(Error {
-                                    error_type: ErrorType::DuplicateVariant(name.clone()),
-                                    location: Location {
-                                        highlight: None,
-                                        area: Range {
-                                            start: Coord { line: 0, column: 0 },
-                                            end: Coord { line: 0, column: 0 },
-                                        },
-                                    },
-                                });
-                            }
                             if let Some(fields) = data {
                                 for field in ast::collect_columns(fields) {
                                     if !context.types.contains_key(&field.type_) {
@@ -410,44 +560,131 @@ fn check_table_query(
         })
     }
 
+    let mut queried_fields: HashSet<String> = HashSet::new();
+    let mut has_limit = false;
+    let mut has_offset = false;
+    let mut has_where = false;
+
     // We've already checked that the top-level query field name is valid
     // we want to make sure that every field queried exists in `table` as a column
-    for field in ast::collect_query_fields(&query.fields) {
-        let mut is_known_field = false;
-        for col in &table.fields {
-            if is_known_field {
-                continue;
-            }
-            match col {
-                ast::Field::Column(column) => {
-                    if column.name == field.name {
-                        is_known_field = true;
-                        check_field(context, errors, column, field)
+    for arg_field in &query.fields {
+        match arg_field {
+            ast::ArgField::Line { .. } => (),
+            ast::ArgField::Arg(arg) => match arg {
+                ast::Arg::Limit { .. } => {
+                    if has_limit {
+                        errors.push(Error {
+                            error_type: ErrorType::MultipleLimits {
+                                query: query.name.clone(),
+                            },
+                            location: Location {
+                                highlight: None,
+                                area: Range {
+                                    start: Coord { line: 0, column: 0 },
+                                    end: Coord { line: 0, column: 0 },
+                                },
+                            },
+                        });
+                    } else {
+                        has_limit = true;
                     }
                 }
-                ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                    if link.link_name == field.name {
-                        is_known_field = true;
-                        check_link(context, errors, link, field)
+                ast::Arg::Offset { .. } => {
+                    if has_offset {
+                        errors.push(Error {
+                            error_type: ErrorType::MultipleOffsets {
+                                query: query.name.clone(),
+                            },
+                            location: Location {
+                                highlight: None,
+                                area: Range {
+                                    start: Coord { line: 0, column: 0 },
+                                    end: Coord { line: 0, column: 0 },
+                                },
+                            },
+                        });
+                    } else {
+                        has_offset = true;
                     }
-                    ()
+                }
+                ast::Arg::Where { .. } => {
+                    if has_where {
+                        errors.push(Error {
+                            error_type: ErrorType::MultipleWheres {
+                                query: query.name.clone(),
+                            },
+                            location: Location {
+                                highlight: None,
+                                area: Range {
+                                    start: Coord { line: 0, column: 0 },
+                                    end: Coord { line: 0, column: 0 },
+                                },
+                            },
+                        });
+                    } else {
+                        has_where = true;
+                    }
                 }
                 _ => (),
+            },
+            ast::ArgField::Field(field) => {
+                let aliased_name = ast::get_aliased_name(field);
+
+                if queried_fields.contains(&aliased_name) {
+                    errors.push(Error {
+                        error_type: ErrorType::DuplicateQueryField {
+                            query: table.name.clone(),
+                            field: aliased_name.clone(),
+                        },
+                        location: Location {
+                            highlight: None,
+                            area: Range {
+                                start: Coord { line: 0, column: 0 },
+                                end: Coord { line: 0, column: 0 },
+                            },
+                        },
+                    });
+                } else {
+                    queried_fields.insert(aliased_name.clone());
+                }
+
+                let mut is_known_field = false;
+                for col in &table.fields {
+                    if is_known_field {
+                        continue;
+                    }
+                    match col {
+                        ast::Field::Column(column) => {
+                            if column.name == field.name {
+                                is_known_field = true;
+                                check_field(context, errors, column, field)
+                            }
+                        }
+                        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                            if link.link_name == field.name {
+                                is_known_field = true;
+                                check_link(context, errors, link, field)
+                            }
+                            ()
+                        }
+                        _ => (),
+                    }
+                }
+                if (!is_known_field) {
+                    errors.push(Error {
+                        error_type: ErrorType::UnknownField {
+                            found: field.name.clone(),
+                        },
+                        location: Location {
+                            highlight: None,
+                            area: Range {
+                                start: Coord { line: 0, column: 0 },
+                                end: Coord { line: 0, column: 0 },
+                            },
+                        },
+                    })
+                }
             }
-        }
-        if (!is_known_field) {
-            errors.push(Error {
-                error_type: ErrorType::UnknownField {
-                    found: field.name.clone(),
-                },
-                location: Location {
-                    highlight: None,
-                    area: Range {
-                        start: Coord { line: 0, column: 0 },
-                        end: Coord { line: 0, column: 0 },
-                    },
-                },
-            })
         }
     }
 }
