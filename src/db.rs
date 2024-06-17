@@ -3,10 +3,17 @@ use crate::ext::string;
 use crate::format;
 use libsql;
 use serde;
+use std::collections::HashMap;
+use std::fs;
+use std::io::Read;
+
+const MIGRATION_TABLE: &str = "_pyre_migrations";
 
 // List all tables
 // Returns list of string
 const LIST_TABLES: &str = "SELECT name FROM sqlite_master WHERE type='table';";
+
+const LIST_MIGRATIONS: &str = "SELECT name FROM _pyre_migrations;";
 
 // [
 //   {
@@ -63,6 +70,7 @@ fn table_indices(table_name: &str) -> String {
 #[derive(Debug)]
 pub struct Introspection {
     pub schema: ast::Schema,
+    pub migrations_recorded: Vec<String>,
     pub warnings: Vec<Warning>,
 }
 
@@ -112,6 +120,12 @@ struct ColumnInfo {
     pk: bool,
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
+struct MigrationRun {
+    name: String,
+}
+
 fn read_serialization_type(serialization_type: &str) -> ast::SerializationType {
     match serialization_type {
         "INTEGER" => ast::SerializationType::Integer,
@@ -137,6 +151,8 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
             let args: Vec<String> = vec![];
             let table_list_result = conn.query(LIST_TABLES, args).await;
             let mut definitions: Vec<ast::Definition> = vec![];
+            let mut migrations_recorded: Vec<String> = vec![];
+            let mut has_migrations_table = false;
 
             match table_list_result {
                 Ok(mut table_rows) => {
@@ -144,6 +160,10 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                         let table = libsql::de::from_row::<Table>(&row).unwrap();
                         if table.name == "sqlite_sequence" {
                             // Built in table, skip pls
+                            continue;
+                        } else if table.name == MIGRATION_TABLE {
+                            // Built in table, skip pls
+                            has_migrations_table = true;
                             continue;
                         }
                         // print!("{:?}\n", table);
@@ -217,11 +237,32 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                         })
                     }
 
+                    // Read Migration Table
+                    if (has_migrations_table) {
+                        let args: Vec<String> = vec![];
+                        let migration_list_result = conn.query(LIST_MIGRATIONS, args).await;
+                        match migration_list_result {
+                            Ok(mut migration_rows) => {
+                                while let Some(row) = migration_rows.next().await? {
+                                    let migration =
+                                        libsql::de::from_row::<MigrationRun>(&row).unwrap();
+                                    migrations_recorded.push(migration.name);
+                                }
+                            }
+                            Err(e) => {
+                                println!("Error: {}", e);
+                                return Err(e);
+                            }
+                        }
+                    }
+
+                    // Prepare Schema
                     let mut schema = ast::Schema { definitions };
                     format::schema(&mut schema);
 
                     Ok(Introspection {
                         schema,
+                        migrations_recorded,
                         warnings: vec![],
                     })
                 }
@@ -260,4 +301,128 @@ where
         1 => Ok(true),
         _ => Err(serde::de::Error::custom("unexpected value")),
     }
+}
+
+// Migrations
+
+enum MigrationError {
+    SqlError(libsql::Error),
+    IoError(std::io::Error),
+}
+
+pub async fn migrate(db: &libsql::Database, migration_folder: &str) -> Result<(), MigrationError> {
+    // Read migration directory
+    let mut migration_file_result = read_migrations(migration_folder);
+    match migration_file_result {
+        Err(err) => {
+            return Err(MigrationError::IoError(err));
+        }
+        Ok(migration_files) => {
+            let introspection_result = introspect(&db).await;
+            match introspection_result {
+                Err(err) => {
+                    return Err(MigrationError::SqlError(err));
+                }
+                Ok(introspection) => {
+                    // Read
+                    let conn_result = db.connect();
+                    match conn_result {
+                        Err(err) => {
+                            return Err(MigrationError::SqlError(err));
+                        }
+                        Ok(conn) => {
+                            create_migration_table_if_not_exists(&conn).await.unwrap();
+
+                            for (migration_filename, migration_contents) in
+                                migration_files.file_contents
+                            {
+                                // Check if migration has been run
+                                if introspection
+                                    .migrations_recorded
+                                    .contains(&migration_filename)
+                                {
+                                    continue;
+                                }
+
+                                // Run migration
+                                let mut tx = conn
+                                    .transaction_with_behavior(
+                                        libsql::TransactionBehavior::Immediate,
+                                    )
+                                    .await
+                                    .unwrap();
+
+                                tx.execute_batch(&migration_contents).await.unwrap();
+                                record_migration(&tx, &migration_filename).await.unwrap();
+
+                                tx.commit().await.unwrap();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn create_migration_table_if_not_exists(
+    conn: &libsql::Connection,
+) -> Result<(), libsql::Error> {
+    let create_migration_table = &format!(
+        r#"
+CREATE TABLE IF NOT EXISTS {} (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);"#,
+        MIGRATION_TABLE
+    );
+    conn.execute_batch(create_migration_table).await
+}
+
+async fn record_migration(
+    conn: &libsql::Connection,
+    migration_name: &str,
+) -> Result<u64, libsql::Error> {
+    let insert_migration = &format!(r#"INSERT INTO {} (name) VALUES (?);"#, MIGRATION_TABLE);
+    conn.execute(insert_migration, libsql::params![migration_name])
+        .await
+}
+
+struct Migrations {
+    file_map: HashMap<String, bool>,
+    file_contents: Vec<(String, String)>,
+}
+
+pub fn read_migrations(migration_folder: &str) -> Result<Migrations, std::io::Error> {
+    // Initialize the HashMap and Vec
+    let mut file_map: HashMap<String, bool> = HashMap::new();
+    let mut file_contents: Vec<(String, String)> = Vec::new();
+
+    for entry in fs::read_dir(migration_folder)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_file() {
+            if let Some(filename) = path.file_name().and_then(|name| name.to_str()) {
+                // Insert the filename into the HashMap with a value of false
+                file_map.insert(filename.to_string(), false);
+
+                // Read the file contents
+                let mut file = fs::File::open(&path)?;
+                let mut contents = String::new();
+                file.read_to_string(&mut contents)?;
+
+                // Store the filename and contents in the Vec
+                file_contents.push((filename.to_string(), contents));
+            }
+        }
+    }
+
+    Ok(Migrations {
+        file_map,
+        file_contents,
+    })
 }
