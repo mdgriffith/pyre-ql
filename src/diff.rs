@@ -1,7 +1,8 @@
 use crate::ast;
+use serde::{Deserialize, Serialize};
 
 // Define a type to represent the diff of two schemas
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SchemaDiff {
     pub added: Vec<crate::ast::Definition>,
     pub removed: Vec<crate::ast::Definition>,
@@ -9,19 +10,19 @@ pub struct SchemaDiff {
     pub modified_taggeds: Vec<DetailedTaggedDiff>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DetailedTaggedDiff {
     pub name: String,
     pub changes: Vec<TaggedChange>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DetailedRecordDiff {
     pub name: String,
     pub changes: Vec<RecordChange>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum TaggedChange {
     AddedVariant(crate::ast::Variant),
     RemovedVariant(crate::ast::Variant),
@@ -32,7 +33,7 @@ pub enum TaggedChange {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum RecordChange {
     AddedField(crate::ast::Column),
     RemovedField(crate::ast::Column),

@@ -1,4 +1,5 @@
 use crate::ext::string;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub struct Schema {
@@ -12,7 +13,7 @@ pub fn empty_schema() -> Schema {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum Definition {
     Lines {
         count: usize,
@@ -36,13 +37,13 @@ pub struct RecordDetails {
     pub fields: Vec<Field>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Variant {
     pub name: String,
     pub data: Option<Vec<Field>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum Field {
     Column(Column),
     ColumnLines { count: usize },
@@ -110,7 +111,7 @@ pub fn is_column_space(field: &Field) -> bool {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum FieldDirective {
     TableName(String),
     Link(LinkDetails),
@@ -125,7 +126,7 @@ pub fn to_reciprocal(local_table: &str, link: &LinkDetails) -> LinkDetails {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct LinkDetails {
     pub link_name: String,
     pub local_ids: Vec<String>,
@@ -156,7 +157,7 @@ pub fn column_order(a: &Field, b: &Field) -> std::cmp::Ordering {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Column {
     pub name: String,
     pub type_: String,
@@ -165,7 +166,7 @@ pub struct Column {
     pub directives: Vec<ColumnDirective>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum ColumnDirective {
     PrimaryKey,
     Unique,
@@ -180,7 +181,7 @@ pub enum ColumnDirective {
 // REAL. The value is a floating point value, stored as an 8-byte IEEE floating point number.
 // TEXT. The value is a text string, stored using the database encoding (UTF-8, UTF-16BE or UTF-16LE).
 // BLOB. The value is a blob of data, stored exactly as it was input.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum SerializationType {
     Integer,
     Real,

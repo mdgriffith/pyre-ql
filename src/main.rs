@@ -2,13 +2,13 @@
 use chrono;
 use clap::{Parser, Subcommand};
 use colored::*;
+use generate::migration;
+use serde_json;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use tokio;
 use walkdir::WalkDir;
-
-use generate::migration;
 
 mod ast;
 mod db;
@@ -262,10 +262,15 @@ async fn main() -> io::Result<()> {
 
                                                     // Write the migration file
                                                     let migration_file_path = format!(
-                                                        "{}/{}_{}.sql",
+                                                        "{}/{}_{}/migration.sql",
+                                                        options.migration_dir, current_date, name
+                                                    );
+                                                    let diff_file_path = format!(
+                                                        "{}/{}_{}/schema.diff",
                                                         options.migration_dir, current_date, name
                                                     );
 
+                                                    // Write migration file
                                                     let migration_file =
                                                         Path::new(&migration_file_path);
                                                     let mut output =
@@ -274,6 +279,26 @@ async fn main() -> io::Result<()> {
                                                     match output {
                                                         Ok(mut file) => {
                                                             file.write_all(sql.as_bytes());
+                                                        }
+                                                        Err(e) => {
+                                                            eprintln!(
+                                                                "Failed to create file: {:?}",
+                                                                e
+                                                            );
+                                                            return Err(e);
+                                                        }
+                                                    };
+
+                                                    // Write diff
+                                                    let diff_file = Path::new(&diff_file_path);
+                                                    let mut output = fs::File::create(diff_file);
+
+                                                    match output {
+                                                        Ok(mut file) => {
+                                                            let json_diff =
+                                                                serde_json::to_string(&diff)
+                                                                    .unwrap();
+                                                            file.write_all(json_diff.as_bytes());
                                                         }
                                                         Err(e) => {
                                                             eprintln!(

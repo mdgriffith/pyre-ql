@@ -376,6 +376,7 @@ async fn create_migration_table_if_not_exists(
 CREATE TABLE IF NOT EXISTS {} (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
+    schema TEXT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );"#,
         MIGRATION_TABLE
@@ -387,7 +388,10 @@ async fn record_migration(
     conn: &libsql::Connection,
     migration_name: &str,
 ) -> Result<u64, libsql::Error> {
-    let insert_migration = &format!(r#"INSERT INTO {} (name) VALUES (?);"#, MIGRATION_TABLE);
+    let insert_migration = &format!(
+        r#"INSERT INTO {} (name, schema) VALUES (?);"#,
+        MIGRATION_TABLE
+    );
     conn.execute(insert_migration, libsql::params![migration_name])
         .await
 }
@@ -406,18 +410,21 @@ pub fn read_migrations(migration_folder: &str) -> Result<Migrations, std::io::Er
         let entry = entry?;
         let path = entry.path();
 
-        if path.is_file() {
-            if let Some(filename) = path.file_name().and_then(|name| name.to_str()) {
-                // Insert the filename into the HashMap with a value of false
-                file_map.insert(filename.to_string(), false);
+        if path.is_dir() {
+            let migrate_file_path = path.join("migration.sql");
+            if migrate_file_path.is_file() {
+                if let Some(folder_name) = path.file_name().and_then(|name| name.to_str()) {
+                    // Insert the folder name into the HashMap with a value of false
+                    file_map.insert(folder_name.to_string(), false);
 
-                // Read the file contents
-                let mut file = fs::File::open(&path)?;
-                let mut contents = String::new();
-                file.read_to_string(&mut contents)?;
+                    // Read the file contents
+                    let mut file = fs::File::open(&migrate_file_path)?;
+                    let mut contents = String::new();
+                    file.read_to_string(&mut contents)?;
 
-                // Store the filename and contents in the Vec
-                file_contents.push((filename.to_string(), contents));
+                    // Store the folder name and contents in the Vec
+                    file_contents.push((folder_name.to_string(), contents));
+                }
             }
         }
     }
