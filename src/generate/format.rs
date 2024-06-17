@@ -1,6 +1,6 @@
 use crate::ast;
 
-pub fn schema(schem: &ast::Schema) -> String {
+pub fn schema_to_string(schem: &ast::Schema) -> String {
     let mut result = String::new();
     for definition in &schem.definitions {
         result.push_str(&to_string_definition(definition));

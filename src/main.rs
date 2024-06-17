@@ -4,13 +4,16 @@ use colored::*;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
+use tokio;
 use walkdir::WalkDir;
 
 use generate::migration;
 
 mod ast;
+mod db;
 mod diff;
 mod ext;
+mod format;
 mod generate;
 mod parser;
 mod typecheck;
@@ -40,6 +43,11 @@ enum Commands {
         // r#in: String,
         #[arg(required = false)]
         files: Vec<String>,
+    },
+    // Introspect current db
+    Introspect {
+        #[arg(long)]
+        db: String,
     },
     /// Migrate files
     Migrate {
@@ -124,7 +132,8 @@ struct Options {
     out_dir: String,
 }
 
-fn main() -> io::Result<()> {
+#[tokio::main]
+async fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
     let options = Options {
@@ -155,7 +164,50 @@ fn main() -> io::Result<()> {
                 }
             }
         },
+        Some(Commands::Introspect { db }) => {
+            let maybeConn = db::local(db).await;
+            match maybeConn {
+                Ok(conn) => {
+                    println!("Connected!");
+                    let introspection_result = db::introspect(&conn).await;
+                    match introspection_result {
+                        Ok(introspection) => {
+                            println!("Writing Schema");
+                            write_schema("./found.schema.pyre", &introspection.schema);
+                        }
+                        Err(e) => {
+                            println!("Failed to connect to database: {:?}", e);
+                        }
+                    }
+
+                    // println!("{:?}", introspection);
+
+                    // generate_elm_schema(&options, &schema).expect("Failed to generate Elm schema");
+                    // generate_typescript_schema(&options, &schema)
+                    // .expect("Failed to generate TS schema");
+                }
+                Err(e) => {
+                    println!("Failed to connect to database: {:?}", e);
+                }
+            }
+        }
         Some(Commands::Migrate { from, out }) => {
+            // let db_string =
+            //     "/Users/mattgriffith/projects/mdgriffith/lore-app/lore-worker/prisma/dev.db";
+
+            // let maybeConn = db::local(db_string).await;
+            // match maybeConn {
+            //     Ok(conn) => {
+            //         // let schema = db::introspect(&conn);
+            //         println!("Connected!");
+            //         return Ok(());
+            //     }
+            //     Err(e) => {
+            //         println!("Failed to connect to database: {:?}", e);
+            //         return Ok(());
+            //     }
+            // }
+
             println!("Migrating from: {} to {}", from, out);
             // Implement your migrate logic here
         }
@@ -208,7 +260,7 @@ fn format_schema(options: &Options, schema_file_path: &str) -> io::Result<()> {
     match parser::run(&schema_source_str) {
         Ok(schema) => {
             // Format schema
-            let formatted = generate::format::schema(&schema);
+            let formatted = generate::format::schema_to_string(&schema);
             let path = Path::new(&schema_file_path);
             let mut output = fs::File::create(path).expect("Failed to create file");
             output
@@ -217,6 +269,24 @@ fn format_schema(options: &Options, schema_file_path: &str) -> io::Result<()> {
         }
         Err(err) => eprintln!("{:?}", err),
     }
+
+    Ok(())
+}
+
+fn write_schema(schema_file_path: &str, schema: &ast::Schema) -> io::Result<()> {
+    // Format schema
+    let formatted = generate::format::schema_to_string(&schema);
+    let path = Path::new(&schema_file_path);
+    let mut output = fs::File::create(path);
+    match output {
+        Ok(mut file) => {
+            file.write_all(formatted.as_bytes());
+        }
+        Err(e) => {
+            eprintln!("Failed to create file: {:?}", e);
+            return Err(e);
+        }
+    };
 
     Ok(())
 }

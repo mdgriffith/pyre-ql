@@ -270,7 +270,6 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     let mut result = "".to_string();
     result.push_str("import * as Ark from 'arktype';\n");
     result.push_str("import * as Db from '../db.ts';\n");
-    result.push_str("import * as Run from '../db/run.ts';\n");
     result.push_str("import * as Decode from '../db/decode.ts';\n\n");
 
     // Input args decoder
