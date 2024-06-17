@@ -69,7 +69,10 @@ enum Commands {
         #[arg(long)]
         db: String,
     },
-
+    Migrate {
+        #[arg(long)]
+        db: String,
+    },
     // Generate or run a migration
     Migration {
         #[command(subcommand)]
@@ -202,6 +205,25 @@ async fn main() -> io::Result<()> {
                     // generate_elm_schema(&options, &schema).expect("Failed to generate Elm schema");
                     // generate_typescript_schema(&options, &schema)
                     // .expect("Failed to generate TS schema");
+                }
+                Err(e) => {
+                    println!("Failed to connect to database: {:?}", e);
+                }
+            }
+        }
+        Some(Commands::Migrate { db }) => {
+            let maybeConn = db::local(db).await;
+            match maybeConn {
+                Ok(conn) => {
+                    let migration_result = db::migrate(&conn, &options.migration_dir).await;
+                    match migration_result {
+                        Ok(()) => {
+                            println!("Migration finished!");
+                        }
+                        Err(e) => {
+                            println!("Failed to connect to database: {:?}", e);
+                        }
+                    }
                 }
                 Err(e) => {
                     println!("Failed to connect to database: {:?}", e);
