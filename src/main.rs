@@ -1,4 +1,5 @@
 #![allow(warnings)]
+use chrono;
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::fs;
@@ -32,6 +33,25 @@ struct Cli {
     /// The output directory to write to (when no subcommand is provided)
     #[arg(long, global = true)]
     out: Option<String>,
+
+    #[arg(long, global = true)]
+    migrations: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum MigrationOperation {
+    Generate {
+        #[arg(long)]
+        name: String,
+
+        #[arg(long)]
+        db: String,
+    },
+    Apply {
+        /// The database connection string
+        #[arg(long)]
+        db: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -49,15 +69,11 @@ enum Commands {
         #[arg(long)]
         db: String,
     },
-    /// Migrate files
-    Migrate {
-        /// The database connection string
-        #[arg(long)]
-        from: String,
 
-        /// The output directory to write migrations to
-        #[arg(long)]
-        out: String,
+    // Generate or run a migration
+    Migration {
+        #[command(subcommand)]
+        operation: MigrationOperation,
     },
 }
 
@@ -130,6 +146,7 @@ fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Re
 struct Options {
     in_dir: String,
     out_dir: String,
+    migration_dir: String,
 }
 
 #[tokio::main]
@@ -139,6 +156,7 @@ async fn main() -> io::Result<()> {
     let options = Options {
         in_dir: cli.r#in.unwrap_or_else(|| "pyre".to_string()),
         out_dir: cli.out.unwrap_or_else(|| "generated".to_string()),
+        migration_dir: cli.migrations.unwrap_or_else(|| "migrations".to_string()),
     };
 
     match &cli.command {
@@ -168,7 +186,6 @@ async fn main() -> io::Result<()> {
             let maybeConn = db::local(db).await;
             match maybeConn {
                 Ok(conn) => {
-                    println!("Connected!");
                     let introspection_result = db::introspect(&conn).await;
                     match introspection_result {
                         Ok(introspection) => {
@@ -191,25 +208,95 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        Some(Commands::Migrate { from, out }) => {
-            // let db_string =
-            //     "/Users/mattgriffith/projects/mdgriffith/lore-app/lore-worker/prisma/dev.db";
+        Some(Commands::Migration { operation }) => {
+            match operation {
+                MigrationOperation::Generate { name, db } => {
+                    let maybeConn = db::local(db).await;
+                    match maybeConn {
+                        Err(e) => {
+                            println!("Failed to connect to database: {:?}", e);
+                        }
+                        Ok(conn) => {
+                            let introspection_result = db::introspect(&conn).await;
+                            match introspection_result {
+                                Ok(introspection) => {
+                                    let paths = collect_filepaths(&options.in_dir);
+                                    match paths.schema_files.as_slice() {
+                                        [] => eprintln!("No schema files found!"),
+                                        [schema_path] => {
+                                            let mut file = fs::File::open(schema_path.clone())?;
+                                            let mut schema_str = String::new();
+                                            file.read_to_string(&mut schema_str)?;
+                                            match parser::run(&schema_str) {
+                                                Ok(schema) => {
+                                                    let diff =
+                                                        diff::diff(&introspection.schema, &schema);
+                                                    let sql = migration::to_sql(&diff);
 
-            // let maybeConn = db::local(db_string).await;
-            // match maybeConn {
-            //     Ok(conn) => {
-            //         // let schema = db::introspect(&conn);
-            //         println!("Connected!");
-            //         return Ok(());
-            //     }
-            //     Err(e) => {
-            //         println!("Failed to connect to database: {:?}", e);
-            //         return Ok(());
-            //     }
-            // }
+                                                    // Format like {year}{month}{day}{hour}{minute}
+                                                    let current_date = chrono::Utc::now()
+                                                        .format("%Y%m%d%H%M")
+                                                        .to_string();
 
-            println!("Migrating from: {} to {}", from, out);
-            // Implement your migrate logic here
+                                                    // Write the migration file
+                                                    let migration_file_path = format!(
+                                                        "{}/{}_{}.sql",
+                                                        options.migration_dir, current_date, name
+                                                    );
+
+                                                    let migration_file =
+                                                        Path::new(&migration_file_path);
+                                                    let mut output =
+                                                        fs::File::create(migration_file);
+
+                                                    match output {
+                                                        Ok(mut file) => {
+                                                            file.write_all(sql.as_bytes());
+                                                        }
+                                                        Err(e) => {
+                                                            eprintln!(
+                                                                "Failed to create file: {:?}",
+                                                                e
+                                                            );
+                                                            return Err(e);
+                                                        }
+                                                    };
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("Failed to parse schema: {:?}", e);
+                                                }
+                                            }
+                                        }
+                                        _ => eprintln!("Multiple schema files found!"),
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("Failed to connect to database: {:?}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+                MigrationOperation::Apply { db } => {
+                    let maybeConn = db::local(db).await;
+                    match maybeConn {
+                        Ok(conn) => {
+                            let migration_result = db::migrate(&conn, &options.migration_dir).await;
+                            match migration_result {
+                                Ok(()) => {
+                                    println!("Migration finished!");
+                                }
+                                Err(e) => {
+                                    println!("Failed to connect to database: {:?}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("Failed to connect to database: {:?}", e);
+                        }
+                    }
+                }
+            }
         }
         None => {
             execute(&options, collect_filepaths(&options.in_dir));

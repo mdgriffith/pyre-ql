@@ -305,7 +305,8 @@ where
 
 // Migrations
 
-enum MigrationError {
+#[derive(Debug)]
+pub enum MigrationError {
     SqlError(libsql::Error),
     IoError(std::io::Error),
 }
