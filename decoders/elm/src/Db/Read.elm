@@ -1,10 +1,10 @@
 module Db.Read exposing
     ( Query, query
     , Decoder, succeed, field
-    , bool, string, int, float
+    , bool, string, int, float, nullable
     , custom
     , id, nested
-    , decodeValue
+    , decodeValue, andDecode
     )
 
 {-|
@@ -13,13 +13,13 @@ module Db.Read exposing
 
 @docs Decoder, succeed, field
 
-@docs bool, string, int, float
+@docs bool, string, int, float, nullable
 
 @docs custom
 
 @docs id, nested
 
-@docs decodeValue
+@docs decodeValue, andDecode
 
 -}
 
@@ -36,6 +36,29 @@ type Query a
         { identity : List (Json.Decoder Id)
         , decoder : Decoder a
         }
+
+
+andDecode : String -> Query item -> Json.Decoder (List item -> result) -> Json.Decoder result
+andDecode fieldname (Query queryDetails) toResult =
+    let
+        (Decoder toDecoder) =
+            queryDetails.decoder
+    in
+    toResult
+        |> Json.andThen
+            (\fn ->
+                Json.map (\result -> fn (List.reverse result)) <|
+                    Json.field fieldname
+                        (Json.value
+                            |> Json.andThen
+                                (\json ->
+                                    uniqueListDecoder 0
+                                        queryDetails.identity
+                                        (Json.succeed True)
+                                        (toDecoder 0 json)
+                                )
+                        )
+            )
 
 
 decodeValue : Query selected -> Json.Value -> Result Json.Error (List selected)
@@ -61,11 +84,9 @@ nullable (Decoder toInner) =
     Decoder (\index json -> Json.nullable (toInner index json))
 
 
-
 custom : Json.Decoder a -> Decoder a
 custom decoder =
     Decoder (\_ _ -> decoder)
-
 
 
 int : Decoder Int
@@ -83,10 +104,9 @@ bool =
     Decoder
         (\_ _ ->
             Json.oneOf
-              [ Json.map (\i -> i /= 0) Json.int
-              , Json.bool
-              ]
-
+                [ Json.map (\i -> i /= 0) Json.int
+                , Json.bool
+                ]
         )
 
 

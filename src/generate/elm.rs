@@ -369,12 +369,57 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     result.push_str("import Db.Encode\n");
     result.push_str("import Json.Decode as Decode\n");
     result.push_str("import Json.Encode as Encode\n");
-
     result.push_str("\n\n");
 
-    // TODO:: Input types
+    result.push_str(&to_param_type_alias(&query.args));
 
-    //
+    result.push_str(&format!(
+        "prepare : Input -> {{ args : Encode.Value, query : String, decoder : Decode.Decoder {} }}\n",
+        string::capitalize(&query.name)
+    ));
+    result.push_str("prepare input =\n");
+    result.push_str(&format!(
+        "    {{ args = encode input, query = \"id\", decoder = decoder{} }}\n\n\n",
+        string::capitalize(&query.name)
+    ));
+
+    // Top level query alias
+    result.push_str(&format!(
+        "{{-| The Return Data! -}}\ntype alias {} =\n",
+        crate::ext::string::capitalize(&query.name)
+    ));
+
+    let mut is_first = true;
+    for field in &query.fields {
+        if is_first {
+            result.push_str(&format!("    {{ ",))
+        }
+
+        let field_name = ast::get_aliased_name(field);
+        if is_first {
+            result.push_str(&format!(
+                "{} : List {}\n",
+                crate::ext::string::decapitalize(&field_name),
+                string::capitalize(&field.name)
+            ));
+        } else {
+            let spaces = " ".repeat(4);
+            result.push_str(&format!(
+                "{}, {} : List {}\n",
+                spaces,
+                crate::ext::string::decapitalize(&field_name),
+                string::capitalize(&field.name)
+            ));
+        }
+
+        if is_first {
+            is_first = false;
+        }
+    }
+    result.push_str("    }\n\n\n");
+
+    // Helpers
+
     // Type Alisaes
     for field in &query.fields {
         let table = context.tables.get(&field.name).unwrap();
@@ -386,10 +431,13 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         ));
     }
 
-    // TODO:: HTTP Sender
+    result.push_str(&to_param_type_encoder(&query.args));
 
+    // Top level query decoder
+    result.push_str(&to_query_toplevel_decoder(context, &query));
     result.push_str("\n\n");
-    // TODO:: Decoder
+
+    // Helper Decoders
     for field in &query.fields {
         let table = context.tables.get(&field.name).unwrap();
         result.push_str(&to_query_decoder(
@@ -397,6 +445,77 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
             &ast::get_aliased_name(&field),
             table,
             &ast::collect_query_fields(&field.fields),
+        ));
+        result.push_str("\n\n");
+    }
+
+    result
+}
+
+fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
+    let mut result = "type alias Input =\n".to_string();
+    result.push_str("    {");
+    let mut is_first = true;
+    for arg in args {
+        if is_first {
+            result.push_str(&format!(" {} : {}\n", arg.name, arg.type_));
+            is_first = false;
+        } else {
+            result.push_str(&format!("    , {} : {}\n", arg.name, arg.type_));
+        }
+    }
+    result.push_str("    }\n\n\n");
+    result
+}
+
+fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
+    let mut result = "encode : Input -> Encode.Value\n".to_string();
+    result.push_str("encode input =\n");
+    result.push_str("    Encode.object\n");
+    let mut is_first = true;
+    for arg in args {
+        if is_first {
+            result.push_str(&format!(
+                "        [ ( {}, {} input.{} )\n",
+                string::quote(&arg.name),
+                to_type_encoder(&arg.type_, &arg.type_),
+                &arg.name
+            ));
+            is_first = false;
+        } else {
+            result.push_str(&format!(
+                "        , ( {}, {} input.{})\n",
+                string::quote(&arg.name),
+                to_type_encoder(&arg.type_, &arg.type_),
+                &arg.name
+            ));
+        }
+    }
+    result.push_str("        ]\n\n\n");
+    result
+}
+
+fn to_query_toplevel_decoder(context: &typecheck::Context, query: &ast::Query) -> String {
+    let mut result = format!(
+        "decode{} : Decode.Decoder {}\n",
+        crate::ext::string::capitalize(&query.name),
+        crate::ext::string::capitalize(&query.name)
+    );
+
+    result.push_str(&format!(
+        "decode{} =\n",
+        crate::ext::string::capitalize(&query.name)
+    ));
+    result.push_str(&format!(
+        "    Decode.succeed {}\n",
+        crate::ext::string::capitalize(&query.name)
+    ));
+    for field in &query.fields {
+        let aliased_field_name = ast::get_aliased_name(field);
+        result.push_str(&format!(
+            "        |> Db.Read.andDecode \"{}\" decode{}\n",
+            aliased_field_name,
+            crate::ext::string::capitalize(&aliased_field_name)
         ));
     }
 
@@ -554,7 +673,7 @@ fn to_query_type_alias(
             is_first = false;
         }
     }
-    result.push_str("    }\n");
+    result.push_str("    }\n\n\n");
 
     for field in fields {
         if field.fields.is_empty() {
@@ -570,13 +689,13 @@ fn to_query_type_alias(
             Some(ast::Field::FieldDirective(ast::FieldDirective::Link(link))) => {
                 let link_table = typecheck::get_linked_table(context, &link).unwrap();
 
-                result.push_str("\n\n");
                 result.push_str(&to_query_type_alias(
                     context,
                     link_table,
                     &ast::get_aliased_name(field),
                     &ast::collect_query_fields(&field.fields),
                 ));
+                // result.push_str("\n\n");
             }
             _ => continue,
         }
