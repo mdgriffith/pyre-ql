@@ -281,23 +281,37 @@ type Input = typeof Input.infer
 
 type Failure = { error: Ark.ArkError }
 
-type Success = { sql: string, args: any }
+type Success = { queries: Query[] }
+
+type Query = { sql: string, args: any }
 
 export const check = (input: any): Success | Failure => {
     const parsed = Input(input);
     if (parsed instanceof Ark.type.errors) {
         return { error: parsed }
     } else {
-        return { sql: sql, args: parsed }
+        let queries = sql.map((query_sql) => ({ sql: query_sql, args: parsed }))
+        return { queries }
     }
-})"#;
+}"#;
 
     result.push_str(validate);
 
-    let sql = crate::generate::sql::to_string(context, query);
-    result.push_str("\n\nconst sql = ");
-    result.push_str(&literal_quote(&sql));
-    result.push_str(";\n\n");
+    result.push_str("\n\nconst sql = [");
+
+    let mut written_field = false;
+    for field in &query.fields {
+        // let table = context.tables.get(&field.name).unwrap();
+        // result.push_str(&to_query_sql(&table, &field.name, &ast::collect_query_fields(&field.fields)));
+        if written_field {
+            result.push_str(", ");
+        }
+        let sql = crate::generate::sql::to_string(context, query, &vec![field]);
+        result.push_str(&literal_quote(&sql));
+        written_field = true;
+    }
+
+    result.push_str("];\n\n");
 
     // Type Alisaes
     // result.push_str("// Return data\n");

@@ -6,29 +6,16 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 
 //  QUERIES
-//
-pub fn write_queries(context: &typecheck::Context, query_list: &ast::QueryList) -> io::Result<()> {
-    for operation in &query_list.queries {
-        match operation {
-            ast::QueryDef::Query(q) => {
-                let path = &format!("examples/sql/{}.sql", q.name.to_string());
-                let target_path = Path::new(path);
-                let mut output = fs::File::create(target_path).expect("Failed to create file");
-                output
-                    .write_all(to_string(&context, &q).as_bytes())
-                    .expect("Failed to write to file");
-            }
-            _ => continue,
-        }
-    }
-    Ok(())
-}
 
-pub fn to_string(context: &typecheck::Context, query: &ast::Query) -> String {
+pub fn to_string(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    query_fields: &Vec<&ast::QueryField>,
+) -> String {
     let mut result = "select\n".to_string();
 
     // Selection
-    for field in &query.fields {
+    for field in query_fields {
         let table = context.tables.get(&field.name).unwrap();
         let selected = &to_selection(
             context,
@@ -36,7 +23,6 @@ pub fn to_string(context: &typecheck::Context, query: &ast::Query) -> String {
             table,
             &ast::collect_query_fields(&field.fields),
         );
-        // result.push_str(&format!("  {}", quote(&field.name)));
         result.push_str("  ");
         result.push_str(&selected.join(",\n  "));
         result.push_str("\n");
@@ -44,7 +30,7 @@ pub fn to_string(context: &typecheck::Context, query: &ast::Query) -> String {
 
     // FROM
     result.push_str("from\n");
-    for field in &query.fields {
+    for field in query_fields {
         let table = context.tables.get(&field.name).unwrap();
         let mut from_vals = &to_from(
             context,
@@ -64,7 +50,7 @@ pub fn to_string(context: &typecheck::Context, query: &ast::Query) -> String {
 
     // WHERE
     let mut where_vals = vec![];
-    for query_field in &query.fields {
+    for query_field in query_fields {
         let table = context.tables.get(&query_field.name).unwrap();
         let table_alias = &ast::get_aliased_name(&query_field);
 
@@ -97,7 +83,7 @@ pub fn to_string(context: &typecheck::Context, query: &ast::Query) -> String {
 
     // Order by
     let mut order_vals = vec![];
-    for query_field in &query.fields {
+    for query_field in query_fields {
         let table = context.tables.get(&query_field.name).unwrap();
         let table_alias = &ast::get_aliased_name(&query_field);
 
@@ -127,7 +113,7 @@ pub fn to_string(context: &typecheck::Context, query: &ast::Query) -> String {
     }
 
     // LIMIT
-    for query_field in &query.fields {
+    for query_field in query_fields {
         for field in &query_field.fields {
             match field {
                 ast::ArgField::Arg(ast::Arg::Limit(val)) => {
