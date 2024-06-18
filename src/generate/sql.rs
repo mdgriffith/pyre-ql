@@ -6,8 +6,61 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 
 //  QUERIES
-
+//
 pub fn to_string(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    query_fields: &Vec<&ast::QueryField>,
+) -> String {
+    match query.operation {
+        ast::QueryOperation::Select => select_to_string(context, query, query_fields),
+        ast::QueryOperation::Insert => insert_to_string(context, query, query_fields),
+        ast::QueryOperation::Update => update_to_string(context, query, query_fields),
+        ast::QueryOperation::Delete => delete_to_string(context, query, query_fields),
+    }
+}
+
+pub fn insert_to_string(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    query_fields: &Vec<&ast::QueryField>,
+) -> String {
+    let mut result = "insert\n".to_string();
+    // INSERT INTO users (username, credit) VALUES ('john_doe', 100);
+
+    result
+}
+
+pub fn update_to_string(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    query_fields: &Vec<&ast::QueryField>,
+) -> String {
+    let mut result = "update\n".to_string();
+    // UPDATE users
+    // SET credit = 150
+    // WHERE username = 'john_doe';
+    //
+    render_where(context, query_fields, &mut result);
+
+    result
+}
+
+pub fn delete_to_string(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    query_fields: &Vec<&ast::QueryField>,
+) -> String {
+    let mut result = "delete\n".to_string();
+    // DELETE FROM users
+    // WHERE username = 'john_doe';
+
+    render_where(context, query_fields, &mut result);
+
+    result
+}
+
+pub fn select_to_string(
     context: &typecheck::Context,
     query: &ast::Query,
     query_fields: &Vec<&ast::QueryField>,
@@ -29,6 +82,30 @@ pub fn to_string(
     }
 
     // FROM
+    render_from(context, query_fields, &mut result);
+
+    // WHERE
+    render_where(context, query_fields, &mut result);
+
+    // Order by
+    render_order_by(context, query_fields, &mut result);
+
+    // LIMIT
+    render_limit(context, query_fields, &mut result);
+
+    // OFFSET
+    render_offset(context, query_fields, &mut result);
+
+    result.push_str(";");
+
+    result
+}
+
+fn render_from(
+    context: &typecheck::Context,
+    query_fields: &Vec<&ast::QueryField>,
+    result: &mut String,
+) {
     result.push_str("from\n");
     for field in query_fields {
         let table = context.tables.get(&field.name).unwrap();
@@ -47,8 +124,87 @@ pub fn to_string(
 
         result.push_str(&from_vals.join(",\n  "));
     }
+}
 
-    // WHERE
+fn render_order_by(
+    context: &typecheck::Context,
+    query_fields: &Vec<&ast::QueryField>,
+    result: &mut String,
+) {
+    let mut order_vals = vec![];
+    for query_field in query_fields {
+        let table = context.tables.get(&query_field.name).unwrap();
+        let table_alias = &ast::get_aliased_name(&query_field);
+
+        for field in &query_field.fields {
+            match field {
+                ast::ArgField::Arg(ast::Arg::OrderBy(dir, col)) => {
+                    let dir_str = ast::direction_to_string(dir);
+                    order_vals.push(format!("{}.{} {}", quote(table_alias), quote(col), dir_str));
+                }
+                _ => continue,
+            }
+        }
+    }
+    if (!&order_vals.is_empty()) {
+        result.push_str("order by ");
+
+        let mut first = true;
+
+        for (i, order) in order_vals.iter().enumerate() {
+            if (first) {
+                result.push_str(order);
+                first = false;
+            } else {
+                result.push_str(&format!(", {}", order));
+            }
+        }
+    }
+}
+
+fn render_limit(
+    context: &typecheck::Context,
+    query_fields: &Vec<&ast::QueryField>,
+    result: &mut String,
+) {
+    for query_field in query_fields {
+        for field in &query_field.fields {
+            match field {
+                ast::ArgField::Arg(ast::Arg::Limit(val)) => {
+                    result.push_str("\n");
+                    result.push_str(&format!("limit {}", render_value(val)));
+                    break;
+                }
+                _ => continue,
+            }
+        }
+    }
+}
+
+fn render_offset(
+    context: &typecheck::Context,
+    query_fields: &Vec<&ast::QueryField>,
+    result: &mut String,
+) {
+    for query_field in query_fields {
+        for field in &query_field.fields {
+            match field {
+                ast::ArgField::Arg(ast::Arg::Offset(val)) => {
+                    result.push_str("\n");
+                    result.push_str(&format!("offset {}", render_value(val)));
+                    break;
+                }
+                _ => continue,
+            }
+        }
+    }
+}
+
+fn render_where(
+    context: &typecheck::Context,
+    query_fields: &Vec<&ast::QueryField>,
+    result: &mut String,
+) {
     let mut where_vals = vec![];
     for query_field in query_fields {
         let table = context.tables.get(&query_field.name).unwrap();
@@ -80,69 +236,6 @@ pub fn to_string(
             }
         }
     }
-
-    // Order by
-    let mut order_vals = vec![];
-    for query_field in query_fields {
-        let table = context.tables.get(&query_field.name).unwrap();
-        let table_alias = &ast::get_aliased_name(&query_field);
-
-        for field in &query_field.fields {
-            match field {
-                ast::ArgField::Arg(ast::Arg::OrderBy(dir, col)) => {
-                    let dir_str = ast::direction_to_string(dir);
-                    order_vals.push(format!("{}.{} {}", quote(table_alias), quote(col), dir_str));
-                }
-                _ => continue,
-            }
-        }
-    }
-    if (!&order_vals.is_empty()) {
-        result.push_str("order by ");
-
-        let mut first = true;
-
-        for (i, order) in order_vals.iter().enumerate() {
-            if (first) {
-                result.push_str(order);
-                first = false;
-            } else {
-                result.push_str(&format!(", {}", order));
-            }
-        }
-    }
-
-    // LIMIT
-    for query_field in query_fields {
-        for field in &query_field.fields {
-            match field {
-                ast::ArgField::Arg(ast::Arg::Limit(val)) => {
-                    result.push_str("\n");
-                    result.push_str(&format!("limit {}", render_value(val)));
-                    break;
-                }
-                _ => continue,
-            }
-        }
-    }
-
-    // OFFSET
-    for query_field in &query.fields {
-        for field in &query_field.fields {
-            match field {
-                ast::ArgField::Arg(ast::Arg::Offset(val)) => {
-                    result.push_str("\n");
-                    result.push_str(&format!("offset {}", render_value(val)));
-                    break;
-                }
-                _ => continue,
-            }
-        }
-    }
-
-    result.push_str(";");
-
-    result
 }
 
 fn to_selection(
