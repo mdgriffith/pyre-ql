@@ -286,9 +286,9 @@ type Success = { sql: string, args: any }
 export const check = (input: any): Success | Failure => {
     const parsed = Input(input);
     if (parsed instanceof Ark.type.errors) {
-    	return { error: parsed }
+        return { error: parsed }
     } else {
-       	return { sql: sql, args: parsed }
+        return { sql: sql, args: parsed }
     }
 })"#;
 
