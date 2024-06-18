@@ -81,7 +81,7 @@ fn parse_record(input: &str) -> IResult<&str, ast::Definition> {
     let (input, _) = multispace1(input)?;
     let (input, name) = parse_typename(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, unsorted_fields) = parse_record_fields(input)?;
+    let (input, unsorted_fields) = with_braces(parse_field)(input)?;
     let (input, _) = newline(input)?;
 
     let mut fields = unsorted_fields.clone();
@@ -154,15 +154,6 @@ fn insert_after_first_instance_continuous<T, F, IfPrevious>(
     }
 }
 
-fn parse_record_fields(input: &str) -> IResult<&str, Vec<ast::Field>> {
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag("{")(input)?;
-    let (input, fields) = many0(parse_field)(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag("}")(input)?;
-    Ok((input, fields))
-}
-
 fn parse_field(input: &str) -> IResult<&str, ast::Field> {
     alt((
         parse_field_comment,
@@ -203,12 +194,8 @@ fn parse_field_directive(input: &str) -> IResult<&str, ast::Field> {
 
             // link details
             // { from: userId, to: User.id }
-
             let (input, _) = multispace1(input)?;
-            let (input, _) = tag("{")(input)?;
-            let (input, fields) = many0(parse_link_field)(input)?;
-            let (input, _) = multispace0(input)?;
-            let (input, _) = tag("}")(input)?;
+            let (input, fields) = with_braces(parse_link_field)(input)?;
             let (input, _) = multispace0(input)?;
 
             // gather into link details
@@ -418,7 +405,8 @@ fn parse_tagged(input: &str) -> IResult<&str, ast::Definition> {
 
 fn parse_variant(input: &str) -> IResult<&str, ast::Variant> {
     let (input, name) = parse_typename(input)?;
-    let (input, optionalFields) = opt(parse_record_fields)(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, optionalFields) = opt(with_braces(parse_field))(input)?;
 
     Ok((
         input,
@@ -489,7 +477,7 @@ fn parse_query_details(input: &str) -> IResult<&str, ast::QueryDef> {
     let (input, name) = parse_typename(input)?;
     let (input, paramDefinitionsOrNone) = opt(parse_query_param_definitions)(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, fields) = parse_query_fieldblock(input)?;
+    let (input, fields) = with_braces(parse_query_field)(input)?;
 
     Ok((
         input,
@@ -505,10 +493,15 @@ fn parse_query_details(input: &str) -> IResult<&str, ast::QueryDef> {
 fn parse_query_param_definitions(input: &str) -> IResult<&str, Vec<ast::QueryParamDefinition>> {
     let (input, _) = tag("(")(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, fields) = many0(parse_query_param_definition)(input)?;
+    let (input, fields) =
+        separated_list0(parse_param_separator, parse_query_param_definition)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag(")")(input)?;
     Ok((input, fields))
+}
+
+fn parse_param_separator(input: &str) -> IResult<&str, char> {
+    delimited(multispace0, char(','), multispace0)(input)
 }
 
 fn parse_query_param_definition(input: &str) -> IResult<&str, ast::QueryParamDefinition> {
@@ -529,31 +522,18 @@ fn parse_query_param_definition(input: &str) -> IResult<&str, ast::QueryParamDef
     ))
 }
 
-fn parse_query_fieldblock(input: &str) -> IResult<&str, Vec<ast::QueryField>> {
-    let (input, _) = tag("{")(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, fields) = many0(parse_query_field)(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag("}")(input)?;
-    Ok((input, fields))
-}
-
-fn parse_query_arg_fieldblock(input: &str) -> IResult<&str, Vec<ast::ArgField>> {
-    let (input, _) = tag("{")(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, mut fields) = many0(parse_arg_field)(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag("}")(input)?;
-
-    fields.sort_by(ast::query_field_order);
-
-    insert_after_last_instance(
-        &mut fields,
-        ast::is_query_field_arg,
-        ast::ArgField::Line { count: 1 },
-    );
-
-    Ok((input, fields))
+fn with_braces<'a, F, T>(parse_term: F) -> impl Fn(&'a str) -> IResult<&'a str, Vec<T>>
+where
+    F: Fn(&'a str) -> IResult<&'a str, T>,
+{
+    move |input: &'a str| {
+        let (input, _) = tag("{")(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, terms) = many0(&parse_term)(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, _) = tag("}")(input)?;
+        Ok((input, terms))
+    }
 }
 
 fn parse_alias(input: &str) -> IResult<&str, String> {
@@ -582,7 +562,7 @@ fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
     let (input, name_or_alias) = parse_fieldname(input)?;
     let (input, alias_or_name) = opt(parse_alias)(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, fieldsOrNone) = opt(parse_query_arg_fieldblock)(input)?;
+    let (input, fieldsOrNone) = opt(with_braces(parse_arg_field))(input)?;
 
     let (name, alias) = match alias_or_name {
         Some(alias) => (alias, Some(name_or_alias.to_string())),
