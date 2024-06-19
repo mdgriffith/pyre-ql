@@ -101,6 +101,13 @@ pub enum ErrorType {
         variable_name: String,
         variable_defined_as: String,
     },
+    UnusedParam {
+        param: String,
+    },
+    UndefinedParam {
+        param: String,
+        type_: String,
+    },
 }
 
 #[derive(Debug)]
@@ -582,6 +589,36 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
             Some(table) => check_table_query(context, errors, table, field, &mut param_names),
         }
     }
+
+    for (param_name, (usage, type_string)) in param_names {
+        match usage {
+            ParamUsage::Defined => errors.push(Error {
+                error_type: ErrorType::UnusedParam { param: param_name },
+                location: Location {
+                    highlight: None,
+                    area: Range {
+                        start: Coord { line: 0, column: 0 },
+                        end: Coord { line: 0, column: 0 },
+                    },
+                },
+            }),
+            ParamUsage::Used => {}
+            ParamUsage::NotDefinedButUsed => errors.push(Error {
+                error_type: ErrorType::UndefinedParam {
+                    param: param_name,
+                    type_: type_string,
+                },
+                location: Location {
+                    highlight: None,
+                    area: Range {
+                        start: Coord { line: 0, column: 0 },
+                        end: Coord { line: 0, column: 0 },
+                    },
+                },
+            }),
+            _ => {}
+        }
+    }
 }
 
 fn check_where_args(
@@ -688,7 +725,7 @@ fn check_value(
                 });
                 params.insert(
                     var.to_string(),
-                    (ParamUsage::NotDefinedButUsed, String::new()),
+                    (ParamUsage::NotDefinedButUsed, table_type_string.to_string()),
                 );
             }
             Some((usage, type_string)) => {
