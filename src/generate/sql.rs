@@ -46,7 +46,7 @@ pub fn insert_to_string(
     let mut values: Vec<String> = Vec::new();
     for table_field in query_fields {
         let table = context.tables.get(&table_field.name).unwrap();
-        let mut new_values = &to_field_set_values(
+        let mut new_values = &to_field_insert_values(
             context,
             &ast::get_aliased_name(&table_field),
             table,
@@ -64,11 +64,34 @@ pub fn update_to_string(
     query: &ast::Query,
     query_fields: &Vec<&ast::QueryField>,
 ) -> String {
-    let mut result = "update\n".to_string();
+    let mut table_name = query.name.clone();
+    for table_field in query_fields {
+        let table = context.tables.get(&table_field.name).unwrap();
+
+        table_name = ast::get_tablename(&table.name, &table.fields);
+    }
+    let mut result = format!("update {}\n", table_name);
+
     // UPDATE users
     // SET credit = 150
     // WHERE username = 'john_doe';
     //
+
+    let mut values: Vec<String> = Vec::new();
+    for table_field in query_fields {
+        let table = context.tables.get(&table_field.name).unwrap();
+        let mut new_values = &to_field_set_values(
+            context,
+            &ast::get_aliased_name(&table_field),
+            table,
+            &ast::collect_query_fields(&table_field.fields),
+        );
+        values.append(&mut new_values.clone());
+    }
+
+    result.push_str(&format!("set {}", values.join(", ")));
+
+    result.push_str("\n");
     render_where(context, query_fields, &mut result);
     result.push_str(";");
     result
@@ -478,6 +501,42 @@ fn to_table_fieldname(
 // SET values
 
 fn to_field_set_values(
+    context: &typecheck::Context,
+    table_alias: &str,
+    table: &ast::RecordDetails,
+    fields: &Vec<&ast::QueryField>,
+) -> Vec<String> {
+    let mut result = vec![];
+
+    for field in fields {
+        let table_field = &table
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
+            .unwrap();
+
+        match &field.set {
+            None => (),
+            Some(val) => match table_field {
+                ast::Field::Column(column) => {
+                    let mut str = String::new();
+
+                    str.push_str(&column.name);
+                    str.push_str(" = ");
+                    str.push_str(&render_value(&val));
+
+                    result.push(str);
+                }
+                _ => (),
+            },
+        }
+    }
+
+    result
+}
+
+// Insert
+fn to_field_insert_values(
     context: &typecheck::Context,
     table_alias: &str,
     table: &ast::RecordDetails,
