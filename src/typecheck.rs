@@ -912,7 +912,7 @@ fn check_table_query(
                         ast::Field::Column(column) => {
                             if column.name == field.name {
                                 is_known_field = true;
-                                check_field(context, operation, errors, column, field)
+                                check_field(context, params, operation, errors, column, field)
                             }
                         }
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
@@ -990,6 +990,7 @@ fn check_table_query(
 
 fn check_field(
     context: &Context,
+    params: &mut HashMap<String, (ParamUsage, String)>,
     operation: &ast::QueryOperation,
     mut errors: &mut Vec<Error>,
     column: &ast::Column,
@@ -1009,6 +1010,13 @@ fn check_field(
             },
         })
     }
+    match &field.set {
+        Some(set) => {
+            check_value(&set, &mut errors, params, &column.name, &column.type_);
+        }
+        None => {}
+    }
+
     match operation {
         ast::QueryOperation::Select => {
             if (field.set.is_some()) {
