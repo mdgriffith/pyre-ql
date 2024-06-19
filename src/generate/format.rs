@@ -169,7 +169,13 @@ fn to_string_query_definition(definition: &ast::QueryDef) -> String {
 }
 
 fn to_string_query(query: &ast::Query) -> String {
-    let mut result = format!("query {}", query.name);
+    let operation_name = match &query.operation {
+        ast::QueryOperation::Select => "query",
+        ast::QueryOperation::Insert => "insert",
+        ast::QueryOperation::Delete => "delete",
+        ast::QueryOperation::Update => "update",
+    };
+    let mut result = format!("{} {}", operation_name, query.name);
 
     if (query.args.len() > 0) {
         result.push_str("(");
@@ -221,6 +227,15 @@ fn to_string_query_field(indent: usize, field: &ast::QueryField) -> String {
     };
 
     let mut result = format!("{}{}{}", spaces, alias_string, field.name);
+
+    match &field.set {
+        Some(val) => {
+            result.push_str(" = ");
+            result.push_str(&value_to_string(val));
+            result.push_str(" ");
+        }
+        None => {}
+    }
 
     if (field.fields.len() > 0) {
         result.push_str(" {\n");

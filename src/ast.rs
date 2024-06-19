@@ -254,6 +254,7 @@ pub fn get_aliased_name(field: &QueryField) -> String {
 pub struct QueryField {
     pub name: String,
     pub alias: Option<String>,
+    pub set: Option<QueryValue>,
     pub directives: Vec<String>,
     pub fields: Vec<ArgField>,
 }

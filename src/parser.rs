@@ -536,6 +536,13 @@ where
     }
 }
 
+fn parse_set(input: &str) -> IResult<&str, ast::QueryValue> {
+    let (input, _) = tag("=")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, val) = parse_value(input)?;
+    Ok((input, val))
+}
+
 fn parse_alias(input: &str) -> IResult<&str, String> {
     let (input, _) = tag(":")(input)?;
     let (input, _) = multispace0(input)?;
@@ -562,6 +569,8 @@ fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
     let (input, name_or_alias) = parse_fieldname(input)?;
     let (input, alias_or_name) = opt(parse_alias)(input)?;
     let (input, _) = multispace0(input)?;
+    let (input, set) = opt(parse_set)(input)?;
+    let (input, _) = multispace0(input)?;
     let (input, fieldsOrNone) = opt(with_braces(parse_arg_field))(input)?;
 
     let (name, alias) = match alias_or_name {
@@ -574,6 +583,7 @@ fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
         ast::QueryField {
             name: name.to_string(),
             alias,
+            set,
             directives: vec![],
             fields: fieldsOrNone.unwrap_or_else(Vec::new),
         },
