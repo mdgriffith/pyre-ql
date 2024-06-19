@@ -1,4 +1,5 @@
 use crate::ext::string;
+use nom_locate;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
@@ -169,6 +170,9 @@ pub fn column_order(a: &Field, b: &Field) -> std::cmp::Ordering {
     }
 }
 
+// #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+// pub type Location = nom_locate::LocatedSpan<&'static str>;
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Column {
     pub name: String,
@@ -176,6 +180,14 @@ pub struct Column {
     pub serialization_type: SerializationType,
     pub nullable: bool,
     pub directives: Vec<ColumnDirective>,
+
+    pub location: Option<Location>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct Location {
+    pub offset: usize,
+    pub line: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

@@ -1,42 +1,46 @@
 use crate::ast;
-
+use crate::error;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while},
     character::complete::{
         alpha1, alphanumeric1, char, digit1, multispace0, multispace1, newline, one_of,
     },
-    combinator::{map_res, opt, recognize},
+    combinator::{cut, eof, map_res, opt, recognize},
+    error::{convert_error, Error, VerboseError, VerboseErrorKind},
     multi::{many0, many1, separated_list0, separated_list1},
     sequence::{delimited, tuple},
     IResult,
 };
+use nom_locate::{position, LocatedSpan};
+
+type Text<'a> = LocatedSpan<&'a str>;
+
+type ParseResult<'a, Output> = IResult<Text<'a>, Output, VerboseError<Text<'a>>>;
+// type ParseResult<'a, Output> = IResult<&'a str, Output, Error<&'a str>>;
 
 pub fn run(input: &str) -> Result<ast::Schema, String> {
-    match parse_schema(input) {
+    match parse_schema(Text::new(input)) {
         Ok((remaining, schema)) => {
-            if !remaining.is_empty() {
-                return Err(format!("Error: Unparsed input: {:?}", remaining));
-            } else {
-                return Ok(schema);
-            }
+            return Ok(schema);
         }
         Err(e) => Err(format!("Error: {:?}", e)),
     }
 }
 
-fn parse_schema(input: &str) -> IResult<&str, ast::Schema> {
+fn parse_schema(input: Text) -> ParseResult<ast::Schema> {
     let (input, _) = multispace0(input)?;
-    let (input, definitions) = many0(parse_definition)(input)?;
+    let (input, definitions) = many1(parse_definition)(input)?;
     let (input, _) = multispace0(input)?;
+    let (input, _) = eof(input)?;
     Ok((input, ast::Schema { definitions }))
 }
 
-fn parse_definition(input: &str) -> IResult<&str, ast::Definition> {
+fn parse_definition(input: Text) -> ParseResult<ast::Definition> {
     alt((parse_comment, parse_tagged, parse_record, parse_lines))(input)
 }
 
-fn parse_lines(input: &str) -> IResult<&str, ast::Definition> {
+fn parse_lines(input: Text) -> ParseResult<ast::Definition> {
     // Parse any whitespace (spaces, tabs, or newlines)
     let (input, whitespaces) = many1(one_of(" \t\n"))(input)?;
 
@@ -46,7 +50,7 @@ fn parse_lines(input: &str) -> IResult<&str, ast::Definition> {
     Ok((input, ast::Definition::Lines { count }))
 }
 
-fn parse_comment(input: &str) -> IResult<&str, ast::Definition> {
+fn parse_comment(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = tag("//")(input)?;
     let (input, text) = take_until("\n")(input)?;
     let (input, _) = newline(input)?;
@@ -58,8 +62,9 @@ fn parse_comment(input: &str) -> IResult<&str, ast::Definition> {
     ))
 }
 
-fn parse_typename(input: &str) -> IResult<&str, &str> {
-    alphanumeric1(input)
+fn parse_typename(input: Text) -> ParseResult<&str> {
+    let (input, val) = alphanumeric1(input)?;
+    Ok((input, val.fragment()))
 }
 
 // A parser to check if a character is lowercase
@@ -68,15 +73,15 @@ fn is_lowercase_char(c: char) -> bool {
 }
 
 // A parser for a lowercase letter followed by alphanumeric characters
-fn parse_fieldname(input: &str) -> IResult<&str, &str> {
+fn parse_fieldname(input: Text) -> ParseResult<&str> {
     // let (input, start) = recognize(char::is_lowercase)(input)?;
     // let (input, rest) = take_while(|c: char| c.is_alphanumeric())(input)?;
     // Ok((input, &input[start.len()..]))
     let (input, name) = alphanumeric1(input)?;
-    Ok((input, name))
+    Ok((input, name.fragment()))
 }
 
-fn parse_record(input: &str) -> IResult<&str, ast::Definition> {
+fn parse_record(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = tag("record")(input)?;
     let (input, _) = multispace1(input)?;
     let (input, name) = parse_typename(input)?;
@@ -154,7 +159,7 @@ fn insert_after_first_instance_continuous<T, F, IfPrevious>(
     }
 }
 
-fn parse_field(input: &str) -> IResult<&str, ast::Field> {
+fn parse_field(input: Text) -> ParseResult<ast::Field> {
     alt((
         parse_field_comment,
         parse_column_field,
@@ -162,7 +167,7 @@ fn parse_field(input: &str) -> IResult<&str, ast::Field> {
     ))(input)
 }
 
-fn parse_field_comment(input: &str) -> IResult<&str, ast::Field> {
+fn parse_field_comment(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("//")(input)?;
     let (input, text) = take_until("\n")(input)?;
@@ -175,7 +180,7 @@ fn parse_field_comment(input: &str) -> IResult<&str, ast::Field> {
     ))
 }
 
-fn parse_field_directive(input: &str) -> IResult<&str, ast::Field> {
+fn parse_field_directive(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("@")(input)?;
     let (input, name) = parse_typename(input)?;
@@ -209,10 +214,9 @@ fn parse_field_directive(input: &str) -> IResult<&str, ast::Field> {
             ));
         }
         _ => {
-            return Err(nom::Err::Error(nom::error::Error::new(
-                input,
-                nom::error::ErrorKind::Tag,
-            )));
+            return Err(nom::Err::Error(VerboseError {
+                errors: vec![(input, VerboseErrorKind::Context("Unknown directive"))],
+            }));
         }
     }
 }
@@ -229,10 +233,10 @@ struct ToDetails {
 }
 
 fn link_field_to_details<'a, 'b>(
-    input: &'a str,
+    input: Text<'a>,
     linkname: &'b str,
     link_fields: Vec<LinkField>,
-) -> IResult<&'a str, ast::LinkDetails> {
+) -> ParseResult<'a, ast::LinkDetails> {
     let mut details = ast::LinkDetails {
         link_name: linkname.to_string(),
         local_ids: vec![],
@@ -245,10 +249,9 @@ fn link_field_to_details<'a, 'b>(
         match link {
             LinkField::From(idList) => {
                 if has_from {
-                    return Err(nom::Err::Error(nom::error::Error::new(
-                        input,
-                        nom::error::ErrorKind::Tag,
-                    )));
+                    return Err(nom::Err::Error(VerboseError {
+                        errors: vec![(input, VerboseErrorKind::Context("tag"))],
+                    }));
                 } else {
                     has_from = true;
                     details.local_ids = idList
@@ -256,10 +259,9 @@ fn link_field_to_details<'a, 'b>(
             }
             LinkField::To { table, id } => {
                 if has_to {
-                    return Err(nom::Err::Error(nom::error::Error::new(
-                        input,
-                        nom::error::ErrorKind::Tag,
-                    )));
+                    return Err(nom::Err::Error(VerboseError {
+                        errors: vec![(input, VerboseErrorKind::Context("tag"))],
+                    }));
                 } else {
                     has_to = true;
                     details.foreign_tablename = table;
@@ -272,13 +274,12 @@ fn link_field_to_details<'a, 'b>(
         return Ok((input, details));
     }
 
-    Err(nom::Err::Error(nom::error::Error::new(
-        input,
-        nom::error::ErrorKind::Tag,
-    )))
+    Err(nom::Err::Error(VerboseError {
+        errors: vec![(input, VerboseErrorKind::Context("tag"))],
+    }))
 }
 
-fn parse_link_field(input: &str) -> IResult<&str, LinkField> {
+fn parse_link_field(input: Text) -> ParseResult<LinkField> {
     let (input, _) = multispace0(input)?;
     let (input, name) = parse_fieldname(input)?;
     let (input, _) = multispace0(input)?;
@@ -309,21 +310,25 @@ fn parse_link_field(input: &str) -> IResult<&str, LinkField> {
             return Ok((input, LinkField::From(vec![from_field.to_string()])));
         }
         _ => {
-            return Err(nom::Err::Error(nom::error::Error::new(
-                input,
-                nom::error::ErrorKind::Tag,
-            )))
+            // return Err(nom::Err::Error(nom::error::Error::new(
+            //     input,
+            //     nom::error::ErrorKind::Tag,
+            // )))
+            return Err(nom::Err::Error(VerboseError {
+                errors: vec![(input, VerboseErrorKind::Context("tag"))],
+            }));
         }
     }
 }
 
-fn parse_column_field(input: &str) -> IResult<&str, ast::Field> {
+fn parse_column_field(input: Text) -> ParseResult<ast::Field> {
     let (input, column) = parse_column(input)?;
     Ok((input, ast::Field::Column(column)))
 }
 
-fn parse_column(input: &str) -> IResult<&str, ast::Column> {
+fn parse_column(input: Text) -> ParseResult<ast::Column> {
     let (input, _) = multispace0(input)?;
+    let (input, pos) = position(input)?;
     let (input, name) = parse_fieldname(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag(":")(input)?;
@@ -333,6 +338,11 @@ fn parse_column(input: &str) -> IResult<&str, ast::Column> {
     let (input, _) = multispace0(input)?;
     let (input, directives) = many0(parse_column_directive)(input)?;
 
+    // println!("{}", name);
+
+    let line = pos.location_line();
+    let column = pos.get_column();
+
     Ok((
         input,
         ast::Column {
@@ -341,16 +351,20 @@ fn parse_column(input: &str) -> IResult<&str, ast::Column> {
             nullable: is_nullable,
             serialization_type: to_serialization_type(type_),
             directives,
+            location: Some(ast::Location {
+                offset: pos.location_offset(),
+                line: pos.location_line(),
+            }),
         },
     ))
 }
 
-fn parse_nullable(input: &str) -> IResult<&str, bool> {
+fn parse_nullable(input: Text) -> ParseResult<bool> {
     let (input, maybeNullable) = opt(char('?'))(input)?;
     Ok((input, maybeNullable != None))
 }
 
-fn parse_column_directive(input: &str) -> IResult<&str, ast::ColumnDirective> {
+fn parse_column_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
     alt((
         parse_directive_named("id", ast::ColumnDirective::PrimaryKey),
         parse_directive_named("unique", ast::ColumnDirective::Unique),
@@ -358,7 +372,7 @@ fn parse_column_directive(input: &str) -> IResult<&str, ast::ColumnDirective> {
     ))(input)
 }
 
-fn parse_default_directive(input: &str) -> IResult<&str, ast::ColumnDirective> {
+fn parse_default_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
     let (input, _) = tag("@default(")(input)?;
 
     let (input, _) = multispace0(input)?;
@@ -371,19 +385,16 @@ fn parse_default_directive(input: &str) -> IResult<&str, ast::ColumnDirective> {
     Ok((input, ast::ColumnDirective::Default(default)))
 }
 
-fn parse_default_value(input: &str) -> IResult<&str, ast::DefaultValue> {
+fn parse_default_value(input: Text) -> ParseResult<ast::DefaultValue> {
     let (input, val) = parse_value(input)?;
     Ok((input, ast::DefaultValue::Value(val)))
 }
 
-fn parse_directive_named<'a, T>(
-    tag_str: &'a str,
-    value: T,
-) -> impl Fn(&'a str) -> IResult<&'a str, T> + 'a
+fn parse_directive_named<'a, T>(tag_str: &'a str, value: T) -> impl Fn(Text) -> ParseResult<T> + 'a
 where
     T: Clone + 'a,
 {
-    move |input: &'a str| {
+    move |input: Text| {
         let (input, _) = tag("@")(input)?;
         let (input, _) = tag(tag_str)(input)?;
         Ok((input, value.clone()))
@@ -402,11 +413,11 @@ fn to_serialization_type(type_: &str) -> ast::SerializationType {
     }
 }
 
-fn parse_type_separator(input: &str) -> IResult<&str, char> {
+fn parse_type_separator(input: Text) -> ParseResult<char> {
     delimited(multispace0, char('|'), multispace0)(input)
 }
 
-fn parse_tagged(input: &str) -> IResult<&str, ast::Definition> {
+fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = tag("type")(input)?;
     let (input, _) = multispace1(input)?;
     let (input, name) = parse_typename(input)?;
@@ -424,7 +435,7 @@ fn parse_tagged(input: &str) -> IResult<&str, ast::Definition> {
     ))
 }
 
-fn parse_variant(input: &str) -> IResult<&str, ast::Variant> {
+fn parse_variant(input: Text) -> ParseResult<ast::Variant> {
     let (input, name) = parse_typename(input)?;
     let (input, _) = multispace0(input)?;
     let (input, optionalFields) = opt(with_braces(parse_field))(input)?;
@@ -441,31 +452,41 @@ fn parse_variant(input: &str) -> IResult<&str, ast::Variant> {
 // Parse Query
 //
 
-pub fn parse_query(input: &str) -> Result<ast::QueryList, String> {
+pub fn parse_query(input_str: &str) -> Result<ast::QueryList, String> {
+    let input = Text::new(input_str);
     match parse_query_list(input) {
         Ok((remaining, query_list)) => {
-            if !remaining.is_empty() {
-                return Err(format!("Error: Unparsed input: {:?}", remaining));
-            } else {
-                return Ok(query_list);
-            }
+            return Ok(query_list);
         }
-        Err(e) => Err(format!("Error: {:?}", e)),
+        Err(e) => match e {
+            nom::Err::Incomplete(_) => {
+                return Err("Incomplete".to_string());
+            }
+            nom::Err::Error(error) => {
+                let err_text: String = error::convert_error(input, error);
+                return Err(err_text);
+            }
+            nom::Err::Failure(e) => {
+                // return Err(convert_error(Text::new(input), e));
+                return Err("Failure".to_string());
+            }
+        },
     }
 }
 
-fn parse_query_list(input: &str) -> IResult<&str, ast::QueryList> {
+fn parse_query_list(input: Text) -> ParseResult<ast::QueryList> {
     let (input, _) = multispace0(input)?;
-    let (input, queries) = many0(parse_query_def)(input)?;
+    let (input, queries) = many1(parse_query_def)(input)?;
     let (input, _) = multispace0(input)?;
+    let (input, _) = eof(input)?;
     Ok((input, ast::QueryList { queries }))
 }
 
-fn parse_query_def(input: &str) -> IResult<&str, ast::QueryDef> {
+fn parse_query_def(input: Text) -> ParseResult<ast::QueryDef> {
     alt((parse_query_comment, parse_query_details, parse_query_lines))(input)
 }
 
-fn parse_query_comment(input: &str) -> IResult<&str, ast::QueryDef> {
+fn parse_query_comment(input: Text) -> ParseResult<ast::QueryDef> {
     let (input, _) = tag("//")(input)?;
     let (input, text) = take_until("\n")(input)?;
     let (input, _) = newline(input)?;
@@ -477,7 +498,7 @@ fn parse_query_comment(input: &str) -> IResult<&str, ast::QueryDef> {
     ))
 }
 
-fn parse_query_lines(input: &str) -> IResult<&str, ast::QueryDef> {
+fn parse_query_lines(input: Text) -> ParseResult<ast::QueryDef> {
     // Parse any whitespace (spaces, tabs, or newlines)
     let (input, whitespaces) = many1(one_of(" \t\n"))(input)?;
 
@@ -487,7 +508,7 @@ fn parse_query_lines(input: &str) -> IResult<&str, ast::QueryDef> {
     Ok((input, ast::QueryDef::QueryLines { count }))
 }
 
-fn parse_query_details(input: &str) -> IResult<&str, ast::QueryDef> {
+fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
     let (input, op) = alt((
         parse_token("query", ast::QueryOperation::Select),
         parse_token("insert", ast::QueryOperation::Insert),
@@ -511,7 +532,7 @@ fn parse_query_details(input: &str) -> IResult<&str, ast::QueryDef> {
     ))
 }
 
-fn parse_query_param_definitions(input: &str) -> IResult<&str, Vec<ast::QueryParamDefinition>> {
+fn parse_query_param_definitions(input: Text) -> ParseResult<Vec<ast::QueryParamDefinition>> {
     let (input, _) = tag("(")(input)?;
     let (input, _) = multispace0(input)?;
     let (input, fields) =
@@ -521,11 +542,11 @@ fn parse_query_param_definitions(input: &str) -> IResult<&str, Vec<ast::QueryPar
     Ok((input, fields))
 }
 
-fn parse_param_separator(input: &str) -> IResult<&str, char> {
+fn parse_param_separator(input: Text) -> ParseResult<char> {
     delimited(multispace0, char(','), multispace0)(input)
 }
 
-fn parse_query_param_definition(input: &str) -> IResult<&str, ast::QueryParamDefinition> {
+fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefinition> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("$")(input)?;
     let (input, name) = parse_fieldname(input)?;
@@ -543,11 +564,11 @@ fn parse_query_param_definition(input: &str) -> IResult<&str, ast::QueryParamDef
     ))
 }
 
-fn with_braces<'a, F, T>(parse_term: F) -> impl Fn(&'a str) -> IResult<&'a str, Vec<T>>
+fn with_braces<'a, F, T>(parse_term: F) -> impl Fn(Text) -> ParseResult<Vec<T>>
 where
-    F: Fn(&'a str) -> IResult<&'a str, T>,
+    F: Fn(Text) -> ParseResult<T>,
 {
-    move |input: &'a str| {
+    move |input: Text| {
         let (input, _) = tag("{")(input)?;
         let (input, _) = multispace0(input)?;
         let (input, terms) = many0(&parse_term)(input)?;
@@ -557,35 +578,35 @@ where
     }
 }
 
-fn parse_set(input: &str) -> IResult<&str, ast::QueryValue> {
+fn parse_set(input: Text) -> ParseResult<ast::QueryValue> {
     let (input, _) = tag("=")(input)?;
     let (input, _) = multispace0(input)?;
     let (input, val) = parse_value(input)?;
     Ok((input, val))
 }
 
-fn parse_alias(input: &str) -> IResult<&str, String> {
+fn parse_alias(input: Text) -> ParseResult<String> {
     let (input, _) = tag(":")(input)?;
     let (input, _) = multispace0(input)?;
     let (input, alias) = parse_fieldname(input)?;
     Ok((input, alias.to_string()))
 }
 
-fn parse_arg_field(input: &str) -> IResult<&str, ast::ArgField> {
+fn parse_arg_field(input: Text) -> ParseResult<ast::ArgField> {
     alt((parse_query_arg_field, parse_arg))(input)
 }
 
-fn parse_arg(input: &str) -> IResult<&str, ast::ArgField> {
+fn parse_arg(input: Text) -> ParseResult<ast::ArgField> {
     let (input, arg) = parse_query_arg(input)?;
     Ok((input, ast::ArgField::Arg(arg)))
 }
 
-fn parse_query_arg_field(input: &str) -> IResult<&str, ast::ArgField> {
+fn parse_query_arg_field(input: Text) -> ParseResult<ast::ArgField> {
     let (input, q) = parse_query_field(input)?;
     Ok((input, ast::ArgField::Field(q)))
 }
 
-fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
+fn parse_query_field(input: Text) -> ParseResult<ast::QueryField> {
     let (input, _) = multispace0(input)?;
     let (input, name_or_alias) = parse_fieldname(input)?;
     let (input, alias_or_name) = opt(parse_alias)(input)?;
@@ -611,11 +632,11 @@ fn parse_query_field(input: &str) -> IResult<&str, ast::QueryField> {
     ))
 }
 
-fn parse_query_arg(input: &str) -> IResult<&str, ast::Arg> {
+fn parse_query_arg(input: Text) -> ParseResult<ast::Arg> {
     alt((parse_limit, parse_offset, parse_sort, parse_where))(input)
 }
 
-fn parse_limit(input: &str) -> IResult<&str, ast::Arg> {
+fn parse_limit(input: Text) -> ParseResult<ast::Arg> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("@limit")(input)?;
     let (input, _) = multispace1(input)?;
@@ -624,7 +645,7 @@ fn parse_limit(input: &str) -> IResult<&str, ast::Arg> {
     Ok((input, ast::Arg::Limit(val)))
 }
 
-fn parse_offset(input: &str) -> IResult<&str, ast::Arg> {
+fn parse_offset(input: Text) -> ParseResult<ast::Arg> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("@offset")(input)?;
     let (input, _) = multispace1(input)?;
@@ -632,7 +653,7 @@ fn parse_offset(input: &str) -> IResult<&str, ast::Arg> {
     Ok((input, ast::Arg::Offset(val)))
 }
 
-fn parse_sort(input: &str) -> IResult<&str, ast::Arg> {
+fn parse_sort(input: Text) -> ParseResult<ast::Arg> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("@sort")(input)?;
     let (input, _) = multispace1(input)?;
@@ -652,11 +673,11 @@ enum AndOr {
     Or,
 }
 
-fn parse_and_or(input: &str) -> IResult<&str, AndOr> {
+fn parse_and_or(input: Text) -> ParseResult<AndOr> {
     alt((parse_token("&&", AndOr::And), parse_token("||", AndOr::Or)))(input)
 }
 
-fn parse_where(input: &str) -> IResult<&str, ast::Arg> {
+fn parse_where(input: Text) -> ParseResult<ast::Arg> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("@where")(input)?;
     let (input, _) = multispace1(input)?;
@@ -664,7 +685,7 @@ fn parse_where(input: &str) -> IResult<&str, ast::Arg> {
     Ok((input, ast::Arg::Where(where_arg)))
 }
 
-fn parse_where_arg(input: &str) -> IResult<&str, ast::WhereArg> {
+fn parse_where_arg(input: Text) -> ParseResult<ast::WhereArg> {
     let (input, _) = multispace0(input)?;
     let (input, where_col) = parse_query_where(input)?;
     let (input, _) = multispace0(input)?;
@@ -682,7 +703,7 @@ fn parse_where_arg(input: &str) -> IResult<&str, ast::WhereArg> {
     }
 }
 
-fn parse_query_where(input: &str) -> IResult<&str, ast::WhereArg> {
+fn parse_query_where(input: Text) -> ParseResult<ast::WhereArg> {
     let (input, _) = multispace0(input)?;
     let (input, name) = parse_fieldname(input)?;
     let (input, _) = multispace0(input)?;
@@ -696,7 +717,7 @@ fn parse_query_where(input: &str) -> IResult<&str, ast::WhereArg> {
     ))
 }
 
-fn parse_operator(input: &str) -> IResult<&str, ast::Operator> {
+fn parse_operator(input: Text) -> ParseResult<ast::Operator> {
     alt((
         parse_token("=", ast::Operator::Equal),
         parse_token("<", ast::Operator::LessThan),
@@ -707,13 +728,13 @@ fn parse_operator(input: &str) -> IResult<&str, ast::Operator> {
     ))(input)
 }
 
-fn parse_variable(input: &str) -> IResult<&str, ast::QueryValue> {
+fn parse_variable(input: Text) -> ParseResult<ast::QueryValue> {
     let (input, _) = tag("$")(input)?;
     let (input, name) = parse_fieldname(input)?;
     Ok((input, ast::QueryValue::Variable(name.to_string())))
 }
 
-fn parse_value(input: &str) -> IResult<&str, ast::QueryValue> {
+fn parse_value(input: Text) -> ParseResult<ast::QueryValue> {
     alt((
         parse_token("null", ast::QueryValue::Null),
         parse_variable,
@@ -731,13 +752,13 @@ fn parse_value(input: &str) -> IResult<&str, ast::QueryValue> {
 //
 // Parses the first digits, starting with any character except 0
 // If there is a ., then it must be a `ast::Float`, otherwise it's an ast::Int.
-fn parse_number(input: &str) -> IResult<&str, ast::QueryValue> {
+fn parse_number(input: Text) -> ParseResult<ast::QueryValue> {
     let (input, first) = one_of("123456789")(input)?;
     let (input, rest) = take_while(|c: char| c.is_digit(10))(input)?;
     let (input, dot) = opt(tag("."))(input)?;
     let (input, tail) = take_while(|c: char| c.is_digit(10))(input)?;
 
-    let period = dot.unwrap_or("");
+    let period = if dot.is_some() { "." } else { "" };
 
     let value = format!("{}{}{}{}", first, rest, period, tail);
     if value.contains(".") {
@@ -747,28 +768,28 @@ fn parse_number(input: &str) -> IResult<&str, ast::QueryValue> {
     }
 }
 
-fn parse_int(input: &str) -> IResult<&str, usize> {
+fn parse_int(input: Text) -> ParseResult<usize> {
     let (input, value) = digit1(input)?;
     Ok((input, value.parse().unwrap()))
 }
 
-fn parse_string(input: &str) -> IResult<&str, ast::QueryValue> {
+fn parse_string(input: Text) -> ParseResult<ast::QueryValue> {
     let (input, value) = parse_string_literal(input)?;
     Ok((input, ast::QueryValue::String(value.to_string())))
 }
 
-fn parse_string_literal(input: &str) -> IResult<&str, &str> {
+fn parse_string_literal(input: Text) -> ParseResult<&str> {
     let (input, _) = tag("\"")(input)?;
     let (input, value) = take_until("\"")(input)?;
     let (input, _) = tag("\"")(input)?;
-    Ok((input, value))
+    Ok((input, value.fragment()))
 }
 
-fn parse_token<'a, T>(tag_str: &'a str, value: T) -> impl Fn(&'a str) -> IResult<&'a str, T> + 'a
+fn parse_token<'a, T>(tag_str: &'a str, value: T) -> impl Fn(Text) -> ParseResult<T> + 'a
 where
     T: Clone + 'a,
 {
-    move |input: &'a str| {
+    move |input: Text| {
         let (input, _) = tag(tag_str)(input)?;
         Ok((input, value.clone()))
     }

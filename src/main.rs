@@ -13,6 +13,7 @@ use walkdir::WalkDir;
 mod ast;
 mod db;
 mod diff;
+mod error;
 mod ext;
 mod format;
 mod generate;
