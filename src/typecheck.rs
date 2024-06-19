@@ -89,6 +89,18 @@ pub enum ErrorType {
     MultipleWheres {
         query: String,
     },
+    UndeclaredVariable {
+        variable: String,
+    },
+    WhereOnLinkIsntAllowed {
+        link_name: String,
+    },
+    TypeMismatch {
+        table: String,
+        column_defined_as: String,
+        variable_name: String,
+        variable_defined_as: String,
+    },
 }
 
 #[derive(Debug)]
@@ -512,6 +524,12 @@ pub fn check_queries<'a>(
     Ok(context)
 }
 
+enum ParamUsage {
+    Defined,
+    Used,
+    NotDefinedButUsed,
+}
+
 fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Query) {
     // We need to check
     // 1. The field exists on the record in the schema
@@ -521,6 +539,31 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
     //     2.a All defined params are used
     //     2.b Every used param is defined
     //
+    let mut param_names = HashMap::new();
+
+    // Param types make sense?
+    for param_def in &query.args {
+        match context.types.get(&param_def.type_) {
+            None => errors.push(Error {
+                error_type: ErrorType::UnknownType(param_def.type_.clone()),
+                location: Location {
+                    highlight: None,
+                    area: Range {
+                        start: Coord { line: 0, column: 0 },
+                        end: Coord { line: 0, column: 0 },
+                    },
+                },
+            }),
+            Some(_) => {}
+        }
+
+        param_names.insert(
+            param_def.name.clone(),
+            (ParamUsage::Defined, param_def.type_.clone()),
+        );
+    }
+
+    // Check fields
     for field in &query.fields {
         match context.tables.get(&field.name) {
             None => errors.push(Error {
@@ -536,8 +579,144 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
                     },
                 },
             }),
-            Some(table) => check_table_query(context, errors, table, field),
+            Some(table) => check_table_query(context, errors, table, field, &mut param_names),
         }
+    }
+}
+
+fn check_where_args(
+    context: &Context,
+    table: &ast::RecordDetails,
+    errors: &mut Vec<Error>,
+    params: &mut HashMap<String, (ParamUsage, String)>,
+    where_args: &ast::WhereArg,
+) {
+    match where_args {
+        ast::WhereArg::And(ands) => {
+            for and in ands {
+                check_where_args(context, table, errors, params, and);
+            }
+        }
+        ast::WhereArg::Or(ors) => {
+            for or in ors {
+                check_where_args(context, table, errors, params, or);
+            }
+        }
+        ast::WhereArg::Column(field_name, operator, query_val) => {
+            let mut is_known_field = false;
+            let mut column_type: Option<String> = None;
+            for col in &table.fields {
+                if is_known_field {
+                    continue;
+                }
+                match col {
+                    ast::Field::Column(column) => {
+                        if &column.name == field_name {
+                            is_known_field = true;
+                            column_type = Some(column.type_.clone());
+                        }
+                    }
+                    ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                        if &link.link_name == field_name {
+                            is_known_field = true;
+                            errors.push(Error {
+                                error_type: ErrorType::WhereOnLinkIsntAllowed {
+                                    link_name: field_name.clone(),
+                                },
+                                location: Location {
+                                    highlight: None,
+                                    area: Range {
+                                        start: Coord { line: 0, column: 0 },
+                                        end: Coord { line: 0, column: 0 },
+                                    },
+                                },
+                            })
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            if (!is_known_field) {
+                errors.push(Error {
+                    error_type: ErrorType::UnknownField {
+                        found: field_name.clone(),
+                    },
+                    location: Location {
+                        highlight: None,
+                        area: Range {
+                            start: Coord { line: 0, column: 0 },
+                            end: Coord { line: 0, column: 0 },
+                        },
+                    },
+                })
+            }
+
+            match column_type {
+                None => (),
+                Some(column_type_string) => {
+                    check_value(query_val, errors, params, &table.name, &column_type_string);
+                }
+            }
+
+            // Check if the field exists
+            // Get field type
+        }
+    }
+}
+
+fn check_value(
+    value: &ast::QueryValue,
+    errors: &mut Vec<Error>,
+    params: &mut HashMap<String, (ParamUsage, String)>,
+    table_name: &str,
+    table_type_string: &str,
+) {
+    match value {
+        ast::QueryValue::Variable(var) => match params.get_mut(var) {
+            None => {
+                errors.push(Error {
+                    error_type: ErrorType::UndeclaredVariable {
+                        variable: var.clone(),
+                    },
+                    location: Location {
+                        highlight: None,
+                        area: Range {
+                            start: Coord { line: 0, column: 0 },
+                            end: Coord { line: 0, column: 0 },
+                        },
+                    },
+                });
+                params.insert(
+                    var.to_string(),
+                    (ParamUsage::NotDefinedButUsed, String::new()),
+                );
+            }
+            Some((usage, type_string)) => {
+                if table_type_string != *type_string {
+                    errors.push(Error {
+                        error_type: ErrorType::TypeMismatch {
+                            table: table_name.to_string(),
+                            column_defined_as: table_type_string.to_string(),
+                            variable_name: var.clone(),
+                            variable_defined_as: type_string.clone(),
+                        },
+                        location: Location {
+                            highlight: None,
+                            area: Range {
+                                start: Coord { line: 0, column: 0 },
+                                end: Coord { line: 0, column: 0 },
+                            },
+                        },
+                    })
+                }
+                match usage {
+                    ParamUsage::Defined => *usage = ParamUsage::Used,
+                    ParamUsage::Used => {}
+                    ParamUsage::NotDefinedButUsed => {}
+                }
+            }
+        },
+        _ => {}
     }
 }
 
@@ -546,6 +725,7 @@ fn check_table_query(
     mut errors: &mut Vec<Error>,
     table: &ast::RecordDetails,
     query: &ast::QueryField,
+    params: &mut HashMap<String, (ParamUsage, String)>,
 ) {
     if query.fields.is_empty() {
         errors.push(Error {
@@ -571,7 +751,7 @@ fn check_table_query(
         match arg_field {
             ast::ArgField::Line { .. } => (),
             ast::ArgField::Arg(arg) => match arg {
-                ast::Arg::Limit { .. } => {
+                ast::Arg::Limit(limit_val) => {
                     if has_limit {
                         errors.push(Error {
                             error_type: ErrorType::MultipleLimits {
@@ -588,8 +768,10 @@ fn check_table_query(
                     } else {
                         has_limit = true;
                     }
+
+                    check_value(limit_val, errors, params, &table.name, "Int");
                 }
-                ast::Arg::Offset { .. } => {
+                ast::Arg::Offset(offset_value) => {
                     if has_offset {
                         errors.push(Error {
                             error_type: ErrorType::MultipleOffsets {
@@ -606,8 +788,10 @@ fn check_table_query(
                     } else {
                         has_offset = true;
                     }
+
+                    check_value(offset_value, errors, params, &table.name, "Int");
                 }
-                ast::Arg::Where { .. } => {
+                ast::Arg::Where(whereArgs) => {
                     if has_where {
                         errors.push(Error {
                             error_type: ErrorType::MultipleWheres {
@@ -624,6 +808,8 @@ fn check_table_query(
                     } else {
                         has_where = true;
                     }
+
+                    check_where_args(context, table, errors, params, whereArgs);
                 }
                 _ => (),
             },
@@ -663,7 +849,7 @@ fn check_table_query(
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                             if link.link_name == field.name {
                                 is_known_field = true;
-                                check_link(context, errors, link, field)
+                                check_link(context, errors, link, field, params)
                             }
                             ()
                         }
@@ -716,6 +902,7 @@ fn check_link(
     mut errors: &mut Vec<Error>,
     link: &ast::LinkDetails,
     field: &ast::QueryField,
+    params: &mut HashMap<String, (ParamUsage, String)>,
 ) {
     if (field.fields.is_empty()) {
         errors.push(Error {
@@ -748,7 +935,7 @@ fn check_link(
                     },
                 },
             }),
-            Some(table) => check_table_query(context, errors, table, field),
+            Some(table) => check_table_query(context, errors, table, field, params),
         }
     }
 }
