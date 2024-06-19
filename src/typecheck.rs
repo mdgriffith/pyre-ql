@@ -174,6 +174,9 @@ fn empty_context() -> Context {
     context.types.insert("Int".to_string(), DefType::Builtin);
     context.types.insert("Float".to_string(), DefType::Builtin);
     context.types.insert("Bool".to_string(), DefType::Builtin);
+    context
+        .types
+        .insert("DateTime".to_string(), DefType::Builtin);
 
     context
 }
