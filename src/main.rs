@@ -392,8 +392,10 @@ fn format_schema(options: &Options, schema_file_path: &str) -> io::Result<()> {
     schema_file.read_to_string(&mut schema_source_str)?;
 
     match parser::run(&schema_source_str) {
-        Ok(schema) => {
+        Ok(mut schema) => {
             // Format schema
+            format::schema(&mut schema);
+            // Output to schema
             let formatted = generate::format::schema_to_string(&schema);
             let path = Path::new(&schema_file_path);
             let mut output = fs::File::create(path).expect("Failed to create file");

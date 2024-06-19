@@ -12,8 +12,7 @@ pub fn schema(schem: &mut ast::Schema) {
         } else if !prev_was_lines {
             schem
                 .definitions
-                .insert(i, ast::Definition::Lines { count: 2 });
-            // prev_was_lines = true;
+                .insert(i, ast::Definition::Lines { count: 1 });
             // Move to the next element after insertion
             i += 1;
         } else {
@@ -22,7 +21,7 @@ pub fn schema(schem: &mut ast::Schema) {
         i += 1;
     }
 
-    let mut links: HashMap<String, Vec<ast::LinkDetails>> = HashMap::new();
+    let mut links: HashMap<String, Vec<(bool, ast::LinkDetails)>> = HashMap::new();
     // Get all links and calculate reciprocals
     for def in &schem.definitions {
         if let ast::Definition::Record { name, fields } = def {
@@ -30,9 +29,9 @@ pub fn schema(schem: &mut ast::Schema) {
             for field in fields {
                 match field {
                     ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                        add_link(&mut links, &name, &link);
+                        add_link(&mut links, &name, &link, true);
                         let reciprocal = ast::to_reciprocal(&name, link);
-                        add_link(&mut links, &link.foreign_tablename, &reciprocal);
+                        add_link(&mut links, &link.foreign_tablename, &reciprocal, false);
                     }
                     _ => (),
                 }
@@ -47,27 +46,54 @@ pub fn schema(schem: &mut ast::Schema) {
 }
 
 fn add_link(
-    links: &mut HashMap<String, Vec<ast::LinkDetails>>,
+    links: &mut HashMap<String, Vec<(bool, ast::LinkDetails)>>,
     tablename: &str,
     link: &ast::LinkDetails,
+    is_calculated: bool,
 ) {
     match links.get(tablename) {
         None => {
-            links.insert(tablename.to_string(), vec![link.clone()]);
+            links.insert(tablename.to_string(), vec![(is_calculated, link.clone())]);
         }
         Some(existing_links) => {
-            if existing_links.contains(&link) {
-                return;
+            enum LinkOp {
+                Append,
+                Skip,
+                Replace(usize),
             }
-            // Probably a fancier way to do this
-            let mut new_links = existing_links.clone();
-            new_links.push(link.clone());
-            links.insert(tablename.to_string(), new_links);
+            let mut op = LinkOp::Append;
+            for (i, (existing_calculated, existing_link)) in existing_links.iter().enumerate() {
+                if ast::link_equivalent(link, existing_link) {
+                    if (is_calculated) {
+                        // The new link is calculated
+                        // So we should skip this because it's already been added
+                        op = LinkOp::Skip
+                    } else if (*existing_calculated) {
+                        op = LinkOp::Replace(i);
+                    }
+                }
+            }
+            match op {
+                LinkOp::Append => {
+                    let mut new_links = existing_links.clone();
+                    new_links.push((is_calculated, link.clone()));
+                    links.insert(tablename.to_string(), new_links);
+                }
+                LinkOp::Skip => (),
+                LinkOp::Replace(i) => {
+                    let mut new_links = existing_links.clone();
+                    new_links[i] = (is_calculated, link.clone());
+                    links.insert(tablename.to_string(), new_links);
+                }
+            }
         }
     }
 }
 
-fn format_definition(def: &mut ast::Definition, links: &HashMap<String, Vec<ast::LinkDetails>>) {
+fn format_definition(
+    def: &mut ast::Definition,
+    links: &HashMap<String, Vec<(bool, ast::LinkDetails)>>,
+) {
     match def {
         ast::Definition::Lines { count } => {
             *count = std::cmp::max(1, std::cmp::min(*count, 2));
@@ -79,7 +105,7 @@ fn format_definition(def: &mut ast::Definition, links: &HashMap<String, Vec<ast:
 
             match links.get(name) {
                 Some(all_links) => {
-                    for link in all_links {
+                    for (is_calculated, link) in all_links {
                         fields.push(ast::Field::FieldDirective(ast::FieldDirective::Link(
                             link.clone(),
                         )));
@@ -89,11 +115,6 @@ fn format_definition(def: &mut ast::Definition, links: &HashMap<String, Vec<ast:
             }
 
             fields.sort_by(ast::column_order);
-            insert_after_last_instance(
-                fields,
-                ast::is_field_directive,
-                ast::Field::ColumnLines { count: 1 },
-            );
         }
     }
 }

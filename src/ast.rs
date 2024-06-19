@@ -111,6 +111,12 @@ pub fn is_column_space(field: &Field) -> bool {
     }
 }
 
+pub fn link_equivalent(a: &LinkDetails, b: &LinkDetails) -> bool {
+    a.foreign_tablename == b.foreign_tablename
+        && a.local_ids == b.local_ids
+        && a.foreign_ids == b.foreign_ids
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum FieldDirective {
     TableName(String),
