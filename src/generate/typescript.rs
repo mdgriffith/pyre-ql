@@ -217,15 +217,6 @@ fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
     }
 }
 
-fn to_json_type_decoder(type_: &str) -> String {
-    match type_ {
-        "String" => "Decode.string".to_string(),
-        "Int" => "Decode.int".to_string(),
-        "Float" => "Decode.float".to_string(),
-        _ => crate::ext::string::decapitalize(type_).to_string(),
-    }
-}
-
 fn to_type_decoder(type_: &str) -> String {
     match type_ {
         "String" => "Db.Read.string".to_string(),
@@ -709,6 +700,7 @@ fn to_ts_type_decoder(qualified: bool, type_: &str) -> String {
         "Int" => "Ark.number".to_string(),
         "Float" => "Ark.number".to_string(),
         "Bool" => "Ark.boolean".to_string(),
+        "DateTime" => "Ark.number".to_string(),
         _ => {
             let qualification = if qualified { "Decode." } else { "" };
             return format!("{}{}", qualification, type_).to_string();
