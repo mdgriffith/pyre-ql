@@ -1,7 +1,7 @@
 module Db.Read exposing
     ( Query, query
     , Decoder, succeed, field
-    , bool, string, int, float, nullable
+    , bool, string, int, float, dateTime, nullable
     , custom
     , id, nested
     , decodeValue, andDecode
@@ -13,7 +13,7 @@ module Db.Read exposing
 
 @docs Decoder, succeed, field
 
-@docs bool, string, int, float, nullable
+@docs bool, string, int, float, dateTime, nullable
 
 @docs custom
 
@@ -25,6 +25,7 @@ module Db.Read exposing
 
 import Json.Decode as Json
 import Set exposing (Set)
+import Time
 
 
 type Decoder a
@@ -92,6 +93,11 @@ custom decoder =
 int : Decoder Int
 int =
     Decoder (\_ _ -> Json.int)
+
+
+dateTime : Decoder Time.Posix
+dateTime =
+    Decoder (\_ _ -> Json.map Time.millisToPosix Json.int)
 
 
 string : Decoder String

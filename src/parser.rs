@@ -354,7 +354,26 @@ fn parse_column_directive(input: &str) -> IResult<&str, ast::ColumnDirective> {
     alt((
         parse_directive_named("id", ast::ColumnDirective::PrimaryKey),
         parse_directive_named("unique", ast::ColumnDirective::Unique),
+        parse_default_directive,
     ))(input)
+}
+
+fn parse_default_directive(input: &str) -> IResult<&str, ast::ColumnDirective> {
+    let (input, _) = tag("@default(")(input)?;
+
+    let (input, _) = multispace0(input)?;
+    let (input, default) = alt((
+        parse_token("now", ast::DefaultValue::Now),
+        parse_default_value,
+    ))(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag(")")(input)?;
+    Ok((input, ast::ColumnDirective::Default(default)))
+}
+
+fn parse_default_value(input: &str) -> IResult<&str, ast::DefaultValue> {
+    let (input, val) = parse_value(input)?;
+    Ok((input, ast::DefaultValue::Value(val)))
 }
 
 fn parse_directive_named<'a, T>(
