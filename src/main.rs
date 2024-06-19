@@ -35,6 +35,9 @@ struct Cli {
     out: Option<String>,
 
     #[arg(long, global = true)]
+    version: bool,
+
+    #[arg(long, global = true)]
     migrations: Option<String>,
 }
 
@@ -155,6 +158,11 @@ struct Options {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let cli = Cli::parse();
+
+    if let true = cli.version {
+        println!("0.1.0");
+        return Ok(());
+    }
 
     let options = Options {
         in_dir: cli.r#in.unwrap_or_else(|| "pyre".to_string()),
