@@ -117,6 +117,15 @@ pub enum ErrorType {
     MissingSetInInsert {
         field: String,
     },
+    LinksDisallowedInInserts {
+        field: String,
+    },
+    LinksDisallowedInDeletes {
+        field: String,
+    },
+    LinksDisallowedInUpdates {
+        field: String,
+    },
 }
 
 #[derive(Debug)]
@@ -1015,6 +1024,55 @@ fn check_link(
     field: &ast::QueryField,
     params: &mut HashMap<String, (ParamUsage, String)>,
 ) {
+    // Links are only allowed in selects at the moment
+    match operation {
+        ast::QueryOperation::Insert => {
+            errors.push(Error {
+                error_type: ErrorType::LinksDisallowedInInserts {
+                    field: link.link_name.clone(),
+                },
+                location: Location {
+                    highlight: None,
+                    area: Range {
+                        start: Coord { line: 0, column: 0 },
+                        end: Coord { line: 0, column: 0 },
+                    },
+                },
+            });
+            return ();
+        }
+        ast::QueryOperation::Update => {
+            errors.push(Error {
+                error_type: ErrorType::LinksDisallowedInUpdates {
+                    field: link.link_name.clone(),
+                },
+                location: Location {
+                    highlight: None,
+                    area: Range {
+                        start: Coord { line: 0, column: 0 },
+                        end: Coord { line: 0, column: 0 },
+                    },
+                },
+            });
+        }
+        ast::QueryOperation::Delete => {
+            errors.push(Error {
+                error_type: ErrorType::LinksDisallowedInDeletes {
+                    field: link.link_name.clone(),
+                },
+                location: Location {
+                    highlight: None,
+                    area: Range {
+                        start: Coord { line: 0, column: 0 },
+                        end: Coord { line: 0, column: 0 },
+                    },
+                },
+            });
+            return ();
+        }
+        _ => (),
+    }
+
     if (field.fields.is_empty()) {
         errors.push(Error {
             error_type: ErrorType::UnknownField {
