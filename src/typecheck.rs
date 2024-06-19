@@ -108,6 +108,15 @@ pub enum ErrorType {
         param: String,
         type_: String,
     },
+    NoSetsInSelect {
+        field: String,
+    },
+    NoSetsInDelete {
+        field: String,
+    },
+    MissingSetInInsert {
+        field: String,
+    },
 }
 
 #[derive(Debug)]
@@ -586,7 +595,14 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
                     },
                 },
             }),
-            Some(table) => check_table_query(context, errors, table, field, &mut param_names),
+            Some(table) => check_table_query(
+                context,
+                errors,
+                &query.operation,
+                table,
+                field,
+                &mut param_names,
+            ),
         }
     }
 
@@ -760,6 +776,7 @@ fn check_value(
 fn check_table_query(
     context: &Context,
     mut errors: &mut Vec<Error>,
+    operation: &ast::QueryOperation,
     table: &ast::RecordDetails,
     query: &ast::QueryField,
     params: &mut HashMap<String, (ParamUsage, String)>,
@@ -880,13 +897,13 @@ fn check_table_query(
                         ast::Field::Column(column) => {
                             if column.name == field.name {
                                 is_known_field = true;
-                                check_field(context, errors, column, field)
+                                check_field(context, operation, errors, column, field)
                             }
                         }
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                             if link.link_name == field.name {
                                 is_known_field = true;
-                                check_link(context, errors, link, field, params)
+                                check_link(context, operation, errors, link, field, params)
                             }
                             ()
                         }
@@ -914,6 +931,7 @@ fn check_table_query(
 
 fn check_field(
     context: &Context,
+    operation: &ast::QueryOperation,
     mut errors: &mut Vec<Error>,
     column: &ast::Column,
     field: &ast::QueryField,
@@ -932,10 +950,66 @@ fn check_field(
             },
         })
     }
+    match operation {
+        ast::QueryOperation::Select => {
+            if (field.set.is_some()) {
+                errors.push(Error {
+                    error_type: ErrorType::NoSetsInSelect {
+                        field: column.name.clone(),
+                    },
+                    location: Location {
+                        highlight: None,
+                        area: Range {
+                            start: Coord { line: 0, column: 0 },
+                            end: Coord { line: 0, column: 0 },
+                        },
+                    },
+                })
+            }
+        }
+        ast::QueryOperation::Insert => {
+            // Set is required
+            if (field.set.is_none()) {
+                errors.push(Error {
+                    error_type: ErrorType::MissingSetInInsert {
+                        field: column.name.clone(),
+                    },
+                    location: Location {
+                        highlight: None,
+                        area: Range {
+                            start: Coord { line: 0, column: 0 },
+                            end: Coord { line: 0, column: 0 },
+                        },
+                    },
+                })
+            }
+        }
+        ast::QueryOperation::Update => {
+            // Set is optional
+        }
+        ast::QueryOperation::Delete => {
+            // Setting is disallowed
+            if (field.set.is_some()) {
+                errors.push(Error {
+                    error_type: ErrorType::NoSetsInDelete {
+                        field: column.name.clone(),
+                    },
+                    location: Location {
+                        highlight: None,
+                        area: Range {
+                            start: Coord { line: 0, column: 0 },
+                            end: Coord { line: 0, column: 0 },
+                        },
+                    },
+                })
+            }
+        }
+    }
 }
 
 fn check_link(
     context: &Context,
+    operation: &ast::QueryOperation,
     mut errors: &mut Vec<Error>,
     link: &ast::LinkDetails,
     field: &ast::QueryField,
@@ -972,7 +1046,7 @@ fn check_link(
                     },
                 },
             }),
-            Some(table) => check_table_query(context, errors, table, field, params),
+            Some(table) => check_table_query(context, errors, operation, table, field, params),
         }
     }
 }
