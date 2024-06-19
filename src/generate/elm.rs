@@ -255,6 +255,10 @@ pub fn to_schema_encoders(schem: &ast::Schema) -> String {
         "module Db.Encode exposing (..)\n\nimport Db\nimport Json.Encode as Encode\n\n\n",
     );
 
+    result.push_str("dateTime : Time.Posix -> Encode.Value\n");
+    result.push_str("dateTime time =\n");
+    result.push_str("    Encode.string (Time.posixToMillis time)\n\n");
+
     for definition in &schem.definitions {
         result.push_str(&to_encoder_definition(definition));
     }
@@ -268,8 +272,12 @@ fn to_encoder_definition(definition: &ast::Definition) -> String {
         ast::Definition::Tagged { name, variants } => {
             let mut result = "".to_string();
 
-            result.push_str(&format!("encode{} : Db.{} -> Encode.Value\n", name, name));
-            result.push_str(&format!("encode{} input_ =\n", name));
+            result.push_str(&format!(
+                "{} : Db.{} -> Encode.Value\n",
+                string::decapitalize(name),
+                name
+            ));
+            result.push_str(&format!("{} input_ =\n", string::decapitalize(name)));
             result.push_str("    case input_ of\n");
             let mut is_first = true;
             for variant in variants {
@@ -334,7 +342,10 @@ fn to_field_encoder(is_first: bool, indent: usize, field: &ast::Field) -> String
 fn to_type_encoder(fieldname: &str, type_: &str) -> String {
     match type_ {
         "String" => "Encode.string".to_string(),
-        _ => format!("Db.encode{}", type_).to_string(),
+        "Int" => "Encode.int".to_string(),
+        "Float" => "Encode.float".to_string(),
+        "DateTime" => "Db.Encode.dateTime".to_string(),
+        _ => format!("Db.Encode.{}", string::decapitalize(type_)).to_string(),
     }
 }
 
