@@ -126,6 +126,12 @@ pub enum ErrorType {
     LinksDisallowedInUpdates {
         field: String,
     },
+    InsertColumnIsNotSet {
+        field: String,
+    },
+    InsertMissingColumn {
+        field: String,
+    },
 }
 
 #[derive(Debug)]
@@ -803,7 +809,7 @@ fn check_table_query(
         })
     }
 
-    let mut queried_fields: HashSet<String> = HashSet::new();
+    let mut queried_fields: HashMap<String, bool> = HashMap::new();
     let mut has_limit = false;
     let mut has_offset = false;
     let mut has_where = false;
@@ -879,7 +885,7 @@ fn check_table_query(
             ast::ArgField::Field(field) => {
                 let aliased_name = ast::get_aliased_name(field);
 
-                if queried_fields.contains(&aliased_name) {
+                if queried_fields.get(&aliased_name).is_some() {
                     errors.push(Error {
                         error_type: ErrorType::DuplicateQueryField {
                             query: table.name.clone(),
@@ -894,7 +900,7 @@ fn check_table_query(
                         },
                     });
                 } else {
-                    queried_fields.insert(aliased_name.clone());
+                    queried_fields.insert(aliased_name.clone(), field.set.is_some());
                 }
 
                 let mut is_known_field = false;
@@ -935,6 +941,44 @@ fn check_table_query(
                 }
             }
         }
+    }
+
+    match operation {
+        ast::QueryOperation::Insert => {
+            for col in ast::collect_columns(&table.fields) {
+                match queried_fields.get(&col.name) {
+                    Some(is_set) => {
+                        if (!is_set) {
+                            errors.push(Error {
+                                error_type: ErrorType::InsertColumnIsNotSet {
+                                    field: col.name.clone(),
+                                },
+                                location: Location {
+                                    highlight: None,
+                                    area: Range {
+                                        start: Coord { line: 0, column: 0 },
+                                        end: Coord { line: 0, column: 0 },
+                                    },
+                                },
+                            })
+                        }
+                    }
+                    None => errors.push(Error {
+                        error_type: ErrorType::InsertMissingColumn {
+                            field: col.name.clone(),
+                        },
+                        location: Location {
+                            highlight: None,
+                            area: Range {
+                                start: Coord { line: 0, column: 0 },
+                                end: Coord { line: 0, column: 0 },
+                            },
+                        },
+                    }),
+                }
+            }
+        }
+        _ => {}
     }
 }
 
