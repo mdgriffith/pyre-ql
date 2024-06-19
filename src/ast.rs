@@ -58,6 +58,12 @@ pub fn is_link(field: &Field) -> bool {
     }
 }
 
+pub fn is_primary_key(col: &Column) -> bool {
+    col.directives
+        .iter()
+        .any(|d| *d == ColumnDirective::PrimaryKey)
+}
+
 pub fn get_tablename(name: &str, fields: &Vec<Field>) -> String {
     for field in fields.iter() {
         match field {
@@ -176,9 +182,15 @@ pub struct Column {
 pub enum ColumnDirective {
     PrimaryKey,
     Unique,
-    // Default(String),
+    Default(DefaultValue),
     // Check(String),
-    // ForeignKey(String),
+}
+
+// CURRENT_TIME, CURRENT_DATE or CURRENT_TIMESTAMP
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub enum DefaultValue {
+    Now,
+    Value(QueryValue),
 }
 
 // https://sqlite.org/datatype3.html
@@ -343,7 +355,7 @@ pub enum WhereArg {
     Or(Vec<WhereArg>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum QueryValue {
     Variable(String),
     String(String),

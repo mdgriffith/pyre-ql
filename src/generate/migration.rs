@@ -1,6 +1,6 @@
 use crate::ast::{
-    collect_columns, get_tablename, ColumnDirective, Definition, Field, FieldDirective,
-    SerializationType, Variant,
+    collect_columns, get_tablename, Column, ColumnDirective, DefaultValue, Definition, Field,
+    FieldDirective, QueryValue, SerializationType, Variant,
 };
 use crate::diff::{DetailedRecordDiff, DetailedTaggedDiff, RecordChange, SchemaDiff, TaggedChange};
 
@@ -42,7 +42,7 @@ fn add_definition_sql(definition: &Definition) -> String {
                         f.name,
                         serialization_to_string(&f.serialization_type),
                         if f.nullable { "" } else { " NOT NULL" },
-                        column_directive_list_to_string(&f.directives),
+                        column_directive_list_to_string(&f, &f.directives),
                         serialization_comment_to_string(&f.serialization_type)
                     )
                 })
@@ -57,21 +57,45 @@ fn add_definition_sql(definition: &Definition) -> String {
     }
 }
 
-fn column_directive_list_to_string(directives: &Vec<ColumnDirective>) -> String {
+fn column_directive_list_to_string(column: &Column, directives: &Vec<ColumnDirective>) -> String {
     if directives.is_empty() {
         return "".to_string();
     }
 
-    let directive_strings: Vec<String> =
-        directives.iter().map(columne_directive_to_string).collect();
+    let directive_strings: Vec<String> = directives
+        .iter()
+        .map(|dir| column_directive_to_string(column, dir))
+        .collect();
 
     format!(" {}", directive_strings.join(" "))
 }
 
-fn columne_directive_to_string(directive: &ColumnDirective) -> String {
+fn column_directive_to_string(column: &Column, directive: &ColumnDirective) -> String {
     match directive {
         ColumnDirective::PrimaryKey => "primary key".to_string(),
         ColumnDirective::Unique => "unique".to_string(),
+        ColumnDirective::Default(def) => match def {
+            DefaultValue::Now => match column.type_.as_str() {
+                "Date" => "default current_date".to_string(),
+                "DateTime" => "default (unixepoch())".to_string(),
+                _ => "".to_string(),
+            },
+
+            DefaultValue::Value(value) => {
+                format!("default {}", value_to_string(&value))
+            }
+        },
+    }
+}
+
+fn value_to_string(value: &QueryValue) -> String {
+    match value {
+        QueryValue::Variable(name) => "".to_string(), // not allowed
+        QueryValue::String(value) => format!("'{}'", value),
+        QueryValue::Int(value) => value.to_string(),
+        QueryValue::Float(value) => value.to_string(),
+        QueryValue::Bool(value) => value.to_string(),
+        QueryValue::Null => "null".to_string(),
     }
 }
 

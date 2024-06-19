@@ -377,6 +377,8 @@ fn to_serialization_type(type_: &str) -> ast::SerializationType {
         "Int" => ast::SerializationType::Integer,
         "Float" => ast::SerializationType::Real,
         "Bool" => ast::SerializationType::Integer,
+        "DateTime" => ast::SerializationType::Integer,
+        "Date" => ast::SerializationType::Text,
         _ => ast::SerializationType::BlobWithSchema(type_.to_string()),
     }
 }

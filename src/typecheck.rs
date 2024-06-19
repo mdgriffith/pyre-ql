@@ -946,6 +946,12 @@ fn check_table_query(
     match operation {
         ast::QueryOperation::Insert => {
             for col in ast::collect_columns(&table.fields) {
+                if ast::is_primary_key(&col) {
+                    // Primary keys aren't required
+                    // (for the moment, we should differentiate between auto-incrementing
+                    // and non-auto-incrementing primary keys)
+                    continue;
+                }
                 match queried_fields.get(&col.name) {
                     Some(is_set) => {
                         if (!is_set) {
