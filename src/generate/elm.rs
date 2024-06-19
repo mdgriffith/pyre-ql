@@ -112,7 +112,7 @@ pub fn to_schema_decoders(schem: &ast::Schema) -> String {
     let mut result = String::new();
 
     result.push_str(
-        "module Db.Decode exposing (..)\n\nimport Db\nimport Db.Read\nimport Json.Decode as Decode\n\n\n",
+        "module Db.Decode exposing (..)\n\nimport Db\nimport Db.Read\nimport Json.Decode as Decode\nimport Time\n\n",
     );
 
     result.push_str("field : String -> Decode.Decoder a -> Decode.Decoder (a -> b) -> Decode.Decoder b\nfield fieldName_ fieldDecoder_ decoder_ =\n    decoder_ |> Decode.andThen (\\func -> Decode.field fieldName_ fieldDecoder_ |> Decode.map func)");
@@ -231,6 +231,7 @@ fn to_json_type_decoder(type_: &str) -> String {
         "String" => "Decode.string".to_string(),
         "Int" => "Decode.int".to_string(),
         "Float" => "Decode.float".to_string(),
+        "DateTime" => "Db.Read.dateTime".to_string(),
         _ => crate::ext::string::decapitalize(type_).to_string(),
     }
 }
@@ -369,6 +370,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     result.push_str("import Db.Encode\n");
     result.push_str("import Json.Decode as Decode\n");
     result.push_str("import Json.Encode as Encode\n");
+    result.push_str("import Time\n");
     result.push_str("\n\n");
 
     result.push_str(&to_param_type_alias(&query.args));
@@ -759,6 +761,7 @@ fn to_elm_typename(type_: &str) -> String {
         "Int" => type_.to_string(),
         "Float" => type_.to_string(),
         "Bool" => type_.to_string(),
+        "DateTime" => "Time.Posix".to_string(),
         _ => format!("Db.{}", type_).to_string(),
     }
 }
