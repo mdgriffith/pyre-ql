@@ -25,9 +25,37 @@ pub fn insert_to_string(
     query: &ast::Query,
     query_fields: &Vec<&ast::QueryField>,
 ) -> String {
-    let mut result = "insert\n".to_string();
     // INSERT INTO users (username, credit) VALUES ('john_doe', 100);
+    let mut field_names: Vec<String> = Vec::new();
+    let mut table_name = query.name.clone();
+    for table_field in query_fields {
+        let table = context.tables.get(&table_field.name).unwrap();
 
+        table_name = ast::get_tablename(&table.name, &table.fields);
+        let mut new_fieldnames = &to_fieldnames(
+            context,
+            &ast::get_aliased_name(&table_field),
+            table,
+            &ast::collect_query_fields(&table_field.fields),
+        );
+        field_names.append(&mut new_fieldnames.clone());
+    }
+
+    let mut result = format!("insert into {} ({})\n", table_name, field_names.join(", "));
+
+    let mut values: Vec<String> = Vec::new();
+    for table_field in query_fields {
+        let table = context.tables.get(&table_field.name).unwrap();
+        let mut new_values = &to_field_set_values(
+            context,
+            &ast::get_aliased_name(&table_field),
+            table,
+            &ast::collect_query_fields(&table_field.fields),
+        );
+        values.append(&mut new_values.clone());
+    }
+
+    result.push_str(&format!("values ({});", values.join(", ")));
     result
 }
 
@@ -42,7 +70,7 @@ pub fn update_to_string(
     // WHERE username = 'john_doe';
     //
     render_where(context, query_fields, &mut result);
-
+    result.push_str(";");
     result
 }
 
@@ -51,11 +79,19 @@ pub fn delete_to_string(
     query: &ast::Query,
     query_fields: &Vec<&ast::QueryField>,
 ) -> String {
-    let mut result = "delete\n".to_string();
+    let mut table_name = query.name.clone();
+    for table_field in query_fields {
+        let table = context.tables.get(&table_field.name).unwrap();
+
+        table_name = ast::get_tablename(&table.name, &table.fields);
+    }
+
+    let mut result = format!("delete from {}\n", table_name);
     // DELETE FROM users
     // WHERE username = 'john_doe';
 
     render_where(context, query_fields, &mut result);
+    result.push_str(";");
 
     result
 }
@@ -237,7 +273,7 @@ fn render_where(
         }
     }
 }
-
+// SELECT
 fn to_selection(
     context: &typecheck::Context,
     table_alias: &str,
@@ -374,6 +410,99 @@ fn to_subfrom(
 
         _ => vec![],
     }
+}
+
+// Field names
+
+fn to_fieldnames(
+    context: &typecheck::Context,
+    table_alias: &str,
+    table: &ast::RecordDetails,
+    fields: &Vec<&ast::QueryField>,
+) -> Vec<String> {
+    let mut result = vec![];
+
+    for field in fields {
+        let table_field = &table
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
+            .unwrap();
+
+        result.append(&mut to_table_fieldname(
+            2,
+            context,
+            &table.name,
+            table_alias,
+            &table_field,
+            &field,
+        ));
+    }
+
+    result
+}
+
+fn to_table_fieldname(
+    indent: usize,
+    context: &typecheck::Context,
+    table_name: &str,
+    table_alias: &str,
+    table_field: &ast::Field,
+    query_field: &ast::QueryField,
+) -> Vec<String> {
+    match table_field {
+        ast::Field::Column(column) => {
+            let spaces = " ".repeat(indent);
+            let str = query_field.name.to_string();
+            return vec![str];
+        }
+        // ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+        //     let spaces = " ".repeat(indent);
+
+        //     let foreign_table_alias = match query_field.alias {
+        //         Some(ref alias) => &alias,
+        //         None => &link.foreign_tablename,
+        //     };
+        //     let link_table = typecheck::get_linked_table(context, &link).unwrap();
+        //     return to_selection(
+        //         context,
+        //         &ast::get_aliased_name(&query_field),
+        //         link_table,
+        //         &ast::collect_query_fields(&query_field.fields),
+        //     );
+        // }
+        _ => vec![],
+    }
+}
+
+// SET values
+
+fn to_field_set_values(
+    context: &typecheck::Context,
+    table_alias: &str,
+    table: &ast::RecordDetails,
+    fields: &Vec<&ast::QueryField>,
+) -> Vec<String> {
+    let mut result = vec![];
+
+    for field in fields {
+        let table_field = &table
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
+            .unwrap();
+
+        match &field.set {
+            None => (),
+            Some(val) => {
+                let spaces = " ".repeat(2);
+                let str = render_value(&val);
+                result.push(str);
+            }
+        }
+    }
+
+    result
 }
 
 // WHERE
