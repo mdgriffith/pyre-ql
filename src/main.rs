@@ -6,7 +6,7 @@ use generate::migration;
 use serde_json;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio;
 use walkdir::WalkDir;
 
@@ -88,9 +88,13 @@ fn out(options: &Options, file: &str) -> String {
     format!("{}/{}", options.out_dir, file)
 }
 
+fn out_path(options: &Options, file: &str) -> PathBuf {
+    Path::new(&options.out_dir).join(file)
+}
+
 fn generate_elm_schema(options: &Options, schema: &ast::Schema) -> io::Result<()> {
-    create_dir_if_not_exists(&out(options, "elm"));
-    create_dir_if_not_exists(&out(options, "elm/Db"));
+    create_dir_if_not_exists(&out_path(options, "elm"));
+    create_dir_if_not_exists(&out_path(options, "elm").join("Db"));
 
     let formatted_elm = generate::elm::schema(&schema);
 
@@ -126,8 +130,8 @@ fn generate_elm_schema(options: &Options, schema: &ast::Schema) -> io::Result<()
 fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Result<()> {
     let formatted_ts = generate::typescript::schema(&schema);
 
-    create_dir_if_not_exists(&out(options, "typescript"));
-    create_dir_if_not_exists(&out(options, "typescript/db"));
+    create_dir_if_not_exists(&out_path(options, "typescript"));
+    create_dir_if_not_exists(&out_path(options, "typescript").join("db"));
 
     // Top level TS files
     let ts_db_path = out(options, "typescript/db.ts");
@@ -200,20 +204,15 @@ async fn main() -> io::Result<()> {
                 Ok(conn) => {
                     let introspection_result = db::introspect(&conn).await;
                     match introspection_result {
-                        Ok(introspection) => {
-                            println!("Writing Schema");
-                            write_schema("./found.schema.pyre", &introspection.schema);
+                        Ok(mut introspection) => {
+                            let path: PathBuf = Path::new(&options.in_dir).join("schema.pyre");
+                            println!("Schema written to {:?}", path.to_str());
+                            write_schema(path, &introspection.schema);
                         }
                         Err(e) => {
                             println!("Failed to connect to database: {:?}", e);
                         }
                     }
-
-                    // println!("{:?}", introspection);
-
-                    // generate_elm_schema(&options, &schema).expect("Failed to generate Elm schema");
-                    // generate_typescript_schema(&options, &schema)
-                    // .expect("Failed to generate TS schema");
                 }
                 Err(e) => {
                     println!("Failed to connect to database: {:?}", e);
@@ -268,6 +267,19 @@ async fn main() -> io::Result<()> {
                                                     let current_date = chrono::Utc::now()
                                                         .format("%Y%m%d%H%M")
                                                         .to_string();
+
+                                                    let migration_dir =
+                                                        Path::new(&options.migration_dir);
+
+                                                    create_dir_if_not_exists(&migration_dir);
+
+                                                    let new_folder =
+                                                        format!("{}_{}", current_date, name);
+
+                                                    let full_path: PathBuf =
+                                                        migration_dir.join(new_folder);
+
+                                                    create_dir_if_not_exists(&full_path);
 
                                                     // Write the migration file
                                                     let migration_file_path = format!(
@@ -361,7 +373,7 @@ async fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn create_dir_if_not_exists(path: &str) -> io::Result<()> {
+fn create_dir_if_not_exists(path: &Path) -> io::Result<()> {
     let path = Path::new(path);
 
     // Check if the path exists and is a directory
@@ -418,10 +430,9 @@ fn format_schema(options: &Options, schema_file_path: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn write_schema(schema_file_path: &str, schema: &ast::Schema) -> io::Result<()> {
+fn write_schema(path: PathBuf, schema: &ast::Schema) -> io::Result<()> {
     // Format schema
     let formatted = generate::format::schema_to_string(&schema);
-    let path = Path::new(&schema_file_path);
     let mut output = fs::File::create(path);
     match output {
         Ok(mut file) => {
@@ -484,11 +495,12 @@ fn execute(options: &Options, paths: Found) -> io::Result<()> {
 
                                 match typecheck_result {
                                     Ok(typecheck_context) => {
-                                        create_dir_if_not_exists(&out(&options, "elm/Query"));
-                                        create_dir_if_not_exists(&out(
-                                            &options,
-                                            "typescript/query",
-                                        ));
+                                        create_dir_if_not_exists(
+                                            &out_path(&options, "elm").join("Query"),
+                                        );
+                                        create_dir_if_not_exists(
+                                            &out_path(&options, "typescript").join("query"),
+                                        );
                                         generate::elm::write_queries(
                                             &out(&options, "elm"),
                                             &typecheck_context,
