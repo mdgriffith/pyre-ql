@@ -130,6 +130,16 @@ pub enum FieldDirective {
     Link(LinkDetails),
 }
 
+pub fn link_identity(local_table: &str, link: &LinkDetails) -> String {
+    format!(
+        "{}_{}_{}_{}_fk",
+        local_table,
+        &link.local_ids.join("_"),
+        link.foreign_tablename,
+        &link.foreign_ids.join("_"),
+    )
+}
+
 pub fn to_reciprocal(local_table: &str, link: &LinkDetails) -> LinkDetails {
     LinkDetails {
         link_name: string::pluralize(&string::decapitalize(local_table)),
@@ -157,6 +167,17 @@ pub fn collect_columns(fields: &Vec<Field>) -> Vec<Column> {
         }
     }
     columns
+}
+
+pub fn collect_links(fields: &Vec<Field>) -> Vec<LinkDetails> {
+    let mut links = Vec::new();
+    for field in fields {
+        match field {
+            Field::FieldDirective(FieldDirective::Link(link)) => links.push(link.clone()),
+            _ => {}
+        }
+    }
+    links
 }
 
 pub fn column_order(a: &Field, b: &Field) -> std::cmp::Ordering {

@@ -127,13 +127,17 @@ struct MigrationRun {
 }
 
 fn read_serialization_type(serialization_type: &str) -> ast::SerializationType {
-    match serialization_type {
-        "INTEGER" => ast::SerializationType::Integer,
-        "TEXT" => ast::SerializationType::Text,
-        "REAL" => ast::SerializationType::Real,
-        "BLOB" => ast::SerializationType::BlobWithSchema("Schema".to_string()),
-        "DATETIME" => ast::SerializationType::Text,
-        _ => ast::SerializationType::Text,
+    if serialization_type.contains("INT") {
+        ast::SerializationType::Integer
+    } else {
+        match serialization_type {
+            "INTEGER" => ast::SerializationType::Integer,
+            "TEXT" => ast::SerializationType::Text,
+            "REAL" => ast::SerializationType::Real,
+            "BLOB" => ast::SerializationType::BlobWithSchema("Schema".to_string()),
+            "DATETIME" => ast::SerializationType::Text,
+            _ => ast::SerializationType::Text,
+        }
     }
 }
 
@@ -260,6 +264,7 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                     // Prepare Schema
                     let mut schema = ast::Schema { definitions };
                     format::schema(&mut schema);
+                    format::schema(&mut schema);
 
                     Ok(Introspection {
                         schema,
@@ -281,14 +286,18 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
 }
 
 fn to_column_type(column_type: &str) -> String {
-    match column_type {
-        "INTEGER" => "Int".to_string(),
-        "TEXT" => "String".to_string(),
-        "REAL" => "Float".to_string(),
-        "BLOB" => "Blob".to_string(),
-        "DATETIME" => "DateTime".to_string(),
-        "BOOLEAN" => "Bool".to_string(),
-        _ => column_type.to_string(),
+    if column_type.contains("INT") {
+        "Int".to_string()
+    } else {
+        match column_type {
+            "INTEGER" => "Int".to_string(),
+            "TEXT" => "String".to_string(),
+            "REAL" => "Float".to_string(),
+            "BLOB" => "Blob".to_string(),
+            "DATETIME" => "DateTime".to_string(),
+            "BOOLEAN" => "Bool".to_string(),
+            _ => column_type.to_string(),
+        }
     }
 }
 

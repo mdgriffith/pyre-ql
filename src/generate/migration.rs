@@ -1,8 +1,9 @@
 use crate::ast::{
-    collect_columns, get_tablename, Column, ColumnDirective, DefaultValue, Definition, Field,
-    FieldDirective, QueryValue, SerializationType, Variant,
+    collect_columns, collect_links, get_tablename, link_identity, Column, ColumnDirective,
+    DefaultValue, Definition, Field, FieldDirective, QueryValue, SerializationType, Variant,
 };
 use crate::diff::{DetailedRecordDiff, DetailedTaggedDiff, RecordChange, SchemaDiff, TaggedChange};
+use crate::ext::string;
 
 pub fn to_sql(diff: &SchemaDiff) -> String {
     let mut sql_statements = Vec::new();
@@ -39,18 +40,37 @@ fn add_definition_sql(definition: &Definition) -> String {
                 .map(|f| {
                     format!(
                         "{} {}{}{}{}",
-                        f.name,
+                        string::quote(&f.name),
                         serialization_to_string(&f.serialization_type),
-                        if f.nullable { "" } else { " NOT NULL" },
+                        if f.nullable { "" } else { " not null" },
                         column_directive_list_to_string(&f, &f.directives),
                         serialization_comment_to_string(&f.serialization_type)
                     )
                 })
                 .collect();
+
+            let link_constraints: Vec<String> = collect_links(fields)
+                .iter()
+                .map(|link| {
+                    format!(
+                        "constraint {} foreign key ({}) references {} ({})",
+                        string::quote(&link_identity(&name, &link)),
+                        string::quote(&link.local_ids.join(", ")),
+                        string::quote(&link.foreign_tablename),
+                        string::quote(&link.foreign_ids.join(", "))
+                    )
+                })
+                .collect();
+
             format!(
-                "create table {} (\n    {}\n);",
-                name,
-                fields_sql.join(",\n    ")
+                "create table {} (\n    {}\n{}\n);",
+                string::quote(&name),
+                fields_sql.join(",\n    "),
+                if link_constraints.is_empty() {
+                    "".to_string()
+                } else {
+                    link_constraints.join(",\n    ")
+                }
             )
         }
         _ => "".to_string(),
