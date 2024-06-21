@@ -1,5 +1,6 @@
 use crate::ast;
 use crate::error;
+use nom::bytes::complete::take_while1;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while},
@@ -72,13 +73,16 @@ fn is_lowercase_char(c: char) -> bool {
     c.is_ascii_lowercase()
 }
 
-// A parser for a lowercase letter followed by alphanumeric characters
 fn parse_fieldname(input: Text) -> ParseResult<&str> {
-    // let (input, start) = recognize(char::is_lowercase)(input)?;
-    // let (input, rest) = take_while(|c: char| c.is_alphanumeric())(input)?;
-    // Ok((input, &input[start.len()..]))
-    let (input, name) = alphanumeric1(input)?;
-    Ok((input, name.fragment()))
+    let (input, val) = recognize(tuple((
+        alt((
+            take_while1(|c: char| c.is_lowercase()), // First character can be lowercase
+            take_while1(|c: char| c == '_'),         // or an underscore
+        )),
+        many0(alt((alphanumeric1, take_while1(|c: char| c == '_')))), // Followed by alphanumeric or underscores
+    )))(input)?;
+
+    Ok((input, val.fragment()))
 }
 
 fn parse_record(input: Text) -> ParseResult<ast::Definition> {
