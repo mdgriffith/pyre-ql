@@ -15,7 +15,7 @@ use nom::{
 };
 use nom_locate::{position, LocatedSpan};
 
-type Text<'a> = LocatedSpan<&'a str>;
+pub type Text<'a> = LocatedSpan<&'a str>;
 
 type ParseResult<'a, Output> = IResult<Text<'a>, Output, VerboseError<Text<'a>>>;
 // type ParseResult<'a, Output> = IResult<&'a str, Output, Error<&'a str>>;
@@ -756,19 +756,23 @@ fn parse_value(input: Text) -> ParseResult<ast::QueryValue> {
 //
 // Parses the first digits, starting with any character except 0
 // If there is a ., then it must be a `ast::Float`, otherwise it's an ast::Int.
-fn parse_number(input: Text) -> ParseResult<ast::QueryValue> {
-    let (input, first) = one_of("123456789")(input)?;
-    let (input, rest) = take_while(|c: char| c.is_digit(10))(input)?;
-    let (input, dot) = opt(tag("."))(input)?;
-    let (input, tail) = take_while(|c: char| c.is_digit(10))(input)?;
-
-    let period = if dot.is_some() { "." } else { "" };
-
-    let value = format!("{}{}{}{}", first, rest, period, tail);
-    if value.contains(".") {
-        Ok((input, ast::QueryValue::Float(value.parse().unwrap())))
+pub fn parse_number(input: Text) -> ParseResult<ast::QueryValue> {
+    let (input, first) = one_of("1234567890")(input)?;
+    if first == '0' {
+        Ok((input, ast::QueryValue::Int(0)))
     } else {
-        Ok((input, ast::QueryValue::Int(value.parse().unwrap())))
+        let (input, rest) = take_while(|c: char| c.is_digit(10))(input)?;
+        let (input, dot) = opt(tag("."))(input)?;
+        let (input, tail) = take_while(|c: char| c.is_digit(10))(input)?;
+
+        let period = if dot.is_some() { "." } else { "" };
+
+        let value = format!("{}{}{}{}", first, rest, period, tail);
+        if value.contains(".") {
+            Ok((input, ast::QueryValue::Float(value.parse().unwrap())))
+        } else {
+            Ok((input, ast::QueryValue::Int(value.parse().unwrap())))
+        }
     }
 }
 
