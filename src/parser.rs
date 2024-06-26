@@ -90,17 +90,8 @@ fn parse_record(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = multispace1(input)?;
     let (input, name) = parse_typename(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, unsorted_fields) = with_braces(parse_field)(input)?;
+    let (input, fields) = with_braces(parse_field)(input)?;
     let (input, _) = newline(input)?;
-
-    let mut fields = unsorted_fields.clone();
-
-    fields.sort_by(ast::column_order);
-    insert_after_last_instance(
-        &mut fields,
-        ast::is_field_directive,
-        ast::Field::ColumnLines { count: 1 },
-    );
 
     Ok((
         input,
@@ -109,58 +100,6 @@ fn parse_record(input: Text) -> ParseResult<ast::Definition> {
             fields,
         },
     ))
-}
-
-fn insert_after_first_instance<T, F>(vec: &mut Vec<T>, predicate: F, value: T)
-where
-    F: Fn(&T) -> bool,
-{
-    if let Some(pos) = vec.iter().position(predicate) {
-        vec.insert(pos + 1, value);
-    }
-}
-
-fn insert_after_last_instance<T, F>(vec: &mut Vec<T>, predicate: F, value: T)
-where
-    F: Fn(&T) -> bool,
-{
-    if let Some(pos) = vec.iter().rev().position(predicate) {
-        vec.insert(vec.len() - pos, value);
-    }
-}
-
-fn insert_after_first_instance_continuous<T, F, IfPrevious>(
-    vec: &mut Vec<T>,
-    predicate: F,
-    insert_if_previous: IfPrevious,
-    value: T,
-) where
-    F: Fn(&T) -> bool,
-    IfPrevious: Fn(Option<&T>) -> bool,
-    T: Clone,
-{
-    let mut in_sequence = false;
-    let mut indices: Vec<usize> = vec![];
-    let mut target_index = 0;
-    let mut previous_item: Option<&T> = None;
-
-    for (i, item) in vec.iter().enumerate() {
-        if predicate(item) {
-            if !in_sequence & insert_if_previous(previous_item) {
-                in_sequence = true;
-                indices.push(target_index);
-                target_index = target_index + 1;
-            }
-        } else {
-            in_sequence = false;
-        }
-        previous_item = Some(item);
-        target_index = target_index + 1;
-    }
-
-    for index in indices {
-        vec.insert(index, value.clone());
-    }
 }
 
 fn parse_field(input: Text) -> ParseResult<ast::Field> {

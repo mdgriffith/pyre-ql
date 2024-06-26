@@ -100,7 +100,10 @@ fn format_definition(
         }
         ast::Definition::Comment { text } => (),
         ast::Definition::Tagged { name, variants } => (),
-        ast::Definition::Record { name, fields } => {
+        ast::Definition::Record {
+            name,
+            ref mut fields,
+        } => {
             fields.retain(|field| !ast::is_link(field));
 
             match links.get(name) {
@@ -115,6 +118,12 @@ fn format_definition(
             }
 
             fields.sort_by(ast::column_order);
+
+            insert_after_last_instance(
+                fields,
+                ast::is_field_directive,
+                ast::Field::ColumnLines { count: 1 },
+            );
         }
     }
 }

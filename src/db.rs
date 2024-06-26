@@ -302,7 +302,6 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                     // Prepare Schema
                     let mut schema = ast::Schema { definitions };
                     format::schema(&mut schema);
-                    format::schema(&mut schema);
 
                     Ok(Introspection {
                         schema,

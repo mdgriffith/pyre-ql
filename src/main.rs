@@ -207,6 +207,7 @@ async fn main() -> io::Result<()> {
                         Ok(mut introspection) => {
                             let path: PathBuf = Path::new(&options.in_dir).join("schema.pyre");
                             println!("Schema written to {:?}", path.to_str());
+
                             write_schema(path, &introspection.schema);
                         }
                         Err(e) => {
