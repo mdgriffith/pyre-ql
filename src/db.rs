@@ -1,6 +1,7 @@
 use crate::ast;
 use crate::ext::string;
 use crate::format;
+use crate::parser;
 use libsql;
 use serde;
 use std::collections::HashMap;
@@ -188,7 +189,6 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                             let fk_result = libsql::de::from_row::<ForeignKey>(&fk_row);
                             match fk_result {
                                 Ok(fk) => {
-                                    // if fk.table == table.name && fk.from == table_info.name {
                                     fields.push(ast::Field::FieldDirective(
                                         ast::FieldDirective::Link(ast::LinkDetails {
                                             link_name: to_formatted_tablename_lower(&fk.table),
@@ -198,7 +198,6 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                                             foreign_ids: vec![fk.to],
                                         }),
                                     ));
-                                    // }
                                 }
                                 Err(e) => {
                                     println!("{:?}", e);
@@ -220,6 +219,45 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
 
                             if table_info.pk {
                                 directives.push(ast::ColumnDirective::PrimaryKey);
+                            }
+
+                            match table_info.dflt_value {
+                                None => (),
+                                Some(str) => {
+                                    if str.to_lowercase() == "current_timestamp" {
+                                        directives.push(ast::ColumnDirective::Default(
+                                            ast::DefaultValue::Now,
+                                        ));
+                                    } else if str == "true" {
+                                        directives.push(ast::ColumnDirective::Default(
+                                            ast::DefaultValue::Value(ast::QueryValue::Bool(true)),
+                                        ));
+                                    } else if str == "false" {
+                                        directives.push(ast::ColumnDirective::Default(
+                                            ast::DefaultValue::Value(ast::QueryValue::Bool(false)),
+                                        ));
+                                    } else if str.starts_with("'") {
+                                        let mut my_string = str.trim_matches('\'');
+
+                                        directives.push(ast::ColumnDirective::Default(
+                                            ast::DefaultValue::Value(ast::QueryValue::String(
+                                                my_string.to_string(),
+                                            )),
+                                        ));
+                                    } else {
+                                        let parsed = parser::parse_number(parser::Text::new(&str));
+                                        match parsed {
+                                            Ok((_, val)) => {
+                                                directives.push(ast::ColumnDirective::Default(
+                                                    ast::DefaultValue::Value(val),
+                                                ));
+                                            }
+                                            Err(err) => {
+                                                println!("Unrecognized default {}", str)
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             // Capture fields
