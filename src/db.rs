@@ -270,13 +270,16 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                                     &table_info.column_type,
                                 ),
                                 directives,
-                                location: None,
+                                start: None,
+                                end: None,
                             }));
                         }
 
                         definitions.push(ast::Definition::Record {
                             name: to_formatted_tablename(&table.name),
                             fields,
+                            start: None,
+                            end: None,
                         })
                     }
 

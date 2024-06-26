@@ -24,7 +24,13 @@ pub fn schema(schem: &mut ast::Schema) {
     let mut links: HashMap<String, Vec<(bool, ast::LinkDetails)>> = HashMap::new();
     // Get all links and calculate reciprocals
     for def in &schem.definitions {
-        if let ast::Definition::Record { name, fields } = def {
+        if let ast::Definition::Record {
+            name,
+            fields,
+            start,
+            end,
+        } = def
+        {
             // let tablename = ast::get_tablename(name, fields);
             for field in fields {
                 match field {
@@ -99,10 +105,17 @@ fn format_definition(
             *count = std::cmp::max(1, std::cmp::min(*count, 2));
         }
         ast::Definition::Comment { text } => (),
-        ast::Definition::Tagged { name, variants } => (),
+        ast::Definition::Tagged {
+            name,
+            variants,
+            start,
+            end,
+        } => (),
         ast::Definition::Record {
             name,
             ref mut fields,
+            start,
+            end,
         } => {
             fields.retain(|field| !ast::is_link(field));
 

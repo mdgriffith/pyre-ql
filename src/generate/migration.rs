@@ -33,7 +33,12 @@ pub fn to_sql(diff: &SchemaDiff) -> String {
 
 fn add_definition_sql(definition: &Definition) -> String {
     match definition {
-        Definition::Record { name, fields } => {
+        Definition::Record {
+            name,
+            fields,
+            start,
+            end,
+        } => {
             let name = get_tablename(&name, &fields);
             let fields_sql: Vec<String> = collect_columns(fields)
                 .iter()

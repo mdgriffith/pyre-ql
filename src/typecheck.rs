@@ -198,7 +198,12 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
 
     for definition in &schem.definitions {
         match definition {
-            ast::Definition::Record { name, fields } => {
+            ast::Definition::Record {
+                name,
+                fields,
+                start,
+                end,
+            } => {
                 if context.types.contains_key(name) {
                     errors.push(Error {
                         error_type: ErrorType::DuplicateDefinition(name.clone()),
@@ -262,7 +267,12 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
 
     for definition in &schem.definitions {
         match definition {
-            ast::Definition::Record { name, fields } => {
+            ast::Definition::Record {
+                name,
+                fields,
+                start,
+                end,
+            } => {
                 let mut tablenames: Vec<String> = Vec::new();
                 let mut has_primary_id = false;
                 let mut field_names = HashSet::new();
@@ -465,7 +475,12 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
     // Check definitions
     for definition in &schem.definitions {
         match definition {
-            ast::Definition::Record { name, fields } => {
+            ast::Definition::Record {
+                name,
+                fields,
+                start,
+                end,
+            } => {
                 let mut field_names = HashSet::new();
                 for field in ast::collect_columns(fields) {
                     // Type exists check
@@ -501,10 +516,20 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                     field_names.insert(field.name.clone());
                 }
             }
-            ast::Definition::Tagged { name, variants } => {
+            ast::Definition::Tagged {
+                name,
+                variants,
+                start,
+                end,
+            } => {
                 for variant in variants {
                     match variant {
-                        ast::Variant { name, data } => {
+                        ast::Variant {
+                            name,
+                            data,
+                            start,
+                            end,
+                        } => {
                             if let Some(fields) = data {
                                 for field in ast::collect_columns(fields) {
                                     if !context.types.contains_key(&field.type_) {

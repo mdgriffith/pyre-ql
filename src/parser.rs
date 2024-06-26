@@ -86,11 +86,13 @@ fn parse_fieldname(input: Text) -> ParseResult<&str> {
 }
 
 fn parse_record(input: Text) -> ParseResult<ast::Definition> {
+    let (input, start_pos) = position(input)?;
     let (input, _) = tag("record")(input)?;
     let (input, _) = multispace1(input)?;
     let (input, name) = parse_typename(input)?;
     let (input, _) = multispace0(input)?;
     let (input, fields) = with_braces(parse_field)(input)?;
+    let (input, end_pos) = position(input)?;
     let (input, _) = newline(input)?;
 
     Ok((
@@ -98,6 +100,8 @@ fn parse_record(input: Text) -> ParseResult<ast::Definition> {
         ast::Definition::Record {
             name: name.to_string(),
             fields,
+            start: Some(to_location(start_pos)),
+            end: Some(to_location(end_pos)),
         },
     ))
 }
@@ -269,9 +273,17 @@ fn parse_column_field(input: Text) -> ParseResult<ast::Field> {
     Ok((input, ast::Field::Column(column)))
 }
 
+fn to_location(pos: LocatedSpan<&str>) -> ast::Location {
+    ast::Location {
+        offset: pos.location_offset(),
+        line: pos.location_line(),
+        column: pos.get_column(),
+    }
+}
+
 fn parse_column(input: Text) -> ParseResult<ast::Column> {
     let (input, _) = multispace0(input)?;
-    let (input, pos) = position(input)?;
+    let (input, start_pos) = position(input)?;
     let (input, name) = parse_fieldname(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag(":")(input)?;
@@ -281,10 +293,7 @@ fn parse_column(input: Text) -> ParseResult<ast::Column> {
     let (input, _) = multispace0(input)?;
     let (input, directives) = many0(parse_column_directive)(input)?;
 
-    // println!("{}", name);
-
-    let line = pos.location_line();
-    let column = pos.get_column();
+    let (input, end_pos) = position(input)?;
 
     Ok((
         input,
@@ -294,10 +303,8 @@ fn parse_column(input: Text) -> ParseResult<ast::Column> {
             nullable: is_nullable,
             serialization_type: to_serialization_type(type_),
             directives,
-            location: Some(ast::Location {
-                offset: pos.location_offset(),
-                line: pos.location_line(),
-            }),
+            start: Some(to_location(start_pos)),
+            end: Some(to_location(end_pos)),
         },
     ))
 }
@@ -361,6 +368,7 @@ fn parse_type_separator(input: Text) -> ParseResult<char> {
 }
 
 fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
+    let (input, start_pos) = position(input)?;
     let (input, _) = tag("type")(input)?;
     let (input, _) = multispace1(input)?;
     let (input, name) = parse_typename(input)?;
@@ -368,26 +376,34 @@ fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = tag("=")(input)?;
     let (input, _) = multispace0(input)?;
     let (input, variants) = separated_list0(parse_type_separator, parse_variant)(input)?;
+    let (input, end_pos) = position(input)?;
     let (input, _) = newline(input)?;
+
     Ok((
         input,
         ast::Definition::Tagged {
             name: name.to_string(),
             variants,
+            start: Some(to_location(start_pos)),
+            end: Some(to_location(end_pos)),
         },
     ))
 }
 
 fn parse_variant(input: Text) -> ParseResult<ast::Variant> {
+    let (input, start_pos) = position(input)?;
     let (input, name) = parse_typename(input)?;
     let (input, _) = multispace0(input)?;
     let (input, optionalFields) = opt(with_braces(parse_field))(input)?;
+    let (input, end_pos) = position(input)?;
 
     Ok((
         input,
         ast::Variant {
             name: name.to_string(),
             data: optionalFields,
+            start: Some(to_location(start_pos)),
+            end: Some(to_location(end_pos)),
         },
     ))
 }
@@ -680,6 +696,11 @@ fn parse_variable(input: Text) -> ParseResult<ast::QueryValue> {
 fn parse_value(input: Text) -> ParseResult<ast::QueryValue> {
     alt((
         parse_token("null", ast::QueryValue::Null),
+        parse_token("Null", ast::QueryValue::Null),
+        parse_token("True", ast::QueryValue::Bool(true)),
+        parse_token("False", ast::QueryValue::Bool(false)),
+        parse_token("true", ast::QueryValue::Bool(true)),
+        parse_token("false", ast::QueryValue::Bool(false)),
         parse_variable,
         parse_string,
         parse_number,

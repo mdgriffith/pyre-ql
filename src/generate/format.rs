@@ -18,7 +18,12 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             }
         }
         ast::Definition::Comment { text } => format!("//{}\n", text),
-        ast::Definition::Tagged { name, variants } => {
+        ast::Definition::Tagged {
+            name,
+            variants,
+            start,
+            end,
+        } => {
             let mut result = format!("type {}\n", name);
             let mut is_first = true;
             for variant in variants {
@@ -27,7 +32,12 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             }
             result
         }
-        ast::Definition::Record { name, fields } => {
+        ast::Definition::Record {
+            name,
+            fields,
+            start,
+            end,
+        } => {
             let mut result = format!("record {} {{\n", name);
 
             for field in fields {
@@ -313,7 +323,8 @@ fn value_to_string(value: &ast::QueryValue) -> String {
         ast::QueryValue::String(value) => format!("\"{}\"", value),
         ast::QueryValue::Int(value) => value.to_string(),
         ast::QueryValue::Float(value) => value.to_string(),
-        ast::QueryValue::Bool(value) => value.to_string(),
+        ast::QueryValue::Bool(true) => "True".to_string(),
+        ast::QueryValue::Bool(false) => "False".to_string(),
         ast::QueryValue::Null => "null".to_string(),
     }
 }

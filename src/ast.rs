@@ -25,10 +25,14 @@ pub enum Definition {
     Tagged {
         name: String,
         variants: Vec<Variant>,
+        start: Option<Location>,
+        end: Option<Location>,
     },
     Record {
         name: String,
         fields: Vec<Field>,
+        start: Option<Location>,
+        end: Option<Location>,
     },
 }
 
@@ -42,6 +46,8 @@ pub struct RecordDetails {
 pub struct Variant {
     pub name: String,
     pub data: Option<Vec<Field>>,
+    pub start: Option<Location>,
+    pub end: Option<Location>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -202,13 +208,15 @@ pub struct Column {
     pub nullable: bool,
     pub directives: Vec<ColumnDirective>,
 
-    pub location: Option<Location>,
+    pub start: Option<Location>,
+    pub end: Option<Location>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Location {
     pub offset: usize,
     pub line: u32,
+    pub column: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

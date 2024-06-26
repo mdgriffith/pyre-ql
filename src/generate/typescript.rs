@@ -27,7 +27,12 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             }
         }
         ast::Definition::Comment { text } => "".to_string(),
-        ast::Definition::Tagged { name, variants } => {
+        ast::Definition::Tagged {
+            name,
+            variants,
+            start,
+            end,
+        } => {
             let mut result = format!("type {} =", name);
             let mut is_first = true;
             for variant in variants {
@@ -39,7 +44,12 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             result.push_str(";\n\n");
             result
         }
-        ast::Definition::Record { name, fields } => to_type_alias(name, fields),
+        ast::Definition::Record {
+            name,
+            fields,
+            start,
+            end,
+        } => to_type_alias(name, fields),
     }
 }
 
@@ -152,7 +162,12 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
             }
         }
         ast::Definition::Comment { text } => "".to_string(),
-        ast::Definition::Tagged { name, variants } => {
+        ast::Definition::Tagged {
+            name,
+            variants,
+            start,
+            end,
+        } => {
             let mut result = "".to_string();
 
             result.push_str(&format!("export const {} = Ark.union(\n", name));
@@ -165,7 +180,12 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
             // result.push_str("        |> Db.Read.custom\n");
             result
         }
-        ast::Definition::Record { name, fields } => "".to_string(),
+        ast::Definition::Record {
+            name,
+            fields,
+            start,
+            end,
+        } => "".to_string(),
     }
 }
 
