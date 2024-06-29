@@ -36,10 +36,13 @@ pub enum Definition {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct RecordDetails {
     pub name: String,
     pub fields: Vec<Field>,
+
+    pub start: Option<Location>,
+    pub end: Option<Location>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -197,9 +200,6 @@ pub fn column_order(a: &Field, b: &Field) -> std::cmp::Ordering {
     }
 }
 
-// #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-// pub type Location = nom_locate::LocatedSpan<&'static str>;
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Column {
     pub name: String,
@@ -268,6 +268,9 @@ pub struct Query {
     pub name: String,
     pub args: Vec<QueryParamDefinition>,
     pub fields: Vec<QueryField>,
+
+    pub start: Option<Location>,
+    pub end: Option<Location>,
 }
 
 #[derive(Debug, Clone)]
@@ -282,6 +285,11 @@ pub enum QueryOperation {
 pub struct QueryParamDefinition {
     pub name: String,
     pub type_: String,
+    pub start_name: Option<Location>,
+    pub end_name: Option<Location>,
+
+    pub start_type: Option<Location>,
+    pub end_type: Option<Location>,
 }
 
 // The "Select Alias" is the value that is in the JSON payload
@@ -310,6 +318,9 @@ pub struct QueryField {
     pub set: Option<QueryValue>,
     pub directives: Vec<String>,
     pub fields: Vec<ArgField>,
+
+    pub start: Option<Location>,
+    pub end: Option<Location>,
 }
 
 #[derive(Debug, Clone)]

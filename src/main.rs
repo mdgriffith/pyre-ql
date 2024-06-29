@@ -513,7 +513,19 @@ fn execute(options: &Options, paths: Found) -> io::Result<()> {
                                             &query_list,
                                         );
                                     }
-                                    Err(err) => eprintln!("{:?}", err),
+                                    Err(errorList) => {
+                                        let mut errors = "".to_string();
+                                        for err in errorList {
+                                            let formatted_error = error::format_error(
+                                                &query_file_path,
+                                                &query_source_str,
+                                                err,
+                                            );
+                                            errors.push_str(&formatted_error);
+                                        }
+
+                                        println!("{}", errors);
+                                    }
                                 }
                             }
                             Err(err) => eprintln!("{:?}", err),

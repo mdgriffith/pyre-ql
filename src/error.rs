@@ -1,11 +1,9 @@
+use crate::typecheck;
+use colored::Colorize;
 use nom::error::{Error, VerboseError, VerboseErrorKind};
 use nom::Offset;
 use nom_locate::LocatedSpan;
 use std::fmt::Write;
-
-pub fn parser_error(input: LocatedSpan<&str>, error: VerboseError<LocatedSpan<&str>>) {
-    ()
-}
 
 /// Transforms a `VerboseError` into a trace with input position information
 
@@ -13,6 +11,7 @@ pub fn convert_error(input: LocatedSpan<&str>, error: VerboseError<LocatedSpan<&
     let mut result = String::new();
 
     for (i, (substring, kind)) in error.errors.iter().enumerate() {
+        println!("{:#?}", (kind));
         let offset = input.offset(substring);
 
         if input.is_empty() {
@@ -116,4 +115,49 @@ pub fn convert_error(input: LocatedSpan<&str>, error: VerboseError<LocatedSpan<&
     }
 
     result
+}
+
+/* Error formats!
+
+
+
+{File name}-------------{Error title}
+
+   | record User {
+   |    ...
+12 |    status: Stats
+   |            ^^^^^
+   |    ...
+   | }
+
+I don't recognize this type. Is it one of these?
+
+   Status
+
+
+
+
+
+
+
+*/
+
+pub fn format_error(filepath: &str, file_contents: &str, error: typecheck::Error) -> String {
+    let path_length = filepath.len();
+    let separator = "-".repeat(80 - path_length);
+
+    let highlight = prepare_highlight(file_contents, error);
+    let description = "".to_string();
+
+    format!(
+        "{}{}\n\n{}\n{}",
+        filepath.cyan(),
+        separator.cyan(),
+        highlight,
+        description
+    )
+}
+
+fn prepare_highlight(file_contents: &str, error: typecheck::Error) -> String {
+    format!("{}", "".on_red())
 }

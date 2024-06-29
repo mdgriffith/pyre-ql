@@ -18,14 +18,37 @@ use nom_locate::{position, LocatedSpan};
 pub type Text<'a> = LocatedSpan<&'a str>;
 
 type ParseResult<'a, Output> = IResult<Text<'a>, Output, VerboseError<Text<'a>>>;
-// type ParseResult<'a, Output> = IResult<&'a str, Output, Error<&'a str>>;
 
-pub fn run(input: &str) -> Result<ast::Schema, String> {
-    match parse_schema(Text::new(input)) {
+pub fn run(input_string: &str) -> Result<ast::Schema, String> {
+    let input = Text::new(input_string);
+
+    match parse_schema(input) {
         Ok((remaining, schema)) => {
             return Ok(schema);
         }
-        Err(e) => Err(format!("Error: {:?}", e)),
+        Err(e) => {
+            return Err(render_error(input, e));
+        }
+    }
+}
+
+fn render_error(
+    input: LocatedSpan<&str>,
+    err: nom::Err<VerboseError<LocatedSpan<&str>>>,
+) -> String {
+    match err {
+        nom::Err::Incomplete(_) => {
+            return "Incomplete".to_string();
+        }
+        nom::Err::Error(error) => {
+            let err_text: String = error::convert_error(input, error);
+            println!("PARSER ERROR");
+            return err_text;
+        }
+        nom::Err::Failure(e) => {
+            // return Err(convert_error(Text::new(input), e));
+            return "Failure".to_string();
+        }
     }
 }
 
@@ -417,19 +440,7 @@ pub fn parse_query(input_str: &str) -> Result<ast::QueryList, String> {
         Ok((remaining, query_list)) => {
             return Ok(query_list);
         }
-        Err(e) => match e {
-            nom::Err::Incomplete(_) => {
-                return Err("Incomplete".to_string());
-            }
-            nom::Err::Error(error) => {
-                let err_text: String = error::convert_error(input, error);
-                return Err(err_text);
-            }
-            nom::Err::Failure(e) => {
-                // return Err(convert_error(Text::new(input), e));
-                return Err("Failure".to_string());
-            }
-        },
+        Err(e) => Err(render_error(input, e)),
     }
 }
 
@@ -475,10 +486,12 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
         parse_token("delete", ast::QueryOperation::Delete),
     ))(input)?;
     let (input, _) = multispace1(input)?;
+    let (input, start_pos) = position(input)?;
     let (input, name) = parse_typename(input)?;
     let (input, paramDefinitionsOrNone) = opt(parse_query_param_definitions)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, fields) = with_braces(parse_query_field)(input)?;
+    let (input, end_pos) = position(input)?;
 
     Ok((
         input,
@@ -487,6 +500,8 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
             name: name.to_string(),
             args: paramDefinitionsOrNone.unwrap_or(vec![]),
             fields,
+            start: Some(to_location(start_pos)),
+            end: Some(to_location(end_pos)),
         }),
     ))
 }
@@ -507,18 +522,26 @@ fn parse_param_separator(input: Text) -> ParseResult<char> {
 
 fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefinition> {
     let (input, _) = multispace0(input)?;
+    let (input, start_name_pos) = position(input)?;
     let (input, _) = tag("$")(input)?;
     let (input, name) = parse_fieldname(input)?;
+    let (input, end_name_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag(":")(input)?;
     let (input, _) = multispace0(input)?;
+    let (input, start_type_pos) = position(input)?;
     let (input, typename) = parse_typename(input)?;
+    let (input, end_type_pos) = position(input)?;
 
     Ok((
         input,
         ast::QueryParamDefinition {
             name: name.to_string(),
             type_: typename.to_string(),
+            start_name: Some(to_location(start_name_pos)),
+            end_name: Some(to_location(end_name_pos)),
+            start_type: Some(to_location(start_type_pos)),
+            end_type: Some(to_location(end_type_pos)),
         },
     ))
 }
@@ -567,12 +590,14 @@ fn parse_query_arg_field(input: Text) -> ParseResult<ast::ArgField> {
 
 fn parse_query_field(input: Text) -> ParseResult<ast::QueryField> {
     let (input, _) = multispace0(input)?;
+    let (input, start_pos) = position(input)?;
     let (input, name_or_alias) = parse_fieldname(input)?;
     let (input, alias_or_name) = opt(parse_alias)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, set) = opt(parse_set)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, fieldsOrNone) = opt(with_braces(parse_arg_field))(input)?;
+    let (input, end_pos) = position(input)?;
 
     let (name, alias) = match alias_or_name {
         Some(alias) => (alias, Some(name_or_alias.to_string())),
@@ -587,6 +612,8 @@ fn parse_query_field(input: Text) -> ParseResult<ast::QueryField> {
             set,
             directives: vec![],
             fields: fieldsOrNone.unwrap_or_else(Vec::new),
+            start: Some(to_location(start_pos)),
+            end: Some(to_location(end_pos)),
         },
     ))
 }

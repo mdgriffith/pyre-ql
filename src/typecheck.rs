@@ -1,34 +1,35 @@
 use crate::ext::string;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::ast;
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Error {
     pub error_type: ErrorType,
     pub location: Location,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Location {
-    pub highlight: Option<Range>,
-    pub area: Range,
+    pub highlights: Vec<Range>,
+    pub area: Option<Range>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Range {
-    pub start: Coord,
-    pub end: Coord,
+    pub start: ast::Location,
+    pub end: ast::Location,
 }
 
-#[derive(Debug, Clone)]
-pub struct Coord {
-    pub line: usize,
-    pub column: usize,
-}
+// #[derive(Debug, Clone, Deserialize, Serialize)]
+// pub struct Coord {
+//     pub line: usize,
+//     pub column: usize,
+// }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub enum ErrorType {
     DuplicateDefinition(String),
     DuplicateField {
@@ -134,21 +135,21 @@ pub enum ErrorType {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 enum DefType {
     Record,
     Tagged,
     Builtin,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Context {
     pub types: HashMap<String, DefType>,
     pub tables: HashMap<String, ast::RecordDetails>,
     pub variants: HashMap<String, Vec<VariantDef>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VariantDef {
     pub typename: String,
     pub variant_name: String,
@@ -193,6 +194,26 @@ pub fn check_schema(schem: &ast::Schema) -> Result<&ast::Schema, Vec<Error>> {
     Ok(schem)
 }
 
+fn to_highlight_range(start: &Option<ast::Location>, end: &Option<ast::Location>) -> Vec<Range> {
+    match to_range(start, end) {
+        None => vec![],
+        Some(item) => vec![item],
+    }
+}
+
+fn to_range(start: &Option<ast::Location>, end: &Option<ast::Location>) -> Option<Range> {
+    match start {
+        None => None,
+        Some(s) => match end {
+            None => None,
+            Some(e) => Some(Range {
+                start: s.clone(),
+                end: e.clone(),
+            }),
+        },
+    }
+}
+
 fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
     let mut errors = Vec::new();
 
@@ -208,11 +229,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                     errors.push(Error {
                         error_type: ErrorType::DuplicateDefinition(name.clone()),
                         location: Location {
-                            highlight: None,
-                            area: Range {
-                                start: Coord { line: 0, column: 0 },
-                                end: Coord { line: 0, column: 0 },
-                            },
+                            highlights: vec![],
+                            area: to_range(start, end),
                         },
                     });
                 }
@@ -222,19 +240,23 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                     ast::RecordDetails {
                         name: name.clone(),
                         fields: fields.clone(),
+                        start: start.clone(),
+                        end: end.clone(),
                     },
                 );
             }
-            ast::Definition::Tagged { name, variants, .. } => {
+            ast::Definition::Tagged {
+                name,
+                variants,
+                start,
+                end,
+            } => {
                 if context.types.contains_key(name) {
                     errors.push(Error {
                         error_type: ErrorType::DuplicateDefinition(name.clone()),
                         location: Location {
-                            highlight: None,
-                            area: Range {
-                                start: Coord { line: 0, column: 0 },
-                                end: Coord { line: 0, column: 0 },
-                            },
+                            highlights: vec![],
+                            area: to_range(start, end),
                         },
                     });
                 }
@@ -242,11 +264,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
 
                 for mut variant in variants {
                     let location = Location {
-                        highlight: None,
-                        area: Range {
-                            start: Coord { line: 0, column: 0 },
-                            end: Coord { line: 0, column: 0 },
-                        },
+                        highlights: vec![],
+                        area: to_range(start, end),
                     };
                     let variant_def = VariantDef {
                         typename: name.clone(),
@@ -292,11 +311,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                         field: name.clone(),
                                     },
                                     location: Location {
-                                        highlight: None,
-                                        area: Range {
-                                            start: Coord { line: 0, column: 0 },
-                                            end: Coord { line: 0, column: 0 },
-                                        },
+                                        highlights: vec![],
+                                        area: to_range(&start, &end),
                                     },
                                 });
                             }
@@ -311,11 +327,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                             field: name.clone(),
                                         },
                                         location: Location {
-                                            highlight: None,
-                                            area: Range {
-                                                start: Coord { line: 0, column: 0 },
-                                                end: Coord { line: 0, column: 0 },
-                                            },
+                                            highlights: vec![],
+                                            area: to_range(&start, &end),
                                         },
                                     });
                                 }
@@ -337,11 +350,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                         field: link.link_name.clone(),
                                     },
                                     location: Location {
-                                        highlight: None,
-                                        area: Range {
-                                            start: Coord { line: 0, column: 0 },
-                                            end: Coord { line: 0, column: 0 },
-                                        },
+                                        highlights: vec![],
+                                        area: to_range(&start, &end),
                                     },
                                 });
                             }
@@ -360,11 +370,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                                     unknown_foreign_field: foreign_id.clone(),
                                                 },
                                                 location: Location {
-                                                    highlight: None,
-                                                    area: Range {
-                                                        start: Coord { line: 0, column: 0 },
-                                                        end: Coord { line: 0, column: 0 },
-                                                    },
+                                                    highlights: vec![],
+                                                    area: to_range(&start, &end),
                                                 },
                                             });
                                         }
@@ -377,11 +384,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                             unknown_table: link.foreign_tablename.clone(),
                                         },
                                         location: Location {
-                                            highlight: None,
-                                            area: Range {
-                                                start: Coord { line: 0, column: 0 },
-                                                end: Coord { line: 0, column: 0 },
-                                            },
+                                            highlights: vec![],
+                                            area: to_range(&start, &end),
                                         },
                                     });
                                 }
@@ -396,11 +400,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                             unknown_local_field: local_id.clone(),
                                         },
                                         location: Location {
-                                            highlight: None,
-                                            area: Range {
-                                                start: Coord { line: 0, column: 0 },
-                                                end: Coord { line: 0, column: 0 },
-                                            },
+                                            highlights: vec![],
+                                            area: to_range(&start, &end),
                                         },
                                     });
                                 }
@@ -417,11 +418,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                             tablenames: tablenames.clone(),
                         },
                         location: Location {
-                            highlight: None,
-                            area: Range {
-                                start: Coord { line: 0, column: 0 },
-                                end: Coord { line: 0, column: 0 },
-                            },
+                            highlights: vec![],
+                            area: to_range(&start, &end),
                         },
                     });
                 }
@@ -432,11 +430,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                             record: name.clone(),
                         },
                         location: Location {
-                            highlight: None,
-                            area: Range {
-                                start: Coord { line: 0, column: 0 },
-                                end: Coord { line: 0, column: 0 },
-                            },
+                            highlights: vec![],
+                            area: to_range(&start, &end),
                         },
                     });
                 }
@@ -455,19 +450,13 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
         if instances.len() > 1 {
             let base_variant = instances.remove(0); // remove and use the first variant as the base
             let duplicates = instances; // the rest are duplicates
-
+            let location = base_variant.location.clone();
             errors.push(Error {
                 error_type: ErrorType::DuplicateVariant {
                     base_variant,
                     duplicates,
                 },
-                location: Location {
-                    highlight: None,
-                    area: Range {
-                        start: Coord { line: 0, column: 0 },
-                        end: Coord { line: 0, column: 0 },
-                    },
-                },
+                location,
             });
         }
     }
@@ -488,11 +477,8 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                         errors.push(Error {
                             error_type: ErrorType::UnknownType(field.type_.clone()),
                             location: Location {
-                                highlight: None,
-                                area: Range {
-                                    start: Coord { line: 0, column: 0 },
-                                    end: Coord { line: 0, column: 0 },
-                                },
+                                highlights: vec![],
+                                area: to_range(start, end),
                             },
                         });
                     }
@@ -505,11 +491,8 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                                 field: field.name.clone(),
                             },
                             location: Location {
-                                highlight: None,
-                                area: Range {
-                                    start: Coord { line: 0, column: 0 },
-                                    end: Coord { line: 0, column: 0 },
-                                },
+                                highlights: vec![],
+                                area: to_range(start, end),
                             },
                         });
                     }
@@ -536,11 +519,8 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                                         errors.push(Error {
                                             error_type: ErrorType::UnknownType(field.type_.clone()),
                                             location: Location {
-                                                highlight: None,
-                                                area: Range {
-                                                    start: Coord { line: 0, column: 0 },
-                                                    end: Coord { line: 0, column: 0 },
-                                                },
+                                                highlights: vec![],
+                                                area: to_range(&start, &end),
                                             },
                                         });
                                     }
@@ -584,9 +564,14 @@ pub fn check_queries<'a>(
 }
 
 enum ParamUsage {
-    Defined,
+    Defined(Option<Range>),
     Used,
-    NotDefinedButUsed,
+    NotDefinedButUsed(Option<Range>),
+}
+
+struct ParamInfo {
+    usage: ParamUsage,
+    type_: String,
 }
 
 fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Query) {
@@ -598,7 +583,7 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
     //     2.a All defined params are used
     //     2.b Every used param is defined
     //
-    let mut param_names = HashMap::new();
+    let mut param_names: HashMap<String, (ParamUsage, String)> = HashMap::new();
 
     // Param types make sense?
     for param_def in &query.args {
@@ -606,11 +591,8 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
             None => errors.push(Error {
                 error_type: ErrorType::UnknownType(param_def.type_.clone()),
                 location: Location {
-                    highlight: None,
-                    area: Range {
-                        start: Coord { line: 0, column: 0 },
-                        end: Coord { line: 0, column: 0 },
-                    },
+                    highlights: to_highlight_range(&param_def.start_type, &param_def.end_type),
+                    area: to_range(&query.start, &query.end),
                 },
             }),
             Some(_) => {}
@@ -618,7 +600,10 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
 
         param_names.insert(
             param_def.name.clone(),
-            (ParamUsage::Defined, param_def.type_.clone()),
+            (
+                ParamUsage::Defined(to_range(&param_def.start_name, &param_def.end_name)),
+                param_def.type_.clone(),
+            ),
         );
     }
 
@@ -631,11 +616,8 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
                     existing: vec![],
                 },
                 location: Location {
-                    highlight: None,
-                    area: Range {
-                        start: Coord { line: 0, column: 0 },
-                        end: Coord { line: 0, column: 0 },
-                    },
+                    highlights: to_highlight_range(&field.start, &field.end),
+                    area: to_range(&query.start, &query.end),
                 },
             }),
             Some(table) => check_table_query(
@@ -651,28 +633,22 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
 
     for (param_name, (usage, type_string)) in param_names {
         match usage {
-            ParamUsage::Defined => errors.push(Error {
+            ParamUsage::Defined(loc) => errors.push(Error {
                 error_type: ErrorType::UnusedParam { param: param_name },
                 location: Location {
-                    highlight: None,
-                    area: Range {
-                        start: Coord { line: 0, column: 0 },
-                        end: Coord { line: 0, column: 0 },
-                    },
+                    highlights: vec![],
+                    area: loc,
                 },
             }),
             ParamUsage::Used => {}
-            ParamUsage::NotDefinedButUsed => errors.push(Error {
+            ParamUsage::NotDefinedButUsed(loc) => errors.push(Error {
                 error_type: ErrorType::UndefinedParam {
                     param: param_name,
                     type_: type_string,
                 },
                 location: Location {
-                    highlight: None,
-                    area: Range {
-                        start: Coord { line: 0, column: 0 },
-                        end: Coord { line: 0, column: 0 },
-                    },
+                    highlights: vec![],
+                    area: loc,
                 },
             }),
             _ => {}
@@ -720,11 +696,8 @@ fn check_where_args(
                                     link_name: field_name.clone(),
                                 },
                                 location: Location {
-                                    highlight: None,
-                                    area: Range {
-                                        start: Coord { line: 0, column: 0 },
-                                        end: Coord { line: 0, column: 0 },
-                                    },
+                                    highlights: vec![],
+                                    area: None,
                                 },
                             })
                         }
@@ -738,11 +711,8 @@ fn check_where_args(
                         found: field_name.clone(),
                     },
                     location: Location {
-                        highlight: None,
-                        area: Range {
-                            start: Coord { line: 0, column: 0 },
-                            end: Coord { line: 0, column: 0 },
-                        },
+                        highlights: vec![],
+                        area: None,
                     },
                 })
             }
@@ -775,16 +745,16 @@ fn check_value(
                         variable: var.clone(),
                     },
                     location: Location {
-                        highlight: None,
-                        area: Range {
-                            start: Coord { line: 0, column: 0 },
-                            end: Coord { line: 0, column: 0 },
-                        },
+                        highlights: vec![],
+                        area: None,
                     },
                 });
                 params.insert(
                     var.to_string(),
-                    (ParamUsage::NotDefinedButUsed, table_type_string.to_string()),
+                    (
+                        ParamUsage::NotDefinedButUsed(None),
+                        table_type_string.to_string(),
+                    ),
                 );
             }
             Some((usage, type_string)) => {
@@ -797,18 +767,15 @@ fn check_value(
                             variable_defined_as: type_string.clone(),
                         },
                         location: Location {
-                            highlight: None,
-                            area: Range {
-                                start: Coord { line: 0, column: 0 },
-                                end: Coord { line: 0, column: 0 },
-                            },
+                            highlights: vec![],
+                            area: None,
                         },
                     })
                 }
                 match usage {
-                    ParamUsage::Defined => *usage = ParamUsage::Used,
+                    ParamUsage::Defined(_) => *usage = ParamUsage::Used,
                     ParamUsage::Used => {}
-                    ParamUsage::NotDefinedButUsed => {}
+                    ParamUsage::NotDefinedButUsed(_) => {}
                 }
             }
         },
@@ -828,11 +795,8 @@ fn check_table_query(
         errors.push(Error {
             error_type: ErrorType::NoFieldsSelected,
             location: Location {
-                highlight: None,
-                area: Range {
-                    start: Coord { line: 0, column: 0 },
-                    end: Coord { line: 0, column: 0 },
-                },
+                highlights: vec![],
+                area: to_range(&query.start, &query.end),
             },
         })
     }
@@ -855,11 +819,8 @@ fn check_table_query(
                                 query: query.name.clone(),
                             },
                             location: Location {
-                                highlight: None,
-                                area: Range {
-                                    start: Coord { line: 0, column: 0 },
-                                    end: Coord { line: 0, column: 0 },
-                                },
+                                highlights: vec![],
+                                area: to_range(&query.start, &query.end),
                             },
                         });
                     } else {
@@ -875,11 +836,8 @@ fn check_table_query(
                                 query: query.name.clone(),
                             },
                             location: Location {
-                                highlight: None,
-                                area: Range {
-                                    start: Coord { line: 0, column: 0 },
-                                    end: Coord { line: 0, column: 0 },
-                                },
+                                highlights: vec![],
+                                area: to_range(&query.start, &query.end),
                             },
                         });
                     } else {
@@ -895,11 +853,8 @@ fn check_table_query(
                                 query: query.name.clone(),
                             },
                             location: Location {
-                                highlight: None,
-                                area: Range {
-                                    start: Coord { line: 0, column: 0 },
-                                    end: Coord { line: 0, column: 0 },
-                                },
+                                highlights: vec![],
+                                area: to_range(&query.start, &query.end),
                             },
                         });
                     } else {
@@ -920,11 +875,8 @@ fn check_table_query(
                             field: aliased_name.clone(),
                         },
                         location: Location {
-                            highlight: None,
-                            area: Range {
-                                start: Coord { line: 0, column: 0 },
-                                end: Coord { line: 0, column: 0 },
-                            },
+                            highlights: vec![],
+                            area: to_range(&query.start, &query.end),
                         },
                     });
                 } else {
@@ -959,11 +911,8 @@ fn check_table_query(
                             found: field.name.clone(),
                         },
                         location: Location {
-                            highlight: None,
-                            area: Range {
-                                start: Coord { line: 0, column: 0 },
-                                end: Coord { line: 0, column: 0 },
-                            },
+                            highlights: vec![],
+                            area: to_range(&query.start, &query.end),
                         },
                     })
                 }
@@ -988,11 +937,8 @@ fn check_table_query(
                                     field: col.name.clone(),
                                 },
                                 location: Location {
-                                    highlight: None,
-                                    area: Range {
-                                        start: Coord { line: 0, column: 0 },
-                                        end: Coord { line: 0, column: 0 },
-                                    },
+                                    highlights: vec![],
+                                    area: to_range(&query.start, &query.end),
                                 },
                             })
                         }
@@ -1002,11 +948,8 @@ fn check_table_query(
                             field: col.name.clone(),
                         },
                         location: Location {
-                            highlight: None,
-                            area: Range {
-                                start: Coord { line: 0, column: 0 },
-                                end: Coord { line: 0, column: 0 },
-                            },
+                            highlights: vec![],
+                            area: to_range(&query.start, &query.end),
                         },
                     }),
                 }
@@ -1030,11 +973,8 @@ fn check_field(
                 found: field.name.clone(),
             },
             location: Location {
-                highlight: None,
-                area: Range {
-                    start: Coord { line: 0, column: 0 },
-                    end: Coord { line: 0, column: 0 },
-                },
+                highlights: vec![],
+                area: to_range(&field.start, &field.end),
             },
         })
     }
@@ -1053,11 +993,8 @@ fn check_field(
                         field: column.name.clone(),
                     },
                     location: Location {
-                        highlight: None,
-                        area: Range {
-                            start: Coord { line: 0, column: 0 },
-                            end: Coord { line: 0, column: 0 },
-                        },
+                        highlights: vec![],
+                        area: to_range(&field.start, &field.end),
                     },
                 })
             }
@@ -1070,11 +1007,8 @@ fn check_field(
                         field: column.name.clone(),
                     },
                     location: Location {
-                        highlight: None,
-                        area: Range {
-                            start: Coord { line: 0, column: 0 },
-                            end: Coord { line: 0, column: 0 },
-                        },
+                        highlights: vec![],
+                        area: to_range(&field.start, &field.end),
                     },
                 })
             }
@@ -1090,11 +1024,8 @@ fn check_field(
                         field: column.name.clone(),
                     },
                     location: Location {
-                        highlight: None,
-                        area: Range {
-                            start: Coord { line: 0, column: 0 },
-                            end: Coord { line: 0, column: 0 },
-                        },
+                        highlights: vec![],
+                        area: to_range(&field.start, &field.end),
                     },
                 })
             }
@@ -1118,11 +1049,8 @@ fn check_link(
                     field: link.link_name.clone(),
                 },
                 location: Location {
-                    highlight: None,
-                    area: Range {
-                        start: Coord { line: 0, column: 0 },
-                        end: Coord { line: 0, column: 0 },
-                    },
+                    highlights: vec![],
+                    area: to_range(&field.start, &field.end),
                 },
             });
             return ();
@@ -1133,11 +1061,8 @@ fn check_link(
                     field: link.link_name.clone(),
                 },
                 location: Location {
-                    highlight: None,
-                    area: Range {
-                        start: Coord { line: 0, column: 0 },
-                        end: Coord { line: 0, column: 0 },
-                    },
+                    highlights: vec![],
+                    area: to_range(&field.start, &field.end),
                 },
             });
         }
@@ -1147,11 +1072,8 @@ fn check_link(
                     field: link.link_name.clone(),
                 },
                 location: Location {
-                    highlight: None,
-                    area: Range {
-                        start: Coord { line: 0, column: 0 },
-                        end: Coord { line: 0, column: 0 },
-                    },
+                    highlights: vec![],
+                    area: to_range(&field.start, &field.end),
                 },
             });
             return ();
@@ -1165,11 +1087,8 @@ fn check_link(
                 found: field.name.clone(),
             },
             location: Location {
-                highlight: None,
-                area: Range {
-                    start: Coord { line: 0, column: 0 },
-                    end: Coord { line: 0, column: 0 },
-                },
+                highlights: vec![],
+                area: to_range(&field.start, &field.end),
             },
         })
     } else {
@@ -1183,11 +1102,8 @@ fn check_link(
                     existing: vec![],
                 },
                 location: Location {
-                    highlight: None,
-                    area: Range {
-                        start: Coord { line: 0, column: 0 },
-                        end: Coord { line: 0, column: 0 },
-                    },
+                    highlights: vec![],
+                    area: to_range(&field.start, &field.end),
                 },
             }),
             Some(table) => check_table_query(context, errors, operation, table, field, params),
