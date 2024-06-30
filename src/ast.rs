@@ -57,6 +57,9 @@ pub struct Variant {
     pub data: Option<Vec<Field>>,
     pub start: Option<Location>,
     pub end: Option<Location>,
+
+    pub start_name: Option<Location>,
+    pub end_name: Option<Location>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -219,6 +222,9 @@ pub struct Column {
 
     pub start_name: Option<Location>,
     pub end_name: Option<Location>,
+
+    pub start_typename: Option<Location>,
+    pub end_typename: Option<Location>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

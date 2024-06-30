@@ -167,46 +167,59 @@ fn prepare_highlight(file_contents: &str, error: &typecheck::Error) -> String {
     rendered
 }
 
+fn divider(indent: usize) -> String {
+    format!("    |{}...\n", " ".repeat(indent * 4))
+        .truecolor(120, 120, 120)
+        .to_string()
+}
+
 fn render_highlight_location(
     file_contents: &str,
     rendered: &mut String,
     location: &typecheck::Location,
 ) {
+    let mut indent: usize = 0;
+
     let mut last_line_index: usize = 0;
     let mut first_rendered = false;
+
     for context in &location.contexts {
+        if first_rendered && context.start.line.to_usize() > last_line_index + 1 {
+            rendered.push_str(&divider(indent))
+        }
         rendered.push_str(&get_line(&file_contents, false, context.start.line));
         rendered.push_str("\n");
-        if first_rendered && context.start.line.to_usize() > last_line_index + 1 {
-            rendered.push_str(&"    |        ...\n".truecolor(120, 120, 120).to_string())
-        }
 
         first_rendered = true;
         last_line_index = context.start.line.to_usize();
+        indent += 1;
     }
 
-    let mut primary_rendered: bool = false;
     for primary in &location.primary {
-        if primary_rendered && primary.start.line.to_usize() > last_line_index + 1 {
-            rendered.push_str(&"    |     ...\n".truecolor(120, 120, 120).to_string())
+        if primary.start.line.to_usize() > last_line_index {
+            rendered.push_str(&divider(indent))
         }
         rendered.push_str(&get_line(file_contents, true, primary.start.line));
         rendered.push_str("\n");
         rendered.push_str(&highlight_line(&primary));
         rendered.push_str("\n");
 
-        last_line_index = primary.start.line.to_usize();
-
-        primary_rendered = true
+        last_line_index = primary.end.line.to_usize();
     }
 
-    for light in &location.contexts {
-        if light.start.line.to_usize() > last_line_index + 1 {
-            rendered.push_str(&"    |        ...\n".truecolor(120, 120, 120).to_string())
+    for context in location.contexts.iter().rev() {
+        if last_line_index == context.end.line.to_usize() {
+            continue;
+        }
+        if context.end.line.to_usize() > last_line_index + 1 {
+            rendered.push_str(&divider(indent))
         }
 
-        rendered.push_str(&get_line(&file_contents, false, light.end.line));
+        rendered.push_str(&get_line(&file_contents, false, context.end.line));
         rendered.push_str("\n");
+
+        last_line_index = context.end.line.to_usize();
+        indent -= 1;
     }
 }
 
@@ -286,6 +299,20 @@ fn to_error_description(error: &typecheck::Error) -> String {
                 "There are multiple definitions for {} on {}.\n",
                 field.yellow(),
                 record.cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::DuplicateVariant {
+            base_variant,
+            duplicates,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "{} has more than one variant named {}.\n",
+                base_variant.typename.yellow(),
+                base_variant.variant_name.cyan()
             ));
 
             result.push_str("\n\n");

@@ -160,14 +160,14 @@ enum DefInfo {
 pub struct Context {
     pub types: HashMap<String, DefInfo>,
     pub tables: HashMap<String, ast::RecordDetails>,
-    pub variants: HashMap<String, Vec<VariantDef>>,
+    pub variants: HashMap<String, (Option<Range>, Vec<VariantDef>)>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VariantDef {
     pub typename: String,
     pub variant_name: String,
-    pub location: Location,
+    pub range: Option<Range>,
 }
 
 pub fn get_linked_table<'a>(
@@ -338,20 +338,19 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                     .insert(name.clone(), DefInfo::Def(to_single_range(start, end)));
 
                 for mut variant in variants {
-                    let location = Location {
-                        contexts: vec![],
-                        primary: to_range(start, end),
-                    };
                     let variant_def = VariantDef {
                         typename: name.clone(),
                         variant_name: variant.name.clone(),
-                        location,
+                        range: to_single_range(&variant.start_name, &variant.end_name),
                     };
+
+                    let type_range = to_single_range(&start, &end);
 
                     context
                         .variants
                         .entry(variant.name.clone())
-                        .or_insert_with(Vec::new)
+                        .or_insert_with(|| (type_range, Vec::new()))
+                        .1
                         .push(variant_def);
                 }
             }
@@ -519,17 +518,39 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
 
 fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: &mut Vec<Error>) {
     let vars = context.variants.clone();
-    for (variant_name, mut instances) in vars {
+    for (variant_name, (maybe_type_range, mut instances)) in vars {
         if instances.len() > 1 {
             let base_variant = instances.remove(0); // remove and use the first variant as the base
             let duplicates = instances; // the rest are duplicates
-            let location = base_variant.location.clone();
+            let maybe_location = base_variant.range.clone();
+            let mut primary_ranges: Vec<Range> = vec![];
+            match maybe_location {
+                None => (),
+                Some(loc) => primary_ranges.push(loc),
+            }
+
+            for dup in &duplicates {
+                match &dup.range {
+                    None => (),
+                    Some(range) => primary_ranges.push(range.clone()),
+                }
+            }
+
+            let mut contexts = vec![];
+            match maybe_type_range {
+                None => (),
+                Some(range) => contexts.push(range),
+            }
+
             errors.push(Error {
                 error_type: ErrorType::DuplicateVariant {
                     base_variant,
                     duplicates,
                 },
-                locations: vec![location],
+                locations: vec![Location {
+                    contexts,
+                    primary: primary_ranges,
+                }],
             });
         }
     }
@@ -603,25 +624,35 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                 end,
             } => {
                 for variant in variants {
-                    match variant {
-                        ast::Variant {
-                            name,
-                            data,
-                            start,
-                            end,
-                        } => {
-                            if let Some(fields) = data {
-                                for field in ast::collect_columns(fields) {
-                                    if !context.types.contains_key(&field.type_) {
-                                        errors.push(Error {
-                                            error_type: ErrorType::UnknownType(field.type_.clone()),
-                                            locations: vec![Location {
-                                                contexts: vec![],
-                                                primary: to_range(&start, &end),
-                                            }],
-                                        });
+                    if let Some(fields) = &variant.data {
+                        for field in ast::collect_columns(&fields) {
+                            if !context.types.contains_key(&field.type_) {
+                                let mut contexts: Vec<Range> = vec![];
+
+                                match to_single_range(&start, &end) {
+                                    None => (),
+                                    Some(new_range) => {
+                                        contexts.push(new_range);
                                     }
                                 }
+
+                                match to_single_range(&variant.start, &variant.end) {
+                                    None => (),
+                                    Some(new_range) => {
+                                        contexts.push(new_range);
+                                    }
+                                }
+
+                                errors.push(Error {
+                                    error_type: ErrorType::UnknownType(field.type_.clone()),
+                                    locations: vec![Location {
+                                        contexts,
+                                        primary: to_range(
+                                            &field.start_typename,
+                                            &field.end_typename,
+                                        ),
+                                    }],
+                                });
                             }
                         }
                     }

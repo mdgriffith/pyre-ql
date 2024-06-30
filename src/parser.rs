@@ -316,7 +316,9 @@ fn parse_column(input: Text) -> ParseResult<ast::Column> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag(":")(input)?;
     let (input, _) = multispace0(input)?;
+    let (input, start_type_pos) = position(input)?;
     let (input, type_) = parse_typename(input)?;
+    let (input, end_type_pos) = position(input)?;
     let (input, is_nullable) = parse_nullable(input)?;
     let (input, _) = multispace0(input)?;
     let (input, directives) = many0(parse_column_directive)(input)?;
@@ -336,6 +338,9 @@ fn parse_column(input: Text) -> ParseResult<ast::Column> {
 
             start_name: Some(to_location(start_pos)),
             end_name: Some(to_location(end_name_pos)),
+
+            start_typename: Some(to_location(start_type_pos)),
+            end_typename: Some(to_location(end_type_pos)),
         },
     ))
 }
@@ -424,6 +429,7 @@ fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
 fn parse_variant(input: Text) -> ParseResult<ast::Variant> {
     let (input, start_pos) = position(input)?;
     let (input, name) = parse_typename(input)?;
+    let (input, end_name_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
     let (input, optionalFields) = opt(with_braces(parse_field))(input)?;
     let (input, end_pos) = position(input)?;
@@ -435,6 +441,9 @@ fn parse_variant(input: Text) -> ParseResult<ast::Variant> {
             data: optionalFields,
             start: Some(to_location(start_pos)),
             end: Some(to_location(end_pos)),
+
+            start_name: Some(to_location(start_pos)),
+            end_name: Some(to_location(end_name_pos)),
         },
     ))
 }
