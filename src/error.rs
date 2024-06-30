@@ -172,38 +172,41 @@ fn render_highlight_location(
     rendered: &mut String,
     location: &typecheck::Location,
 ) {
-    match &location.primary {
-        None => (),
-        Some(primary) => {
-            let mut last_line_index: usize = 0;
-            let mut first_rendered = false;
-            for context in &location.contexts {
-                rendered.push_str(&get_line(&file_contents, false, context.start.line));
-                rendered.push_str("\n");
-                if first_rendered && context.start.line.to_usize() > last_line_index + 1 {
-                    rendered.push_str(&"    |        ...\n".truecolor(120, 120, 120).to_string())
-                }
-
-                first_rendered = true;
-                last_line_index = context.start.line.to_usize();
-            }
-
-            rendered.push_str(&get_line(file_contents, true, primary.start.line));
-            rendered.push_str("\n");
-            rendered.push_str(&highlight_line(&primary));
-            rendered.push_str("\n");
-
-            last_line_index = primary.start.line.to_usize();
-
-            for light in &location.contexts {
-                if light.start.line.to_usize() > last_line_index + 1 {
-                    rendered.push_str(&"    |        ...\n".truecolor(120, 120, 120).to_string())
-                }
-
-                rendered.push_str(&get_line(&file_contents, false, light.end.line));
-                rendered.push_str("\n");
-            }
+    let mut last_line_index: usize = 0;
+    let mut first_rendered = false;
+    for context in &location.contexts {
+        rendered.push_str(&get_line(&file_contents, false, context.start.line));
+        rendered.push_str("\n");
+        if first_rendered && context.start.line.to_usize() > last_line_index + 1 {
+            rendered.push_str(&"    |        ...\n".truecolor(120, 120, 120).to_string())
         }
+
+        first_rendered = true;
+        last_line_index = context.start.line.to_usize();
+    }
+
+    let mut primary_rendered: bool = false;
+    for primary in &location.primary {
+        if primary_rendered && primary.start.line.to_usize() > last_line_index + 1 {
+            rendered.push_str(&"    |     ...\n".truecolor(120, 120, 120).to_string())
+        }
+        rendered.push_str(&get_line(file_contents, true, primary.start.line));
+        rendered.push_str("\n");
+        rendered.push_str(&highlight_line(&primary));
+        rendered.push_str("\n");
+
+        last_line_index = primary.start.line.to_usize();
+
+        primary_rendered = true
+    }
+
+    for light in &location.contexts {
+        if light.start.line.to_usize() > last_line_index + 1 {
+            rendered.push_str(&"    |        ...\n".truecolor(120, 120, 120).to_string())
+        }
+
+        rendered.push_str(&get_line(&file_contents, false, light.end.line));
+        rendered.push_str("\n");
     }
 }
 
