@@ -29,6 +29,8 @@ pub fn schema(schem: &mut ast::Schema) {
             fields,
             start,
             end,
+            start_name,
+            end_name,
         } = def
         {
             // let tablename = ast::get_tablename(name, fields);
@@ -116,6 +118,8 @@ fn format_definition(
             ref mut fields,
             start,
             end,
+            start_name,
+            end_name,
         } => {
             fields.retain(|field| !ast::is_link(field));
 

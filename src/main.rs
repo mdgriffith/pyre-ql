@@ -474,61 +474,75 @@ fn execute(options: &Options, paths: Found) -> io::Result<()> {
         [] => eprintln!("No schema files found!"),
         [schema_path] => {
             let mut file = fs::File::open(schema_path.clone())?;
-            let mut input = String::new();
-            file.read_to_string(&mut input)?;
+            let mut schema_source = String::new();
+            file.read_to_string(&mut schema_source)?;
 
-            match parser::run(&input) {
+            match parser::run(&schema_source) {
                 Ok(schema) => {
-                    // Generate schema files
-                    generate_elm_schema(&options, &schema);
-                    generate_typescript_schema(&options, &schema);
+                    match typecheck::check_schema(&schema) {
+                        Err(errorList) => {
+                            let mut errors = "".to_string();
+                            for err in errorList {
+                                let formatted_error =
+                                    error::format_error(&schema_path, &schema_source, err);
+                                errors.push_str(&formatted_error);
+                            }
 
-                    for query_file_path in paths.query_files {
-                        let mut query_file = fs::File::open(query_file_path.clone())?;
-                        let mut query_source_str = String::new();
-                        query_file.read_to_string(&mut query_source_str)?;
+                            println!("{}", errors);
+                        }
+                        Ok(_schem) => {
+                            // Generate schema files
+                            generate_elm_schema(&options, &schema);
+                            generate_typescript_schema(&options, &schema);
 
-                        match parser::parse_query(&query_source_str) {
-                            Ok(query_list) => {
-                                // Typecheck and generate
-                                let typecheck_result =
-                                    typecheck::check_queries(&schema, &query_list);
+                            for query_file_path in paths.query_files {
+                                let mut query_file = fs::File::open(query_file_path.clone())?;
+                                let mut query_source_str = String::new();
+                                query_file.read_to_string(&mut query_source_str)?;
 
-                                match typecheck_result {
-                                    Ok(typecheck_context) => {
-                                        create_dir_if_not_exists(
-                                            &out_path(&options, "elm").join("Query"),
-                                        );
-                                        create_dir_if_not_exists(
-                                            &out_path(&options, "typescript").join("query"),
-                                        );
-                                        generate::elm::write_queries(
-                                            &out(&options, "elm"),
-                                            &typecheck_context,
-                                            &query_list,
-                                        );
-                                        generate::typescript::write_queries(
-                                            &out(&options, "typescript"),
-                                            &typecheck_context,
-                                            &query_list,
-                                        );
-                                    }
-                                    Err(errorList) => {
-                                        let mut errors = "".to_string();
-                                        for err in errorList {
-                                            let formatted_error = error::format_error(
-                                                &query_file_path,
-                                                &query_source_str,
-                                                err,
-                                            );
-                                            errors.push_str(&formatted_error);
+                                match parser::parse_query(&query_source_str) {
+                                    Ok(query_list) => {
+                                        // Typecheck and generate
+                                        let typecheck_result =
+                                            typecheck::check_queries(&schema, &query_list);
+
+                                        match typecheck_result {
+                                            Ok(typecheck_context) => {
+                                                create_dir_if_not_exists(
+                                                    &out_path(&options, "elm").join("Query"),
+                                                );
+                                                create_dir_if_not_exists(
+                                                    &out_path(&options, "typescript").join("query"),
+                                                );
+                                                generate::elm::write_queries(
+                                                    &out(&options, "elm"),
+                                                    &typecheck_context,
+                                                    &query_list,
+                                                );
+                                                generate::typescript::write_queries(
+                                                    &out(&options, "typescript"),
+                                                    &typecheck_context,
+                                                    &query_list,
+                                                );
+                                            }
+                                            Err(errorList) => {
+                                                let mut errors = "".to_string();
+                                                for err in errorList {
+                                                    let formatted_error = error::format_error(
+                                                        &query_file_path,
+                                                        &query_source_str,
+                                                        err,
+                                                    );
+                                                    errors.push_str(&formatted_error);
+                                                }
+
+                                                println!("{}", errors);
+                                            }
                                         }
-
-                                        println!("{}", errors);
                                     }
+                                    Err(err) => eprintln!("{:?}", err),
                                 }
                             }
-                            Err(err) => eprintln!("{:?}", err),
                         }
                     }
                 }

@@ -37,6 +37,8 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             fields,
             start,
             end,
+            start_name,
+            end_name,
         } => {
             let mut result = format!("record {} {{\n", name);
 

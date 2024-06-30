@@ -155,21 +155,37 @@ pub fn format_error(filepath: &str, file_contents: &str, error: typecheck::Error
 }
 
 fn prepare_highlight(file_contents: &str, error: &typecheck::Error) -> String {
-    match &error.location.primary {
-        None => "".to_string(),
+    let mut rendered = "".to_string();
+    let mut has_rendered = false;
+    for location in &error.locations {
+        if has_rendered {
+            rendered.push_str("\n\n");
+        }
+        render_highlight_location(file_contents, &mut rendered, &location);
+        has_rendered = true;
+    }
+    rendered
+}
+
+fn render_highlight_location(
+    file_contents: &str,
+    rendered: &mut String,
+    location: &typecheck::Location,
+) {
+    match &location.primary {
+        None => (),
         Some(primary) => {
-            let mut rendered = "".to_string();
             let mut last_line_index: usize = 0;
             let mut first_rendered = false;
-            for light in &error.location.contexts {
-                rendered.push_str(&get_line(&file_contents, false, light.start.line));
+            for context in &location.contexts {
+                rendered.push_str(&get_line(&file_contents, false, context.start.line));
                 rendered.push_str("\n");
-                if first_rendered && light.start.line.to_usize() > last_line_index + 1 {
+                if first_rendered && context.start.line.to_usize() > last_line_index + 1 {
                     rendered.push_str(&"    |        ...\n".truecolor(120, 120, 120).to_string())
                 }
 
                 first_rendered = true;
-                last_line_index = light.start.line.to_usize();
+                last_line_index = context.start.line.to_usize();
             }
 
             rendered.push_str(&get_line(file_contents, true, primary.start.line));
@@ -179,7 +195,7 @@ fn prepare_highlight(file_contents: &str, error: &typecheck::Error) -> String {
 
             last_line_index = primary.start.line.to_usize();
 
-            for light in &error.location.contexts {
+            for light in &location.contexts {
                 if light.start.line.to_usize() > last_line_index + 1 {
                     rendered.push_str(&"    |        ...\n".truecolor(120, 120, 120).to_string())
                 }
@@ -187,7 +203,6 @@ fn prepare_highlight(file_contents: &str, error: &typecheck::Error) -> String {
                 rendered.push_str(&get_line(&file_contents, false, light.end.line));
                 rendered.push_str("\n");
             }
-            rendered
         }
     }
 }
@@ -228,7 +243,8 @@ fn highlight_line(range: &typecheck::Range) -> String {
 fn get_line(file_contents: &str, show_line_number: bool, line_index: u32) -> String {
     let line_number = line_index.to_usize() - 1;
 
-    let prefix = line_number_prefix(show_line_number, line_number).truecolor(120, 120, 120);
+    let prefix =
+        line_number_prefix(show_line_number, line_index.to_usize()).truecolor(120, 120, 120);
 
     for (index, line) in file_contents.to_string().lines().enumerate() {
         if line_number == index {
@@ -240,6 +256,38 @@ fn get_line(file_contents: &str, show_line_number: bool, line_index: u32) -> Str
 
 fn to_error_description(error: &typecheck::Error) -> String {
     match &error.error_type {
+        typecheck::ErrorType::DuplicateDefinition(name) => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "There are two definitions for {}\n",
+                name.yellow()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
+        typecheck::ErrorType::DefinitionIsBuiltIn(name) => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "The {} type is a built-in type, try using another name.\n",
+                name.yellow()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::DuplicateField { record, field } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "There are multiple definitions for {} on {}.\n",
+                field.yellow(),
+                record.cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
         typecheck::ErrorType::UnknownTable { found, existing } => {
             let mut result = "".to_string();
             result.push_str(&format!(

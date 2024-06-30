@@ -272,6 +272,8 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                                 directives,
                                 start: None,
                                 end: None,
+                                start_name: None,
+                                end_name: None,
                             }));
                         }
 
@@ -280,6 +282,8 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                             fields,
                             start: None,
                             end: None,
+                            start_name: None,
+                            end_name: None,
                         })
                     }
 

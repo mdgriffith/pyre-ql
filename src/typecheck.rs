@@ -8,7 +8,7 @@ use crate::ast;
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Error {
     pub error_type: ErrorType,
-    pub location: Location,
+    pub locations: Vec<Location>,
 }
 
 /*
@@ -39,6 +39,7 @@ pub struct Range {
 #[derive(Debug, Deserialize, Serialize)]
 pub enum ErrorType {
     DuplicateDefinition(String),
+    DefinitionIsBuiltIn(String),
     DuplicateField {
         record: String,
         field: String,
@@ -150,15 +151,14 @@ pub enum ErrorType {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-enum DefType {
-    Record,
-    Tagged,
+enum DefInfo {
+    Def(Option<Range>),
     Builtin,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Context {
-    pub types: HashMap<String, DefType>,
+    pub types: HashMap<String, DefInfo>,
     pub tables: HashMap<String, ast::RecordDetails>,
     pub variants: HashMap<String, Vec<VariantDef>>,
 }
@@ -185,13 +185,13 @@ fn empty_context() -> Context {
         tables: HashMap::new(),
         variants: HashMap::new(),
     };
-    context.types.insert("String".to_string(), DefType::Builtin);
-    context.types.insert("Int".to_string(), DefType::Builtin);
-    context.types.insert("Float".to_string(), DefType::Builtin);
-    context.types.insert("Bool".to_string(), DefType::Builtin);
+    context.types.insert("String".to_string(), DefInfo::Builtin);
+    context.types.insert("Int".to_string(), DefInfo::Builtin);
+    context.types.insert("Float".to_string(), DefInfo::Builtin);
+    context.types.insert("Bool".to_string(), DefInfo::Builtin);
     context
         .types
-        .insert("DateTime".to_string(), DefType::Builtin);
+        .insert("DateTime".to_string(), DefInfo::Builtin);
 
     context
 }
@@ -204,6 +204,10 @@ pub fn check_schema(schem: &ast::Schema) -> Result<&ast::Schema, Vec<Error>> {
     }
     let mut errors: Vec<Error> = Vec::new();
     check_schema_definitions(&context, schem, &mut errors);
+
+    if (!errors.is_empty()) {
+        return Err(errors);
+    }
 
     Ok(schem)
 }
@@ -238,17 +242,41 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                 fields,
                 start,
                 end,
+                start_name,
+                end_name,
             } => {
-                if context.types.contains_key(name) {
-                    errors.push(Error {
-                        error_type: ErrorType::DuplicateDefinition(name.clone()),
-                        location: Location {
+                match context.types.get(name) {
+                    None => (),
+                    Some(DefInfo::Def(loc)) => {
+                        let mut locations: Vec<Location> = vec![];
+                        locations.push(Location {
                             contexts: vec![],
-                            primary: to_range(start, end),
-                        },
-                    });
+                            primary: loc.clone(),
+                        });
+                        locations.push(Location {
+                            contexts: vec![],
+                            primary: to_range(start_name, end_name),
+                        });
+                        errors.push(Error {
+                            error_type: ErrorType::DuplicateDefinition(name.clone()),
+                            locations,
+                        });
+                    }
+                    Some(DefInfo::Builtin) => {
+                        let mut locations: Vec<Location> = vec![];
+                        locations.push(Location {
+                            contexts: vec![],
+                            primary: to_range(start_name, end_name),
+                        });
+                        errors.push(Error {
+                            error_type: ErrorType::DefinitionIsBuiltIn(name.clone()),
+                            locations,
+                        });
+                    }
                 }
-                context.types.insert(name.clone(), DefType::Record);
+                context
+                    .types
+                    .insert(name.clone(), DefInfo::Def(to_range(start_name, end_name)));
                 context.tables.insert(
                     crate::ext::string::decapitalize(&name),
                     ast::RecordDetails {
@@ -256,6 +284,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                         fields: fields.clone(),
                         start: start.clone(),
                         end: end.clone(),
+                        start_name: start_name.clone(),
+                        end_name: end_name.clone(),
                     },
                 );
             }
@@ -265,16 +295,38 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                 start,
                 end,
             } => {
-                if context.types.contains_key(name) {
-                    errors.push(Error {
-                        error_type: ErrorType::DuplicateDefinition(name.clone()),
-                        location: Location {
+                match context.types.get(name) {
+                    None => (),
+                    Some(DefInfo::Def(loc)) => {
+                        let mut locations: Vec<Location> = vec![];
+                        locations.push(Location {
+                            contexts: vec![],
+                            primary: loc.clone(),
+                        });
+                        locations.push(Location {
                             contexts: vec![],
                             primary: to_range(start, end),
-                        },
-                    });
+                        });
+                        errors.push(Error {
+                            error_type: ErrorType::DuplicateDefinition(name.clone()),
+                            locations,
+                        });
+                    }
+                    Some(DefInfo::Builtin) => {
+                        let mut locations: Vec<Location> = vec![];
+                        locations.push(Location {
+                            contexts: vec![],
+                            primary: to_range(start, end),
+                        });
+                        errors.push(Error {
+                            error_type: ErrorType::DefinitionIsBuiltIn(name.clone()),
+                            locations,
+                        });
+                    }
                 }
-                context.types.insert(name.clone(), DefType::Tagged);
+                context
+                    .types
+                    .insert(name.clone(), DefInfo::Def(to_range(start, end)));
 
                 for mut variant in variants {
                     let location = Location {
@@ -305,6 +357,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                 fields,
                 start,
                 end,
+                start_name,
+                end_name,
             } => {
                 let mut tablenames: Vec<String> = Vec::new();
                 let mut has_primary_id = false;
@@ -312,25 +366,21 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
 
                 for field in fields {
                     match field {
-                        ast::Field::Column(ast::Column {
-                            name,
-                            type_,
-                            directives,
-                            ..
-                        }) => {
-                            if field_names.contains(name) {
+                        ast::Field::Column(column) => {
+                            if field_names.contains(&column.name) {
                                 errors.push(Error {
                                     error_type: ErrorType::DuplicateField {
                                         record: name.clone(),
-                                        field: name.clone(),
+                                        field: column.name.clone(),
                                     },
-                                    location: Location {
-                                        contexts: vec![],
-                                        primary: to_range(&start, &end),
-                                    },
+                                    locations: vec![Location {
+                                        contexts: to_highlight_range(&start, &end),
+                                        primary: to_range(&column.start, &column.end),
+                                    }],
                                 });
                             }
-                            if (directives
+                            if (column
+                                .directives
                                 .iter()
                                 .any(|item| *item == ast::ColumnDirective::PrimaryKey))
                             {
@@ -340,10 +390,10 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                             record: name.clone(),
                                             field: name.clone(),
                                         },
-                                        location: Location {
+                                        locations: vec![Location {
                                             contexts: vec![],
                                             primary: to_range(&start, &end),
-                                        },
+                                        }],
                                     });
                                 }
                                 has_primary_id = true;
@@ -363,10 +413,10 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                         record: name.clone(),
                                         field: link.link_name.clone(),
                                     },
-                                    location: Location {
+                                    locations: vec![Location {
                                         contexts: vec![],
                                         primary: to_range(&start, &end),
-                                    },
+                                    }],
                                 });
                             }
 
@@ -383,10 +433,10 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                                     link_name: link.link_name.clone(),
                                                     unknown_foreign_field: foreign_id.clone(),
                                                 },
-                                                location: Location {
+                                                locations: vec![Location {
                                                     contexts: vec![],
                                                     primary: to_range(&start, &end),
-                                                },
+                                                }],
                                             });
                                         }
                                     }
@@ -397,10 +447,10 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                             link_name: link.link_name.clone(),
                                             unknown_table: link.foreign_tablename.clone(),
                                         },
-                                        location: Location {
+                                        locations: vec![Location {
                                             contexts: vec![],
                                             primary: to_range(&start, &end),
-                                        },
+                                        }],
                                     });
                                 }
                             }
@@ -413,10 +463,10 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                             link_name: link.link_name.clone(),
                                             unknown_local_field: local_id.clone(),
                                         },
-                                        location: Location {
+                                        locations: vec![Location {
                                             contexts: vec![],
                                             primary: to_range(&start, &end),
-                                        },
+                                        }],
                                     });
                                 }
                             }
@@ -431,10 +481,10 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                             record: name.clone(),
                             tablenames: tablenames.clone(),
                         },
-                        location: Location {
+                        locations: vec![Location {
                             contexts: vec![],
                             primary: to_range(&start, &end),
-                        },
+                        }],
                     });
                 }
 
@@ -443,10 +493,10 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                         error_type: ErrorType::NoPrimaryKey {
                             record: name.clone(),
                         },
-                        location: Location {
+                        locations: vec![Location {
                             contexts: vec![],
                             primary: to_range(&start, &end),
-                        },
+                        }],
                     });
                 }
             }
@@ -470,7 +520,7 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                     base_variant,
                     duplicates,
                 },
-                location,
+                locations: vec![location],
             });
         }
     }
@@ -483,6 +533,8 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                 fields,
                 start,
                 end,
+                start_name,
+                end_name,
             } => {
                 let mut field_names = HashSet::new();
                 for column in ast::collect_columns(fields) {
@@ -490,10 +542,10 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                     if !context.types.contains_key(&column.type_) {
                         errors.push(Error {
                             error_type: ErrorType::UnknownType(column.type_.clone()),
-                            location: Location {
+                            locations: vec![Location {
                                 contexts: to_highlight_range(start, end),
                                 primary: to_range(&column.start, &column.end),
-                            },
+                            }],
                         });
                     }
 
@@ -504,10 +556,10 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                                 record: name.clone(),
                                 field: column.name.clone(),
                             },
-                            location: Location {
-                                contexts: vec![],
-                                primary: to_range(start, end),
-                            },
+                            locations: vec![Location {
+                                contexts: to_highlight_range(start, end),
+                                primary: to_range(&column.start_name, &column.end_name),
+                            }],
                         });
                     }
                     field_names.insert(column.name.clone());
@@ -532,10 +584,10 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                                     if !context.types.contains_key(&field.type_) {
                                         errors.push(Error {
                                             error_type: ErrorType::UnknownType(field.type_.clone()),
-                                            location: Location {
+                                            locations: vec![Location {
                                                 contexts: vec![],
                                                 primary: to_range(&start, &end),
-                                            },
+                                            }],
                                         });
                                     }
                                 }
@@ -604,10 +656,10 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
         match context.types.get(&param_def.type_) {
             None => errors.push(Error {
                 error_type: ErrorType::UnknownType(param_def.type_.clone()),
-                location: Location {
+                locations: vec![Location {
                     contexts: vec![],
                     primary: to_range(&param_def.start_type, &param_def.end_type),
-                },
+                }],
             }),
             Some(_) => {}
         }
@@ -629,12 +681,10 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
                     found: field.name.clone(),
                     existing: vec![],
                 },
-                location: Location {
-                    // contexts: to_highlight_range(&field.start, &field.end),
-                    // primary: to_range(&query.start, &query.end),
+                locations: vec![Location {
                     contexts: to_highlight_range(&query.start, &query.end),
                     primary: to_range(&field.start_fieldname, &field.end_fieldname),
-                },
+                }],
             }),
             Some(table) => check_table_query(
                 context,
@@ -651,10 +701,10 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
         match usage {
             ParamUsage::Defined(loc) => errors.push(Error {
                 error_type: ErrorType::UnusedParam { param: param_name },
-                location: Location {
+                locations: vec![Location {
                     contexts: vec![],
                     primary: loc,
-                },
+                }],
             }),
             ParamUsage::Used => {}
             ParamUsage::NotDefinedButUsed(loc) => errors.push(Error {
@@ -662,10 +712,10 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
                     param: param_name,
                     type_: type_string,
                 },
-                location: Location {
+                locations: vec![Location {
                     contexts: vec![],
                     primary: loc,
-                },
+                }],
             }),
             _ => {}
         }
@@ -711,10 +761,10 @@ fn check_where_args(
                                 error_type: ErrorType::WhereOnLinkIsntAllowed {
                                     link_name: field_name.clone(),
                                 },
-                                location: Location {
+                                locations: vec![Location {
                                     contexts: vec![],
                                     primary: None,
-                                },
+                                }],
                             })
                         }
                     }
@@ -730,10 +780,10 @@ fn check_where_args(
                         record_name: table.name.clone(),
                         known_fields,
                     },
-                    location: Location {
+                    locations: vec![Location {
                         contexts: vec![],
                         primary: None,
-                    },
+                    }],
                 })
             }
 
@@ -764,10 +814,10 @@ fn check_value(
                     error_type: ErrorType::UndeclaredVariable {
                         variable: var.clone(),
                     },
-                    location: Location {
+                    locations: vec![Location {
                         contexts: vec![],
                         primary: None,
-                    },
+                    }],
                 });
                 params.insert(
                     var.to_string(),
@@ -786,10 +836,10 @@ fn check_value(
                             variable_name: var.clone(),
                             variable_defined_as: type_string.clone(),
                         },
-                        location: Location {
+                        locations: vec![Location {
                             contexts: vec![],
                             primary: None,
-                        },
+                        }],
                     })
                 }
                 match usage {
@@ -814,10 +864,10 @@ fn check_table_query(
     if query.fields.is_empty() {
         errors.push(Error {
             error_type: ErrorType::NoFieldsSelected,
-            location: Location {
+            locations: vec![Location {
                 contexts: vec![],
                 primary: to_range(&query.start, &query.end),
-            },
+            }],
         })
     }
 
@@ -838,10 +888,10 @@ fn check_table_query(
                             error_type: ErrorType::MultipleLimits {
                                 query: query.name.clone(),
                             },
-                            location: Location {
+                            locations: vec![Location {
                                 contexts: vec![],
                                 primary: to_range(&query.start, &query.end),
-                            },
+                            }],
                         });
                     } else {
                         has_limit = true;
@@ -855,10 +905,10 @@ fn check_table_query(
                             error_type: ErrorType::MultipleOffsets {
                                 query: query.name.clone(),
                             },
-                            location: Location {
+                            locations: vec![Location {
                                 contexts: vec![],
                                 primary: to_range(&query.start, &query.end),
-                            },
+                            }],
                         });
                     } else {
                         has_offset = true;
@@ -872,10 +922,10 @@ fn check_table_query(
                             error_type: ErrorType::MultipleWheres {
                                 query: query.name.clone(),
                             },
-                            location: Location {
+                            locations: vec![Location {
                                 contexts: vec![],
                                 primary: to_range(&query.start, &query.end),
-                            },
+                            }],
                         });
                     } else {
                         has_where = true;
@@ -894,10 +944,10 @@ fn check_table_query(
                             query: table.name.clone(),
                             field: aliased_name.clone(),
                         },
-                        location: Location {
+                        locations: vec![Location {
                             contexts: vec![],
                             primary: to_range(&query.start, &query.end),
-                        },
+                        }],
                     });
                 } else {
                     queried_fields.insert(aliased_name.clone(), field.set.is_some());
@@ -933,10 +983,10 @@ fn check_table_query(
                             record_name: table.name.clone(),
                             known_fields,
                         },
-                        location: Location {
+                        locations: vec![Location {
                             contexts: to_highlight_range(&query.start, &query.end),
                             primary: to_range(&field.start_fieldname, &field.end_fieldname),
-                        },
+                        }],
                     })
                 }
             }
@@ -959,10 +1009,10 @@ fn check_table_query(
                                 error_type: ErrorType::InsertColumnIsNotSet {
                                     field: col.name.clone(),
                                 },
-                                location: Location {
+                                locations: vec![Location {
                                     contexts: vec![],
                                     primary: to_range(&query.start, &query.end),
-                                },
+                                }],
                             })
                         }
                     }
@@ -970,10 +1020,10 @@ fn check_table_query(
                         error_type: ErrorType::InsertMissingColumn {
                             field: col.name.clone(),
                         },
-                        location: Location {
+                        locations: vec![Location {
                             contexts: vec![],
                             primary: to_range(&query.start, &query.end),
-                        },
+                        }],
                     }),
                 }
             }
@@ -1020,10 +1070,10 @@ fn check_field(
                     error_type: ErrorType::NoSetsInSelect {
                         field: column.name.clone(),
                     },
-                    location: Location {
+                    locations: vec![Location {
                         contexts: vec![],
                         primary: to_range(&field.start, &field.end),
-                    },
+                    }],
                 })
             }
         }
@@ -1034,10 +1084,10 @@ fn check_field(
                     error_type: ErrorType::MissingSetInInsert {
                         field: column.name.clone(),
                     },
-                    location: Location {
+                    locations: vec![Location {
                         contexts: vec![],
                         primary: to_range(&field.start, &field.end),
-                    },
+                    }],
                 })
             }
         }
@@ -1051,10 +1101,10 @@ fn check_field(
                     error_type: ErrorType::NoSetsInDelete {
                         field: column.name.clone(),
                     },
-                    location: Location {
+                    locations: vec![Location {
                         contexts: vec![],
                         primary: to_range(&field.start, &field.end),
-                    },
+                    }],
                 })
             }
         }
@@ -1092,10 +1142,10 @@ fn check_link(
                 error_type: ErrorType::LinksDisallowedInInserts {
                     field: link.link_name.clone(),
                 },
-                location: Location {
+                locations: vec![Location {
                     contexts: vec![],
                     primary: to_range(&field.start, &field.end),
-                },
+                }],
             });
             return ();
         }
@@ -1104,10 +1154,10 @@ fn check_link(
                 error_type: ErrorType::LinksDisallowedInUpdates {
                     field: link.link_name.clone(),
                 },
-                location: Location {
+                locations: vec![Location {
                     contexts: vec![],
                     primary: to_range(&field.start, &field.end),
-                },
+                }],
             });
         }
         ast::QueryOperation::Delete => {
@@ -1115,10 +1165,10 @@ fn check_link(
                 error_type: ErrorType::LinksDisallowedInDeletes {
                     field: link.link_name.clone(),
                 },
-                location: Location {
+                locations: vec![Location {
                     contexts: vec![],
                     primary: to_range(&field.start, &field.end),
-                },
+                }],
             });
             return ();
         }
@@ -1136,10 +1186,10 @@ fn check_link(
                 link_name: link.link_name.clone(),
                 known_fields,
             },
-            location: Location {
+            locations: vec![Location {
                 contexts: vec![],
                 primary: to_range(&field.start, &field.end),
-            },
+            }],
         })
     } else {
         let table = context
@@ -1151,10 +1201,10 @@ fn check_link(
                     found: link.foreign_tablename.clone(),
                     existing: vec![],
                 },
-                location: Location {
+                locations: vec![Location {
                     contexts: vec![],
                     primary: to_range(&field.start, &field.end),
-                },
+                }],
             }),
             Some(table) => check_table_query(context, errors, operation, table, field, params),
         }

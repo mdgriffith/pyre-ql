@@ -33,6 +33,9 @@ pub enum Definition {
         fields: Vec<Field>,
         start: Option<Location>,
         end: Option<Location>,
+
+        start_name: Option<Location>,
+        end_name: Option<Location>,
     },
 }
 
@@ -43,6 +46,9 @@ pub struct RecordDetails {
 
     pub start: Option<Location>,
     pub end: Option<Location>,
+
+    pub start_name: Option<Location>,
+    pub end_name: Option<Location>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -210,6 +216,9 @@ pub struct Column {
 
     pub start: Option<Location>,
     pub end: Option<Location>,
+
+    pub start_name: Option<Location>,
+    pub end_name: Option<Location>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

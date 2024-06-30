@@ -45,6 +45,8 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             fields,
             start,
             end,
+            start_name,
+            end_name,
         } => to_type_alias(name, fields),
     }
 }
@@ -190,6 +192,8 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
             fields,
             start,
             end,
+            start_name,
+            end_name,
         } => "".to_string(),
     }
 }
@@ -316,6 +320,8 @@ fn to_encoder_definition(definition: &ast::Definition) -> String {
             fields,
             start,
             end,
+            start_name,
+            end_name,
         } => "".to_string(),
     }
 }

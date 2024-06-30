@@ -38,6 +38,8 @@ fn add_definition_sql(definition: &Definition) -> String {
             fields,
             start,
             end,
+            start_name,
+            end_name,
         } => {
             let name = get_tablename(&name, &fields);
             let fields_sql: Vec<String> = collect_columns(fields)
