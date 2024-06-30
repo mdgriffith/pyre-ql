@@ -593,6 +593,7 @@ fn parse_query_field(input: Text) -> ParseResult<ast::QueryField> {
     let (input, start_pos) = position(input)?;
     let (input, name_or_alias) = parse_fieldname(input)?;
     let (input, alias_or_name) = opt(parse_alias)(input)?;
+    let (input, end_fieldname_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
     let (input, set) = opt(parse_set)(input)?;
     let (input, _) = multispace0(input)?;
@@ -614,6 +615,9 @@ fn parse_query_field(input: Text) -> ParseResult<ast::QueryField> {
             fields: fieldsOrNone.unwrap_or_else(Vec::new),
             start: Some(to_location(start_pos)),
             end: Some(to_location(end_pos)),
+
+            start_fieldname: Some(to_location(start_pos)),
+            end_fieldname: Some(to_location(end_fieldname_pos)),
         },
     ))
 }

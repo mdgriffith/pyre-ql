@@ -319,6 +319,9 @@ pub struct QueryField {
     pub directives: Vec<String>,
     pub fields: Vec<ArgField>,
 
+    pub start_fieldname: Option<Location>,
+    pub end_fieldname: Option<Location>,
+
     pub start: Option<Location>,
     pub end: Option<Location>,
 }
