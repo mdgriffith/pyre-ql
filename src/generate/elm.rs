@@ -1,5 +1,6 @@
 use crate::ast;
 use crate::ext::string;
+use crate::hash;
 use crate::typecheck;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -123,11 +124,17 @@ fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> Stri
 pub fn to_schema_decoders(schem: &ast::Schema) -> String {
     let mut result = String::new();
 
-    result.push_str(
-        "module Db.Decode exposing (..)\n\nimport Db\nimport Db.Read\nimport Json.Decode as Decode\nimport Time\n\n",
-    );
+    result.push_str("module Db.Decode exposing (..)\n\n");
+    result.push_str("import Db\n");
+    result.push_str("import Db.Read\n");
+    result.push_str("import Json.Decode as Decode\n");
+    result.push_str("import Time\n\n");
 
-    result.push_str("field : String -> Decode.Decoder a -> Decode.Decoder (a -> b) -> Decode.Decoder b\nfield fieldName_ fieldDecoder_ decoder_ =\n    decoder_ |> Decode.andThen (\\func -> Decode.field fieldName_ fieldDecoder_ |> Decode.map func)");
+    result.push_str(
+        "field : String -> Decode.Decoder a -> Decode.Decoder (a -> b) -> Decode.Decoder b\n",
+    );
+    result.push_str("field fieldName_ fieldDecoder_ decoder_ =\n");
+    result.push_str("    decoder_ |> Decode.andThen (\\func -> Decode.field fieldName_ fieldDecoder_ |> Decode.map func)");
 
     result.push_str("\n\n");
 
@@ -428,7 +435,8 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     ));
     result.push_str("prepare input =\n");
     result.push_str(&format!(
-        "    {{ args = encode input, query = \"id\", decoder = decoder{} }}\n\n\n",
+        "    {{ args = encode input\n    , query = \"{}\"\n    , decoder = decoder{}\n    }}\n\n\n",
+        &query.full_hash,
         string::capitalize(&query.name)
     ));
 

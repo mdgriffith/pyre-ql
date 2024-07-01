@@ -1,5 +1,6 @@
 use crate::ast;
 use crate::error;
+use crate::hash;
 use nom::bytes::complete::take_while1;
 use nom::{
     branch::alt,
@@ -525,17 +526,23 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
     let (input, fields) = with_braces(parse_query_field)(input)?;
     let (input, end_pos) = position(input)?;
 
-    Ok((
-        input,
-        ast::QueryDef::Query(ast::Query {
-            operation: op,
-            name: name.to_string(),
-            args: paramDefinitionsOrNone.unwrap_or(vec![]),
-            fields,
-            start: Some(to_location(start_pos)),
-            end: Some(to_location(end_pos)),
-        }),
-    ))
+    let mut query = ast::Query {
+        interface_hash: "".to_string(),
+        full_hash: "".to_string(),
+        operation: op,
+        name: name.to_string(),
+        args: paramDefinitionsOrNone.unwrap_or(vec![]),
+        fields,
+        start: Some(to_location(start_pos)),
+        end: Some(to_location(end_pos)),
+    };
+    let interface_hash = crate::hash::hash_query_interface(&query);
+    let full_hash = crate::hash::hash_query_full(&query);
+
+    query.interface_hash = interface_hash;
+    query.full_hash = full_hash;
+
+    Ok((input, ast::QueryDef::Query(query)))
 }
 
 fn parse_query_param_definitions(input: Text) -> ParseResult<Vec<ast::QueryParamDefinition>> {

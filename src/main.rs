@@ -17,6 +17,7 @@ mod error;
 mod ext;
 mod format;
 mod generate;
+mod hash;
 mod parser;
 mod typecheck;
 
@@ -134,7 +135,10 @@ fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Re
     create_dir_if_not_exists(&out_path(options, "typescript").join("db"));
 
     // Top level TS files
-    let ts_db_path = out(options, "typescript/db.ts");
+    //
+
+    // Schema-level data types
+    let ts_db_path = out(options, "typescript/db/data.ts");
     let ts_file = Path::new(&ts_db_path);
     let mut output = fs::File::create(ts_file).expect("Failed to create file");
     output

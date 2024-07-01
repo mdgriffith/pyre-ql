@@ -307,6 +307,9 @@ pub enum QueryDef {
 
 #[derive(Debug, Clone)]
 pub struct Query {
+    pub interface_hash: String,
+    pub full_hash: String,
+
     pub operation: QueryOperation,
     pub name: String,
     pub args: Vec<QueryParamDefinition>,
