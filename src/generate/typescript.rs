@@ -771,7 +771,7 @@ fn operator_to_string(operator: &ast::Operator) -> &str {
 //
 pub const DB_ENGINE: &str = r#"import { Client as LibsqlClient, createClient, ResultSet } from '@libsql/client/web';
 import { Env } from '../env';
-import { z } from 'zod';
+import * as Ark from '@arktype/arktype';
 
 export type ExecuteResult = SuccessResult | ErrorResult;
 
@@ -803,15 +803,15 @@ export enum ErrorType {
 
 export interface Runner<input, output> {
 	id: string;
-	input: z.ZodType<input>;
-	output: z.ZodType<output>;
+	input: Ark.Type<input>;
+	output: Ark.Type<output>;
 	execute: (env: Env, args: ValidArgs<input>) => Promise<ExecuteResult>;
 }
 
 export type ToRunnerArgs<input, output> = {
 	id: string;
-	input: z.ZodType<input>;
-	output: z.ZodType<output>;
+	input: Ark.Type<input>;
+	output: Ark.Type<output>;
 	sql: string;
 };
 
@@ -848,14 +848,17 @@ export const run = async <Input, Output>(env: Env, runner: Runner<Input, Output>
 	return runner.execute(env, validArgs);
 };
 
+
 const validate = <Input, Output>(runner: Runner<Input, Output>, args: any): ErrorResult | ValidArgs<Input> => {
-	try {
-		const valid = runner.input.parse(args);
-		return { kind: 'valid', valid: valid };
-	} catch (error) {
-		return { kind: 'error', errorType: ErrorType.InvalidInput, message: 'Expected object' };
-	}
+    const validationResult = runner.input.validate(args);
+
+    if (validationResult.problems) {
+        return { kind: 'error', errorType: ErrorType.InvalidInput, message: 'Expected object' };
+    } else {
+        return { kind: 'valid', valid: validationResult.value };
+    }
 };
+
 
 // Queries
 
