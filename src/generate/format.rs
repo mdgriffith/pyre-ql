@@ -97,7 +97,9 @@ fn to_string_column(indent: usize, column: &ast::Column) -> String {
 fn to_string_field_directive(indent: usize, directive: &ast::FieldDirective) -> String {
     let spaces = " ".repeat(indent);
     match directive {
-        ast::FieldDirective::TableName(name) => format!("{}@tablename \"{}\"\n", spaces, name),
+        ast::FieldDirective::TableName((range, name)) => {
+            format!("{}@tablename \"{}\"\n", spaces, name)
+        }
         ast::FieldDirective::Link(details) => {
             let mut result = format!("{}@link ", spaces);
             result.push_str(&to_string_link_details(details));

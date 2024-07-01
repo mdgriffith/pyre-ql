@@ -156,15 +156,22 @@ fn parse_field_comment(input: Text) -> ParseResult<ast::Field> {
 
 fn parse_field_directive(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = multispace0(input)?;
+    let (input, start_pos) = position(input)?;
     let (input, _) = tag("@")(input)?;
     let (input, name) = parse_typename(input)?;
     match name {
         "tablename" => {
             let (input, _) = multispace1(input)?;
             let (input, tablename) = parse_string_literal(input)?;
+            let (input, end_pos) = position(input)?;
             let (input, _) = multispace0(input)?;
 
-            let directive = ast::FieldDirective::TableName(tablename.to_string());
+            let range = ast::Range {
+                start: to_location(start_pos),
+                end: to_location(end_pos),
+            };
+
+            let directive = ast::FieldDirective::TableName((range, tablename.to_string()));
             return Ok((input, ast::Field::FieldDirective(directive)));
         }
         "link" => {

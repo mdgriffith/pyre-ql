@@ -67,7 +67,6 @@ pub enum ErrorType {
     },
     MultipleTableNames {
         record: String,
-        tablenames: Vec<String>,
     },
     // Schema Link errors
     LinkToUnknownTable {
@@ -115,9 +114,6 @@ pub enum ErrorType {
     },
     MultipleWheres {
         query: String,
-    },
-    UndeclaredVariable {
-        variable: String,
     },
     WhereOnLinkIsntAllowed {
         link_name: String,
@@ -379,7 +375,7 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                 start_name,
                 end_name,
             } => {
-                let mut tablenames: Vec<String> = Vec::new();
+                let mut tablenames: Vec<Range> = Vec::new();
                 let mut has_primary_id = false;
                 let mut field_names = HashSet::new();
 
@@ -420,9 +416,10 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
 
                             field_names.insert(name.clone());
                         }
-                        ast::Field::FieldDirective(ast::FieldDirective::TableName(tablename)) => {
-                            tablenames.push(tablename.to_string())
-                        }
+                        ast::Field::FieldDirective(ast::FieldDirective::TableName((
+                            tablename_range,
+                            tablename,
+                        ))) => tablenames.push(convert_range(tablename_range)),
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                             let maybe_foreign_table = get_linked_table(context, link);
 
@@ -502,11 +499,10 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                     errors.push(Error {
                         error_type: ErrorType::MultipleTableNames {
                             record: name.clone(),
-                            tablenames: tablenames.clone(),
                         },
                         locations: vec![Location {
-                            contexts: vec![],
-                            primary: to_range(&start, &end),
+                            contexts: to_range(&start, &end),
+                            primary: tablenames,
                         }],
                     });
                 }
@@ -907,16 +903,10 @@ fn check_value(
     match value {
         ast::QueryValue::Variable((var_range, var)) => match params.get_mut(var) {
             None => {
-                errors.push(Error {
-                    error_type: ErrorType::UndeclaredVariable {
-                        variable: var.clone(),
-                    },
-                    locations: vec![],
-                });
                 params.insert(
                     var.to_string(),
                     ParamInfo {
-                        usage: ParamUsage::NotDefinedButUsed(None),
+                        usage: ParamUsage::NotDefinedButUsed(Some(convert_range(var_range))),
                         defined_at: None,
                         type_: table_type_string.to_string(),
                     },
@@ -1214,7 +1204,7 @@ fn check_field(
                     },
                     locations: vec![Location {
                         contexts: vec![],
-                        primary: to_range(&field.start, &field.end),
+                        primary: to_range(&field.start_fieldname, &field.end_fieldname),
                     }],
                 })
             }
@@ -1228,7 +1218,7 @@ fn check_field(
                     },
                     locations: vec![Location {
                         contexts: vec![],
-                        primary: to_range(&field.start, &field.end),
+                        primary: to_range(&field.start_fieldname, &field.end_fieldname),
                     }],
                 })
             }
@@ -1245,7 +1235,7 @@ fn check_field(
                     },
                     locations: vec![Location {
                         contexts: vec![],
-                        primary: to_range(&field.start, &field.end),
+                        primary: to_range(&field.start_fieldname, &field.end_fieldname),
                     }],
                 })
             }

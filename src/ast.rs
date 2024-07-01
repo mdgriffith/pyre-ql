@@ -86,7 +86,9 @@ pub fn is_primary_key(col: &Column) -> bool {
 pub fn get_tablename(name: &str, fields: &Vec<Field>) -> String {
     for field in fields.iter() {
         match field {
-            Field::FieldDirective(FieldDirective::TableName(name)) => return name.to_string(),
+            Field::FieldDirective(FieldDirective::TableName((range, name))) => {
+                return name.to_string()
+            }
             _ => {}
         }
     }
@@ -144,7 +146,7 @@ pub fn link_equivalent(a: &LinkDetails, b: &LinkDetails) -> bool {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum FieldDirective {
-    TableName(String),
+    TableName((Range, String)),
     Link(LinkDetails),
 }
 

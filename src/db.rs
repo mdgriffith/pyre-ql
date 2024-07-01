@@ -176,7 +176,7 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                         // println!("{:?}", row);
                         let mut fields: Vec<ast::Field> = vec![];
                         fields.push(ast::Field::FieldDirective(ast::FieldDirective::TableName(
-                            table.name.clone(),
+                            (ast::empty_range(), table.name.clone()),
                         )));
 
                         // FKs

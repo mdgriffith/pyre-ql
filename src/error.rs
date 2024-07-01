@@ -201,10 +201,21 @@ fn render_highlight_location(
         {
             rendered.push_str(&divider(indent))
         }
-        rendered.push_str(&get_line(file_contents, true, primary.start.line));
-        rendered.push_str("\n");
-        rendered.push_str(&highlight_line(&primary));
-        rendered.push_str("\n");
+
+        if primary.start.line == primary.end.line {
+            rendered.push_str(&get_line(file_contents, true, primary.start.line));
+            rendered.push_str("\n");
+            rendered.push_str(&highlight_line(&primary));
+            rendered.push_str("\n");
+        } else {
+            rendered.push_str(&get_lines(
+                file_contents,
+                true,
+                primary.start.line,
+                primary.end.line,
+            ));
+            rendered.push_str("\n");
+        }
 
         last_line_index = primary.end.line.to_usize();
         first_primary_rendered = true;
@@ -271,6 +282,23 @@ fn get_line(file_contents: &str, show_line_number: bool, line_index: u32) -> Str
         }
     }
     prefix.to_string()
+}
+
+fn get_lines(file_contents: &str, show_line_number: bool, start: u32, end: u32) -> String {
+    let start_line_number = start.to_usize() - 1;
+    let end_line_number = end.to_usize() - 1;
+
+    let mut result = "".to_string();
+
+    for (index, line) in file_contents.to_string().lines().enumerate() {
+        if start_line_number <= index && end_line_number >= index {
+            let prefix =
+                line_number_prefix(show_line_number, index.to_usize() + 1).truecolor(120, 120, 120);
+            result.push_str(&format!("{}{}", prefix, line.to_string()));
+            result.push_str("\n");
+        }
+    }
+    result
 }
 
 fn to_error_description(error: &typecheck::Error) -> String {
@@ -427,6 +455,18 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
+        typecheck::ErrorType::MultipleTableNames { record } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} has has multiple @tablename definitions, let's only have one.",
+                record.cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
         typecheck::ErrorType::MultipleLimits { query } => {
             let mut result = "".to_string();
 
@@ -446,6 +486,31 @@ fn to_error_description(error: &typecheck::Error) -> String {
                 "{} has multiple {}, let's only have one!",
                 query.cyan(),
                 "@offsets".yellow()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::MultipleWheres { query } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} has multiple {}, let's only have one!",
+                query.cyan(),
+                "@wheres".yellow()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::UndefinedParam { param, type_ } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} is used, but not declared.\n    Add it to your declarations as {}: {}",
+                format!("${}", param).yellow(),
+                format!("${}", param).yellow(),
+                type_.cyan(),
             ));
 
             result.push_str("\n\n");
@@ -476,6 +541,40 @@ fn to_error_description(error: &typecheck::Error) -> String {
                 "{} isn't being used. Let's either use it or remove it.",
                 colored_param
             ));
+
+            result.push_str("\n\n");
+            result
+        }
+
+        typecheck::ErrorType::NoSetsInSelect { field } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} is being set, which isn't allowed in a {}",
+                format!("${}", field).yellow(),
+                "query".cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::NoSetsInDelete { field } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} is being set, which isn't allowed in a {}",
+                format!("${}", field).yellow(),
+                "delete".cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
+        typecheck::ErrorType::InsertMissingColumn { field } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!("This insert is missing {}", field.yellow()));
 
             result.push_str("\n\n");
             result
