@@ -766,3 +766,121 @@ fn operator_to_string(operator: &ast::Operator) -> &str {
         ast::Operator::NotLike => "not like",
     }
 }
+
+//
+//
+pub const DB_ENGINE: &str = r#"import { Client as LibsqlClient, createClient, ResultSet } from '@libsql/client/web';
+import { Env } from '../env';
+import { z } from 'zod';
+
+export type ExecuteResult = SuccessResult | ErrorResult;
+
+export interface SuccessResult {
+	kind: 'success';
+	metadata: {
+		outOfDate: boolean;
+	};
+	data: ResultSet;
+}
+
+export type ValidArgs<valid> = {
+	kind: 'valid';
+	valid: valid;
+};
+
+export interface ErrorResult {
+	kind: 'error';
+	errorType: ErrorType;
+	message: string;
+}
+
+export enum ErrorType {
+	NotFound,
+	Unauthorized,
+	InvalidInput,
+	UnknownError,
+}
+
+export interface Runner<input, output> {
+	id: string;
+	input: z.ZodType<input>;
+	output: z.ZodType<output>;
+	execute: (env: Env, args: ValidArgs<input>) => Promise<ExecuteResult>;
+}
+
+export type ToRunnerArgs<input, output> = {
+	id: string;
+	input: z.ZodType<input>;
+	output: z.ZodType<output>;
+	sql: string;
+};
+
+export const toRunner = <Input, Output>(options: ToRunnerArgs<Input, Output>): Runner<Input, Output> => {
+	return {
+		id: options.id,
+		input: options.input,
+		output: options.output,
+		execute: async <Input>(env: Env, args: ValidArgs<Input>): Promise<ExecuteResult> => {
+			return exec(env, options.sql, args.valid);
+		},
+	};
+};
+
+export const executeOneOf = async <Input, Output>(
+	env: Env,
+	queries: Runner<Input, Output>[],
+	id: string,
+	args: any,
+): Promise<ExecuteResult> => {
+	for (const query of queries) {
+		if (query.id === id) {
+			return run(env, query, args);
+		}
+	}
+	return { kind: 'error', errorType: ErrorType.NotFound, message: 'Unknown command' };
+};
+
+export const run = async <Input, Output>(env: Env, runner: Runner<Input, Output>, args: any): Promise<ExecuteResult> => {
+	const validArgs = validate(runner, args);
+	if (validArgs.kind === 'error') {
+		return validArgs;
+	}
+	return runner.execute(env, validArgs);
+};
+
+const validate = <Input, Output>(runner: Runner<Input, Output>, args: any): ErrorResult | ValidArgs<Input> => {
+	try {
+		const valid = runner.input.parse(args);
+		return { kind: 'valid', valid: valid };
+	} catch (error) {
+		return { kind: 'error', errorType: ErrorType.InvalidInput, message: 'Expected object' };
+	}
+};
+
+// Queries
+
+const exec = async (env: Env, sql: string, args: any): Promise<ExecuteResult> => {
+	const client = buildLibsqlClient(env);
+	try {
+		const res = await client.execute(sql);
+		return { kind: 'success', metadata: { outOfDate: false }, data: res };
+	} catch (error) {
+		return { kind: 'error', errorType: ErrorType.InvalidInput, message: 'Expected object' };
+	}
+};
+
+// Connection
+
+function buildLibsqlClient(env: Env): LibsqlClient {
+	const url = env.TURSO_URL?.trim();
+	if (url === undefined) {
+		throw new Error('TURSO_URL env var is not defined');
+	}
+
+	const authToken = env.TURSO_AUTH_TOKEN?.trim();
+	if (authToken == undefined) {
+		throw new Error('TURSO_AUTH_TOKEN env var is not defined');
+	}
+
+	return createClient({ url, authToken });
+}"#;

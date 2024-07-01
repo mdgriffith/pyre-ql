@@ -135,13 +135,19 @@ fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Re
     create_dir_if_not_exists(&out_path(options, "typescript").join("db"));
 
     // Top level TS files
-    //
-
-    // Schema-level data types
-    let ts_db_path = out(options, "typescript/db/data.ts");
+    // DB engine as db.ts
+    let ts_db_path = out(options, "typescript/db.ts");
     let ts_file = Path::new(&ts_db_path);
     let mut output = fs::File::create(ts_file).expect("Failed to create file");
     output
+        .write_all(generate::typescript::DB_ENGINE.as_bytes())
+        .expect("Failed to write to file");
+
+    // Schema-level data types
+    let ts_db_data_path = out(options, "typescript/db/data.ts");
+    let ts_data_path = Path::new(&ts_db_data_path);
+    let mut output_data = fs::File::create(ts_data_path).expect("Failed to create file");
+    output_data
         .write_all(formatted_ts.as_bytes())
         .expect("Failed to write to file");
 
