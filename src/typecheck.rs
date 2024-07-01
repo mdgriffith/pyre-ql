@@ -137,9 +137,6 @@ pub enum ErrorType {
     NoSetsInDelete {
         field: String,
     },
-    MissingSetInInsert {
-        field: String,
-    },
     LinksDisallowedInInserts {
         field: String,
     },
@@ -850,7 +847,10 @@ fn check_where_args(
                                 error_type: ErrorType::WhereOnLinkIsntAllowed {
                                     link_name: field_name.clone(),
                                 },
-                                locations: vec![],
+                                locations: vec![Location {
+                                    contexts: vec![],
+                                    primary: to_range(&link.start_name, &link.end_name),
+                                }],
                             })
                         }
                     }
@@ -959,7 +959,7 @@ fn check_table_query(
             error_type: ErrorType::NoFieldsSelected,
             locations: vec![Location {
                 contexts: vec![],
-                primary: to_range(&query.start, &query.end),
+                primary: to_range(&query.start_fieldname, &query.end_fieldname),
             }],
         })
     }
@@ -1033,8 +1033,8 @@ fn check_table_query(
                             field: aliased_name.clone(),
                         },
                         locations: vec![Location {
-                            contexts: vec![],
-                            primary: to_range(&query.start, &query.end),
+                            contexts: to_range(&query.start, &query.end),
+                            primary: to_range(&field.start_fieldname, &field.end_fieldname),
                         }],
                     });
                 } else {
@@ -1211,17 +1211,6 @@ fn check_field(
         }
         ast::QueryOperation::Insert => {
             // Set is required
-            if (field.set.is_none()) {
-                errors.push(Error {
-                    error_type: ErrorType::MissingSetInInsert {
-                        field: column.name.clone(),
-                    },
-                    locations: vec![Location {
-                        contexts: vec![],
-                        primary: to_range(&field.start_fieldname, &field.end_fieldname),
-                    }],
-                })
-            }
         }
         ast::QueryOperation::Update => {
             // Set is optional

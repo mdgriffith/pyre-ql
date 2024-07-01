@@ -168,7 +168,7 @@ fn prepare_highlight(file_contents: &str, error: &typecheck::Error) -> String {
 }
 
 fn divider(indent: usize) -> String {
-    format!("    |{}...\n", " ".repeat(indent * 4))
+    format!("    | {}...\n", " ".repeat(indent * 4))
         .truecolor(120, 120, 120)
         .to_string()
 }
@@ -345,6 +345,13 @@ fn to_error_description(error: &typecheck::Error) -> String {
                 base_variant.typename.yellow(),
                 base_variant.variant_name.cyan()
             ));
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::DuplicateQueryField { query, field } => {
+            let mut result = "".to_string();
+            result.push_str(&format!("{} is listed multiple times.\n", field.yellow()));
 
             result.push_str("\n\n");
             result
@@ -545,6 +552,58 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
+        typecheck::ErrorType::InsertColumnIsNotSet { field } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} is required but not set to anything.",
+                field.yellow(),
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::LinksDisallowedInDeletes { field } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} is a {}, which isn't allowed in a {}",
+                field.yellow(),
+                "@link".yellow(),
+                "delete".cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
+        typecheck::ErrorType::LinksDisallowedInUpdates { field } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} is a {}, which isn't allowed in a {}",
+                field.yellow(),
+                "@link".yellow(),
+                "update".cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
+        typecheck::ErrorType::LinksDisallowedInInserts { field } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} is a {}, which isn't allowed in a {}",
+                field.yellow(),
+                "@link".yellow(),
+                "insert".cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
 
         typecheck::ErrorType::NoSetsInSelect { field } => {
             let mut result = "".to_string();
@@ -575,6 +634,27 @@ fn to_error_description(error: &typecheck::Error) -> String {
             let mut result = "".to_string();
 
             result.push_str(&format!("This insert is missing {}", field.yellow()));
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::NoFieldsSelected => {
+            let mut result = "".to_string();
+
+            result.push_str("There are no fields selected for this table, let's add some!");
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::WhereOnLinkIsntAllowed { link_name } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} is a {}, which can't be in a {}",
+                link_name.cyan(),
+                "@link".cyan(),
+                "@where".yellow(),
+            ));
 
             result.push_str("\n\n");
             result
@@ -646,6 +726,5 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        _ => format!("{:#?}\n", error.error_type),
     }
 }
