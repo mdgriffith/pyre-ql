@@ -197,9 +197,16 @@ fn render_order_by(
 
         for field in &query_field.fields {
             match field {
-                ast::ArgField::Arg(ast::Arg::OrderBy(dir, col)) => {
-                    let dir_str = ast::direction_to_string(dir);
-                    order_vals.push(format!("{}.{} {}", quote(table_alias), quote(col), dir_str));
+                ast::ArgField::Arg(located_arg) => {
+                    if let ast::Arg::OrderBy(dir, col) = &located_arg.arg {
+                        let dir_str = ast::direction_to_string(dir);
+                        order_vals.push(format!(
+                            "{}.{} {}",
+                            quote(table_alias),
+                            quote(col),
+                            dir_str
+                        ));
+                    }
                 }
                 _ => continue,
             }
@@ -229,10 +236,12 @@ fn render_limit(
     for query_field in query_fields {
         for field in &query_field.fields {
             match field {
-                ast::ArgField::Arg(ast::Arg::Limit(val)) => {
-                    result.push_str("\n");
-                    result.push_str(&format!("limit {}", render_value(val)));
-                    break;
+                ast::ArgField::Arg(located_arg) => {
+                    if let ast::Arg::Limit(val) = &located_arg.arg {
+                        result.push_str("\n");
+                        result.push_str(&format!("limit {}", render_value(val)));
+                        break;
+                    }
                 }
                 _ => continue,
             }
@@ -248,10 +257,12 @@ fn render_offset(
     for query_field in query_fields {
         for field in &query_field.fields {
             match field {
-                ast::ArgField::Arg(ast::Arg::Offset(val)) => {
-                    result.push_str("\n");
-                    result.push_str(&format!("offset {}", render_value(val)));
-                    break;
+                ast::ArgField::Arg(located_arg) => {
+                    if let ast::Arg::Offset(val) = &located_arg.arg {
+                        result.push_str("\n");
+                        result.push_str(&format!("offset {}", render_value(val)));
+                        break;
+                    }
                 }
                 _ => continue,
             }
@@ -626,7 +637,7 @@ fn to_subwhere(
     }
 }
 
-fn render_where_params(args: &Vec<&ast::Arg>, table_alias: &str) -> Vec<String> {
+fn render_where_params(args: &Vec<ast::Arg>, table_alias: &str) -> Vec<String> {
     let mut result = vec![];
     for where_arg in ast::collect_where_args(args) {
         result.push(render_where_arg(&where_arg, table_alias));
@@ -636,12 +647,12 @@ fn render_where_params(args: &Vec<&ast::Arg>, table_alias: &str) -> Vec<String> 
 
 fn render_value(value: &ast::QueryValue) -> String {
     match value {
-        ast::QueryValue::Variable(v) => format!("${}", v),
-        ast::QueryValue::String(s) => format!("'{}'", s),
-        ast::QueryValue::Int(i) => i.to_string(),
-        ast::QueryValue::Float(f) => f.to_string(),
-        ast::QueryValue::Bool(b) => b.to_string(),
-        ast::QueryValue::Null => "null".to_string(),
+        ast::QueryValue::Variable((r, v)) => format!("${}", v),
+        ast::QueryValue::String((r, s)) => format!("'{}'", s),
+        ast::QueryValue::Int((r, i)) => i.to_string(),
+        ast::QueryValue::Float((r, f)) => f.to_string(),
+        ast::QueryValue::Bool((r, b)) => b.to_string(),
+        ast::QueryValue::Null(r) => "null".to_string(),
     }
 }
 

@@ -196,6 +196,9 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
 
                                             foreign_tablename: to_formatted_tablename(&fk.table),
                                             foreign_ids: vec![fk.to],
+
+                                            start_name: None,
+                                            end_name: None,
                                         }),
                                     ));
                                 }
@@ -230,19 +233,26 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                                         ));
                                     } else if str == "true" {
                                         directives.push(ast::ColumnDirective::Default(
-                                            ast::DefaultValue::Value(ast::QueryValue::Bool(true)),
+                                            ast::DefaultValue::Value(ast::QueryValue::Bool((
+                                                ast::empty_range(),
+                                                true,
+                                            ))),
                                         ));
                                     } else if str == "false" {
                                         directives.push(ast::ColumnDirective::Default(
-                                            ast::DefaultValue::Value(ast::QueryValue::Bool(false)),
+                                            ast::DefaultValue::Value(ast::QueryValue::Bool((
+                                                ast::empty_range(),
+                                                false,
+                                            ))),
                                         ));
                                     } else if str.starts_with("'") {
                                         let mut my_string = str.trim_matches('\'');
 
                                         directives.push(ast::ColumnDirective::Default(
-                                            ast::DefaultValue::Value(ast::QueryValue::String(
+                                            ast::DefaultValue::Value(ast::QueryValue::String((
+                                                ast::empty_range(),
                                                 my_string.to_string(),
-                                            )),
+                                            ))),
                                         ));
                                     } else {
                                         let parsed = parser::parse_number(parser::Text::new(&str));

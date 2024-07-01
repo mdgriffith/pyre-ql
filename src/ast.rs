@@ -164,6 +164,8 @@ pub fn to_reciprocal(local_table: &str, link: &LinkDetails) -> LinkDetails {
         local_ids: link.foreign_ids.clone(),
         foreign_tablename: local_table.to_string(),
         foreign_ids: link.local_ids.clone(),
+        start_name: None,
+        end_name: None,
     }
 }
 
@@ -174,6 +176,9 @@ pub struct LinkDetails {
 
     pub foreign_tablename: String,
     pub foreign_ids: Vec<String>,
+
+    pub start_name: Option<Location>,
+    pub end_name: Option<Location>,
 }
 
 pub fn collect_columns(fields: &Vec<Field>) -> Vec<Column> {
@@ -227,11 +232,32 @@ pub struct Column {
     pub end_typename: Option<Location>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, Hash)]
 pub struct Location {
     pub offset: usize,
     pub line: u32,
     pub column: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, Hash)]
+pub struct Range {
+    pub start: Location,
+    pub end: Location,
+}
+
+pub fn empty_range() -> Range {
+    Range {
+        start: Location {
+            offset: 0,
+            line: 0,
+            column: 0,
+        },
+        end: Location {
+            offset: 0,
+            line: 0,
+            column: 0,
+        },
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -344,8 +370,15 @@ pub struct QueryField {
 #[derive(Debug, Clone)]
 pub enum ArgField {
     Field(QueryField),
-    Arg(Arg),
+    Arg(LocatedArg),
     Line { count: usize },
+}
+
+#[derive(Debug, Clone)]
+pub struct LocatedArg {
+    pub arg: Arg,
+    pub start: Option<Location>,
+    pub end: Option<Location>,
 }
 
 pub fn is_query_field_arg(field: &ArgField) -> bool {
@@ -375,12 +408,11 @@ pub fn collect_query_fields(fields: &Vec<ArgField>) -> Vec<&QueryField> {
     args
 }
 
-pub fn collect_query_args(fields: &Vec<ArgField>) -> Vec<&Arg> {
+pub fn collect_query_args(fields: &Vec<ArgField>) -> Vec<Arg> {
     let mut args = Vec::new();
     for field in fields {
-        match field {
-            ArgField::Arg(arg) => args.push(arg),
-            _ => {}
+        if let ArgField::Arg(arg) = field {
+            args.push(arg.arg.clone());
         }
     }
     args
@@ -394,7 +426,7 @@ pub enum Arg {
     Where(WhereArg),
 }
 
-pub fn collect_where_args<'a>(args: &'a Vec<&'a Arg>) -> Vec<&'a WhereArg> {
+pub fn collect_where_args<'a>(args: &'a Vec<Arg>) -> Vec<&'a WhereArg> {
     let mut wheres = Vec::new();
     for arg in args {
         match arg {
@@ -427,12 +459,12 @@ pub enum WhereArg {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum QueryValue {
-    Variable(String),
-    String(String),
-    Int(i32),
-    Float(f32),
-    Bool(bool),
-    Null,
+    Variable((Range, String)),
+    String((Range, String)),
+    Int((Range, i32)),
+    Float((Range, f32)),
+    Bool((Range, bool)),
+    Null(Range),
 }
 
 #[derive(Debug, Clone)]

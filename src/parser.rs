@@ -169,7 +169,9 @@ fn parse_field_directive(input: Text) -> ParseResult<ast::Field> {
         }
         "link" => {
             let (input, _) = multispace1(input)?;
+            let (input, start_pos) = position(input)?;
             let (input, linkname) = parse_fieldname(input)?;
+            let (input, end_name_pos) = position(input)?;
 
             // link details
             // { from: userId, to: User.id }
@@ -178,7 +180,8 @@ fn parse_field_directive(input: Text) -> ParseResult<ast::Field> {
             let (input, _) = multispace0(input)?;
 
             // gather into link details
-            let (input, link_details) = link_field_to_details(input, linkname, fields)?;
+            let (input, link_details) =
+                link_field_to_details(input, linkname, start_pos, end_name_pos, fields)?;
 
             let (input, _) = multispace0(input)?;
 
@@ -209,6 +212,8 @@ struct ToDetails {
 fn link_field_to_details<'a, 'b>(
     input: Text<'a>,
     linkname: &'b str,
+    start_pos: LocatedSpan<&str>,
+    end_name_pos: LocatedSpan<&str>,
     link_fields: Vec<LinkField>,
 ) -> ParseResult<'a, ast::LinkDetails> {
     let mut details = ast::LinkDetails {
@@ -216,6 +221,9 @@ fn link_field_to_details<'a, 'b>(
         local_ids: vec![],
         foreign_tablename: "".to_string(),
         foreign_ids: vec![],
+
+        start_name: Some(to_location(start_pos)),
+        end_name: Some(to_location(end_name_pos)),
     };
     let mut has_from = false;
     let mut has_to = false;
@@ -596,8 +604,18 @@ fn parse_arg_field(input: Text) -> ParseResult<ast::ArgField> {
 }
 
 fn parse_arg(input: Text) -> ParseResult<ast::ArgField> {
+    let (input, _) = multispace0(input)?;
+    let (input, start_pos) = position(input)?;
     let (input, arg) = parse_query_arg(input)?;
-    Ok((input, ast::ArgField::Arg(arg)))
+    let (input, end_pos) = position(input)?;
+    Ok((
+        input,
+        ast::ArgField::Arg(ast::LocatedArg {
+            arg,
+            start: Some(to_location(start_pos)),
+            end: Some(to_location(end_pos)),
+        }),
+    ))
 }
 
 fn parse_query_arg_field(input: Text) -> ParseResult<ast::ArgField> {
@@ -644,7 +662,6 @@ fn parse_query_arg(input: Text) -> ParseResult<ast::Arg> {
 }
 
 fn parse_limit(input: Text) -> ParseResult<ast::Arg> {
-    let (input, _) = multispace0(input)?;
     let (input, _) = tag("@limit")(input)?;
     let (input, _) = multispace1(input)?;
     let (input, val) = parse_value(input)?;
@@ -736,19 +753,25 @@ fn parse_operator(input: Text) -> ParseResult<ast::Operator> {
 }
 
 fn parse_variable(input: Text) -> ParseResult<ast::QueryValue> {
+    let (input, start_pos) = position(input)?;
     let (input, _) = tag("$")(input)?;
     let (input, name) = parse_fieldname(input)?;
-    Ok((input, ast::QueryValue::Variable(name.to_string())))
+    let (input, end_pos) = position(input)?;
+    let range = ast::Range {
+        start: to_location(start_pos),
+        end: to_location(end_pos),
+    };
+    Ok((input, ast::QueryValue::Variable((range, name.to_string()))))
 }
 
 fn parse_value(input: Text) -> ParseResult<ast::QueryValue> {
     alt((
-        parse_token("null", ast::QueryValue::Null),
-        parse_token("Null", ast::QueryValue::Null),
-        parse_token("True", ast::QueryValue::Bool(true)),
-        parse_token("False", ast::QueryValue::Bool(false)),
-        parse_token("true", ast::QueryValue::Bool(true)),
-        parse_token("false", ast::QueryValue::Bool(false)),
+        parse_located_token("null", |range| ast::QueryValue::Null(range)),
+        parse_located_token("Null", |range| ast::QueryValue::Null(range)),
+        parse_located_token("True", |range| ast::QueryValue::Bool((range, true))),
+        parse_located_token("False", |range| ast::QueryValue::Bool((range, false))),
+        parse_located_token("true", |range| ast::QueryValue::Bool((range, true))),
+        parse_located_token("false", |range| ast::QueryValue::Bool((range, false))),
         parse_variable,
         parse_string,
         parse_number,
@@ -765,21 +788,36 @@ fn parse_value(input: Text) -> ParseResult<ast::QueryValue> {
 // Parses the first digits, starting with any character except 0
 // If there is a ., then it must be a `ast::Float`, otherwise it's an ast::Int.
 pub fn parse_number(input: Text) -> ParseResult<ast::QueryValue> {
+    let (input, start_pos) = position(input)?;
     let (input, first) = one_of("1234567890")(input)?;
     if first == '0' {
-        Ok((input, ast::QueryValue::Int(0)))
+        let (input, end_pos) = position(input)?;
+        let range = ast::Range {
+            start: to_location(start_pos),
+            end: to_location(end_pos),
+        };
+        Ok((input, ast::QueryValue::Int((range, 0))))
     } else {
         let (input, rest) = take_while(|c: char| c.is_digit(10))(input)?;
         let (input, dot) = opt(tag("."))(input)?;
         let (input, tail) = take_while(|c: char| c.is_digit(10))(input)?;
+        let (input, end_pos) = position(input)?;
+
+        let range = ast::Range {
+            start: to_location(start_pos),
+            end: to_location(end_pos),
+        };
 
         let period = if dot.is_some() { "." } else { "" };
 
         let value = format!("{}{}{}{}", first, rest, period, tail);
         if value.contains(".") {
-            Ok((input, ast::QueryValue::Float(value.parse().unwrap())))
+            Ok((
+                input,
+                ast::QueryValue::Float((range, value.parse().unwrap())),
+            ))
         } else {
-            Ok((input, ast::QueryValue::Int(value.parse().unwrap())))
+            Ok((input, ast::QueryValue::Int((range, value.parse().unwrap()))))
         }
     }
 }
@@ -790,8 +828,15 @@ fn parse_int(input: Text) -> ParseResult<usize> {
 }
 
 fn parse_string(input: Text) -> ParseResult<ast::QueryValue> {
+    let (input, start_pos) = position(input)?;
     let (input, value) = parse_string_literal(input)?;
-    Ok((input, ast::QueryValue::String(value.to_string())))
+    let (input, end_pos) = position(input)?;
+
+    let range = ast::Range {
+        start: to_location(start_pos),
+        end: to_location(end_pos),
+    };
+    Ok((input, ast::QueryValue::String((range, value.to_string()))))
 }
 
 fn parse_string_literal(input: Text) -> ParseResult<&str> {
@@ -808,5 +853,29 @@ where
     move |input: Text| {
         let (input, _) = tag(tag_str)(input)?;
         Ok((input, value.clone()))
+    }
+}
+
+fn parse_located_token<'a, T, F>(
+    tag_str: &'a str,
+    value_constructor: F,
+) -> impl Fn(Text) -> ParseResult<T> + 'a
+where
+    T: Clone + 'a,
+    F: Fn(ast::Range) -> T + 'a,
+{
+    move |input: Text| {
+        let original_input = input;
+        let (input, start_pos) = position(input)?;
+        let (input, _) = tag(tag_str)(input)?;
+        let (input, end_pos) = position(input)?;
+
+        let range = ast::Range {
+            start: to_location(start_pos),
+            end: to_location(end_pos),
+        };
+
+        let value = value_constructor(range);
+        Ok((input, value))
     }
 }

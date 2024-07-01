@@ -194,9 +194,11 @@ fn render_highlight_location(
         last_line_index = context.start.line.to_usize();
         indent += 1;
     }
-
+    let mut first_primary_rendered = false;
     for primary in &location.primary {
-        if primary.start.line.to_usize() > last_line_index {
+        if primary.start.line.to_usize() > last_line_index + 1
+            && (first_rendered || first_primary_rendered)
+        {
             rendered.push_str(&divider(indent))
         }
         rendered.push_str(&get_line(file_contents, true, primary.start.line));
@@ -205,6 +207,7 @@ fn render_highlight_location(
         rendered.push_str("\n");
 
         last_line_index = primary.end.line.to_usize();
+        first_primary_rendered = true;
     }
 
     for context in location.contexts.iter().rev() {
@@ -328,13 +331,143 @@ fn to_error_description(error: &typecheck::Error) -> String {
             if existing.len() > 0 {
                 result.push_str("\nThese tables might be similar\n");
                 for table in existing {
-                    result.push_str(&format!("    {}", table.cyan()));
+                    result.push_str(&format!("    {}\n", table.cyan()));
                 }
             }
 
             result.push_str("\n\n");
             result
         }
+        typecheck::ErrorType::TypeMismatch {
+            table,
+
+            column_defined_as,
+            variable_name,
+            variable_defined_as,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "{} is defined as {}, but I'm expecting a {}.\n",
+                format!("${}", variable_name).yellow(),
+                variable_defined_as.yellow(),
+                column_defined_as.cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
+        typecheck::ErrorType::LinkToUnknownForeignField {
+            link_name,
+            foreign_table,
+            unknown_foreign_field,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "{} is trying to link to the {} column on the {} table, but that column doesn't exist.\n",
+                link_name.yellow(),
+                unknown_foreign_field.yellow(),
+                foreign_table.yellow(),
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
+        typecheck::ErrorType::LinkToUnknownField {
+            link_name,
+            unknown_local_field,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "{} is trying to link using the {} column, but that column doesn't exist.",
+                link_name.yellow(),
+                unknown_local_field.yellow(),
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::LinkToUnknownTable {
+            link_name,
+            unknown_table,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "{} is trying to link to the {} table, but that table doesn't exist.",
+                link_name.yellow(),
+                unknown_table.yellow(),
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
+        typecheck::ErrorType::NoPrimaryKey { record } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} doesn't have a primary key, let's add one!",
+                record.cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
+        typecheck::ErrorType::MultiplePrimaryKeys { record, field } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} has multiple primary keys, let's only have one.",
+                record.cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
+        typecheck::ErrorType::MultipleLimits { query } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} has multiple {}, let's only have one!",
+                query.cyan(),
+                "@limits".yellow()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::MultipleOffsets { query } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} has multiple {}, let's only have one!",
+                query.cyan(),
+                "@offsets".yellow()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+        typecheck::ErrorType::LinkSelectionIsEmpty {
+            link_name,
+            foreign_table,
+            foreign_table_fields,
+        } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} is a link to the {} table, but doesn't select any fields.  Let's select some!",
+                link_name.cyan(),
+                foreign_table.cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
         typecheck::ErrorType::UnusedParam { param } => {
             let mut result = "".to_string();
             let colored_param = format!("${}", param).yellow();
@@ -347,7 +480,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::UnknownType(found) => {
+        typecheck::ErrorType::UnknownType { found, known_types } => {
             let mut result = "".to_string();
             let colored_param = format!("{}", found).cyan();
 
@@ -355,6 +488,14 @@ fn to_error_description(error: &typecheck::Error) -> String {
                 "I don't recognize the {} type, is that a typo?",
                 colored_param
             ));
+
+            result.push_str("\n    Here are the types I know:\n\n");
+
+            let mut sorted_types: Vec<String> = known_types.clone();
+            sorted_types.sort();
+            for typename in sorted_types {
+                result.push_str(&format!("        {}\n", typename.cyan()));
+            }
 
             result.push_str("\n\n");
             result

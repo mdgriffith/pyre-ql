@@ -117,12 +117,12 @@ fn column_directive_to_string(column: &Column, directive: &ColumnDirective) -> S
 
 fn value_to_string(value: &QueryValue) -> String {
     match value {
-        QueryValue::Variable(name) => "".to_string(), // not allowed
-        QueryValue::String(value) => format!("'{}'", value),
-        QueryValue::Int(value) => value.to_string(),
-        QueryValue::Float(value) => value.to_string(),
-        QueryValue::Bool(value) => value.to_string(),
-        QueryValue::Null => "null".to_string(),
+        QueryValue::Variable((r, name)) => "".to_string(), // not allowed
+        QueryValue::String((r, value)) => format!("'{}'", value),
+        QueryValue::Int((r, value)) => value.to_string(),
+        QueryValue::Float((r, value)) => value.to_string(),
+        QueryValue::Bool((r, value)) => value.to_string(),
+        QueryValue::Null(r) => "null".to_string(),
     }
 }
 

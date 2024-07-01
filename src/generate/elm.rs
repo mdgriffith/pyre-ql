@@ -824,12 +824,12 @@ fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition)
 
 fn value_to_string(value: &ast::QueryValue) -> String {
     match value {
-        ast::QueryValue::Variable(name) => format!("${}", name),
-        ast::QueryValue::String(value) => format!("\"{}\"", value),
-        ast::QueryValue::Int(value) => value.to_string(),
-        ast::QueryValue::Float(value) => value.to_string(),
-        ast::QueryValue::Bool(value) => value.to_string(),
-        ast::QueryValue::Null => "null".to_string(),
+        ast::QueryValue::Variable((range, name)) => format!("${}", name),
+        ast::QueryValue::String((range, value)) => format!("\"{}\"", value),
+        ast::QueryValue::Int((range, value)) => value.to_string(),
+        ast::QueryValue::Float((range, value)) => value.to_string(),
+        ast::QueryValue::Bool((range, value)) => value.to_string(),
+        ast::QueryValue::Null(range) => "null".to_string(),
     }
 }
 

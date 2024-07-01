@@ -14,7 +14,7 @@ pub struct Error {
 /*
 
 
-    For trakcing location errors, we have a few different considerations.
+    For tracking location errors, we have a few different considerations.
 
     1. Generally a language server takes a single range, so that should easily be retrievable.
     2. For error rendering in the terminal, we want a hierarchy of the contexts we're in.
@@ -35,6 +35,12 @@ pub struct Range {
     pub start: ast::Location,
     pub end: ast::Location,
 }
+fn convert_range(range: &ast::Range) -> Range {
+    Range {
+        start: range.start.clone(),
+        end: range.end.clone(),
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum ErrorType {
@@ -48,7 +54,10 @@ pub enum ErrorType {
         base_variant: VariantDef,
         duplicates: Vec<VariantDef>,
     },
-    UnknownType(String),
+    UnknownType {
+        found: String,
+        known_types: Vec<String>,
+    },
     NoPrimaryKey {
         record: String,
     },
@@ -73,11 +82,13 @@ pub enum ErrorType {
 
     LinkToUnknownForeignField {
         link_name: String,
+        foreign_table: String,
         unknown_foreign_field: String,
     },
     LinkSelectionIsEmpty {
         link_name: String,
-        known_fields: Vec<(String, String)>,
+        foreign_table: String,
+        foreign_table_fields: Vec<(String, String)>,
     },
 
     // Query Validation Errors
@@ -399,8 +410,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                             field: name.clone(),
                                         },
                                         locations: vec![Location {
-                                            contexts: vec![],
-                                            primary: to_range(&start, &end),
+                                            contexts: to_range(&start, &end),
+                                            primary: to_range(&column.start_name, &column.end_name),
                                         }],
                                     });
                                 }
@@ -439,11 +450,15 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                             errors.push(Error {
                                                 error_type: ErrorType::LinkToUnknownForeignField {
                                                     link_name: link.link_name.clone(),
+                                                    foreign_table: link.foreign_tablename.clone(),
                                                     unknown_foreign_field: foreign_id.clone(),
                                                 },
                                                 locations: vec![Location {
-                                                    contexts: vec![],
-                                                    primary: to_range(&start, &end),
+                                                    contexts: to_range(&start, &end),
+                                                    primary: to_range(
+                                                        &link.start_name,
+                                                        &link.end_name,
+                                                    ),
                                                 }],
                                             });
                                         }
@@ -456,8 +471,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                             unknown_table: link.foreign_tablename.clone(),
                                         },
                                         locations: vec![Location {
-                                            contexts: vec![],
-                                            primary: to_range(&start, &end),
+                                            contexts: to_range(&start, &end),
+                                            primary: to_range(&link.start_name, &link.end_name),
                                         }],
                                     });
                                 }
@@ -472,8 +487,8 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                                             unknown_local_field: local_id.clone(),
                                         },
                                         locations: vec![Location {
-                                            contexts: vec![],
-                                            primary: to_range(&start, &end),
+                                            contexts: to_range(&start, &end),
+                                            primary: to_range(&link.start_name, &link.end_name),
                                         }],
                                     });
                                 }
@@ -503,7 +518,7 @@ fn populate_context(schem: &ast::Schema, context: &mut Context) -> Vec<Error> {
                         },
                         locations: vec![Location {
                             contexts: vec![],
-                            primary: to_range(&start, &end),
+                            primary: to_range(&start_name, &end_name),
                         }],
                     });
                 }
@@ -571,7 +586,10 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                     // Type exists check
                     if !context.types.contains_key(&column.type_) {
                         errors.push(Error {
-                            error_type: ErrorType::UnknownType(column.type_.clone()),
+                            error_type: ErrorType::UnknownType {
+                                found: column.type_.clone(),
+                                known_types: context.types.keys().cloned().collect(),
+                            },
                             locations: vec![Location {
                                 contexts: to_range(start, end),
                                 primary: to_range(&column.start, &column.end),
@@ -644,7 +662,10 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
                                 }
 
                                 errors.push(Error {
-                                    error_type: ErrorType::UnknownType(field.type_.clone()),
+                                    error_type: ErrorType::UnknownType {
+                                        found: field.type_.clone(),
+                                        known_types: context.types.keys().cloned().collect(),
+                                    },
                                     locations: vec![Location {
                                         contexts,
                                         primary: to_range(
@@ -699,6 +720,7 @@ enum ParamUsage {
 
 struct ParamInfo {
     usage: ParamUsage,
+    defined_at: Option<Range>,
     type_: String,
 }
 
@@ -711,13 +733,16 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
     //     2.a All defined params are used
     //     2.b Every used param is defined
     //
-    let mut param_names: HashMap<String, (ParamUsage, String)> = HashMap::new();
+    let mut param_names: HashMap<String, ParamInfo> = HashMap::new();
 
     // Param types make sense?
     for param_def in &query.args {
         match context.types.get(&param_def.type_) {
             None => errors.push(Error {
-                error_type: ErrorType::UnknownType(param_def.type_.clone()),
+                error_type: ErrorType::UnknownType {
+                    found: param_def.type_.clone(),
+                    known_types: context.types.keys().cloned().collect(),
+                },
                 locations: vec![Location {
                     contexts: vec![],
                     primary: to_range(&param_def.start_type, &param_def.end_type),
@@ -728,10 +753,14 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
 
         param_names.insert(
             param_def.name.clone(),
-            (
-                ParamUsage::Defined(to_single_range(&param_def.start_name, &param_def.end_name)),
-                param_def.type_.clone(),
-            ),
+            ParamInfo {
+                usage: ParamUsage::Defined(to_single_range(
+                    &param_def.start_name,
+                    &param_def.end_name,
+                )),
+                defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
+                type_: param_def.type_.clone(),
+            },
         );
     }
 
@@ -759,8 +788,8 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
         }
     }
 
-    for (param_name, (usage, type_string)) in param_names {
-        match usage {
+    for (param_name, param_info) in param_names {
+        match param_info.usage {
             ParamUsage::Defined(loc) => errors.push(Error {
                 error_type: ErrorType::UnusedParam { param: param_name },
                 locations: vec![Location {
@@ -772,7 +801,7 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
             ParamUsage::NotDefinedButUsed(loc) => errors.push(Error {
                 error_type: ErrorType::UndefinedParam {
                     param: param_name,
-                    type_: type_string,
+                    type_: param_info.type_,
                 },
                 locations: vec![Location {
                     contexts: vec![],
@@ -786,20 +815,22 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
 
 fn check_where_args(
     context: &Context,
+    start: &Option<ast::Location>,
+    end: &Option<ast::Location>,
     table: &ast::RecordDetails,
     errors: &mut Vec<Error>,
-    params: &mut HashMap<String, (ParamUsage, String)>,
+    params: &mut HashMap<String, ParamInfo>,
     where_args: &ast::WhereArg,
 ) {
     match where_args {
         ast::WhereArg::And(ands) => {
             for and in ands {
-                check_where_args(context, table, errors, params, and);
+                check_where_args(context, start, end, table, errors, params, and);
             }
         }
         ast::WhereArg::Or(ors) => {
             for or in ors {
-                check_where_args(context, table, errors, params, or);
+                check_where_args(context, start, end, table, errors, params, or);
             }
         }
         ast::WhereArg::Column(field_name, operator, query_val) => {
@@ -846,7 +877,15 @@ fn check_where_args(
             match column_type {
                 None => (),
                 Some(column_type_string) => {
-                    check_value(query_val, errors, params, &table.name, &column_type_string);
+                    check_value(
+                        query_val,
+                        start,
+                        end,
+                        errors,
+                        params,
+                        &table.name,
+                        &column_type_string,
+                    );
                 }
             }
 
@@ -858,13 +897,15 @@ fn check_where_args(
 
 fn check_value(
     value: &ast::QueryValue,
+    start: &Option<ast::Location>,
+    end: &Option<ast::Location>,
     errors: &mut Vec<Error>,
-    params: &mut HashMap<String, (ParamUsage, String)>,
+    params: &mut HashMap<String, ParamInfo>,
     table_name: &str,
     table_type_string: &str,
 ) {
     match value {
-        ast::QueryValue::Variable(var) => match params.get_mut(var) {
+        ast::QueryValue::Variable((var_range, var)) => match params.get_mut(var) {
             None => {
                 errors.push(Error {
                     error_type: ErrorType::UndeclaredVariable {
@@ -874,29 +915,41 @@ fn check_value(
                 });
                 params.insert(
                     var.to_string(),
-                    (
-                        ParamUsage::NotDefinedButUsed(None),
-                        table_type_string.to_string(),
-                    ),
+                    ParamInfo {
+                        usage: ParamUsage::NotDefinedButUsed(None),
+                        defined_at: None,
+                        type_: table_type_string.to_string(),
+                    },
                 );
             }
-            Some((usage, type_string)) => {
-                if table_type_string != *type_string {
+            Some(param_info) => {
+                if table_type_string != param_info.type_ {
                     errors.push(Error {
                         error_type: ErrorType::TypeMismatch {
                             table: table_name.to_string(),
                             column_defined_as: table_type_string.to_string(),
                             variable_name: var.clone(),
-                            variable_defined_as: type_string.clone(),
+                            variable_defined_as: param_info.type_.clone(),
                         },
-                        locations: vec![],
+                        locations: vec![
+                            Location {
+                                contexts: vec![],
+                                primary: param_info
+                                    .defined_at
+                                    .as_ref()
+                                    .map_or_else(Vec::new, |range| vec![range.clone()]),
+                            },
+                            Location {
+                                contexts: vec![], // to_range(&start, &end),
+                                primary: vec![convert_range(var_range)],
+                            },
+                        ],
                     })
                 }
-                match usage {
-                    ParamUsage::Defined(_) => *usage = ParamUsage::Used,
-                    ParamUsage::Used => {}
-                    ParamUsage::NotDefinedButUsed(_) => {}
-                }
+                param_info.usage = match param_info.usage {
+                    ParamUsage::Defined(_) | ParamUsage::NotDefinedButUsed(_) => ParamUsage::Used,
+                    ParamUsage::Used => ParamUsage::Used,
+                };
             }
         },
         _ => {}
@@ -909,7 +962,7 @@ fn check_table_query(
     operation: &ast::QueryOperation,
     table: &ast::RecordDetails,
     query: &ast::QueryField,
-    params: &mut HashMap<String, (ParamUsage, String)>,
+    params: &mut HashMap<String, ParamInfo>,
 ) {
     if query.fields.is_empty() {
         errors.push(Error {
@@ -922,69 +975,64 @@ fn check_table_query(
     }
 
     let mut queried_fields: HashMap<String, bool> = HashMap::new();
-    let mut has_limit = false;
-    let mut has_offset = false;
-    let mut has_where = false;
+
+    let mut limits: Vec<Range> = vec![];
+    let mut offsets: Vec<Range> = vec![];
+    let mut wheres: Vec<Range> = vec![];
 
     // We've already checked that the top-level query field name is valid
     // we want to make sure that every field queried exists in `table` as a column
     for arg_field in &query.fields {
         match arg_field {
             ast::ArgField::Line { .. } => (),
-            ast::ArgField::Arg(arg) => match arg {
-                ast::Arg::Limit(limit_val) => {
-                    if has_limit {
-                        errors.push(Error {
-                            error_type: ErrorType::MultipleLimits {
-                                query: query.name.clone(),
-                            },
-                            locations: vec![Location {
-                                contexts: vec![],
-                                primary: to_range(&query.start, &query.end),
-                            }],
-                        });
-                    } else {
-                        has_limit = true;
-                    }
+            ast::ArgField::Arg(arg) => {
+                let arg_data = &arg.arg;
+                match arg_data {
+                    ast::Arg::Limit(limit_val) => {
+                        match to_single_range(&arg.start, &arg.end) {
+                            Some(range) => limits.push(range),
+                            None => (),
+                        }
 
-                    check_value(limit_val, errors, params, &table.name, "Int");
-                }
-                ast::Arg::Offset(offset_value) => {
-                    if has_offset {
-                        errors.push(Error {
-                            error_type: ErrorType::MultipleOffsets {
-                                query: query.name.clone(),
-                            },
-                            locations: vec![Location {
-                                contexts: vec![],
-                                primary: to_range(&query.start, &query.end),
-                            }],
-                        });
-                    } else {
-                        has_offset = true;
+                        check_value(
+                            &limit_val,
+                            &arg.start,
+                            &arg.end,
+                            errors,
+                            params,
+                            &table.name,
+                            "Int",
+                        );
                     }
+                    ast::Arg::Offset(offset_value) => {
+                        match to_single_range(&arg.start, &arg.end) {
+                            Some(range) => offsets.push(range),
+                            None => (),
+                        }
 
-                    check_value(offset_value, errors, params, &table.name, "Int");
-                }
-                ast::Arg::Where(whereArgs) => {
-                    if has_where {
-                        errors.push(Error {
-                            error_type: ErrorType::MultipleWheres {
-                                query: query.name.clone(),
-                            },
-                            locations: vec![Location {
-                                contexts: vec![],
-                                primary: to_range(&query.start, &query.end),
-                            }],
-                        });
-                    } else {
-                        has_where = true;
+                        check_value(
+                            &offset_value,
+                            &arg.start,
+                            &arg.end,
+                            errors,
+                            params,
+                            &table.name,
+                            "Int",
+                        );
                     }
+                    ast::Arg::Where(whereArgs) => {
+                        match to_single_range(&arg.start, &arg.end) {
+                            Some(range) => wheres.push(range),
+                            None => (),
+                        }
 
-                    check_where_args(context, table, errors, params, whereArgs);
+                        check_where_args(
+                            context, &arg.start, &arg.end, table, errors, params, &whereArgs,
+                        );
+                    }
+                    _ => (),
                 }
-                _ => (),
-            },
+            }
             ast::ArgField::Field(field) => {
                 let aliased_name = ast::get_aliased_name(field);
 
@@ -1043,6 +1091,42 @@ fn check_table_query(
         }
     }
 
+    if limits.len() > 1 {
+        errors.push(Error {
+            error_type: ErrorType::MultipleLimits {
+                query: query.name.clone(),
+            },
+            locations: vec![Location {
+                contexts: to_range(&query.start, &query.end),
+                primary: limits,
+            }],
+        });
+    }
+
+    if offsets.len() > 1 {
+        errors.push(Error {
+            error_type: ErrorType::MultipleOffsets {
+                query: query.name.clone(),
+            },
+            locations: vec![Location {
+                contexts: to_range(&query.start, &query.end),
+                primary: offsets,
+            }],
+        });
+    }
+
+    if wheres.len() > 1 {
+        errors.push(Error {
+            error_type: ErrorType::MultipleWheres {
+                query: query.name.clone(),
+            },
+            locations: vec![Location {
+                contexts: to_range(&query.start, &query.end),
+                primary: wheres,
+            }],
+        });
+    }
+
     match operation {
         ast::QueryOperation::Insert => {
             for col in ast::collect_columns(&table.fields) {
@@ -1084,7 +1168,7 @@ fn check_table_query(
 
 fn check_field(
     context: &Context,
-    params: &mut HashMap<String, (ParamUsage, String)>,
+    params: &mut HashMap<String, ParamInfo>,
     operation: &ast::QueryOperation,
     mut errors: &mut Vec<Error>,
     column: &ast::Column,
@@ -1108,7 +1192,15 @@ fn check_field(
     // }
     match &field.set {
         Some(set) => {
-            check_value(&set, &mut errors, params, &column.name, &column.type_);
+            check_value(
+                &set,
+                &field.start,
+                &field.end,
+                &mut errors,
+                params,
+                &column.name,
+                &column.type_,
+            );
         }
         None => {}
     }
@@ -1183,7 +1275,7 @@ fn check_link(
     mut errors: &mut Vec<Error>,
     link: &ast::LinkDetails,
     field: &ast::QueryField,
-    params: &mut HashMap<String, (ParamUsage, String)>,
+    params: &mut HashMap<String, ParamInfo>,
 ) {
     // Links are only allowed in selects at the moment
     match operation {
@@ -1227,18 +1319,17 @@ fn check_link(
 
     if (field.fields.is_empty()) {
         let mut known_fields: Vec<(String, String)> = vec![];
-        // for col in &link.fields {
-
-        // }
 
         errors.push(Error {
             error_type: ErrorType::LinkSelectionIsEmpty {
                 link_name: link.link_name.clone(),
-                known_fields,
+                foreign_table: link.foreign_tablename.clone(),
+                foreign_table_fields: known_fields,
             },
             locations: vec![Location {
+                // contexts: to_range(&field.start, &field.end),
                 contexts: vec![],
-                primary: to_range(&field.start, &field.end),
+                primary: to_range(&field.start_fieldname, &field.end_fieldname),
             }],
         })
     } else {

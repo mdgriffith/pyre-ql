@@ -230,7 +230,7 @@ fn to_string_field_arg(indent: usize, field_arg: &ast::ArgField) -> String {
     match field_arg {
         ast::ArgField::Arg(arg) => {
             let spaces = " ".repeat(indent);
-            format!("{}{}", spaces, &to_string_param(&arg))
+            format!("{}{}", spaces, &to_string_param(&arg.arg))
         }
         ast::ArgField::Field(field) => to_string_query_field(indent, field),
         ast::ArgField::Line { count } => "\n".repeat(count.clone()),
@@ -321,13 +321,13 @@ fn format_where(where_arg: &ast::WhereArg) -> String {
 
 fn value_to_string(value: &ast::QueryValue) -> String {
     match value {
-        ast::QueryValue::Variable(name) => format!("${}", name),
-        ast::QueryValue::String(value) => format!("\"{}\"", value),
-        ast::QueryValue::Int(value) => value.to_string(),
-        ast::QueryValue::Float(value) => value.to_string(),
-        ast::QueryValue::Bool(true) => "True".to_string(),
-        ast::QueryValue::Bool(false) => "False".to_string(),
-        ast::QueryValue::Null => "null".to_string(),
+        ast::QueryValue::Variable((r, name)) => format!("${}", name),
+        ast::QueryValue::String((r, value)) => format!("\"{}\"", value),
+        ast::QueryValue::Int((r, value)) => value.to_string(),
+        ast::QueryValue::Float((r, value)) => value.to_string(),
+        ast::QueryValue::Bool((r, true)) => "True".to_string(),
+        ast::QueryValue::Bool((r, false)) => "False".to_string(),
+        ast::QueryValue::Null(r) => "null".to_string(),
     }
 }
 
