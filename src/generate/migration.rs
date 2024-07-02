@@ -70,13 +70,13 @@ fn add_definition_sql(definition: &Definition) -> String {
                 .collect();
 
             format!(
-                "create table {} (\n    {}\n{}\n);",
+                "create table {} (\n    {}{}\n);",
                 string::quote(&name),
                 fields_sql.join(",\n    "),
                 if link_constraints.is_empty() {
-                    "".to_string()
+                    "\n".to_string()
                 } else {
-                    link_constraints.join(",\n    ")
+                    format!(",\n    {}", link_constraints.join(",\n    "))
                 }
             )
         }
@@ -137,7 +137,7 @@ fn serialization_to_string(serialization_type: &SerializationType) -> String {
 
 fn serialization_comment_to_string(serialization_type: &SerializationType) -> String {
     match serialization_type {
-        SerializationType::BlobWithSchema(schema) => format!(" -- {}", schema).to_string(),
+        SerializationType::BlobWithSchema(schema) => format!(", -- {}", schema).to_string(),
         _ => "".to_string(),
     }
 }

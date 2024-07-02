@@ -21,6 +21,10 @@ pub fn quote(s: &str) -> String {
     format!("\"{}\"", s)
 }
 
+pub fn single_quote(s: &str) -> String {
+    format!("'{}'", s)
+}
+
 pub fn snake_to_camel_and_singular(input: &str) -> String {
     // Convert snake case to camel case
     let re = Regex::new(r"_([a-z])").unwrap();
