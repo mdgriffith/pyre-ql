@@ -172,13 +172,13 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
         } => {
             let mut result = "".to_string();
 
-            result.push_str(&format!("export const {} = Ark.union(\n", name));
+            result.push_str(&format!("export const {} = ", name));
             let mut is_first = true;
             for variant in variants {
                 result.push_str(&to_decoder_variant(is_first, 2, name, variant));
                 is_first = false;
             }
-            result.push_str(");\n");
+            result.push_str("\n");
             // result.push_str("        |> Db.Read.custom\n");
             result
         }
@@ -202,25 +202,29 @@ fn to_decoder_variant(
     let outer_indent = " ".repeat(indent_size);
     let indent = " ".repeat(indent_size + 4);
     let inner_indent = " ".repeat(indent_size + 8);
+
+    let or = &format!("{}{}", outer_indent, ".or");
+    let starter = if is_first { "Ark.type" } else { or };
+
     match &variant.data {
         Some(fields) => {
             let mut result = format!(
-                "{}Ark.object({{\n    \"type_\": Ark.literal({}),\n",
-                outer_indent,
-                crate::ext::string::quote(&variant.name),
+                "{}({{\n    \"type_\": {},\n",
+                starter,
+                crate::ext::string::quote(&crate::ext::string::single_quote(&variant.name)),
             );
 
             for field in fields {
                 result.push_str(&to_variant_field_json_decoder(indent_size + 2, &field));
             }
-            result.push_str(&format!("{}}}),\n", outer_indent));
+            result.push_str(&format!("{}}})\n", outer_indent));
 
             result
         }
         None => format!(
-            "{}Ark.object({{ \"type_\": Ark.literal({}) }}),\n",
-            outer_indent,
-            crate::ext::string::quote(&variant.name),
+            "{}({{ \"type_\": {} }})\n",
+            starter,
+            crate::ext::string::quote(&crate::ext::string::single_quote(&variant.name)),
         ),
     }
 }
@@ -284,33 +288,12 @@ pub fn literal_quote(s: &str) -> String {
 fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     let mut result = "".to_string();
     result.push_str("import * as Ark from 'arktype';\n");
-    result.push_str("import * as Db from '../db/data.ts';\n");
-    result.push_str("import * as Decode from '../db/decode.ts';\n\n");
+    result.push_str("import * as Db from '../db';\n");
+    // result.push_str("import * as Data from '../db/data';\n");
+    result.push_str("import * as Decode from '../db/decode';\n\n");
 
     // Input args decoder
     to_query_input_decoder(context, &query, &mut result);
-
-    let validate = r#"
-
-type Input = typeof Input.infer
-
-type Failure = { error: Ark.ArkError }
-
-type Success = { queries: Query[] }
-
-type Query = { sql: string, args: any }
-
-export const check = (input: any): Success | Failure => {
-    const parsed = Input(input);
-    if (parsed instanceof Ark.type.errors) {
-        return { error: parsed }
-    } else {
-        let queries = sql.map((query_sql) => ({ sql: query_sql, args: parsed }))
-        return { queries }
-    }
-}"#;
-
-    result.push_str(validate);
 
     result.push_str("\n\nconst sql = [");
 
@@ -326,7 +309,23 @@ export const check = (input: any): Success | Failure => {
         written_field = true;
     }
 
-    result.push_str("];\n\n");
+    result.push_str("];\n");
+
+    let validate = format!(
+        r#"
+export const query = Db.toRunner({{
+    id: "{}",
+    sql: sql,
+    input: Input,
+    output: Ark.type("number")
+}});
+
+type Input = typeof Input.infer
+"#,
+        query.full_hash
+    );
+
+    result.push_str(&validate);
 
     // Type Alisaes
     // result.push_str("// Return data\n");
@@ -357,7 +356,7 @@ export const check = (input: any): Success | Failure => {
 
     // Rectangle data decoder
     result.push_str("\n");
-    result.push_str("export const ReturnRectangle = Ark.object({\n");
+    result.push_str("export const ReturnRectangle = Ark.type({\n");
     for field in &query.fields {
         let table = context.tables.get(&field.name).unwrap();
 
@@ -375,7 +374,7 @@ export const check = (input: any): Success | Failure => {
 }
 
 fn to_query_input_decoder(context: &typecheck::Context, query: &ast::Query, result: &mut String) {
-    result.push_str("export const Input = Ark.object({{");
+    result.push_str("export const Input = Ark.type({");
     for arg in &query.args {
         result.push_str(&format!(
             "\n  {}: {},",
@@ -474,72 +473,6 @@ fn to_table_field_flat_decoder(
     }
 }
 
-fn to_query_decoder(
-    context: &typecheck::Context,
-    table_alias: &str,
-    table: &ast::RecordDetails,
-    fields: &Vec<&ast::QueryField>,
-) -> String {
-    let mut result = format!(
-        "decode{} : Db.Read.Query {}\n",
-        crate::ext::string::capitalize(table_alias),
-        crate::ext::string::capitalize(table_alias)
-    );
-
-    let identifiers = format!("[]");
-
-    result.push_str(&format!(
-        "decode{} =\n",
-        crate::ext::string::capitalize(table_alias)
-    ));
-    result.push_str(&format!(
-        "    Db.Read.query {} {}\n",
-        crate::ext::string::capitalize(table_alias),
-        identifiers
-    ));
-    for field in fields {
-        let table_field = &table
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
-            .unwrap();
-
-        result.push_str(&to_table_field_decoder(
-            8,
-            table_alias,
-            &table_field,
-            &field,
-        ));
-    }
-
-    for field in fields {
-        if field.fields.is_empty() {
-            continue;
-        }
-
-        let fieldname_match = table
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(f, &field.name));
-
-        match fieldname_match {
-            Some(ast::Field::FieldDirective(ast::FieldDirective::Link(link))) => {
-                let link_table = typecheck::get_linked_table(context, &link).unwrap();
-                result.push_str("\n\n");
-                result.push_str(&to_query_decoder(
-                    context,
-                    &ast::get_aliased_name(&field),
-                    link_table,
-                    &ast::collect_query_fields(&field.fields),
-                ));
-            }
-            _ => continue,
-        }
-    }
-
-    result
-}
-
 fn format_db_id(table_alias: &str, ids: &Vec<String>) -> String {
     let mut result = String::new();
     for id in ids {
@@ -547,162 +480,6 @@ fn format_db_id(table_alias: &str, ids: &Vec<String>) -> String {
         result.push_str(&format!("Db.Read.id \"{}\"", formatted));
     }
     result
-}
-
-fn to_table_field_decoder(
-    indent: usize,
-    table_alias: &str,
-    table_field: &ast::Field,
-    query_field: &ast::QueryField,
-) -> String {
-    match table_field {
-        ast::Field::Column(column) => {
-            let spaces = " ".repeat(indent);
-            return format!(
-                "{}|> Db.Read.field \"{}\" {}\n",
-                spaces,
-                ast::get_select_alias(table_alias, table_field, query_field),
-                to_type_decoder(&column.type_)
-            );
-        }
-        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let spaces = " ".repeat(indent);
-
-            let foreign_table_alias = match query_field.alias {
-                Some(ref alias) => &alias,
-                None => &link.foreign_tablename,
-            };
-
-            return format!(
-                "{}|> Db.Read.nested\n{}({})\n{}({})\n{}decode{}\n",
-                spaces,
-                // ID columns
-                " ".repeat(indent + 4),
-                format_db_id(table_alias, &link.local_ids),
-                " ".repeat(indent + 4),
-                format_db_id(foreign_table_alias, &link.foreign_ids),
-                " ".repeat(indent + 4),
-                (crate::ext::string::capitalize(&ast::get_aliased_name(query_field))) // (capitalize(&link.link_name)) // ast::get_select_alias(table_alias, table_field, query_field),
-            );
-        }
-
-        _ => "".to_string(),
-    }
-}
-
-fn to_query_type_alias(
-    context: &typecheck::Context,
-    table: &ast::RecordDetails,
-    name: &str,
-    fields: &Vec<&ast::QueryField>,
-) -> String {
-    let mut result = format!("type {} =\n", crate::ext::string::capitalize(name));
-
-    let mut is_first = true;
-
-    for field in fields {
-        if is_first {
-            result.push_str(&format!("    {{ ",))
-        }
-
-        let table_field = &table
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
-            .unwrap();
-
-        match table_field {
-            ast::Field::Column(col) => {
-                result.push_str(&to_string_query_field(is_first, 4, &field, col));
-            }
-            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                result.push_str(&to_string_query_field_link(is_first, 4, &field, link));
-            }
-            _ => {}
-        }
-
-        if is_first {
-            is_first = false;
-        }
-    }
-    result.push_str("    }\n");
-
-    for field in fields {
-        if field.fields.is_empty() {
-            continue;
-        }
-
-        let fieldname_match = table
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(f, &field.name));
-
-        match fieldname_match {
-            Some(ast::Field::FieldDirective(ast::FieldDirective::Link(link))) => {
-                let link_table = typecheck::get_linked_table(context, &link).unwrap();
-
-                result.push_str("\n\n");
-                result.push_str(&to_query_type_alias(
-                    context,
-                    link_table,
-                    &ast::get_aliased_name(field),
-                    &ast::collect_query_fields(&field.fields),
-                ));
-            }
-            _ => continue,
-        }
-    }
-
-    result
-}
-
-fn to_string_query_field_link(
-    is_first: bool,
-    indent: usize,
-    field: &ast::QueryField,
-    link_details: &ast::LinkDetails,
-) -> String {
-    let field_name = ast::get_aliased_name(field);
-
-    if is_first {
-        return format!(
-            "{} : {}\n",
-            crate::ext::string::decapitalize(&field_name),
-            (format!("List {}", crate::ext::string::capitalize(&field_name)))
-        );
-    } else {
-        let spaces = " ".repeat(indent);
-        return format!(
-            "{}, {} : {}\n",
-            spaces,
-            crate::ext::string::decapitalize(&field_name),
-            (format!("List {}", crate::ext::string::capitalize(&field_name)))
-        );
-    }
-}
-
-fn to_string_query_field(
-    is_first: bool,
-    indent: usize,
-    field: &ast::QueryField,
-    table_column: &ast::Column,
-) -> String {
-    let field_name = ast::get_aliased_name(field);
-    if is_first {
-        return format!(
-            "{} : {}\n",
-            crate::ext::string::decapitalize(&field_name),
-            to_ts_typename(true, &table_column.type_)
-        );
-    } else {
-        let spaces = " ".repeat(indent);
-        return format!(
-            "{}, {} : {}\n",
-            spaces,
-            crate::ext::string::decapitalize(&field_name),
-            to_ts_typename(true, &table_column.type_)
-        );
-    }
 }
 
 fn to_ts_typename(qualified: bool, type_: &str) -> String {
@@ -720,11 +497,11 @@ fn to_ts_typename(qualified: bool, type_: &str) -> String {
 
 fn to_ts_type_decoder(qualified: bool, type_: &str) -> String {
     match type_ {
-        "String" => "Ark.string".to_string(),
-        "Int" => "Ark.number".to_string(),
-        "Float" => "Ark.number".to_string(),
-        "Bool" => "Ark.boolean".to_string(),
-        "DateTime" => "Ark.number".to_string(),
+        "String" => "\"string\"".to_string(),
+        "Int" => "\"number\"".to_string(),
+        "Float" => "\"number\"".to_string(),
+        "Bool" => "\"boolean\"".to_string(),
+        "DateTime" => "\"number\"".to_string(),
         _ => {
             let qualification = if qualified { "Decode." } else { "" };
             return format!("{}{}", qualification, type_).to_string();
@@ -768,122 +545,141 @@ fn operator_to_string(operator: &ast::Operator) -> &str {
 }
 
 //
-//
-pub const DB_ENGINE: &str = r#"import { Client as LibsqlClient, createClient, ResultSet } from '@libsql/client/web';
-import { Env } from '../env';
-import * as Ark from '@arktype/arktype';
+pub const DB_ENGINE: &str = r#"import {
+  createClient,
+  ResultSet,
+  InStatement,
+  InArgs,
+} from "@libsql/client/web";
+import * as Ark from "arktype";
 
 export type ExecuteResult = SuccessResult | ErrorResult;
 
 export interface SuccessResult {
-	kind: 'success';
-	metadata: {
-		outOfDate: boolean;
-	};
-	data: ResultSet;
+  kind: "success";
+  metadata: {
+    outOfDate: boolean;
+  };
+  data: ResultSet[];
 }
 
-export type ValidArgs<valid> = {
-	kind: 'valid';
-	valid: valid;
+export type ValidArgs = {
+  kind: "valid";
+  valid: InArgs;
 };
 
 export interface ErrorResult {
-	kind: 'error';
-	errorType: ErrorType;
-	message: string;
+  kind: "error";
+  errorType: ErrorType;
+  message: string;
 }
 
 export enum ErrorType {
-	NotFound,
-	Unauthorized,
-	InvalidInput,
-	UnknownError,
+  NotFound,
+  Unauthorized,
+  InvalidInput,
+  UnknownError,
 }
 
 export interface Runner<input, output> {
-	id: string;
-	input: Ark.Type<input>;
-	output: Ark.Type<output>;
-	execute: (env: Env, args: ValidArgs<input>) => Promise<ExecuteResult>;
+  id: string;
+  input: Ark.Type<input>;
+  output: Ark.Type<output>;
+  execute: (env: Env, args: ValidArgs) => Promise<ExecuteResult>;
 }
 
 export type ToRunnerArgs<input, output> = {
-	id: string;
-	input: Ark.Type<input>;
-	output: Ark.Type<output>;
-	sql: string;
+  id: string;
+  input: Ark.Type<input>;
+  output: Ark.Type<output>;
+  sql: Array<string>;
 };
 
-export const toRunner = <Input, Output>(options: ToRunnerArgs<Input, Output>): Runner<Input, Output> => {
-	return {
-		id: options.id,
-		input: options.input,
-		output: options.output,
-		execute: async <Input>(env: Env, args: ValidArgs<Input>): Promise<ExecuteResult> => {
-			return exec(env, options.sql, args.valid);
-		},
-	};
+export const toRunner = <Input, Output>(
+  options: ToRunnerArgs<Input, Output>,
+): Runner<Input, Output> => {
+  return {
+    id: options.id,
+    input: options.input,
+    output: options.output,
+    execute: async (env: Env, args: ValidArgs): Promise<ExecuteResult> => {
+      const sql_arg_list: InStatement[] = options.sql.map((sql) => {
+        return { sql: sql, args: args.valid };
+      });
+
+      return exec(env, sql_arg_list);
+    },
+  };
 };
 
-export const executeOneOf = async <Input, Output>(
-	env: Env,
-	queries: Runner<Input, Output>[],
-	id: string,
-	args: any,
+export interface Env {
+  url: string;
+  authToken: string | undefined;
+}
+
+export const executeOneOf = async <Input extends InArgs, Output>(
+  env: Env,
+  queries: Runner<Input, Output>[],
+  id: string,
+  args: any,
 ): Promise<ExecuteResult> => {
-	for (const query of queries) {
-		if (query.id === id) {
-			return run(env, query, args);
-		}
-	}
-	return { kind: 'error', errorType: ErrorType.NotFound, message: 'Unknown command' };
-};
-
-export const run = async <Input, Output>(env: Env, runner: Runner<Input, Output>, args: any): Promise<ExecuteResult> => {
-	const validArgs = validate(runner, args);
-	if (validArgs.kind === 'error') {
-		return validArgs;
-	}
-	return runner.execute(env, validArgs);
-};
-
-
-const validate = <Input, Output>(runner: Runner<Input, Output>, args: any): ErrorResult | ValidArgs<Input> => {
-    const validationResult = runner.input.validate(args);
-
-    if (validationResult.problems) {
-        return { kind: 'error', errorType: ErrorType.InvalidInput, message: 'Expected object' };
-    } else {
-        return { kind: 'valid', valid: validationResult.value };
+  for (const query of queries) {
+    if (query.id === id) {
+      return run(env, query, args);
     }
+  }
+  return {
+    kind: "error",
+    errorType: ErrorType.NotFound,
+    message: "Unknown command",
+  };
 };
 
+export const run = async <Input extends InArgs, Output>(
+  env: Env,
+  runner: Runner<Input, Output>,
+  args: any,
+): Promise<ExecuteResult> => {
+  const validArgs = validate(runner, args);
+  if (validArgs.kind === "error") {
+    return validArgs;
+  }
+  return runner.execute(env, validArgs);
+};
+
+const validate = <Input extends InArgs, Output>(
+  runner: Runner<Input, Output>,
+  args: any,
+): ErrorResult | ValidArgs => {
+  const validationResult: any | Ark.ArkErrors = runner.input(args);
+
+  if (validationResult instanceof Ark.type.errors) {
+    return {
+      kind: "error",
+      errorType: ErrorType.InvalidInput,
+      message: "Expected object",
+    };
+  } else {
+    return { kind: "valid", valid: validationResult };
+  }
+};
 
 // Queries
 
-const exec = async (env: Env, sql: string, args: any): Promise<ExecuteResult> => {
-	const client = buildLibsqlClient(env);
-	try {
-		const res = await client.execute(sql);
-		return { kind: 'success', metadata: { outOfDate: false }, data: res };
-	} catch (error) {
-		return { kind: 'error', errorType: ErrorType.InvalidInput, message: 'Expected object' };
-	}
+const exec = async (
+  env: Env,
+  sql: Array<InStatement>,
+): Promise<ExecuteResult> => {
+  const client = createClient({ url: env.url, authToken: env.authToken });
+  try {
+    const res = await client.batch(sql);
+    return { kind: "success", metadata: { outOfDate: false }, data: res };
+  } catch (error) {
+    return {
+      kind: "error",
+      errorType: ErrorType.InvalidInput,
+      message: "Expected object",
+    };
+  }
 };
-
-// Connection
-
-function buildLibsqlClient(env: Env): LibsqlClient {
-	const url = env.TURSO_URL?.trim();
-	if (url === undefined) {
-		throw new Error('TURSO_URL env var is not defined');
-	}
-
-	const authToken = env.TURSO_AUTH_TOKEN?.trim();
-	if (authToken == undefined) {
-		throw new Error('TURSO_AUTH_TOKEN env var is not defined');
-	}
-
-	return createClient({ url, authToken });
-}"#;
+"#;
