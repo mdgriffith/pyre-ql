@@ -261,6 +261,8 @@ pub fn write_queries(
     context: &typecheck::Context,
     query_list: &ast::QueryList,
 ) -> io::Result<()> {
+    write_runner(dir, context, query_list);
+
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
@@ -279,6 +281,54 @@ pub fn write_queries(
         }
     }
     Ok(())
+}
+
+fn write_runner(dir: &str, context: &typecheck::Context, query_list: &ast::QueryList) {
+    let path = &format!("{}/query.ts", dir);
+    let target_path = Path::new(path);
+    let mut content = String::new();
+
+    content.push_str("import * as Db from \"./db\";\n");
+    for operation in &query_list.queries {
+        match operation {
+            ast::QueryDef::Query(q) => {
+                content.push_str(&format!(
+                    "import * as {} from './query/{}';\n",
+                    q.name,
+                    crate::ext::string::decapitalize(&q.name)
+                ));
+            }
+            _ => continue,
+        }
+    }
+    content.push_str("\n\n\nexport const run = async (env: Db.Env, id: string, args: any) => {\n");
+    content.push_str("    switch (id) {\n");
+
+    for operation in &query_list.queries {
+        match operation {
+            ast::QueryDef::Query(q) => {
+                content.push_str(&format!("        case \"{}\":\n", q.full_hash));
+
+                content.push_str(&format!(
+                    "            return Db.run(env, {}.query, args);\n",
+                    &q.name
+                ));
+            }
+            _ => continue,
+        }
+    }
+    content.push_str("        default:\n");
+    content.push_str(
+        "            return { kind: \"error\", errorType: Db.ErrorType.UnknownQuery, message: \"\" }\n"
+    );
+
+    content.push_str("    }\n");
+    content.push_str("};\n");
+
+    let mut output = fs::File::create(target_path).expect("Failed to create file");
+    output
+        .write_all(content.as_bytes())
+        .expect("Failed to write to file");
 }
 
 pub fn literal_quote(s: &str) -> String {
@@ -579,6 +629,7 @@ export enum ErrorType {
   Unauthorized,
   InvalidInput,
   UnknownError,
+  UnknownQuery
 }
 
 export interface Runner<input, output> {
@@ -635,9 +686,9 @@ export const executeOneOf = async <Input extends InArgs, Output>(
   };
 };
 
-export const run = async <Input extends InArgs, Output>(
+export const run = async (
   env: Env,
-  runner: Runner<Input, Output>,
+  runner: Runner<any, any>,
   args: any,
 ): Promise<ExecuteResult> => {
   const validArgs = validate(runner, args);
