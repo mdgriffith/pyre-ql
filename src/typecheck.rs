@@ -1120,8 +1120,8 @@ fn check_table_query(
     match operation {
         ast::QueryOperation::Insert => {
             for col in ast::collect_columns(&table.fields) {
-                if ast::is_primary_key(&col) {
-                    // Primary keys aren't required
+                if ast::is_primary_key(&col) || ast::has_default_value(&col) {
+                    // Primary keys aren't required and those with defaults aren't required
                     // (for the moment, we should differentiate between auto-incrementing
                     // and non-auto-incrementing primary keys)
                     continue;

@@ -70,11 +70,47 @@ pub enum Field {
     FieldDirective(FieldDirective),
 }
 
+pub fn is_serialized_as_json(field: &Field) -> bool {
+    match field {
+        Field::Column(Column {
+            serialization_type, ..
+        }) => match serialization_type {
+            SerializationType::BlobWithSchema(_) => true,
+            _ => false,
+        },
+
+        _ => false,
+    }
+}
+
+pub fn field_to_column_type(field: &Field) -> Option<SerializationType> {
+    match field {
+        Field::Column(Column {
+            serialization_type, ..
+        }) => Some(serialization_type.clone()),
+        _ => None,
+    }
+}
+
 pub fn is_link(field: &Field) -> bool {
     match field {
         Field::FieldDirective(FieldDirective::Link(_)) => true,
         _ => false,
     }
+}
+
+pub fn has_default_value(col: &Column) -> bool {
+    col.directives.iter().any(|d| match d {
+        ColumnDirective::Default(_) => true,
+        _ => false,
+    })
+}
+
+pub fn is_field_primary_key(field_names: &Vec<String>, field: &Vec<Field>) -> bool {
+    field.iter().any(|f| match f {
+        Field::Column(col) => is_primary_key(col) && field_names.contains(&col.name),
+        _ => false,
+    })
 }
 
 pub fn is_primary_key(col: &Column) -> bool {
@@ -169,6 +205,20 @@ pub fn to_reciprocal(local_table: &str, link: &LinkDetails) -> LinkDetails {
         start_name: None,
         end_name: None,
     }
+}
+
+pub fn get_foreign_tablename(schema: &Schema, link: &LinkDetails) -> String {
+    for definition in schema.definitions.iter() {
+        match definition {
+            Definition::Record { name, fields, .. } => {
+                if name == &link.foreign_tablename {
+                    return get_tablename(&link.foreign_tablename, fields);
+                }
+            }
+            _ => {}
+        }
+    }
+    link.foreign_tablename.clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

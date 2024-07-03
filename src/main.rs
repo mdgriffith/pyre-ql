@@ -272,7 +272,7 @@ async fn main() -> io::Result<()> {
                                                 Ok(schema) => {
                                                     let diff =
                                                         diff::diff(&introspection.schema, &schema);
-                                                    let sql = migration::to_sql(&diff);
+                                                    let sql = migration::to_sql(&schema, &diff);
 
                                                     // Format like {year}{month}{day}{hour}{minute}
                                                     let current_date = chrono::Utc::now()

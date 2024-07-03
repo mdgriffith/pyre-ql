@@ -1,16 +1,17 @@
 use crate::ast::{
-    collect_columns, collect_links, get_tablename, link_identity, Column, ColumnDirective,
-    DefaultValue, Definition, Field, FieldDirective, QueryValue, SerializationType, Variant,
+    collect_columns, collect_links, get_foreign_tablename, get_tablename, is_field_primary_key,
+    link_identity, Column, ColumnDirective, DefaultValue, Definition, Field, FieldDirective,
+    QueryValue, Schema, SerializationType, Variant,
 };
 use crate::diff::{DetailedRecordDiff, DetailedTaggedDiff, RecordChange, SchemaDiff, TaggedChange};
 use crate::ext::string;
 
-pub fn to_sql(diff: &SchemaDiff) -> String {
+pub fn to_sql(schema: &Schema, diff: &SchemaDiff) -> String {
     let mut sql_statements = Vec::new();
 
     // Handle added definitions
     for definition in &diff.added {
-        sql_statements.push(add_definition_sql(definition));
+        sql_statements.push(add_definition_sql(schema, definition));
     }
 
     // Handle removed definitions
@@ -31,7 +32,7 @@ pub fn to_sql(diff: &SchemaDiff) -> String {
     sql_statements.join("\n")
 }
 
-fn add_definition_sql(definition: &Definition) -> String {
+fn add_definition_sql(schema: &Schema, definition: &Definition) -> String {
     match definition {
         Definition::Record {
             name,
@@ -58,14 +59,20 @@ fn add_definition_sql(definition: &Definition) -> String {
 
             let link_constraints: Vec<String> = collect_links(fields)
                 .iter()
-                .map(|link| {
-                    format!(
+                .filter_map(|link| {
+                    // Skip the cosntraint if the local_id is referncing the primary key of this table.
+                    if is_field_primary_key(&link.local_ids, &fields) {
+                        return None;
+                    }
+
+                    let foreign_table = get_foreign_tablename(&schema, &link);
+                    Some(format!(
                         "constraint {} foreign key ({}) references {} ({})",
                         string::quote(&link_identity(&name, &link)),
                         string::quote(&link.local_ids.join(", ")),
-                        string::quote(&link.foreign_tablename),
+                        string::quote(&foreign_table),
                         string::quote(&link.foreign_ids.join(", "))
-                    )
+                    ))
                 })
                 .collect();
 
@@ -131,7 +138,7 @@ fn serialization_to_string(serialization_type: &SerializationType) -> String {
         SerializationType::Integer => "integer".to_string(),
         SerializationType::Real => "real".to_string(),
         SerializationType::Text => "text".to_string(),
-        SerializationType::BlobWithSchema(schema) => "blob".to_string(),
+        SerializationType::BlobWithSchema(schema) => "text".to_string(),
     }
 }
 

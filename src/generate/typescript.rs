@@ -550,7 +550,7 @@ pub const DB_ENGINE: &str = r#"import {
   ResultSet,
   InStatement,
   InArgs,
-} from "@libsql/client/web";
+} from "@libsql/client";
 import * as Ark from "arktype";
 
 export type ExecuteResult = SuccessResult | ErrorResult;
@@ -647,10 +647,28 @@ export const run = async <Input extends InArgs, Output>(
   return runner.execute(env, validArgs);
 };
 
+const stringifyNestedObjects = (obj: Record<string, any>): Record<string, any> => {
+    const result: Record<string, any> = {};
+
+    for (const key in obj) {
+        if (obj.hasOwnProperty(key)) {
+            const value = obj[key];
+            if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                result[key] = JSON.stringify(value);
+            } else {
+                result[key] = value;
+            }
+        }
+    }
+
+    return result;
+};
+
 const validate = <Input extends InArgs, Output>(
   runner: Runner<Input, Output>,
   args: any,
 ): ErrorResult | ValidArgs => {
+
   const validationResult: any | Ark.ArkErrors = runner.input(args);
 
   if (validationResult instanceof Ark.type.errors) {
@@ -660,9 +678,10 @@ const validate = <Input extends InArgs, Output>(
       message: "Expected object",
     };
   } else {
-    return { kind: "valid", valid: validationResult };
+    return { kind: "valid", valid: stringifyNestedObjects(validationResult) };
   }
 };
+
 
 // Queries
 
@@ -675,6 +694,7 @@ const exec = async (
     const res = await client.batch(sql);
     return { kind: "success", metadata: { outOfDate: false }, data: res };
   } catch (error) {
+    console.log("DB ERROR", error)
     return {
       kind: "error",
       errorType: ErrorType.InvalidInput,
