@@ -672,24 +672,6 @@ export interface Env {
   authToken: string | undefined;
 }
 
-export const executeOneOf = async <Input extends InArgs, Output>(
-  env: Env,
-  queries: Runner<Input, Output>[],
-  id: string,
-  args: any,
-): Promise<ExecuteResult> => {
-  for (const query of queries) {
-    if (query.id === id) {
-      return run(env, query, args);
-    }
-  }
-  return {
-    kind: "error",
-    errorType: ErrorType.NotFound,
-    message: "Unknown command",
-  };
-};
-
 export const run = async (
   env: Env,
   runner: Runner<any, any>,
