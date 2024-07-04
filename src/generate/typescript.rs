@@ -301,7 +301,11 @@ fn write_runner(dir: &str, context: &typecheck::Context, query_list: &ast::Query
             _ => continue,
         }
     }
-    content.push_str("\n\n\nexport const run = async (env: Db.Env, id: string, args: any) => {\n");
+    content.push_str("\nexport const run = async (\n");
+    content.push_str("  env: Db.Env,\n");
+    content.push_str("  id: string,\n");
+    content.push_str("  args: any,\n");
+    content.push_str("): Promise<Db.ExecuteResult> => {\n");
     content.push_str("    switch (id) {\n");
 
     for operation in &query_list.queries {

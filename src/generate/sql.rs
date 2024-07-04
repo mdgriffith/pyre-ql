@@ -31,7 +31,7 @@ pub fn insert_to_string(
     for table_field in query_fields {
         let table = context.tables.get(&table_field.name).unwrap();
 
-        table_name = ast::get_tablename(&table.name, &table.fields);
+        let table_name = ast::get_tablename(&table.name, &table.fields);
         let mut new_fieldnames = &to_fieldnames(
             context,
             &ast::get_aliased_name(&table_field),
@@ -168,13 +168,15 @@ fn render_from(
     result.push_str("from\n");
     for field in query_fields {
         let table = context.tables.get(&field.name).unwrap();
+
+        let table_name = ast::get_tablename(&table.name, &table.fields);
         let mut from_vals = &to_from(
             context,
             &ast::get_aliased_name(&field),
             table,
             &ast::collect_query_fields(&field.fields),
         );
-        result.push_str(&format!("  {}", quote(&field.name)));
+        result.push_str(&format!("  {}", quote(&table_name)));
         if (from_vals.is_empty()) {
             result.push_str("\n");
         } else {
@@ -238,8 +240,7 @@ fn render_limit(
             match field {
                 ast::ArgField::Arg(located_arg) => {
                     if let ast::Arg::Limit(val) = &located_arg.arg {
-                        result.push_str("\n");
-                        result.push_str(&format!("limit {}", render_value(val)));
+                        result.push_str(&format!("limit {}\n", render_value(val)));
                         break;
                     }
                 }
@@ -259,8 +260,7 @@ fn render_offset(
             match field {
                 ast::ArgField::Arg(located_arg) => {
                     if let ast::Arg::Offset(val) = &located_arg.arg {
-                        result.push_str("\n");
-                        result.push_str(&format!("offset {}", render_value(val)));
+                        result.push_str(&format!("offset {}\n", render_value(val)));
                         break;
                     }
                 }
@@ -279,14 +279,16 @@ fn render_where(
     for query_field in query_fields {
         let table = context.tables.get(&query_field.name).unwrap();
         let table_alias = &ast::get_aliased_name(&query_field);
+        let table_name = ast::get_tablename(&table.name, &table.fields);
 
         let new_params =
-            render_where_params(&ast::collect_query_args(&query_field.fields), table_alias);
+            render_where_params(&ast::collect_query_args(&query_field.fields), &table_name);
 
         where_vals.extend(new_params);
 
         let new_where_vals = to_where(
             context,
+            &table_name,
             table_alias,
             table,
             &ast::collect_query_fields(&query_field.fields),
@@ -323,10 +325,12 @@ fn to_selection(
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
             .unwrap();
 
+        let table_name = ast::get_tablename(&table.name, &table.fields);
+
         result.append(&mut to_subselection(
             2,
             context,
-            &table.name,
+            &table_name,
             table_alias,
             &table_field,
             &field,
@@ -399,6 +403,7 @@ fn to_from(
         result.append(&mut to_subfrom(
             2,
             context,
+            table,
             table_alias,
             &table_field,
             &field,
@@ -411,6 +416,7 @@ fn to_from(
 fn to_subfrom(
     indent: usize,
     context: &typecheck::Context,
+    table: &ast::RecordDetails,
     table_alias: &str,
     table_field: &ast::Field,
     query_field: &ast::QueryField,
@@ -419,11 +425,15 @@ fn to_subfrom(
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
             let spaces = " ".repeat(indent);
 
+            let table_name = ast::get_tablename(&table.name, &table.fields);
+
             let foreign_table_alias = match query_field.alias {
                 Some(ref alias) => &alias,
                 None => &link.foreign_tablename,
             };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
+            let foreign_table_name =
+                ast::get_tablename(&link.foreign_tablename, &link_table.fields);
             let mut inner_list = to_from(
                 context,
                 &ast::get_aliased_name(&query_field),
@@ -431,12 +441,12 @@ fn to_subfrom(
                 &ast::collect_query_fields(&query_field.fields),
             );
             let join = format!(
-                "left join {} on \"{}\".\"{}\" = {}.\"{}\"\n",
-                format_tablename(&link.foreign_tablename),
-                table_alias,
-                link.local_ids.join(""),
-                format_tablename(&link.foreign_tablename),
-                link.foreign_ids.join(""),
+                "left join {} on {}.{} = {}.{}\n",
+                quote(&foreign_table_name),
+                quote(&table_name),
+                quote(&link.local_ids.join("")),
+                quote(&foreign_table_name),
+                quote(&link.foreign_ids.join("")),
             );
             inner_list.push(join);
             return inner_list;
@@ -463,10 +473,12 @@ fn to_fieldnames(
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
             .unwrap();
 
+        let table_name = ast::get_tablename(&table.name, &table.fields);
+
         result.append(&mut to_table_fieldname(
             2,
             context,
-            &table.name,
+            &table_name,
             table_alias,
             &table_field,
             &field,
@@ -579,6 +591,7 @@ fn to_field_insert_values(
 //
 fn to_where(
     context: &typecheck::Context,
+    table_name: &str,
     table_alias: &str,
     table: &ast::RecordDetails,
     fields: &Vec<&ast::QueryField>,
@@ -623,8 +636,11 @@ fn to_subwhere(
                 None => &link.foreign_tablename,
             };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
+            let foreign_table_name =
+                ast::get_tablename(&link.foreign_tablename, &link_table.fields);
             let mut inner_list = to_where(
                 context,
+                &foreign_table_name,
                 &ast::get_aliased_name(&query_field),
                 link_table,
                 &ast::collect_query_fields(&query_field.fields),
