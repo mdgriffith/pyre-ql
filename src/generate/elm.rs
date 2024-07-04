@@ -567,11 +567,11 @@ fn to_query_toplevel_decoder(context: &typecheck::Context, query: &ast::Query) -
         "    Decode.succeed {}\n",
         crate::ext::string::capitalize(&query.name)
     ));
-    for field in &query.fields {
+    for (index, field) in query.fields.iter().enumerate() {
         let aliased_field_name = ast::get_aliased_name(field);
         result.push_str(&format!(
-            "        |> Db.Read.andDecode \"{}\" decode{}\n",
-            aliased_field_name,
+            "        |> Db.Read.andDecodeIndex {} decode{}\n",
+            index,
             crate::ext::string::capitalize(&aliased_field_name)
         ));
     }

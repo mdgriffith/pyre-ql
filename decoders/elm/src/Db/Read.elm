@@ -4,7 +4,7 @@ module Db.Read exposing
     , bool, string, int, float, dateTime, nullable
     , custom
     , id, nested
-    , decodeValue, andDecode
+    , decodeValue, andDecode, andDecodeIndex
     )
 
 {-|
@@ -19,7 +19,7 @@ module Db.Read exposing
 
 @docs id, nested
 
-@docs decodeValue, andDecode
+@docs decodeValue, andDecode, andDecodeIndex
 
 -}
 
@@ -37,6 +37,29 @@ type Query a
         { identity : List (Json.Decoder Id)
         , decoder : Decoder a
         }
+
+
+andDecodeIndex : Int -> Query item -> Json.Decoder (List item -> result) -> Json.Decoder result
+andDecodeIndex index (Query queryDetails) toResult =
+    let
+        (Decoder toDecoder) =
+            queryDetails.decoder
+    in
+    toResult
+        |> Json.andThen
+            (\fn ->
+                Json.map (\result -> fn (List.reverse result)) <|
+                    Json.index index
+                        (Json.value
+                            |> Json.andThen
+                                (\json ->
+                                    uniqueListDecoder 0
+                                        queryDetails.identity
+                                        (Json.succeed True)
+                                        (toDecoder 0 json)
+                                )
+                        )
+            )
 
 
 andDecode : String -> Query item -> Json.Decoder (List item -> result) -> Json.Decoder result
