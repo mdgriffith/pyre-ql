@@ -227,7 +227,9 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                             match table_info.dflt_value {
                                 None => (),
                                 Some(str) => {
-                                    if str.to_lowercase() == "current_timestamp" {
+                                    if str.to_lowercase() == "current_timestamp"
+                                        || str.to_lowercase() == "unixepoch()"
+                                    {
                                         directives.push(ast::ColumnDirective::Default(
                                             ast::DefaultValue::Now,
                                         ));
