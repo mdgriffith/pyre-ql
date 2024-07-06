@@ -7,6 +7,7 @@ use serde;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
+use std::path::{Path, PathBuf};
 
 const MIGRATION_TABLE: &str = "_pyre_migrations";
 
@@ -464,9 +465,26 @@ async fn record_migration(
         .await
 }
 
-struct Migrations {
-    file_map: HashMap<String, bool>,
-    file_contents: Vec<(String, String)>,
+pub fn read_migration_items(migration_folder: &Path) -> Result<Vec<String>, std::io::Error> {
+    let mut migration_items: Vec<String> = Vec::new();
+
+    for entry in fs::read_dir(migration_folder)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            if let Some(folder_name) = path.file_name().and_then(|name| name.to_str()) {
+                migration_items.push(folder_name.to_string());
+            }
+        }
+    }
+
+    Ok(migration_items)
+}
+
+pub struct Migrations {
+    pub file_map: HashMap<String, bool>,
+    pub file_contents: Vec<(String, String)>,
 }
 
 pub fn read_migrations(migration_folder: &str) -> Result<Migrations, std::io::Error> {

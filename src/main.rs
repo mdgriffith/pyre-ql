@@ -261,6 +261,47 @@ async fn main() -> io::Result<()> {
                             let introspection_result = db::introspect(&conn).await;
                             match introspection_result {
                                 Ok(introspection) => {
+                                    let migration_dir = Path::new(&options.migration_dir);
+                                    let existing_migration_result =
+                                        db::read_migration_items(migration_dir);
+
+                                    match existing_migration_result {
+                                        Err(e) => {
+                                            println!("Failed to read existing migrations: {:?}", e);
+                                            return Ok(());
+                                        }
+                                        Ok(existing_migrations) => {
+                                            let mut not_applied: Vec<String> = vec![];
+                                            for migration_from_file in existing_migrations {
+                                                let mut migrated = false;
+                                                for migration_recorded in
+                                                    introspection.migrations_recorded.iter()
+                                                {
+                                                    if &migration_from_file == migration_recorded {
+                                                        migrated = true;
+                                                        break;
+                                                    }
+                                                }
+                                                if !migrated {
+                                                    not_applied.push(
+                                                        migration_from_file.yellow().to_string(),
+                                                    );
+                                                }
+                                            }
+                                            if not_applied.len() > 0 {
+                                                println!(
+                                                    "It looks like some migrations have not been applied:\n    {}",
+                                                    not_applied.join("\n   ")
+                                                );
+                                                println!(
+                                                    "Run `pyre migreation apply` to apply these migrations before generating a new one.",
+                                                );
+                                                return Ok(());
+                                            }
+                                        }
+                                    }
+
+                                    // filepaths to .pyre files
                                     let paths = collect_filepaths(&options.in_dir);
                                     match paths.schema_files.as_slice() {
                                         [] => eprintln!("No schema files found!"),
@@ -278,9 +319,6 @@ async fn main() -> io::Result<()> {
                                                     let current_date = chrono::Utc::now()
                                                         .format("%Y%m%d%H%M")
                                                         .to_string();
-
-                                                    let migration_dir =
-                                                        Path::new(&options.migration_dir);
 
                                                     create_dir_if_not_exists(&migration_dir);
 
