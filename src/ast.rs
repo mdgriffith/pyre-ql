@@ -119,6 +119,40 @@ pub fn is_primary_key(col: &Column) -> bool {
         .any(|d| *d == ColumnDirective::PrimaryKey)
 }
 
+pub fn to_watch_details(record: &RecordDetails) -> Option<&WatchedDetails> {
+    for field in record.fields.iter() {
+        match field {
+            Field::FieldDirective(FieldDirective::Watched(details)) => return Some(details),
+            _ => {}
+        }
+    }
+    None
+}
+
+pub fn to_watched_operations(record: &RecordDetails) -> Vec<QueryOperation> {
+    let mut ops = Vec::new();
+    for field in record.fields.iter() {
+        match field {
+            Field::FieldDirective(FieldDirective::Watched(details)) => {
+                if details.selects {
+                    ops.push(QueryOperation::Select);
+                }
+                if details.inserts {
+                    ops.push(QueryOperation::Insert);
+                }
+                if details.updates {
+                    ops.push(QueryOperation::Update);
+                }
+                if details.deletes {
+                    ops.push(QueryOperation::Delete);
+                }
+            }
+            _ => {}
+        }
+    }
+    ops
+}
+
 pub fn get_tablename(name: &str, fields: &Vec<Field>) -> String {
     for field in fields.iter() {
         match field {
@@ -182,8 +216,26 @@ pub fn link_equivalent(a: &LinkDetails, b: &LinkDetails) -> bool {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum FieldDirective {
+    Watched(WatchedDetails),
     TableName((Range, String)),
     Link(LinkDetails),
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct WatchedDetails {
+    pub selects: bool,
+    pub inserts: bool,
+    pub updates: bool,
+    pub deletes: bool,
+}
+
+pub fn operation_matches_watch(op: &QueryOperation, watched: &WatchedDetails) -> bool {
+    match op {
+        QueryOperation::Select => watched.selects,
+        QueryOperation::Insert => watched.inserts,
+        QueryOperation::Update => watched.updates,
+        QueryOperation::Delete => watched.deletes,
+    }
 }
 
 pub fn link_identity(local_table: &str, link: &LinkDetails) -> String {
@@ -369,7 +421,7 @@ pub struct Query {
     pub end: Option<Location>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum QueryOperation {
     Select,
     Insert,

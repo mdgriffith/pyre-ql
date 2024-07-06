@@ -161,6 +161,16 @@ fn parse_field_directive(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = tag("@")(input)?;
     let (input, name) = parse_typename(input)?;
     match name {
+        "watch" => {
+            let (input, _) = multispace0(input)?;
+            let directive = ast::FieldDirective::Watched(ast::WatchedDetails {
+                selects: false,
+                inserts: true,
+                updates: false,
+                deletes: false,
+            });
+            return Ok((input, ast::Field::FieldDirective(directive)));
+        }
         "tablename" => {
             let (input, _) = multispace1(input)?;
             let (input, tablename) = parse_string_literal(input)?;

@@ -97,6 +97,7 @@ fn to_string_column(indent: usize, column: &ast::Column) -> String {
 fn to_string_field_directive(indent: usize, directive: &ast::FieldDirective) -> String {
     let spaces = " ".repeat(indent);
     match directive {
+        ast::FieldDirective::Watched(_) => format!("{}@watch\n", spaces),
         ast::FieldDirective::TableName((range, name)) => {
             format!("{}@tablename \"{}\"\n", spaces, name)
         }

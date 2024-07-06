@@ -262,6 +262,7 @@ pub fn write_queries(
     query_list: &ast::QueryList,
 ) -> io::Result<()> {
     write_runner(dir, context, query_list);
+    write_watched(dir, context);
 
     for operation in &query_list.queries {
         match operation {
@@ -281,6 +282,67 @@ pub fn write_queries(
         }
     }
     Ok(())
+}
+
+fn operation_name(operation: ast::QueryOperation) -> String {
+    match operation {
+        ast::QueryOperation::Select => "Queried",
+        ast::QueryOperation::Insert => "Added",
+        ast::QueryOperation::Update => "Updated",
+        ast::QueryOperation::Delete => "Deleted",
+    }
+    .to_string()
+}
+fn write_watched(dir: &str, context: &typecheck::Context) {
+    let path = &format!("{}/watched.ts", dir);
+    let target_path = Path::new(path);
+    let mut content = String::new();
+
+    content
+        .push_str("\n\n// All tables that are currently being watched\nexport enum WatchedKind {");
+    let mut at_least_one_watched = false;
+    for (name, record) in &context.tables {
+        for watched_operation in ast::to_watched_operations(record) {
+            content.push_str(&format!(
+                "\n  {}{},",
+                record.name,
+                operation_name(watched_operation)
+            ));
+        }
+    }
+    content.push_str("\n}");
+
+    for (name, record) in &context.tables {
+        for watched_operation in ast::to_watched_operations(record) {
+            let name = format!("{}{}", record.name, operation_name(watched_operation));
+            content.push_str(&format!(
+                "\n\nexport interface {} {{\n  kind: WatchedKind.{};\n  data: {};\n}}",
+                name, name, "{}"
+            ));
+        }
+    }
+
+    content.push_str("\n\nexport type Watched");
+    let mut at_least_one_constructor = false;
+    for (name, record) in &context.tables {
+        for watched_operation in ast::to_watched_operations(record) {
+            let name = format!("{}{}", record.name, operation_name(watched_operation));
+            if !at_least_one_constructor {
+                content.push_str(&format!("\n    = {}", name));
+                at_least_one_constructor = true;
+            } else {
+                content.push_str(&format!("\n    | {}", name));
+            }
+        }
+    }
+    if !at_least_one_constructor {
+        content.push_str(" = {};")
+    }
+
+    let mut output = fs::File::create(target_path).expect("Failed to create file");
+    output
+        .write_all(content.as_bytes())
+        .expect("Failed to write to file");
 }
 
 fn write_runner(dir: &str, context: &typecheck::Context, query_list: &ast::QueryList) {
@@ -340,22 +402,47 @@ pub fn literal_quote(s: &str) -> String {
     format!("`\n{}`", s)
 }
 
+fn format_ts_list(items: Vec<String>) -> String {
+    let mut result = "[ ".to_string();
+    let mut first = true;
+    for item in items {
+        if first {
+            result.push_str(&format!("{}", item));
+        } else {
+            result.push_str(&format!(", {}", item));
+        }
+
+        first = false;
+    }
+    result.push_str("]");
+    result
+}
+
 fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     let mut result = "".to_string();
     result.push_str("import * as Ark from 'arktype';\n");
     result.push_str("import * as Db from '../db';\n");
-    // result.push_str("import * as Data from '../db/data';\n");
+    result.push_str("import * as Watched from '../watched';\n");
     result.push_str("import * as Decode from '../db/decode';\n\n");
 
     // Input args decoder
     to_query_input_decoder(context, &query, &mut result);
 
     result.push_str("\n\nconst sql = [");
+    let mut watchers = vec![];
 
     let mut written_field = false;
     for field in &query.fields {
-        // let table = context.tables.get(&field.name).unwrap();
-        // result.push_str(&to_query_sql(&table, &field.name, &ast::collect_query_fields(&field.fields)));
+        let table = context.tables.get(&field.name).unwrap();
+
+        for watched_operation in ast::to_watched_operations(table) {
+            let name = format!("{}{}", table.name, operation_name(watched_operation));
+            watchers.push(format!(
+                "{{ kind: Watched.WatchedKind.{}, data: {{}} }}",
+                name
+            ));
+        }
+
         if written_field {
             result.push_str(", ");
         }
@@ -364,7 +451,22 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         written_field = true;
     }
 
-    result.push_str("];\n");
+    result.push_str("];\n\n\n");
+
+    // Rectangle data decoder
+    result.push_str("export const ReturnRectangle = Ark.type({\n");
+    for field in &query.fields {
+        let table = context.tables.get(&field.name).unwrap();
+
+        to_flat_query_decoder(
+            context,
+            &ast::get_aliased_name(&field),
+            table,
+            &ast::collect_query_fields(&field.fields),
+            &mut result,
+        );
+    }
+    result.push_str("});\n\n");
 
     let validate = format!(
         r#"
@@ -372,12 +474,14 @@ export const query = Db.toRunner({{
     id: "{}",
     sql: sql,
     input: Input,
-    output: Ark.type("number")
+    output: ReturnRectangle,
+    watch_triggers: {}
 }});
 
 type Input = typeof Input.infer
 "#,
-        query.full_hash
+        query.full_hash,
+        format_ts_list(watchers)
     );
 
     result.push_str(&validate);
@@ -408,22 +512,6 @@ type Input = typeof Input.infer
     //     ));
     // }
     //
-
-    // Rectangle data decoder
-    result.push_str("\n");
-    result.push_str("export const ReturnRectangle = Ark.type({\n");
-    for field in &query.fields {
-        let table = context.tables.get(&field.name).unwrap();
-
-        to_flat_query_decoder(
-            context,
-            &ast::get_aliased_name(&field),
-            table,
-            &ast::collect_query_fields(&field.fields),
-            &mut result,
-        );
-    }
-    result.push_str("});");
 
     result
 }
@@ -608,6 +696,7 @@ pub const DB_ENGINE: &str = r#"import {
   Config
 } from "@libsql/client";
 import * as Ark from "arktype";
+import * as Watched from "./watched";
 
 export type ExecuteResult = SuccessResult | ErrorResult;
 
@@ -615,6 +704,7 @@ export interface SuccessResult {
   kind: "success";
   metadata: {
     outOfDate: boolean;
+    watched: Watched.Watched[];
   };
   data: ResultSet[];
 }
@@ -650,6 +740,7 @@ export type ToRunnerArgs<input, output> = {
   input: Ark.Type<input>;
   output: Ark.Type<output>;
   sql: Array<string>;
+  watch_triggers: Watched.Watched[];
 };
 
 export const toRunner = <Input, Output>(
@@ -664,7 +755,7 @@ export const toRunner = <Input, Output>(
         return { sql: sql, args: args.valid };
       });
 
-      return exec(env, sql_arg_list);
+      return exec(env, sql_arg_list, options.watch_triggers);
     },
   };
 };
@@ -722,11 +813,16 @@ const validate = <Input extends InArgs, Output>(
 const exec = async (
   env: Config,
   sql: Array<InStatement>,
+  watch_triggers: Watched.Watched[],
 ): Promise<ExecuteResult> => {
-  const client = createClient({ url: env.url, authToken: env.authToken });
+  const client = createClient(env);
   try {
     const res = await client.batch(sql);
-    return { kind: "success", metadata: { outOfDate: false }, data: res };
+    return {
+      kind: "success",
+      metadata: { outOfDate: false, watched: watch_triggers },
+      data: res,
+    };
   } catch (error) {
     console.log("DB ERROR", error)
     return {
