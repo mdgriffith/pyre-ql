@@ -106,7 +106,7 @@ fn column_directive_list_to_string(column: &Column, directives: &Vec<ColumnDirec
 
 fn column_directive_to_string(column: &Column, directive: &ColumnDirective) -> String {
     match directive {
-        ColumnDirective::PrimaryKey => "primary key".to_string(),
+        ColumnDirective::PrimaryKey => "primary key autoincrement".to_string(),
         ColumnDirective::Unique => "unique".to_string(),
         ColumnDirective::Default(def) => match def {
             DefaultValue::Now => match column.type_.as_str() {
