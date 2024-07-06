@@ -110,11 +110,12 @@ fn to_string_field(is_first: bool, indent: usize, field: &ast::Field) -> String 
 }
 
 fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> String {
+    let maybe = if column.nullable { "Maybe " } else { "" };
     if is_first {
-        return format!("{} : {}\n", column.name, column.type_);
+        return format!("{} : {}{}\n", column.name, maybe, column.type_);
     } else {
         let spaces = " ".repeat(indent);
-        return format!("{}, {} : {}\n", spaces, column.name, column.type_);
+        return format!("{}, {} : {}{}\n", spaces, column.name, maybe, column.type_);
     }
 }
 
@@ -279,7 +280,7 @@ fn to_type_decoder(column: &ast::Column) -> String {
         .to_string(),
     };
     if column.nullable {
-        format!("Db.Read.nullable {}", decoder)
+        format!("(Db.Read.nullable {})", decoder)
     } else {
         decoder
     }
@@ -802,18 +803,21 @@ fn to_string_query_field(
     table_column: &ast::Column,
 ) -> String {
     let field_name = ast::get_aliased_name(field);
+    let maybe = if table_column.nullable { "Maybe " } else { "" };
     if is_first {
         return format!(
-            "{} : {}\n",
+            "{} : {}{}\n",
             crate::ext::string::decapitalize(&field_name),
+            maybe,
             to_elm_typename(&table_column.type_)
         );
     } else {
         let spaces = " ".repeat(indent);
         return format!(
-            "{}, {} : {}\n",
+            "{}, {} : {}{}\n",
             spaces,
             crate::ext::string::decapitalize(&field_name),
+            maybe,
             to_elm_typename(&table_column.type_)
         );
     }
