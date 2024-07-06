@@ -169,6 +169,32 @@ struct Options<'a> {
     migration_dir: &'a Path,
 }
 
+fn prepare_options<'a>(cli: &'a Cli) -> Options<'a> {
+    let mut in_dir = Path::new("pyre");
+    match &cli.r#in {
+        Some(dir) => in_dir = Path::new(dir),
+        None => (),
+    }
+
+    let mut out_dir = Path::new("pyre/generated");
+    match &cli.out {
+        Some(dir) => out_dir = Path::new(dir),
+        None => (),
+    }
+
+    let mut migration_dir = Path::new("pyre/migrations");
+    match &cli.migrations {
+        Some(dir) => migration_dir = Path::new(dir),
+        None => (),
+    }
+
+    Options {
+        in_dir: &in_dir,
+        out_dir: &out_dir,
+        migration_dir: &migration_dir,
+    }
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let cli = Cli::parse();
@@ -177,16 +203,8 @@ async fn main() -> io::Result<()> {
         println!("0.1.0");
         return Ok(());
     }
-    let in_dir = &cli.r#in.unwrap_or_else(|| "pyre".to_string());
-    let out_dir = &cli.out.unwrap_or_else(|| "out".to_string());
-    let migration_dir = &cli
-        .migrations
-        .unwrap_or_else(|| "pyre/migrations".to_string());
-    let options = Options {
-        in_dir: Path::new(in_dir),
-        out_dir: Path::new(out_dir),
-        migration_dir: Path::new(migration_dir),
-    };
+
+    let options = prepare_options(&cli);
 
     match &cli.command {
         Some(Commands::Format { files }) => match files.len() {
@@ -219,9 +237,18 @@ async fn main() -> io::Result<()> {
                     match introspection_result {
                         Ok(mut introspection) => {
                             let path: PathBuf = Path::new(&options.in_dir).join("schema.pyre");
-                            println!("Schema written to {:?}", path.to_str());
 
-                            write_schema(path, &introspection.schema);
+                            if path.exists() {
+                                println!(
+                                    "Schema already exists\n\n   {}",
+                                    path.display().to_string().yellow()
+                                );
+
+                                println!("\nRemove it if you want to generate a new one!");
+                            } else {
+                                println!("Schema written to {:?}", path.to_str());
+                                write_schema(path, &introspection.schema);
+                            }
                         }
                         Err(e) => {
                             println!("Failed to connect to database: {:?}", e);
