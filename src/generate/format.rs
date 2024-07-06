@@ -85,11 +85,13 @@ fn to_string_field(indent: usize, field: &ast::Field) -> String {
 
 fn to_string_column(indent: usize, column: &ast::Column) -> String {
     let spaces = " ".repeat(indent);
+    let nullable = if column.nullable { "?" } else { "" };
     format!(
-        "{}{}: {}{}\n",
+        "{}{}: {}{}{}\n",
         spaces,
         column.name,
         column.type_,
+        nullable,
         to_string_directives(&column.directives)
     )
 }

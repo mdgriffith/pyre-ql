@@ -267,12 +267,21 @@ fn to_json_type_decoder(type_: &str) -> String {
     }
 }
 
-fn to_type_decoder(type_: &str) -> String {
-    match type_ {
+fn to_type_decoder(column: &ast::Column) -> String {
+    let decoder = match column.type_.as_str() {
         "String" => "Db.Read.string".to_string(),
         "Int" => "Db.Read.int".to_string(),
         "Float" => "Db.Read.float".to_string(),
-        _ => format!("Db.Decode.{}", crate::ext::string::decapitalize(type_)).to_string(),
+        _ => format!(
+            "Db.Decode.{}",
+            crate::ext::string::decapitalize(&column.type_)
+        )
+        .to_string(),
+    };
+    if column.nullable {
+        format!("Db.Read.nullable {}", decoder)
+    } else {
+        decoder
     }
 }
 
@@ -667,7 +676,7 @@ fn to_table_field_decoder(
                 "{}|> Db.Read.field \"{}\" {}\n",
                 spaces,
                 ast::get_select_alias(table_alias, table_field, query_field),
-                to_type_decoder(&column.type_)
+                to_type_decoder(&column)
             );
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
