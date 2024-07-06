@@ -288,6 +288,7 @@ fn write_runner(dir: &str, context: &typecheck::Context, query_list: &ast::Query
     let target_path = Path::new(path);
     let mut content = String::new();
 
+    content.push_str("import { Config } from \"@libsql/client\";\n");
     content.push_str("import * as Db from \"./db\";\n");
     for operation in &query_list.queries {
         match operation {
@@ -302,7 +303,7 @@ fn write_runner(dir: &str, context: &typecheck::Context, query_list: &ast::Query
         }
     }
     content.push_str("\nexport const run = async (\n");
-    content.push_str("  env: Db.Env,\n");
+    content.push_str("  env: Config,\n");
     content.push_str("  id: string,\n");
     content.push_str("  args: any,\n");
     content.push_str("): Promise<Db.ExecuteResult> => {\n");
@@ -604,6 +605,7 @@ pub const DB_ENGINE: &str = r#"import {
   ResultSet,
   InStatement,
   InArgs,
+  Config
 } from "@libsql/client";
 import * as Ark from "arktype";
 
@@ -640,7 +642,7 @@ export interface Runner<input, output> {
   id: string;
   input: Ark.Type<input>;
   output: Ark.Type<output>;
-  execute: (env: Env, args: ValidArgs) => Promise<ExecuteResult>;
+  execute: (env: Config, args: ValidArgs) => Promise<ExecuteResult>;
 }
 
 export type ToRunnerArgs<input, output> = {
@@ -657,7 +659,7 @@ export const toRunner = <Input, Output>(
     id: options.id,
     input: options.input,
     output: options.output,
-    execute: async (env: Env, args: ValidArgs): Promise<ExecuteResult> => {
+    execute: async (env: Config, args: ValidArgs): Promise<ExecuteResult> => {
       const sql_arg_list: InStatement[] = options.sql.map((sql) => {
         return { sql: sql, args: args.valid };
       });
@@ -667,13 +669,8 @@ export const toRunner = <Input, Output>(
   };
 };
 
-export interface Env {
-  url: string;
-  authToken: string | undefined;
-}
-
 export const run = async (
-  env: Env,
+  env: Config,
   runner: Runner<any, any>,
   args: any,
 ): Promise<ExecuteResult> => {
@@ -723,7 +720,7 @@ const validate = <Input extends InArgs, Output>(
 // Queries
 
 const exec = async (
-  env: Env,
+  env: Config,
   sql: Array<InStatement>,
 ): Promise<ExecuteResult> => {
   const client = createClient({ url: env.url, authToken: env.authToken });
