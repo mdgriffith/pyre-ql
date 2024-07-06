@@ -15,6 +15,7 @@ mod db;
 mod diff;
 mod error;
 mod ext;
+mod filesystem;
 mod format;
 mod generate;
 mod hash;
@@ -210,7 +211,7 @@ async fn main() -> io::Result<()> {
         Some(Commands::Format { files }) => match files.len() {
             0 => {
                 println!("Formatting all files in {}", options.in_dir.display());
-                format_all(&options, collect_filepaths(&options.in_dir));
+                format_all(&options, filesystem::collect_filepaths(&options.in_dir));
             }
             _ => {
                 println!("Formatting files: {:?}", files);
@@ -221,7 +222,7 @@ async fn main() -> io::Result<()> {
                         continue;
                     }
 
-                    if is_schema_file(file_path) {
+                    if filesystem::is_schema_file(file_path) {
                         format_schema(&options, file_path);
                     } else {
                         format_query(&options, file_path);
@@ -323,11 +324,11 @@ async fn main() -> io::Result<()> {
                                     }
 
                                     // filepaths to .pyre files
-                                    let paths = collect_filepaths(&options.in_dir);
+                                    let paths = filesystem::collect_filepaths(&options.in_dir);
                                     match paths.schema_files.as_slice() {
                                         [] => eprintln!("No schema files found!"),
                                         [schema_path] => {
-                                            let mut file = fs::File::open(schema_path.clone())?;
+                                            let mut file = fs::File::open(&schema_path)?;
                                             let mut schema_str = String::new();
                                             file.read_to_string(&mut schema_str)?;
                                             match parser::run(&schema_str) {
@@ -438,7 +439,7 @@ async fn main() -> io::Result<()> {
             }
         }
         None => {
-            execute(&options, collect_filepaths(&options.in_dir));
+            execute(&options, filesystem::collect_filepaths(&options.in_dir));
         }
     }
     Ok(())
@@ -465,7 +466,7 @@ fn create_dir_if_not_exists(path: &Path) -> io::Result<()> {
     }
 }
 
-fn format_all(options: &Options, paths: Found) -> io::Result<()> {
+fn format_all(options: &Options, paths: filesystem::Found) -> io::Result<()> {
     for schema_file_path in paths.schema_files {
         format_schema(&options, &schema_file_path);
     }
@@ -539,7 +540,7 @@ fn format_query(options: &Options, query_file_path: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn execute(options: &Options, paths: Found) -> io::Result<()> {
+fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
     match paths.schema_files.as_slice() {
         [] => eprintln!("No schema files found!"),
         [schema_path] => {
@@ -625,58 +626,4 @@ fn execute(options: &Options, paths: Found) -> io::Result<()> {
     }
 
     Ok(())
-}
-
-#[derive(Debug)]
-struct Found {
-    schema_files: Vec<String>,
-    query_files: Vec<String>,
-}
-
-fn is_schema_file(file_path: &str) -> bool {
-    file_path == "schema.pyre" || file_path.ends_with(".schema.pyre")
-}
-
-fn collect_filepaths(dir: &Path) -> Found {
-    let mut schema_files: Vec<String> = vec![];
-    let mut query_files: Vec<String> = vec![];
-
-    for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
-        let path = entry.path();
-
-        // Skip directories
-        if path.is_dir() {
-            continue;
-        }
-
-        // Convert the path to a string for easier manipulation
-        if let Some(file_str) = path.to_str() {
-            // Skip files that don't end in `.pyre`
-            if !file_str.ends_with(".pyre") {
-                continue;
-            }
-
-            let path = Path::new(file_str);
-            match path.file_name() {
-                None => continue,
-                Some(os_file_name) => {
-                    match os_file_name.to_str() {
-                        None => continue,
-                        Some(file_name) => {
-                            // Check if the file is `schema.pyre`
-                            if is_schema_file(file_name) {
-                                schema_files.push(file_str.to_string());
-                            } else {
-                                query_files.push(file_str.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Found {
-        schema_files,
-        query_files,
-    }
 }
