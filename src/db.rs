@@ -278,7 +278,7 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                             fields.push(ast::Field::Column(ast::Column {
                                 name: table_info.name,
                                 type_: to_column_type(&table_info.column_type),
-                                nullable: table_info.notnull,
+                                nullable: !table_info.notnull,
                                 serialization_type: read_serialization_type(
                                     &table_info.column_type,
                                 ),
