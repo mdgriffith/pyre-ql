@@ -94,46 +94,11 @@ fn out_path(options: &Options, file: &str) -> PathBuf {
     Path::new(&options.out_dir).join(file)
 }
 
-fn generate_elm_schema(options: &Options, schema: &ast::Schema) -> io::Result<()> {
-    create_dir_if_not_exists(&out_path(options, "elm"));
-    create_dir_if_not_exists(&out_path(options, "elm").join("Db"));
-
-    let formatted_elm = generate::elm::schema(&schema);
-
-    // Top level Elm files
-    let elm_db_path = out(options, Path::new("elm/Db.elm"));
-    let elm_file = Path::new(&elm_db_path);
-    let mut output = fs::File::create(elm_file).expect("Failed to create file");
-    output
-        .write_all(formatted_elm.as_bytes())
-        .expect("Failed to write to file");
-
-    // Elm Decoders
-    let elm_db_decode_path = out(options, Path::new("elm/Db/Decode.elm"));
-    let elm_decoders = generate::elm::to_schema_decoders(&schema);
-    let elm_decoder_file = Path::new(&elm_db_decode_path);
-    let mut output = fs::File::create(elm_decoder_file).expect("Failed to create file");
-    output
-        .write_all(elm_decoders.as_bytes())
-        .expect("Failed to write to file");
-
-    // Elm Encoders
-    let elm_db_encode_path = out(options, Path::new("elm/Db/Encode.elm"));
-    let elm_encoders = generate::elm::to_schema_encoders(&schema);
-    let elm_encoder_file = Path::new(&elm_db_encode_path);
-    let mut output = fs::File::create(elm_encoder_file).expect("Failed to create file");
-    output
-        .write_all(elm_encoders.as_bytes())
-        .expect("Failed to write to file");
-
-    Ok(())
-}
-
 fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Result<()> {
     let formatted_ts = generate::typescript::schema(&schema);
 
-    create_dir_if_not_exists(&out_path(options, "typescript"));
-    create_dir_if_not_exists(&out_path(options, "typescript").join("db"));
+    filesystem::create_dir_if_not_exists(&out_path(options, "typescript"));
+    filesystem::create_dir_if_not_exists(&out_path(options, "typescript").join("db"));
 
     // Top level TS files
     // DB engine as db.ts
@@ -342,7 +307,9 @@ async fn main() -> io::Result<()> {
                                                         .format("%Y%m%d%H%M")
                                                         .to_string();
 
-                                                    create_dir_if_not_exists(&migration_dir);
+                                                    filesystem::create_dir_if_not_exists(
+                                                        &migration_dir,
+                                                    );
 
                                                     let new_folder =
                                                         format!("{}_{}", current_date, name);
@@ -350,7 +317,9 @@ async fn main() -> io::Result<()> {
                                                     let full_path: PathBuf =
                                                         migration_dir.join(new_folder);
 
-                                                    create_dir_if_not_exists(&full_path);
+                                                    filesystem::create_dir_if_not_exists(
+                                                        &full_path,
+                                                    );
 
                                                     // Write the migration file
                                                     let migration_file =
@@ -443,27 +412,6 @@ async fn main() -> io::Result<()> {
         }
     }
     Ok(())
-}
-
-fn create_dir_if_not_exists(path: &Path) -> io::Result<()> {
-    let path = Path::new(path);
-
-    // Check if the path exists and is a directory
-    if path.exists() {
-        if path.is_dir() {
-            // The directory already exists
-            Ok(())
-        } else {
-            // The path exists but is not a directory
-            Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "The path exists but is not a directory",
-            ))
-        }
-    } else {
-        // The path does not exist, create the directory
-        fs::create_dir_all(path)
-    }
 }
 
 fn format_all(options: &Options, paths: filesystem::Found) -> io::Result<()> {
@@ -563,7 +511,7 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
                         }
                         Ok(_schem) => {
                             // Generate schema files
-                            generate_elm_schema(&options, &schema);
+                            generate::elm::write(&options.out_dir, &schema);
                             generate_typescript_schema(&options, &schema);
 
                             for query_file_path in paths.query_files {
@@ -579,10 +527,10 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
 
                                         match typecheck_result {
                                             Ok(typecheck_context) => {
-                                                create_dir_if_not_exists(
+                                                filesystem::create_dir_if_not_exists(
                                                     &out_path(&options, "elm").join("Query"),
                                                 );
-                                                create_dir_if_not_exists(
+                                                filesystem::create_dir_if_not_exists(
                                                     &out_path(&options, "typescript").join("query"),
                                                 );
                                                 generate::elm::write_queries(

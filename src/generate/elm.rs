@@ -1,12 +1,58 @@
 use crate::ast;
 use crate::ext::string;
+use crate::filesystem;
 use crate::hash;
 use crate::typecheck;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-pub fn schema(schem: &ast::Schema) -> String {
+const ELM_READ_MODULE: &str = include_str!("../../decoders/elm/src/Db/Read.elm");
+
+pub fn write(out_path: &Path, schema: &ast::Schema) -> io::Result<()> {
+    filesystem::create_dir_if_not_exists(&out_path.join("elm"));
+    filesystem::create_dir_if_not_exists(&out_path.join("elm/Db"));
+
+    let formatted_elm = write_schema(&schema);
+
+    // Top level Elm files
+    let elm_db_path = out_path.join("elm/Db.elm");
+    let elm_file = Path::new(&elm_db_path);
+    let mut output = fs::File::create(elm_file).expect("Failed to create file");
+    output
+        .write_all(formatted_elm.as_bytes())
+        .expect("Failed to write to file");
+
+    // Decode Helper file
+    let elm_db_read_path = out_path.join("elm/Db/Read.elm");
+    let elm_read_file = Path::new(&elm_db_read_path);
+    let mut output = fs::File::create(elm_read_file).expect("Failed to create file");
+    output
+        .write_all(ELM_READ_MODULE.as_bytes())
+        .expect("Failed to write to file");
+
+    // Elm Decoders
+    let elm_db_decode_path = out_path.join("elm/Db/Decode.elm");
+    let elm_decoders = to_schema_decoders(&schema);
+    let elm_decoder_file = Path::new(&elm_db_decode_path);
+    let mut output = fs::File::create(elm_decoder_file).expect("Failed to create file");
+    output
+        .write_all(elm_decoders.as_bytes())
+        .expect("Failed to write to file");
+
+    // Elm Encoders
+    let elm_db_encode_path = out_path.join("elm/Db/Encode.elm");
+    let elm_encoders = to_schema_encoders(&schema);
+    let elm_encoder_file = Path::new(&elm_db_encode_path);
+    let mut output = fs::File::create(elm_encoder_file).expect("Failed to create file");
+    output
+        .write_all(elm_encoders.as_bytes())
+        .expect("Failed to write to file");
+
+    Ok(())
+}
+
+pub fn write_schema(schem: &ast::Schema) -> String {
     let mut result = String::new();
 
     result.push_str("module Db exposing (..)\n\n");
