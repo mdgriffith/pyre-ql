@@ -238,7 +238,7 @@ fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
                 "{}{}: {},\n",
                 spaces,
                 crate::ext::string::quote(&column.name),
-                to_ts_type_decoder(true, &column.type_)
+                to_ts_type_decoder(true, column.nullable, &column.type_)
             );
         }
         _ => "".to_string(),
@@ -520,7 +520,7 @@ fn to_query_input_decoder(context: &typecheck::Context, query: &ast::Query, resu
         result.push_str(&format!(
             "\n  {}: {},",
             crate::ext::string::quote(&arg.name),
-            to_ts_type_decoder(true, &arg.type_)
+            to_ts_type_decoder(true, false, &arg.type_)
         ));
     }
     result.push_str("\n});\n");
@@ -576,7 +576,7 @@ fn to_table_field_flat_decoder(
                 "{}\"{}\": {},\n",
                 spaces,
                 ast::get_select_alias(table_alias, table_field, query_field),
-                to_ts_type_decoder(true, &column.type_)
+                to_ts_type_decoder(true, column.nullable, &column.type_)
             ));
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
@@ -636,16 +636,24 @@ fn to_ts_typename(qualified: bool, type_: &str) -> String {
     }
 }
 
-fn to_ts_type_decoder(qualified: bool, type_: &str) -> String {
+fn to_nullable_type(is_nullable: bool, type_: &str) -> String {
+    if is_nullable {
+        format!("{} | null", type_)
+    } else {
+        type_.to_string()
+    }
+}
+
+fn to_ts_type_decoder(qualified: bool, nullable: bool, type_: &str) -> String {
     match type_ {
-        "String" => "\"string\"".to_string(),
-        "Int" => "\"number\"".to_string(),
-        "Float" => "\"number\"".to_string(),
-        "Bool" => "\"boolean\"".to_string(),
-        "DateTime" => "\"number\"".to_string(),
+        "String" => crate::ext::string::quote(&to_nullable_type(nullable, "string")),
+        "Int" => crate::ext::string::quote(&to_nullable_type(nullable, "number")),
+        "Float" => crate::ext::string::quote(&to_nullable_type(nullable, "number")),
+        "Bool" => crate::ext::string::quote(&to_nullable_type(nullable, "boolean")),
+        "DateTime" => crate::ext::string::quote(&to_nullable_type(nullable, "number")),
         _ => {
             let qualification = if qualified { "Decode." } else { "" };
-            return format!("{}{}", qualification, type_).to_string();
+            return to_nullable_type(nullable, &format!("{}{}", qualification, type_)).to_string();
         }
     }
 }
