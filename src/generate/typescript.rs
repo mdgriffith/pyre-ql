@@ -257,7 +257,7 @@ fn to_type_decoder(type_: &str) -> String {
 //  QUERIES
 //
 pub fn write_queries(
-    dir: &str,
+    dir: &Path,
     context: &typecheck::Context,
     query_list: &ast::QueryList,
 ) -> io::Result<()> {
@@ -267,12 +267,11 @@ pub fn write_queries(
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
-                let path = &format!(
-                    "{}/query/{}.ts",
-                    dir,
+                let target_path = dir.join(&format!(
+                    "query/{}.ts",
                     crate::ext::string::decapitalize(&q.name)
-                );
-                let target_path = Path::new(path);
+                ));
+
                 let mut output = fs::File::create(target_path).expect("Failed to create file");
                 output
                     .write_all(to_query_file(&context, &q).as_bytes())
@@ -293,9 +292,9 @@ fn operation_name(operation: ast::QueryOperation) -> String {
     }
     .to_string()
 }
-fn write_watched(dir: &str, context: &typecheck::Context) {
-    let path = &format!("{}/watched.ts", dir);
-    let target_path = Path::new(path);
+fn write_watched(dir: &Path, context: &typecheck::Context) {
+    let target_path = dir.join("watched.ts");
+
     let mut content = String::new();
 
     content
@@ -345,9 +344,8 @@ fn write_watched(dir: &str, context: &typecheck::Context) {
         .expect("Failed to write to file");
 }
 
-fn write_runner(dir: &str, context: &typecheck::Context, query_list: &ast::QueryList) {
-    let path = &format!("{}/query.ts", dir);
-    let target_path = Path::new(path);
+fn write_runner(dir: &Path, context: &typecheck::Context, query_list: &ast::QueryList) {
+    let target_path = dir.join("query.ts");
     let mut content = String::new();
 
     content.push_str("import { Config } from \"@libsql/client\";\n");

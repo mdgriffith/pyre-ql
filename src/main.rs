@@ -85,8 +85,8 @@ enum Commands {
     },
 }
 
-fn out(options: &Options, file: &str) -> String {
-    format!("{}/{}", options.out_dir, file)
+fn out(options: &Options, file: &Path) -> PathBuf {
+    options.out_dir.join(file)
 }
 
 fn out_path(options: &Options, file: &str) -> PathBuf {
@@ -100,7 +100,7 @@ fn generate_elm_schema(options: &Options, schema: &ast::Schema) -> io::Result<()
     let formatted_elm = generate::elm::schema(&schema);
 
     // Top level Elm files
-    let elm_db_path = out(options, "elm/Db.elm");
+    let elm_db_path = out(options, Path::new("elm/Db.elm"));
     let elm_file = Path::new(&elm_db_path);
     let mut output = fs::File::create(elm_file).expect("Failed to create file");
     output
@@ -108,7 +108,7 @@ fn generate_elm_schema(options: &Options, schema: &ast::Schema) -> io::Result<()
         .expect("Failed to write to file");
 
     // Elm Decoders
-    let elm_db_decode_path = out(options, "elm/Db/Decode.elm");
+    let elm_db_decode_path = out(options, Path::new("elm/Db/Decode.elm"));
     let elm_decoders = generate::elm::to_schema_decoders(&schema);
     let elm_decoder_file = Path::new(&elm_db_decode_path);
     let mut output = fs::File::create(elm_decoder_file).expect("Failed to create file");
@@ -117,7 +117,7 @@ fn generate_elm_schema(options: &Options, schema: &ast::Schema) -> io::Result<()
         .expect("Failed to write to file");
 
     // Elm Encoders
-    let elm_db_encode_path = out(options, "elm/Db/Encode.elm");
+    let elm_db_encode_path = out(options, Path::new("elm/Db/Encode.elm"));
     let elm_encoders = generate::elm::to_schema_encoders(&schema);
     let elm_encoder_file = Path::new(&elm_db_encode_path);
     let mut output = fs::File::create(elm_encoder_file).expect("Failed to create file");
@@ -136,7 +136,7 @@ fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Re
 
     // Top level TS files
     // DB engine as db.ts
-    let ts_db_path = out(options, "typescript/db.ts");
+    let ts_db_path = out(options, Path::new("typescript/db.ts"));
     let ts_file = Path::new(&ts_db_path);
     let mut output = fs::File::create(ts_file).expect("Failed to create file");
     output
@@ -144,7 +144,7 @@ fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Re
         .expect("Failed to write to file");
 
     // Schema-level data types
-    let ts_db_data_path = out(options, "typescript/db/data.ts");
+    let ts_db_data_path = out(options, Path::new("typescript/db/data.ts"));
     let ts_data_path = Path::new(&ts_db_data_path);
     let mut output_data = fs::File::create(ts_data_path).expect("Failed to create file");
     output_data
@@ -152,7 +152,7 @@ fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Re
         .expect("Failed to write to file");
 
     // TS Decoders
-    let ts_db_decoder_path = out(options, "typescript/db/decode.ts");
+    let ts_db_decoder_path = out(options, Path::new("typescript/db/decode.ts"));
     let ts_decoders = generate::typescript::to_schema_decoders(&schema);
     let ts_decoder_file = Path::new(&ts_db_decoder_path);
     let mut output = fs::File::create(ts_decoder_file).expect("Failed to create file");
@@ -163,11 +163,10 @@ fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Re
     Ok(())
 }
 
-#[derive(Debug)]
-struct Options {
-    in_dir: String,
-    out_dir: String,
-    migration_dir: String,
+struct Options<'a> {
+    in_dir: &'a Path,
+    out_dir: &'a Path,
+    migration_dir: &'a Path,
 }
 
 #[tokio::main]
@@ -178,17 +177,21 @@ async fn main() -> io::Result<()> {
         println!("0.1.0");
         return Ok(());
     }
-
+    let in_dir = &cli.r#in.unwrap_or_else(|| "pyre".to_string());
+    let out_dir = &cli.out.unwrap_or_else(|| "out".to_string());
+    let migration_dir = &cli
+        .migrations
+        .unwrap_or_else(|| "pyre/migrations".to_string());
     let options = Options {
-        in_dir: cli.r#in.unwrap_or_else(|| "pyre".to_string()),
-        out_dir: cli.out.unwrap_or_else(|| "generated".to_string()),
-        migration_dir: cli.migrations.unwrap_or_else(|| "migrations".to_string()),
+        in_dir: Path::new(in_dir),
+        out_dir: Path::new(out_dir),
+        migration_dir: Path::new(migration_dir),
     };
 
     match &cli.command {
         Some(Commands::Format { files }) => match files.len() {
             0 => {
-                println!("Formatting all files in {}", options.in_dir);
+                println!("Formatting all files in {}", options.in_dir.display());
                 format_all(&options, collect_filepaths(&options.in_dir));
             }
             _ => {
@@ -262,43 +265,34 @@ async fn main() -> io::Result<()> {
                             match introspection_result {
                                 Ok(introspection) => {
                                     let migration_dir = Path::new(&options.migration_dir);
-                                    let existing_migration_result =
-                                        db::read_migration_items(migration_dir);
+                                    let existing_migrations =
+                                        db::read_migration_items(migration_dir).unwrap_or(vec![]);
 
-                                    match existing_migration_result {
-                                        Err(e) => {
-                                            println!("Failed to read existing migrations: {:?}", e);
-                                            return Ok(());
-                                        }
-                                        Ok(existing_migrations) => {
-                                            let mut not_applied: Vec<String> = vec![];
-                                            for migration_from_file in existing_migrations {
-                                                let mut migrated = false;
-                                                for migration_recorded in
-                                                    introspection.migrations_recorded.iter()
-                                                {
-                                                    if &migration_from_file == migration_recorded {
-                                                        migrated = true;
-                                                        break;
-                                                    }
-                                                }
-                                                if !migrated {
-                                                    not_applied.push(
-                                                        migration_from_file.yellow().to_string(),
-                                                    );
-                                                }
+                                    let mut not_applied: Vec<String> = vec![];
+                                    for migration_from_file in existing_migrations {
+                                        let mut migrated = false;
+                                        for migration_recorded in
+                                            introspection.migrations_recorded.iter()
+                                        {
+                                            if &migration_from_file == migration_recorded {
+                                                migrated = true;
+                                                break;
                                             }
-                                            if not_applied.len() > 0 {
-                                                println!(
-                                                    "It looks like some migrations have not been applied:\n    {}",
+                                        }
+                                        if !migrated {
+                                            not_applied
+                                                .push(migration_from_file.yellow().to_string());
+                                        }
+                                    }
+                                    if not_applied.len() > 0 {
+                                        println!(
+                                                    "\nIt looks like some migrations have not been applied:\n\n    {}",
                                                     not_applied.join("\n   ")
                                                 );
-                                                println!(
-                                                    "Run `pyre migreation apply` to apply these migrations before generating a new one.",
+                                        println!(
+                                                    "\nRun `pyre migrate` to apply these migrations before generating a new one.",
                                                 );
-                                                return Ok(());
-                                            }
-                                        }
+                                        return Ok(());
                                     }
 
                                     // filepaths to .pyre files
@@ -331,18 +325,19 @@ async fn main() -> io::Result<()> {
                                                     create_dir_if_not_exists(&full_path);
 
                                                     // Write the migration file
-                                                    let migration_file_path = format!(
-                                                        "{}/{}_{}/migration.sql",
-                                                        options.migration_dir, current_date, name
-                                                    );
-                                                    let diff_file_path = format!(
-                                                        "{}/{}_{}/schema.diff",
-                                                        options.migration_dir, current_date, name
-                                                    );
+                                                    let migration_file =
+                                                        options.migration_dir.join(format!(
+                                                            "{}_{}/migration.sql",
+                                                            current_date, name
+                                                        ));
+
+                                                    let diff_file_path =
+                                                        options.migration_dir.join(format!(
+                                                            "{}_{}/schema.diff",
+                                                            current_date, name
+                                                        ));
 
                                                     // Write migration file
-                                                    let migration_file =
-                                                        Path::new(&migration_file_path);
                                                     let mut output =
                                                         fs::File::create(migration_file);
 
@@ -563,12 +558,12 @@ fn execute(options: &Options, paths: Found) -> io::Result<()> {
                                                     &out_path(&options, "typescript").join("query"),
                                                 );
                                                 generate::elm::write_queries(
-                                                    &out(&options, "elm"),
+                                                    &out(&options, Path::new("elm")),
                                                     &typecheck_context,
                                                     &query_list,
                                                 );
                                                 generate::typescript::write_queries(
-                                                    &out(&options, "typescript"),
+                                                    &out(&options, Path::new("typescript")),
                                                     &typecheck_context,
                                                     &query_list,
                                                 );
@@ -615,7 +610,7 @@ fn is_schema_file(file_path: &str) -> bool {
     file_path == "schema.pyre" || file_path.ends_with(".schema.pyre")
 }
 
-fn collect_filepaths(dir: &str) -> Found {
+fn collect_filepaths(dir: &Path) -> Found {
     let mut schema_files: Vec<String> = vec![];
     let mut query_files: Vec<String> = vec![];
 

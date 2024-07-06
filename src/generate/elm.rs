@@ -395,15 +395,15 @@ fn to_type_encoder(fieldname: &str, type_: &str) -> String {
 //  QUERIES
 //
 pub fn write_queries(
-    dir: &str,
+    dir: &Path,
     context: &typecheck::Context,
     query_list: &ast::QueryList,
 ) -> io::Result<()> {
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
-                let path = &format!("{}/Query/{}.elm", dir, q.name.to_string());
-                let target_path = Path::new(path);
+                let target_path = dir.join(&format!("Query/{}.elm", q.name.to_string()));
+
                 let mut output = fs::File::create(target_path).expect("Failed to create file");
                 output
                     .write_all(to_query_file(&context, &q).as_bytes())

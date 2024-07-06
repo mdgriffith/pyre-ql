@@ -380,7 +380,7 @@ pub enum MigrationError {
     IoError(std::io::Error),
 }
 
-pub async fn migrate(db: &libsql::Database, migration_folder: &str) -> Result<(), MigrationError> {
+pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(), MigrationError> {
     // Read migration directory
     let mut migration_file_result = read_migrations(migration_folder);
     match migration_file_result {
@@ -487,7 +487,7 @@ pub struct Migrations {
     pub file_contents: Vec<(String, String)>,
 }
 
-pub fn read_migrations(migration_folder: &str) -> Result<Migrations, std::io::Error> {
+pub fn read_migrations(migration_folder: &Path) -> Result<Migrations, std::io::Error> {
     // Initialize the HashMap and Vec
     let mut file_map: HashMap<String, bool> = HashMap::new();
     let mut file_contents: Vec<(String, String)> = Vec::new();
