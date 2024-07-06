@@ -374,7 +374,7 @@ fn write_runner(dir: &str, context: &typecheck::Context, query_list: &ast::Query
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
-                content.push_str(&format!("        case \"{}\":\n", q.full_hash));
+                content.push_str(&format!("        case \"{}\":\n", q.interface_hash));
 
                 content.push_str(&format!(
                     "            return Db.run(env, {}.query, args);\n",
@@ -480,7 +480,7 @@ export const query = Db.toRunner({{
 
 type Input = typeof Input.infer
 "#,
-        query.full_hash,
+        query.interface_hash,
         format_ts_list(watchers)
     );
 

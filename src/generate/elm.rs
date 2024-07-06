@@ -436,7 +436,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     result.push_str("prepare input =\n");
     result.push_str(&format!(
         "    {{ args = encode input\n    , query = \"{}\"\n    , decoder = decoder{}\n    }}\n\n\n",
-        &query.full_hash,
+        &query.interface_hash,
         string::capitalize(&query.name)
     ));
 
