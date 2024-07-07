@@ -55,7 +55,9 @@ pub fn write(out_path: &Path, schema: &ast::Schema) -> io::Result<()> {
 pub fn write_schema(schem: &ast::Schema) -> String {
     let mut result = String::new();
 
-    result.push_str("module Db exposing (..)\n\n");
+    result.push_str("module Db exposing (..)\n\nimport Time\n\n\n");
+
+    result.push_str("type alias DateTime =\n    Time.Posix\n\n\n");
 
     for definition in &schem.definitions {
         result.push_str(&to_string_definition(definition));
@@ -116,7 +118,7 @@ fn to_type_alias(name: &str, fields: &Vec<ast::Field>) -> String {
             is_first = false;
         }
     }
-    result.push_str("    }\n");
+    result.push_str("    }\n\n");
     result
 }
 
@@ -166,7 +168,22 @@ fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> Stri
 }
 
 // DECODE
-//
+
+const DECODE_BOOL: &str = r#"bool : Decode.Decoder Bool
+bool =
+    Decode.oneOf
+        [ Decode.bool
+        , Decode.int
+            |> Decode.andThen
+                (\int ->
+                    case int of
+                        0 ->
+                            Decode.succeed False
+
+                        _ ->
+                            Decode.succeed True
+                )
+                ]"#;
 
 pub fn to_schema_decoders(schem: &ast::Schema) -> String {
     let mut result = String::new();
@@ -175,7 +192,7 @@ pub fn to_schema_decoders(schem: &ast::Schema) -> String {
     result.push_str("import Db\n");
     result.push_str("import Db.Read\n");
     result.push_str("import Json.Decode as Decode\n");
-    result.push_str("import Time\n\n");
+    result.push_str("import Time\n\n\n");
 
     result.push_str(
         "field : String -> Decode.Decoder a -> Decode.Decoder (a -> b) -> Decode.Decoder b\n",
@@ -184,6 +201,9 @@ pub fn to_schema_decoders(schem: &ast::Schema) -> String {
     result.push_str("    decoder_ |> Decode.andThen (\\func -> Decode.field fieldName_ fieldDecoder_ |> Decode.map func)");
 
     result.push_str("\n\n");
+
+    result.push_str("bool : Decode.Decoder Bool\n");
+    result.push_str("bool =\n");
 
     for definition in &schem.definitions {
         result.push_str(&to_decoder_definition(definition));
@@ -491,7 +511,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     ));
     result.push_str("prepare input =\n");
     result.push_str(&format!(
-        "    {{ args = encode input\n    , query = \"{}\"\n    , decoder = decoder{}\n    }}\n\n\n",
+        "    {{ args = encode input\n    , query = \"{}\"\n    , decoder = decode{}\n    }}\n\n\n",
         &query.interface_hash,
         string::capitalize(&query.name)
     ));
