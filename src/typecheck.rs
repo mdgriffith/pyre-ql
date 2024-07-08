@@ -152,6 +152,8 @@ pub enum ErrorType {
     InsertMissingColumn {
         field: String,
     },
+
+    LimitOffsetOnlyInFlatRecord,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -969,6 +971,7 @@ fn check_table_query(
     let mut limits: Vec<Range> = vec![];
     let mut offsets: Vec<Range> = vec![];
     let mut wheres: Vec<Range> = vec![];
+    let mut has_nested_selected = false;
 
     // We've already checked that the top-level query field name is valid
     // we want to make sure that every field queried exists in `table` as a column
@@ -1056,6 +1059,7 @@ fn check_table_query(
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                             if link.link_name == field.name {
                                 is_known_field = true;
+                                has_nested_selected = true;
                                 check_link(context, operation, errors, link, field, params)
                             }
                             ()
@@ -1081,26 +1085,37 @@ fn check_table_query(
         }
     }
 
-    if limits.len() > 1 {
+    let limit_len = limits.len();
+    if limit_len > 1 {
         errors.push(Error {
             error_type: ErrorType::MultipleLimits {
                 query: query.name.clone(),
             },
             locations: vec![Location {
                 contexts: to_range(&query.start, &query.end),
-                primary: limits,
+                primary: limits.clone(),
             }],
         });
     }
-
-    if offsets.len() > 1 {
+    let offset_len = offsets.len();
+    if offset_len > 1 {
         errors.push(Error {
             error_type: ErrorType::MultipleOffsets {
                 query: query.name.clone(),
             },
             locations: vec![Location {
                 contexts: to_range(&query.start, &query.end),
-                primary: offsets,
+                primary: offsets.clone(),
+            }],
+        });
+    }
+
+    if ((offset_len > 0 || limit_len > 0) && has_nested_selected) {
+        errors.push(Error {
+            error_type: ErrorType::LimitOffsetOnlyInFlatRecord,
+            locations: vec![Location {
+                contexts: to_range(&query.start, &query.end),
+                primary: [limits, offsets].concat(),
             }],
         });
     }

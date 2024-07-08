@@ -605,6 +605,19 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
+        typecheck::ErrorType::LimitOffsetOnlyInFlatRecord => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "This query has a limit/offset, but also queries nested values.\n\n{} isn't able to handle this situation yet and can only handle @limit and @offset in a query with no nested fields.",
+                "Pyre".yellow(),
+
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
         typecheck::ErrorType::NoSetsInSelect { field } => {
             let mut result = "".to_string();
 
