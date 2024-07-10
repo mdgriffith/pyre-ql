@@ -1,9 +1,170 @@
-use crate::typecheck;
+use crate::ast;
 use colored::Colorize;
-use nom::error::{Error, VerboseError, VerboseErrorKind};
+use nom::error::{VerboseError, VerboseErrorKind};
 use nom::{Offset, ToUsize};
 use nom_locate::LocatedSpan;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt::Write;
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Error {
+    pub error_type: ErrorType,
+    pub locations: Vec<Location>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum ErrorType {
+    DuplicateDefinition(String),
+    DefinitionIsBuiltIn(String),
+    DuplicateField {
+        record: String,
+        field: String,
+    },
+    DuplicateVariant {
+        base_variant: VariantDef,
+        duplicates: Vec<VariantDef>,
+    },
+    UnknownType {
+        found: String,
+        known_types: Vec<String>,
+    },
+    NoPrimaryKey {
+        record: String,
+    },
+    MultiplePrimaryKeys {
+        record: String,
+        field: String,
+    },
+    MultipleTableNames {
+        record: String,
+    },
+    // Schema Link errors
+    LinkToUnknownTable {
+        link_name: String,
+        unknown_table: String,
+    },
+
+    LinkToUnknownField {
+        link_name: String,
+        unknown_local_field: String,
+    },
+
+    LinkToUnknownForeignField {
+        link_name: String,
+        foreign_table: String,
+        unknown_foreign_field: String,
+    },
+    LinkSelectionIsEmpty {
+        link_name: String,
+        foreign_table: String,
+        foreign_table_fields: Vec<(String, String)>,
+    },
+
+    // Query Validation Errors
+    UnknownTable {
+        found: String,
+        existing: Vec<String>,
+    },
+    DuplicateQueryField {
+        query: String,
+        field: String,
+    },
+    NoFieldsSelected,
+    UnknownField {
+        found: String,
+
+        record_name: String,
+        known_fields: Vec<(String, String)>,
+    },
+    MultipleLimits {
+        query: String,
+    },
+    MultipleOffsets {
+        query: String,
+    },
+    MultipleWheres {
+        query: String,
+    },
+    WhereOnLinkIsntAllowed {
+        link_name: String,
+    },
+    TypeMismatch {
+        table: String,
+        column_defined_as: String,
+        variable_name: String,
+        variable_defined_as: String,
+    },
+    UnusedParam {
+        param: String,
+    },
+    UndefinedParam {
+        param: String,
+        type_: String,
+    },
+    NoSetsInSelect {
+        field: String,
+    },
+    NoSetsInDelete {
+        field: String,
+    },
+    LinksDisallowedInInserts {
+        field: String,
+    },
+    LinksDisallowedInDeletes {
+        field: String,
+    },
+    LinksDisallowedInUpdates {
+        field: String,
+    },
+    InsertColumnIsNotSet {
+        field: String,
+    },
+    InsertMissingColumn {
+        field: String,
+    },
+
+    LimitOffsetOnlyInFlatRecord,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum DefInfo {
+    Def(Option<Range>),
+    Builtin,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct VariantDef {
+    pub typename: String,
+    pub variant_name: String,
+    pub range: Option<Range>,
+}
+
+/*
+
+
+    For tracking location errors, we have a few different considerations.
+
+    1. Generally a language server takes a single range, so that should easily be retrievable.
+    2. For error rendering in the terminal, we want a hierarchy of the contexts we're in.
+        So, we want
+            - The Query
+            - The table field, etc.
+
+*/
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Location {
+    pub contexts: Vec<Range>,
+    pub primary: Vec<Range>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Range {
+    pub start: ast::Location,
+    pub end: ast::Location,
+}
 
 /// Transforms a `VerboseError` into a trace with input position information
 
@@ -138,7 +299,7 @@ I don't recognize this type. Is it one of these?
 
 */
 
-pub fn format_error(filepath: &str, file_contents: &str, error: typecheck::Error) -> String {
+pub fn format_error(filepath: &str, file_contents: &str, error: Error) -> String {
     let path_length = filepath.len();
     let separator = "-".repeat(80 - path_length);
 
@@ -154,7 +315,7 @@ pub fn format_error(filepath: &str, file_contents: &str, error: typecheck::Error
     )
 }
 
-fn prepare_highlight(file_contents: &str, error: &typecheck::Error) -> String {
+fn prepare_highlight(file_contents: &str, error: &Error) -> String {
     let mut rendered = "".to_string();
     let mut has_rendered = false;
     for location in &error.locations {
@@ -173,11 +334,7 @@ fn divider(indent: usize) -> String {
         .to_string()
 }
 
-fn render_highlight_location(
-    file_contents: &str,
-    rendered: &mut String,
-    location: &typecheck::Location,
-) {
+fn render_highlight_location(file_contents: &str, rendered: &mut String, location: &Location) {
     let mut indent: usize = 0;
 
     let mut last_line_index: usize = 0;
@@ -254,7 +411,7 @@ fn line_number_prefix(show_line_number: bool, number: usize) -> String {
     }
 }
 
-fn highlight_line(range: &typecheck::Range) -> String {
+fn highlight_line(range: &Range) -> String {
     if range.start.column < range.end.column && range.start.line == range.end.line {
         let indent = " ".repeat(range.start.column);
         let highlight = "^".repeat(range.end.column - range.start.column);
@@ -301,9 +458,9 @@ fn get_lines(file_contents: &str, show_line_number: bool, start: u32, end: u32) 
     result
 }
 
-fn to_error_description(error: &typecheck::Error) -> String {
+fn to_error_description(error: &Error) -> String {
     match &error.error_type {
-        typecheck::ErrorType::DuplicateDefinition(name) => {
+        ErrorType::DuplicateDefinition(name) => {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "There are two definitions for {}\n",
@@ -314,7 +471,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::DefinitionIsBuiltIn(name) => {
+        ErrorType::DefinitionIsBuiltIn(name) => {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "The {} type is a built-in type, try using another name.\n",
@@ -324,7 +481,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::DuplicateField { record, field } => {
+        ErrorType::DuplicateField { record, field } => {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "There are multiple definitions for {} on {}.\n",
@@ -335,7 +492,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::DuplicateVariant {
+        ErrorType::DuplicateVariant {
             base_variant,
             duplicates,
         } => {
@@ -349,14 +506,14 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::DuplicateQueryField { query, field } => {
+        ErrorType::DuplicateQueryField { query, field } => {
             let mut result = "".to_string();
             result.push_str(&format!("{} is listed multiple times.\n", field.yellow()));
 
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::UnknownTable { found, existing } => {
+        ErrorType::UnknownTable { found, existing } => {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "I don't recognize the '{}' table, is that a typo?\n",
@@ -373,7 +530,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::TypeMismatch {
+        ErrorType::TypeMismatch {
             table,
 
             column_defined_as,
@@ -392,7 +549,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::LinkToUnknownForeignField {
+        ErrorType::LinkToUnknownForeignField {
             link_name,
             foreign_table,
             unknown_foreign_field,
@@ -409,7 +566,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::LinkToUnknownField {
+        ErrorType::LinkToUnknownField {
             link_name,
             unknown_local_field,
         } => {
@@ -423,7 +580,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::LinkToUnknownTable {
+        ErrorType::LinkToUnknownTable {
             link_name,
             unknown_table,
         } => {
@@ -438,7 +595,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::NoPrimaryKey { record } => {
+        ErrorType::NoPrimaryKey { record } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -450,7 +607,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::MultiplePrimaryKeys { record, field } => {
+        ErrorType::MultiplePrimaryKeys { record, field } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -462,7 +619,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::MultipleTableNames { record } => {
+        ErrorType::MultipleTableNames { record } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -474,7 +631,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::MultipleLimits { query } => {
+        ErrorType::MultipleLimits { query } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -486,7 +643,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::MultipleOffsets { query } => {
+        ErrorType::MultipleOffsets { query } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -498,7 +655,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::MultipleWheres { query } => {
+        ErrorType::MultipleWheres { query } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -510,7 +667,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::UndefinedParam { param, type_ } => {
+        ErrorType::UndefinedParam { param, type_ } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -523,7 +680,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::LinkSelectionIsEmpty {
+        ErrorType::LinkSelectionIsEmpty {
             link_name,
             foreign_table,
             foreign_table_fields,
@@ -540,7 +697,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::UnusedParam { param } => {
+        ErrorType::UnusedParam { param } => {
             let mut result = "".to_string();
             let colored_param = format!("${}", param).yellow();
 
@@ -552,7 +709,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::InsertColumnIsNotSet { field } => {
+        ErrorType::InsertColumnIsNotSet { field } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -563,7 +720,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::LinksDisallowedInDeletes { field } => {
+        ErrorType::LinksDisallowedInDeletes { field } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -577,7 +734,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::LinksDisallowedInUpdates { field } => {
+        ErrorType::LinksDisallowedInUpdates { field } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -591,7 +748,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::LinksDisallowedInInserts { field } => {
+        ErrorType::LinksDisallowedInInserts { field } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -605,7 +762,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::LimitOffsetOnlyInFlatRecord => {
+        ErrorType::LimitOffsetOnlyInFlatRecord => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -618,7 +775,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::NoSetsInSelect { field } => {
+        ErrorType::NoSetsInSelect { field } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -630,7 +787,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::NoSetsInDelete { field } => {
+        ErrorType::NoSetsInDelete { field } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -643,7 +800,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::InsertMissingColumn { field } => {
+        ErrorType::InsertMissingColumn { field } => {
             let mut result = "".to_string();
 
             result.push_str(&format!("This insert is missing {}", field.yellow()));
@@ -651,7 +808,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::NoFieldsSelected => {
+        ErrorType::NoFieldsSelected => {
             let mut result = "".to_string();
 
             result.push_str("There are no fields selected for this table, let's add some!");
@@ -659,7 +816,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::WhereOnLinkIsntAllowed { link_name } => {
+        ErrorType::WhereOnLinkIsntAllowed { link_name } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -672,7 +829,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result.push_str("\n\n");
             result
         }
-        typecheck::ErrorType::UnknownType { found, known_types } => {
+        ErrorType::UnknownType { found, known_types } => {
             let mut result = "".to_string();
             let colored_param = format!("{}", found).cyan();
 
@@ -693,7 +850,7 @@ fn to_error_description(error: &typecheck::Error) -> String {
             result
         }
 
-        typecheck::ErrorType::UnknownField {
+        ErrorType::UnknownField {
             found,
             record_name,
             known_fields,

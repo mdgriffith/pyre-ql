@@ -1,166 +1,9 @@
+use crate::ast;
+use crate::error::{DefInfo, Error, ErrorType, Location, Range, VariantDef};
 use crate::ext::string;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
-
-use crate::ast;
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Error {
-    pub error_type: ErrorType,
-    pub locations: Vec<Location>,
-}
-
-/*
-
-
-    For tracking location errors, we have a few different considerations.
-
-    1. Generally a language server takes a single range, so that should easily be retrievable.
-    2. For error rendering in the terminal, we want a hierarchy of the contexts we're in.
-        So, we want
-            - The Query
-            - The table field, etc.
-
-*/
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Location {
-    pub contexts: Vec<Range>,
-    pub primary: Vec<Range>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Range {
-    pub start: ast::Location,
-    pub end: ast::Location,
-}
-fn convert_range(range: &ast::Range) -> Range {
-    Range {
-        start: range.start.clone(),
-        end: range.end.clone(),
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub enum ErrorType {
-    DuplicateDefinition(String),
-    DefinitionIsBuiltIn(String),
-    DuplicateField {
-        record: String,
-        field: String,
-    },
-    DuplicateVariant {
-        base_variant: VariantDef,
-        duplicates: Vec<VariantDef>,
-    },
-    UnknownType {
-        found: String,
-        known_types: Vec<String>,
-    },
-    NoPrimaryKey {
-        record: String,
-    },
-    MultiplePrimaryKeys {
-        record: String,
-        field: String,
-    },
-    MultipleTableNames {
-        record: String,
-    },
-    // Schema Link errors
-    LinkToUnknownTable {
-        link_name: String,
-        unknown_table: String,
-    },
-
-    LinkToUnknownField {
-        link_name: String,
-        unknown_local_field: String,
-    },
-
-    LinkToUnknownForeignField {
-        link_name: String,
-        foreign_table: String,
-        unknown_foreign_field: String,
-    },
-    LinkSelectionIsEmpty {
-        link_name: String,
-        foreign_table: String,
-        foreign_table_fields: Vec<(String, String)>,
-    },
-
-    // Query Validation Errors
-    UnknownTable {
-        found: String,
-        existing: Vec<String>,
-    },
-    DuplicateQueryField {
-        query: String,
-        field: String,
-    },
-    NoFieldsSelected,
-    UnknownField {
-        found: String,
-
-        record_name: String,
-        known_fields: Vec<(String, String)>,
-    },
-    MultipleLimits {
-        query: String,
-    },
-    MultipleOffsets {
-        query: String,
-    },
-    MultipleWheres {
-        query: String,
-    },
-    WhereOnLinkIsntAllowed {
-        link_name: String,
-    },
-    TypeMismatch {
-        table: String,
-        column_defined_as: String,
-        variable_name: String,
-        variable_defined_as: String,
-    },
-    UnusedParam {
-        param: String,
-    },
-    UndefinedParam {
-        param: String,
-        type_: String,
-    },
-    NoSetsInSelect {
-        field: String,
-    },
-    NoSetsInDelete {
-        field: String,
-    },
-    LinksDisallowedInInserts {
-        field: String,
-    },
-    LinksDisallowedInDeletes {
-        field: String,
-    },
-    LinksDisallowedInUpdates {
-        field: String,
-    },
-    InsertColumnIsNotSet {
-        field: String,
-    },
-    InsertMissingColumn {
-        field: String,
-    },
-
-    LimitOffsetOnlyInFlatRecord,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-enum DefInfo {
-    Def(Option<Range>),
-    Builtin,
-}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Context {
@@ -169,11 +12,11 @@ pub struct Context {
     pub variants: HashMap<String, (Option<Range>, Vec<VariantDef>)>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct VariantDef {
-    pub typename: String,
-    pub variant_name: String,
-    pub range: Option<Range>,
+fn convert_range(range: &ast::Range) -> Range {
+    Range {
+        start: range.start.clone(),
+        end: range.end.clone(),
+    }
 }
 
 pub fn get_linked_table<'a>(
