@@ -258,7 +258,10 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                                             ))),
                                         ));
                                     } else {
-                                        let parsed = parser::parse_number(parser::Text::new(&str));
+                                        let parsed = parser::parse_number(parser::Text::new_extra(
+                                            &str,
+                                            parser::PLACEHOLDER_CONTEXT,
+                                        ));
                                         match parsed {
                                             Ok((_, val)) => {
                                                 directives.push(ast::ColumnDirective::Default(
