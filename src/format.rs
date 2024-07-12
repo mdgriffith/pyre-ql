@@ -6,50 +6,56 @@ pub fn schema(schem: &mut ast::Schema) {
     let mut i = 0;
     let mut prev_was_lines = false;
 
-    while i < schem.definitions.len() {
-        if let ast::Definition::Lines { .. } = schem.definitions[i] {
-            prev_was_lines = true;
-        } else if !prev_was_lines {
-            schem
-                .definitions
-                .insert(i, ast::Definition::Lines { count: 1 });
-            // Move to the next element after insertion
+    // Insert some blank lines if needed
+    for file in schem.files.iter_mut() {
+        while i < file.definitions.len() {
+            if let ast::Definition::Lines { .. } = file.definitions[i] {
+                prev_was_lines = true;
+            } else if !prev_was_lines {
+                file.definitions
+                    .insert(i, ast::Definition::Lines { count: 1 });
+                // Move to the next element after insertion
+                i += 1;
+            } else {
+                prev_was_lines = false;
+            }
             i += 1;
-        } else {
-            prev_was_lines = false;
         }
-        i += 1;
     }
 
     let mut links: HashMap<String, Vec<(bool, ast::LinkDetails)>> = HashMap::new();
     // Get all links and calculate reciprocals
-    for def in &schem.definitions {
-        if let ast::Definition::Record {
-            name,
-            fields,
-            start,
-            end,
-            start_name,
-            end_name,
-        } = def
-        {
-            // let tablename = ast::get_tablename(name, fields);
-            for field in fields {
-                match field {
-                    ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                        add_link(&mut links, &name, &link, true);
-                        let reciprocal = ast::to_reciprocal(&name, link);
-                        add_link(&mut links, &link.foreign_tablename, &reciprocal, false);
+    for file in schem.files.iter() {
+        for def in &file.definitions {
+            if let ast::Definition::Record {
+                name,
+                fields,
+                start,
+                end,
+                start_name,
+                end_name,
+            } = def
+            {
+                // let tablename = ast::get_tablename(name, fields);
+                for field in fields {
+                    match field {
+                        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                            add_link(&mut links, &name, &link, true);
+                            let reciprocal = ast::to_reciprocal(&name, link);
+                            add_link(&mut links, &link.foreign_tablename, &reciprocal, false);
+                        }
+                        _ => (),
                     }
-                    _ => (),
                 }
             }
         }
     }
 
     // Standard formatting
-    for definition in &mut schem.definitions {
-        format_definition(definition, &links);
+    for file in schem.files.iter_mut() {
+        for definition in &mut file.definitions {
+            format_definition(definition, &links);
+        }
     }
 }
 

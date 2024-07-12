@@ -4,13 +4,17 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub struct Schema {
+    pub files: Vec<SchemaFile>,
+}
+
+#[derive(Debug)]
+pub struct SchemaFile {
+    pub path: String,
     pub definitions: Vec<Definition>,
 }
 
 pub fn empty_schema() -> Schema {
-    Schema {
-        definitions: Vec::new(),
-    }
+    Schema { files: Vec::new() }
 }
 
 #[repr(u8)]
@@ -260,14 +264,16 @@ pub fn to_reciprocal(local_table: &str, link: &LinkDetails) -> LinkDetails {
 }
 
 pub fn get_foreign_tablename(schema: &Schema, link: &LinkDetails) -> String {
-    for definition in schema.definitions.iter() {
-        match definition {
-            Definition::Record { name, fields, .. } => {
-                if name == &link.foreign_tablename {
-                    return get_tablename(&link.foreign_tablename, fields);
+    for file in schema.files.iter() {
+        for definition in file.definitions.iter() {
+            match definition {
+                Definition::Record { name, fields, .. } => {
+                    if name == &link.foreign_tablename {
+                        return get_tablename(&link.foreign_tablename, fields);
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
     link.foreign_tablename.clone()

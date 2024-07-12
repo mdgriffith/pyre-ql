@@ -41,7 +41,8 @@ type ParseResult<'a, Output> = IResult<Text<'a>, Output, VerboseError<Text<'a>>>
 pub fn run<'a>(
     path: &'a str,
     input_string: &'a str,
-) -> Result<ast::Schema, nom::Err<VerboseError<Text<'a>>>> {
+    schema: &'a mut ast::Schema,
+) -> Result<(), nom::Err<VerboseError<Text<'a>>>> {
     let input = Text::new_extra(
         input_string,
         ParseContext {
@@ -50,11 +51,9 @@ pub fn run<'a>(
         },
     );
 
-    match parse_schema(input) {
-        Ok((remaining, schema)) => {
-            // println!("Remaining: {:#?}", remaining.len());
-            // println!("Items {:#?}", schema.definitions.len());
-            return Ok(schema);
+    match parse_schema(input, schema) {
+        Ok((remaining, ())) => {
+            return Ok(());
         }
         Err(e) => {
             return Err(e);
@@ -88,6 +87,7 @@ pub fn render_error(input: &str, err: nom::Err<VerboseError<Text>>) -> String {
 fn convert_error(input: &str, err: VerboseError<Text>) -> String {
     if let Some((text, error_kind)) = err.errors.get(0) {
         let error = crate::error::Error {
+            filepath: text.extra.file.to_string(),
             error_type: crate::error::ErrorType::ParsingError(crate::error::ParsingErrorDetails {
                 expecting: text.extra.expecting.clone(),
             }),
@@ -106,12 +106,17 @@ fn convert_error(input: &str, err: VerboseError<Text>) -> String {
     }
 }
 
-fn parse_schema(input: Text) -> ParseResult<ast::Schema> {
+fn parse_schema<'a>(input: Text<'a>, schema: &'a mut ast::Schema) -> ParseResult<'a, ()> {
     let (input, _) = multispace0(input)?;
     let (input, definitions) = many1(parse_definition)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = eof(input)?;
-    Ok((input, ast::Schema { definitions }))
+    let file = ast::SchemaFile {
+        path: input.extra.file.to_string(),
+        definitions,
+    };
+    schema.files.push(file);
+    Ok((input, ()))
 }
 
 fn parse_definition(input: Text) -> ParseResult<ast::Definition> {

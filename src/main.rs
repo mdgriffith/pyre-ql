@@ -188,7 +188,9 @@ async fn main() -> io::Result<()> {
                     }
 
                     if filesystem::is_schema_file(file_path) {
-                        format_schema(&options, file_path);
+                        let mut schema = parse_single_schema(file_path)?;
+                        format::schema(&mut schema);
+                        write_schema(&options, &schema);
                     } else {
                         format_query(&options, file_path);
                     }
@@ -213,7 +215,7 @@ async fn main() -> io::Result<()> {
                                 println!("\nRemove it if you want to generate a new one!");
                             } else {
                                 println!("Schema written to {:?}", path.to_str());
-                                write_schema(path, &introspection.schema);
+                                write_schema(&options, &introspection.schema);
                             }
                         }
                         Err(e) => {
@@ -290,97 +292,59 @@ async fn main() -> io::Result<()> {
 
                                     // filepaths to .pyre files
                                     let paths = filesystem::collect_filepaths(&options.in_dir);
-                                    match paths.schema_files.as_slice() {
-                                        [] => eprintln!("No schema files found!"),
-                                        [schema_path] => {
-                                            let mut file = fs::File::open(&schema_path)?;
-                                            let mut schema_str = String::new();
-                                            file.read_to_string(&mut schema_str)?;
-                                            match parser::run(&schema_path, &schema_str) {
-                                                Ok(schema) => {
-                                                    let diff =
-                                                        diff::diff(&introspection.schema, &schema);
-                                                    let sql = migration::to_sql(&schema, &diff);
+                                    let schema = parse_schemas(&options, &paths)?;
 
-                                                    // Format like {year}{month}{day}{hour}{minute}
-                                                    let current_date = chrono::Utc::now()
-                                                        .format("%Y%m%d%H%M")
-                                                        .to_string();
+                                    let diff = diff::diff(&introspection.schema, &schema);
+                                    let sql = migration::to_sql(&schema, &diff);
 
-                                                    filesystem::create_dir_if_not_exists(
-                                                        &migration_dir,
-                                                    );
+                                    // Format like {year}{month}{day}{hour}{minute}
+                                    let current_date =
+                                        chrono::Utc::now().format("%Y%m%d%H%M").to_string();
 
-                                                    let new_folder =
-                                                        format!("{}_{}", current_date, name);
+                                    filesystem::create_dir_if_not_exists(&migration_dir);
 
-                                                    let full_path: PathBuf =
-                                                        migration_dir.join(new_folder);
+                                    let new_folder = format!("{}_{}", current_date, name);
 
-                                                    filesystem::create_dir_if_not_exists(
-                                                        &full_path,
-                                                    );
+                                    let full_path: PathBuf = migration_dir.join(new_folder);
 
-                                                    // Write the migration file
-                                                    let migration_file =
-                                                        options.migration_dir.join(format!(
-                                                            "{}_{}/migration.sql",
-                                                            current_date, name
-                                                        ));
+                                    filesystem::create_dir_if_not_exists(&full_path);
 
-                                                    let diff_file_path =
-                                                        options.migration_dir.join(format!(
-                                                            "{}_{}/schema.diff",
-                                                            current_date, name
-                                                        ));
+                                    // Write the migration file
+                                    let migration_file = options
+                                        .migration_dir
+                                        .join(format!("{}_{}/migration.sql", current_date, name));
 
-                                                    // Write migration file
-                                                    let mut output =
-                                                        fs::File::create(migration_file);
+                                    let diff_file_path = options
+                                        .migration_dir
+                                        .join(format!("{}_{}/schema.diff", current_date, name));
 
-                                                    match output {
-                                                        Ok(mut file) => {
-                                                            file.write_all(sql.as_bytes());
-                                                        }
-                                                        Err(e) => {
-                                                            eprintln!(
-                                                                "Failed to create file: {:?}",
-                                                                e
-                                                            );
-                                                            return Err(e);
-                                                        }
-                                                    };
+                                    // Write migration file
+                                    let mut output = fs::File::create(migration_file);
 
-                                                    // Write diff
-                                                    let diff_file = Path::new(&diff_file_path);
-                                                    let mut output = fs::File::create(diff_file);
-
-                                                    match output {
-                                                        Ok(mut file) => {
-                                                            let json_diff =
-                                                                serde_json::to_string(&diff)
-                                                                    .unwrap();
-                                                            file.write_all(json_diff.as_bytes());
-                                                        }
-                                                        Err(e) => {
-                                                            eprintln!(
-                                                                "Failed to create file: {:?}",
-                                                                e
-                                                            );
-                                                            return Err(e);
-                                                        }
-                                                    };
-                                                }
-                                                Err(err) => {
-                                                    eprintln!(
-                                                        "{}",
-                                                        parser::render_error(&schema_str, err)
-                                                    );
-                                                }
-                                            }
+                                    match output {
+                                        Ok(mut file) => {
+                                            file.write_all(sql.as_bytes());
                                         }
-                                        _ => eprintln!("Multiple schema files found!"),
-                                    }
+                                        Err(e) => {
+                                            eprintln!("Failed to create file: {:?}", e);
+                                            return Err(e);
+                                        }
+                                    };
+
+                                    // Write diff
+                                    let diff_file = Path::new(&diff_file_path);
+                                    let mut output = fs::File::create(diff_file);
+
+                                    match output {
+                                        Ok(mut file) => {
+                                            let json_diff = serde_json::to_string(&diff).unwrap();
+                                            file.write_all(json_diff.as_bytes());
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Failed to create file: {:?}", e);
+                                            return Err(e);
+                                        }
+                                    };
                                 }
                                 Err(err) => {
                                     println!("Failed to connect to database: {:?}", err);
@@ -418,9 +382,10 @@ async fn main() -> io::Result<()> {
 }
 
 fn format_all(options: &Options, paths: filesystem::Found) -> io::Result<()> {
-    for schema_file_path in paths.schema_files {
-        format_schema(&options, &schema_file_path);
-    }
+    let mut schema = parse_schemas(&options, &paths)?;
+
+    format::schema(&mut schema);
+    write_schema(options, &schema);
 
     // Format queries
     for query_file_path in paths.query_files {
@@ -430,42 +395,22 @@ fn format_all(options: &Options, paths: filesystem::Found) -> io::Result<()> {
     Ok(())
 }
 
-fn format_schema(options: &Options, schema_file_path: &str) -> io::Result<()> {
-    let mut schema_file = fs::File::open(schema_file_path)?;
-    let mut schema_source_str = String::new();
-    schema_file.read_to_string(&mut schema_source_str)?;
-
-    match parser::run(&schema_file_path, &schema_source_str) {
-        Ok(mut schema) => {
-            // Format schema
-            format::schema(&mut schema);
-            // Output to schema
-            let formatted = generate::format::schema_to_string(&schema);
-            let path = Path::new(&schema_file_path);
-            let mut output = fs::File::create(path).expect("Failed to create file");
-            output
-                .write_all(formatted.as_bytes())
-                .expect("Failed to write to file");
-        }
-        Err(err) => eprintln!("{}", parser::render_error(&schema_source_str, err)),
-    }
-
-    Ok(())
-}
-
-fn write_schema(path: PathBuf, schema: &ast::Schema) -> io::Result<()> {
+fn write_schema(options: &Options, schema: &ast::Schema) -> io::Result<()> {
     // Format schema
-    let formatted = generate::format::schema_to_string(&schema);
-    let mut output = fs::File::create(path);
-    match output {
-        Ok(mut file) => {
-            file.write_all(formatted.as_bytes());
-        }
-        Err(e) => {
-            eprintln!("Failed to create file: {:?}", e);
-            return Err(e);
-        }
-    };
+
+    for schema_file in schema.files.iter() {
+        let mut output = fs::File::create(options.out_dir.join(schema_file.path.to_string()));
+        let formatted = generate::format::schema_to_string(&schema_file);
+        match output {
+            Ok(mut file) => {
+                file.write_all(formatted.as_bytes());
+            }
+            Err(e) => {
+                eprintln!("Failed to create file: {:?}", e);
+                return Err(e);
+            }
+        };
+    }
 
     Ok(())
 }
@@ -491,98 +436,113 @@ fn format_query(options: &Options, query_file_path: &str) -> io::Result<()> {
     Ok(())
 }
 
+fn parse_single_schema(schema_file_path: &String) -> io::Result<ast::Schema> {
+    let mut schema = ast::Schema { files: vec![] };
+
+    let mut file = fs::File::open(schema_file_path.clone())?;
+    let mut schema_source = String::new();
+    file.read_to_string(&mut schema_source)?;
+
+    match parser::run(&schema_file_path, &schema_source, &mut schema) {
+        Ok(()) => {}
+        Err(err) => {
+            eprintln!("{}", parser::render_error(&schema_source, err));
+        }
+    }
+
+    Ok(schema)
+}
+
+fn parse_schemas(options: &Options, paths: &filesystem::Found) -> io::Result<ast::Schema> {
+    let mut schema = ast::Schema { files: vec![] };
+    for schema_file_path in paths.schema_files.iter() {
+        let mut file = fs::File::open(schema_file_path.clone())?;
+        let mut schema_source = String::new();
+        file.read_to_string(&mut schema_source)?;
+
+        match parser::run(&schema_file_path, &schema_source, &mut schema) {
+            Ok(()) => {}
+            Err(err) => {
+                eprintln!("{}", parser::render_error(&schema_source, err));
+            }
+        }
+    }
+
+    Ok(schema)
+}
+
 fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
-    match paths.schema_files.as_slice() {
-        [] => eprintln!("No schema files found!"),
-        [schema_path] => {
-            let mut file = fs::File::open(schema_path.clone())?;
-            let mut schema_source = String::new();
-            file.read_to_string(&mut schema_source)?;
+    let schema = parse_schemas(&options, &paths)?;
 
-            match parser::run(&schema_path, &schema_source) {
-                Ok(schema) => {
-                    match typecheck::check_schema(&schema) {
-                        Err(errorList) => {
-                            let mut errors = "".to_string();
-                            for err in errorList {
-                                let formatted_error =
-                                    error::format_error(&schema_path, &schema_source, err);
-                                errors.push_str(&formatted_error);
+    match typecheck::check_schema(&schema) {
+        Err(errorList) => {
+            let mut errors = "".to_string();
+
+            // TODO
+            // for err in errorList {
+            //     let formatted_error = error::format_error(&schema_path, &schema_source, err);
+            //     errors.push_str(&formatted_error);
+            // }
+
+            println!("{}", errors);
+        }
+        Ok(mut context) => {
+            // Generate schema files
+            generate::elm::write(&options.out_dir, &schema);
+            generate_typescript_schema(&options, &schema);
+
+            for query_file_path in paths.query_files {
+                let mut query_file = fs::File::open(query_file_path.clone())?;
+                let mut query_source_str = String::new();
+                query_file.read_to_string(&mut query_source_str)?;
+
+                match parser::parse_query(&query_file_path, &query_source_str) {
+                    Ok(query_list) => {
+                        // Typecheck and generate
+                        context.current_filepath = query_file_path.clone();
+                        let typecheck_result =
+                            typecheck::check_queries(&schema, &query_list, &mut context);
+
+                        match typecheck_result {
+                            Ok(()) => {
+                                filesystem::create_dir_if_not_exists(
+                                    &out_path(&options, "elm").join("Query"),
+                                );
+                                filesystem::create_dir_if_not_exists(
+                                    &out_path(&options, "typescript").join("query"),
+                                );
+                                generate::elm::write_queries(
+                                    &out(&options, Path::new("elm")),
+                                    &context,
+                                    &query_list,
+                                );
+                                generate::typescript::write_queries(
+                                    &out(&options, Path::new("typescript")),
+                                    &context,
+                                    &query_list,
+                                );
                             }
-
-                            println!("{}", errors);
-                        }
-                        Ok(_schem) => {
-                            // Generate schema files
-                            generate::elm::write(&options.out_dir, &schema);
-                            generate_typescript_schema(&options, &schema);
-
-                            for query_file_path in paths.query_files {
-                                let mut query_file = fs::File::open(query_file_path.clone())?;
-                                let mut query_source_str = String::new();
-                                query_file.read_to_string(&mut query_source_str)?;
-
-                                match parser::parse_query(&query_file_path, &query_source_str) {
-                                    Ok(query_list) => {
-                                        // Typecheck and generate
-                                        let typecheck_result =
-                                            typecheck::check_queries(&schema, &query_list);
-
-                                        match typecheck_result {
-                                            Ok(typecheck_context) => {
-                                                filesystem::create_dir_if_not_exists(
-                                                    &out_path(&options, "elm").join("Query"),
-                                                );
-                                                filesystem::create_dir_if_not_exists(
-                                                    &out_path(&options, "typescript").join("query"),
-                                                );
-                                                generate::elm::write_queries(
-                                                    &out(&options, Path::new("elm")),
-                                                    &typecheck_context,
-                                                    &query_list,
-                                                );
-                                                generate::typescript::write_queries(
-                                                    &out(&options, Path::new("typescript")),
-                                                    &typecheck_context,
-                                                    &query_list,
-                                                );
-                                            }
-                                            Err(errorList) => {
-                                                let mut errors = "".to_string();
-                                                for err in errorList {
-                                                    let formatted_error = error::format_error(
-                                                        &query_file_path,
-                                                        &query_source_str,
-                                                        err,
-                                                    );
-                                                    errors.push_str(&formatted_error);
-                                                }
-
-                                                println!("{}", errors);
-                                            }
-                                        }
-                                    }
-                                    Err(err) => {
-                                        eprintln!("{:#?}", err);
-                                        eprintln!(
-                                            "{}",
-                                            parser::render_error(&query_source_str, err)
-                                        )
-                                    }
+                            Err(errorList) => {
+                                let mut errors = "".to_string();
+                                for err in errorList {
+                                    let formatted_error = error::format_error(
+                                        &query_file_path,
+                                        &query_source_str,
+                                        err,
+                                    );
+                                    errors.push_str(&formatted_error);
                                 }
+
+                                println!("{}", errors);
                             }
                         }
                     }
-                }
-
-                Err(err) => {
-                    eprintln!("{:#?}", err);
-                    eprintln!("{}", parser::render_error(&schema_source, err));
+                    Err(err) => {
+                        eprintln!("{}", parser::render_error(&query_source_str, err))
+                    }
                 }
             }
         }
-
-        _ => eprintln!("More than one schema file was found, but for now only one is supported"),
     }
 
     Ok(())

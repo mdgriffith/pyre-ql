@@ -10,9 +10,10 @@ pub fn schema(schem: &ast::Schema) -> String {
     let mut result = String::new();
 
     result.push_str("\n\n");
-
-    for definition in &schem.definitions {
-        result.push_str(&to_string_definition(definition));
+    for file in &schem.files {
+        for definition in &file.definitions {
+            result.push_str(&to_string_definition(definition));
+        }
     }
     result
 }
@@ -148,8 +149,10 @@ pub fn to_schema_decoders(schem: &ast::Schema) -> String {
 
     result.push_str("\n\n");
 
-    for definition in &schem.definitions {
-        result.push_str(&to_decoder_definition(definition));
+    for file in &schem.files {
+        for definition in &file.definitions {
+            result.push_str(&to_decoder_definition(definition));
+        }
     }
     result
 }

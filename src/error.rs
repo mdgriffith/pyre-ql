@@ -11,6 +11,7 @@ use std::fmt::Write;
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Error {
     pub error_type: ErrorType,
+    pub filepath: String,
     pub locations: Vec<Location>,
 }
 

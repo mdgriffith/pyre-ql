@@ -52,30 +52,33 @@ pub fn diff(schema1: &crate::ast::Schema, schema2: &crate::ast::Schema) -> Schem
     let mut modified_taggeds = Vec::new();
 
     // Collect `Tagged` and `Record` definitions from both schemas
-    let defs1: Vec<_> = schema1
-        .definitions
-        .iter()
-        .filter(|d| {
-            matches!(
-                d,
-                crate::ast::Definition::Tagged { .. } | crate::ast::Definition::Record { .. }
-            )
-        })
-        .collect();
-    let defs2: Vec<_> = schema2
-        .definitions
-        .iter()
-        .filter(|d| {
-            matches!(
-                d,
-                crate::ast::Definition::Tagged { .. } | crate::ast::Definition::Record { .. }
-            )
-        })
-        .collect();
+    let mut defs1: Vec<ast::Definition> = vec![];
+    for file in schema1.files.iter() {
+        for def in &file.definitions {
+            match def {
+                crate::ast::Definition::Tagged { .. } | crate::ast::Definition::Record { .. } => {
+                    defs1.push(def.clone());
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    let mut defs2: Vec<ast::Definition> = vec![];
+    for file in schema2.files.iter() {
+        for def in &file.definitions {
+            match def {
+                crate::ast::Definition::Tagged { .. } | crate::ast::Definition::Record { .. } => {
+                    defs2.push(def.clone());
+                }
+                _ => continue,
+            }
+        }
+    }
 
     // Find added and modified definitions
     for def2 in &defs2 {
-        if let Some(def1) = defs1.iter().find(|&&d| match (d, def2) {
+        if let Some(def1) = defs1.iter().find(|&d| match (d, def2) {
             (
                 crate::ast::Definition::Tagged { name: name1, .. },
                 crate::ast::Definition::Tagged { name: name2, .. },
@@ -112,7 +115,7 @@ pub fn diff(schema1: &crate::ast::Schema, schema2: &crate::ast::Schema) -> Schem
 
     // Find removed definitions
     for def1 in &defs1 {
-        if !defs2.iter().any(|&d| match (d, def1) {
+        if !defs2.iter().any(|d| match (d, def1) {
             (
                 crate::ast::Definition::Tagged { name: name2, .. },
                 crate::ast::Definition::Tagged { name: name1, .. },

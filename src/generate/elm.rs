@@ -59,9 +59,12 @@ pub fn write_schema(schem: &ast::Schema) -> String {
 
     result.push_str("type alias DateTime =\n    Time.Posix\n\n\n");
 
-    for definition in &schem.definitions {
-        result.push_str(&to_string_definition(definition));
+    for file in &schem.files {
+        for definition in &file.definitions {
+            result.push_str(&to_string_definition(definition));
+        }
     }
+
     result
 }
 
@@ -205,8 +208,10 @@ pub fn to_schema_decoders(schem: &ast::Schema) -> String {
     result.push_str("bool : Decode.Decoder Bool\n");
     result.push_str("bool =\n");
 
-    for definition in &schem.definitions {
-        result.push_str(&to_decoder_definition(definition));
+    for file in &schem.files {
+        for definition in &file.definitions {
+            result.push_str(&to_decoder_definition(definition));
+        }
     }
     result
 }
@@ -366,8 +371,10 @@ pub fn to_schema_encoders(schem: &ast::Schema) -> String {
     result.push_str("dateTime time =\n");
     result.push_str("    Encode.string (Time.posixToMillis time)\n\n");
 
-    for definition in &schem.definitions {
-        result.push_str(&to_encoder_definition(definition));
+    for file in &schem.files {
+        for definition in &file.definitions {
+            result.push_str(&to_encoder_definition(definition));
+        }
     }
     result
 }
