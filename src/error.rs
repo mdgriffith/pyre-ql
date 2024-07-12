@@ -30,7 +30,6 @@ pub enum Expecting {
     // Schema stuff
     SchemaAtDirective,
     SchemaFieldAtDirective,
-    SchemaColumn,
 
     LinkDirective,
 }
@@ -402,8 +401,26 @@ fn render_expecting(expecting: &Expecting) -> String {
             "@unique".yellow(),
             "@default".yellow()
         ),
-        Expecting::SchemaColumn => "I was expecting a column definition".to_string(),
-        Expecting::LinkDirective => "I was expecting a link directive".to_string(),
+        Expecting::LinkDirective => {
+            let example =           format!("{} posts {{ from: id, to: Post.authorUserId }}", "@link".yellow());
+            let example_breakdown =           format!("                            {} {}", "^^^^".cyan(), "^^^^^^^^^^^^".cyan());
+            let example_breakdown_connector = format!("                            {}    {}", "|".cyan(), "|".cyan());
+            let example_breakdown_labels =    format!("                {}    {}", "Foreign table".cyan(), "Foreign key".cyan());
+
+
+            return format!(
+                "This {} looks off, I'm expecting something that looks like this:\n\n        {}\n        {}\n        {}\n        {}",
+                "@link".yellow(),
+                example,
+                example_breakdown,
+                example_breakdown_connector,
+                example_breakdown_labels
+            )
+
+        }
+
+
+        // "I was expecting a link directive".to_string(),
     }
 }
 

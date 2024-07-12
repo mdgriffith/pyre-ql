@@ -8,10 +8,10 @@ use nom::{
     character::complete::{
         alpha1, alphanumeric1, char, digit1, multispace0, multispace1, newline, one_of,
     },
-    combinator::{cut, eof, map_res, opt, recognize},
+    combinator::{all_consuming, cut, eof, map_res, opt, recognize},
     error::{Error, VerboseError, VerboseErrorKind},
     multi::{many0, many1, separated_list0, separated_list1},
-    sequence::{delimited, tuple},
+    sequence::{delimited, terminated, tuple},
     IResult,
 };
 use nom_locate::{position, LocatedSpan};
@@ -52,6 +52,8 @@ pub fn run<'a>(
 
     match parse_schema(input) {
         Ok((remaining, schema)) => {
+            // println!("Remaining: {:#?}", remaining.len());
+            // println!("Items {:#?}", schema.definitions.len());
             return Ok(schema);
         }
         Err(e) => {
@@ -428,7 +430,7 @@ fn parse_nullable(input: Text) -> ParseResult<bool> {
 }
 
 fn parse_column_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
-    let (input, _) = cut(tag("@"))(input)?;
+    let (input, _) = tag("@")(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaFieldAtDirective);
     cut(alt((
         parse_directive_named("id", ast::ColumnDirective::PrimaryKey),
@@ -550,14 +552,12 @@ pub fn parse_query<'a>(
 
 fn parse_query_list(input: Text) -> ParseResult<ast::QueryList> {
     let (input, _) = multispace0(input)?;
-    let (input, queries) = many1(parse_query_def)(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = eof(input)?;
+    let (input, queries) = all_consuming(many1(parse_query_def))(input)?;
     Ok((input, ast::QueryList { queries }))
 }
 
 fn parse_query_def(input: Text) -> ParseResult<ast::QueryDef> {
-    alt((parse_query_comment, parse_query_details, parse_query_lines))(input)
+    alt((parse_query_comment, parse_query_lines, parse_query_details))(input)
 }
 
 fn parse_query_comment(input: Text) -> ParseResult<ast::QueryDef> {
@@ -576,6 +576,8 @@ fn parse_query_lines(input: Text) -> ParseResult<ast::QueryDef> {
     // Parse any whitespace (spaces, tabs, or newlines)
     let (input, whitespaces) = many1(one_of(" \t\n"))(input)?;
 
+    let (input, _) = opt(eof)(input)?; // Ensure we are at the end of the file (or query list
+
     // Count the newlines
     let count = whitespaces.iter().filter(|&&c| c == '\n').count();
 
@@ -591,11 +593,12 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
     ))(input)?;
     let (input, _) = cut(multispace1)(input)?;
     let (input, start_pos) = position(input)?;
-    let (input, name) = cut(parse_typename)(input)?;
     let input = expecting(input, crate::error::Expecting::ParamDefinition);
-    let (input, paramDefinitionsOrNone) = opt(parse_query_param_definitions)(input)?;
+    let (input, name) = cut(parse_typename)(input)?;
+
+    let (input, paramDefinitionsOrNone) = cut(opt(parse_query_param_definitions))(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, fields) = cut(with_braces(parse_query_field))(input)?;
+    let (input, fields) = with_braces(parse_query_field)(input)?;
     let (input, end_pos) = position(input)?;
 
     let mut query = ast::Query {
@@ -621,7 +624,7 @@ fn parse_query_param_definitions(input: Text) -> ParseResult<Vec<ast::QueryParam
     let (input, _) = tag("(")(input)?;
     let input = expecting(input, crate::error::Expecting::ParamDefinition);
     let (input, _) = cut(multispace0)(input)?;
-    let (input, fields) = separated_list0(char(','), parse_query_param_definition)(input)?;
+    let (input, fields) = cut(separated_list1(char(','), parse_query_param_definition))(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag(")")(input)?;
     Ok((input, fields))
@@ -631,7 +634,7 @@ fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefin
     let (input, _) = multispace0(input)?;
     let (input, start_name_pos) = position(input)?;
     let (input, _) = tag("$")(input)?;
-    let input = expecting(input, crate::error::Expecting::ParamDefType);
+
     let (input, name) = cut(parse_fieldname)(input)?;
     let (input, end_name_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
@@ -719,7 +722,7 @@ fn parse_query_field(input: Text) -> ParseResult<ast::QueryField> {
     let (input, _) = multispace0(input)?;
     let (input, fieldsOrNone) = opt(with_braces(parse_arg_field))(input)?;
     let (input, end_pos) = position(input)?;
-
+    let input = expecting(input, crate::error::Expecting::PyreFile);
     let (name, alias) = match alias_or_name {
         Some(alias) => (alias, Some(name_or_alias.to_string())),
         None => (name_or_alias.to_string(), None),

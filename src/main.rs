@@ -562,10 +562,13 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
                                             }
                                         }
                                     }
-                                    Err(err) => eprintln!(
-                                        "{}",
-                                        parser::render_error(&query_source_str, err)
-                                    ),
+                                    Err(err) => {
+                                        eprintln!("{:#?}", err);
+                                        eprintln!(
+                                            "{}",
+                                            parser::render_error(&query_source_str, err)
+                                        )
+                                    }
                                 }
                             }
                         }
