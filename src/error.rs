@@ -15,7 +15,30 @@ pub struct Error {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct ParsingErrorDetails {
+    pub expecting: Expecting,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub enum Expecting {
+    PyreFile,
+    // Query stuff
+    ParamDefinition,
+    ParamDefType,
+    AtDirective,
+
+    // Schema stuff
+    SchemaAtDirective,
+    SchemaFieldAtDirective,
+    SchemaColumn,
+
+    LinkDirective,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub enum ErrorType {
+    ParsingError(ParsingErrorDetails),
+
     DuplicateDefinition(String),
     DefinitionIsBuiltIn(String),
     DuplicateField {
@@ -166,118 +189,6 @@ pub struct Range {
     pub end: ast::Location,
 }
 
-/// Transforms a `VerboseError` into a trace with input position information
-
-// pub fn convert_error(input: LocatedSpan<&str>, error: VerboseError<LocatedSpan<&str>>) -> String {
-//     let mut result = String::new();
-
-//     for (i, (substring, kind)) in error.errors.iter().enumerate() {
-//         println!("{:#?}", (kind));
-//         let offset = input.offset(substring);
-
-//         if input.is_empty() {
-//             match kind {
-//                 VerboseErrorKind::Char(c) => {
-//                     write!(&mut result, "{}: expected '{}', got empty input\n\n", i, c)
-//                 }
-//                 VerboseErrorKind::Context(s) => {
-//                     write!(&mut result, "{}: in {}, got empty input\n\n", i, s)
-//                 }
-//                 VerboseErrorKind::Nom(e) => {
-//                     write!(&mut result, "{}: in {:?}, got empty input\n\n", i, e)
-//                 }
-//             }
-//         } else {
-//             let prefix = &input.as_bytes()[..offset];
-
-//             // Count the number of newlines in the first `offset` bytes of input
-//             let line_number = prefix.iter().filter(|&&b| b == b'\n').count() + 1;
-
-//             // Find the line that includes the subslice:
-//             // Find the *last* newline before the substring starts
-//             let line_begin = prefix
-//                 .iter()
-//                 .rev()
-//                 .position(|&b| b == b'\n')
-//                 .map(|pos| offset - pos)
-//                 .unwrap_or(0);
-
-//             // Find the full line after that newline
-//             let line = input[line_begin..]
-//                 .lines()
-//                 .next()
-//                 .unwrap_or(&input[line_begin..])
-//                 .trim_end();
-
-//             // The (1-indexed) column number is the offset of our substring into that line
-//             let column_number = line.offset(substring) + 1;
-
-//             match kind {
-//                 VerboseErrorKind::Char(c) => {
-//                     if let Some(actual) = substring.chars().next() {
-//                         write!(
-//                             &mut result,
-//                             "{i}: at line {line_number}:\n\
-//                {line}\n\
-//                {caret:>column$}\n\
-//                expected '{expected}', found {actual}\n\n",
-//                             i = i,
-//                             line_number = line_number,
-//                             line = line,
-//                             caret = '^',
-//                             column = column_number,
-//                             expected = c,
-//                             actual = actual,
-//                         )
-//                     } else {
-//                         write!(
-//                             &mut result,
-//                             "{i}: at line {line_number}:\n\
-//                {line}\n\
-//                {caret:>column$}\n\
-//                expected '{expected}', got end of input\n\n",
-//                             i = i,
-//                             line_number = line_number,
-//                             line = line,
-//                             caret = '^',
-//                             column = column_number,
-//                             expected = c,
-//                         )
-//                     }
-//                 }
-//                 VerboseErrorKind::Context(s) => write!(
-//                     &mut result,
-//                     "{i}: at line {line_number}, in {context}:\n\
-//              {line}\n\
-//              {caret:>column$}\n\n",
-//                     i = i,
-//                     line_number = line_number,
-//                     context = s,
-//                     line = line,
-//                     caret = '^',
-//                     column = column_number,
-//                 ),
-//                 VerboseErrorKind::Nom(e) => write!(
-//                     &mut result,
-//                     "{i}: at line {line_number}, in {nom_err:?}:\n\
-//              {line}\n\
-//              {caret:>column$}\n\n",
-//                     i = i,
-//                     line_number = line_number,
-//                     nom_err = e,
-//                     line = line,
-//                     caret = '^',
-//                     column = column_number,
-//                 ),
-//             }
-//         }
-//         // Because `write!` to a `String` is infallible, this `unwrap` is fine.
-//         .unwrap();
-//     }
-
-//     result
-// }
-
 /* Error formats!
 
 
@@ -421,6 +332,15 @@ fn highlight_line(range: &Range) -> String {
             indent,
             highlight.red()
         )
+    } else if range.start.column == range.end.column && range.start.line == range.end.line {
+        let indent = " ".repeat(range.start.column);
+        let highlight = "^";
+        format!(
+            "    {}{}{}",
+            "|".truecolor(120, 120, 120),
+            indent,
+            highlight.red()
+        )
     } else {
         println!("CROSSED RANGE {:#?}", range);
         "    ^^".red().to_string()
@@ -458,8 +378,45 @@ fn get_lines(file_contents: &str, show_line_number: bool, start: u32, end: u32) 
     result
 }
 
+fn render_expecting(expecting: &Expecting) -> String {
+    match expecting {
+        Expecting::PyreFile => "".to_string(),
+        Expecting::ParamDefinition => "I was expecting a parameter definition".to_string(),
+        Expecting::ParamDefType => "I was expecting a parameter type".to_string(),
+        Expecting::AtDirective => return format!(
+            "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}\n        {}",
+            "@where".yellow(),
+            "@sort".yellow(),
+            "@limit".yellow(),
+            "@offset".yellow()
+        ),
+        Expecting::SchemaAtDirective => return format!(
+            "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}",
+            "@watch".yellow(),
+            "@tablename".yellow(),
+            "@link".yellow()
+        ),
+        Expecting::SchemaFieldAtDirective => return format!(
+            "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}",
+            "@id".yellow(),
+            "@unique".yellow(),
+            "@default".yellow()
+        ),
+        Expecting::SchemaColumn => "I was expecting a column definition".to_string(),
+        Expecting::LinkDirective => "I was expecting a link directive".to_string(),
+    }
+}
+
 fn to_error_description(error: &Error) -> String {
     match &error.error_type {
+        ErrorType::ParsingError(parsingDetails) => {
+            let mut result = "".to_string();
+            result.push_str(&format!("{}", render_expecting(&parsingDetails.expecting)));
+
+            result.push_str("\n\n");
+            result
+        }
+
         ErrorType::DuplicateDefinition(name) => {
             let mut result = "".to_string();
             result.push_str(&format!(

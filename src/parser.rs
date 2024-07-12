@@ -9,7 +9,7 @@ use nom::{
         alpha1, alphanumeric1, char, digit1, multispace0, multispace1, newline, one_of,
     },
     combinator::{cut, eof, map_res, opt, recognize},
-    error::{convert_error, Error, VerboseError, VerboseErrorKind},
+    error::{Error, VerboseError, VerboseErrorKind},
     multi::{many0, many1, separated_list0, separated_list1},
     sequence::{delimited, tuple},
     IResult,
@@ -20,72 +20,87 @@ pub type Text<'a> = LocatedSpan<&'a str, ParseContext<'a>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParseContext<'a> {
-    file: &'a str,
-    expecting: Option<Expecting>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Expecting {
-    // Query stuff
-    ParamDefinition,
-    ParamDefType,
-    AtDirective,
-
-    // Schema stuff
-    SchemaAtDirective,
-    SchemaFieldAtDirective,
-    SchemaColumn,
-
-    LinkDirective,
+    pub file: &'a str,
+    pub expecting: crate::error::Expecting,
 }
 
 pub const PLACEHOLDER_CONTEXT: ParseContext = ParseContext {
     file: "placeholder.txt",
-    expecting: None,
+    expecting: crate::error::Expecting::PyreFile,
 };
 
-fn expecting(input: Text, expecting: Expecting) -> Text {
+fn expecting(input: Text, expecting: crate::error::Expecting) -> Text {
     input.map_extra(|mut ctxt| {
-        ctxt.expecting = Some(expecting);
+        ctxt.expecting = expecting;
         ctxt
     })
 }
 
 type ParseResult<'a, Output> = IResult<Text<'a>, Output, VerboseError<Text<'a>>>;
 
-pub fn run(input_string: &str) -> Result<ast::Schema, String> {
-    let input = Text::new_extra(input_string, PLACEHOLDER_CONTEXT);
+pub fn run<'a>(
+    path: &'a str,
+    input_string: &'a str,
+) -> Result<ast::Schema, nom::Err<VerboseError<Text<'a>>>> {
+    let input = Text::new_extra(
+        input_string,
+        ParseContext {
+            file: path,
+            expecting: crate::error::Expecting::PyreFile,
+        },
+    );
 
     match parse_schema(input) {
         Ok((remaining, schema)) => {
             return Ok(schema);
         }
         Err(e) => {
-            return Err(render_error(e));
+            return Err(e);
         }
     }
 }
 
-fn render_error(err: nom::Err<VerboseError<Text>>) -> String {
+pub fn render_error(input: &str, err: nom::Err<VerboseError<Text>>) -> String {
     match err {
         nom::Err::Incomplete(_) => {
             return "Incomplete".to_string();
         }
         nom::Err::Error(error) => {
-            println!("PARSER ERROR {:#?}", &error);
-            // let err_text: String = error::convert_error(input, error);
+            // println!("PARSER ERROR {:#?}", &error);
+            let err_text: String = convert_error(input, error);
 
             // println!("PARSER ERROR, formatted {:#?}", &err_text);
             // return err_text;
-            return "Backtrackable error".to_string();
+            return err_text;
         }
         nom::Err::Failure(error) => {
-            println!("PARSER ERROR {:#?}", &error);
-            // let err_text: String = error::convert_error(input, error);
+            // println!("PARSER ERROR {:#?}", &error);
+            let err_text: String = convert_error(input, error);
 
             // println!("PARSER ERROR, formatted {:#?}", &err_text);
-            return "Failure".to_string();
+            return err_text;
         }
+    }
+}
+
+fn convert_error(input: &str, err: VerboseError<Text>) -> String {
+    if let Some((text, error_kind)) = err.errors.get(0) {
+        let error = crate::error::Error {
+            error_type: crate::error::ErrorType::ParsingError(crate::error::ParsingErrorDetails {
+                expecting: text.extra.expecting.clone(),
+            }),
+            locations: vec![crate::error::Location {
+                contexts: vec![],
+                primary: vec![crate::error::Range {
+                    start: to_location(text),
+                    end: to_location(text),
+                }],
+            }],
+        };
+
+        crate::error::format_error(text.extra.file, input, error)
+    } else {
+        "No errors".to_string()
     }
 }
 
@@ -194,7 +209,7 @@ fn parse_field_comment(input: Text) -> ParseResult<ast::Field> {
 fn parse_field_directive(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = multispace0(input)?;
     let (input, start_pos) = position(input)?;
-    let input = expecting(input, Expecting::SchemaAtDirective);
+    let input = expecting(input, crate::error::Expecting::SchemaAtDirective);
     let (input, _) = tag("@")(input)?;
 
     cut(alt((
@@ -232,7 +247,7 @@ fn parse_tablename(start_location: ast::Location) -> impl Fn(Text) -> ParseResul
 
 fn parse_link(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = tag("link")(input)?;
-    let input = expecting(input, Expecting::LinkDirective);
+    let input = expecting(input, crate::error::Expecting::LinkDirective);
     let (input, _) = cut(multispace1)(input)?;
     let (input, start_pos) = position(input)?;
     let (input, linkname) = parse_fieldname(input)?;
@@ -350,10 +365,6 @@ fn parse_link_field(input: Text) -> ParseResult<LinkField> {
             return Ok((input, LinkField::From(vec![from_field.to_string()])));
         }
         _ => {
-            // return Err(nom::Err::Error(nom::error::Error::new(
-            //     input,
-            //     nom::error::ErrorKind::Tag,
-            // )))
             return Err(nom::Err::Error(VerboseError {
                 errors: vec![(input, VerboseErrorKind::Context("tag"))],
             }));
@@ -377,14 +388,13 @@ fn to_location(pos: &Text) -> ast::Location {
 fn parse_column(input: Text) -> ParseResult<ast::Column> {
     let (input, _) = multispace0(input)?;
     let (input, start_pos) = position(input)?;
-    let input = expecting(input, Expecting::SchemaColumn);
     let (input, name) = parse_fieldname(input)?;
     let (input, end_name_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = cut(tag(":"))(input)?;
     let (input, _) = multispace0(input)?;
     let (input, start_type_pos) = position(input)?;
-    let (input, type_) = parse_typename(input)?;
+    let (input, type_) = cut(parse_typename)(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, is_nullable) = parse_nullable(input)?;
     let (input, _) = multispace0(input)?;
@@ -418,8 +428,8 @@ fn parse_nullable(input: Text) -> ParseResult<bool> {
 }
 
 fn parse_column_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
-    let (input, _) = tag("@")(input)?;
-    let input = expecting(input, Expecting::SchemaFieldAtDirective);
+    let (input, _) = cut(tag("@"))(input)?;
+    let input = expecting(input, crate::error::Expecting::SchemaFieldAtDirective);
     cut(alt((
         parse_directive_named("id", ast::ColumnDirective::PrimaryKey),
         parse_directive_named("unique", ast::ColumnDirective::Unique),
@@ -519,13 +529,22 @@ fn parse_variant(input: Text) -> ParseResult<ast::Variant> {
 // Parse Query
 //
 
-pub fn parse_query(input_str: &str) -> Result<ast::QueryList, String> {
-    let input = Text::new_extra(input_str, PLACEHOLDER_CONTEXT);
+pub fn parse_query<'a>(
+    path: &'a str,
+    input_str: &'a str,
+) -> Result<ast::QueryList, nom::Err<VerboseError<Text<'a>>>> {
+    let input = Text::new_extra(
+        input_str,
+        ParseContext {
+            file: path,
+            expecting: crate::error::Expecting::PyreFile,
+        },
+    );
     match parse_query_list(input) {
         Ok((remaining, query_list)) => {
             return Ok(query_list);
         }
-        Err(e) => Err(render_error(e)),
+        Err(e) => Err(e),
     }
 }
 
@@ -573,7 +592,7 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
     let (input, _) = cut(multispace1)(input)?;
     let (input, start_pos) = position(input)?;
     let (input, name) = cut(parse_typename)(input)?;
-    let input = expecting(input, Expecting::ParamDefinition);
+    let input = expecting(input, crate::error::Expecting::ParamDefinition);
     let (input, paramDefinitionsOrNone) = opt(parse_query_param_definitions)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, fields) = cut(with_braces(parse_query_field))(input)?;
@@ -600,7 +619,7 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
 
 fn parse_query_param_definitions(input: Text) -> ParseResult<Vec<ast::QueryParamDefinition>> {
     let (input, _) = tag("(")(input)?;
-    let input = expecting(input, Expecting::ParamDefinition);
+    let input = expecting(input, crate::error::Expecting::ParamDefinition);
     let (input, _) = cut(multispace0)(input)?;
     let (input, fields) = separated_list0(char(','), parse_query_param_definition)(input)?;
     let (input, _) = multispace0(input)?;
@@ -612,14 +631,14 @@ fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefin
     let (input, _) = multispace0(input)?;
     let (input, start_name_pos) = position(input)?;
     let (input, _) = tag("$")(input)?;
-    let input = expecting(input, Expecting::ParamDefType);
+    let input = expecting(input, crate::error::Expecting::ParamDefType);
     let (input, name) = cut(parse_fieldname)(input)?;
     let (input, end_name_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag(":")(input)?;
     let (input, _) = multispace0(input)?;
     let (input, start_type_pos) = position(input)?;
-    let input = expecting(input, Expecting::ParamDefType);
+    let input = expecting(input, crate::error::Expecting::ParamDefType);
     let (input, typename) = cut(parse_typename)(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
@@ -725,7 +744,7 @@ fn parse_query_field(input: Text) -> ParseResult<ast::QueryField> {
 
 fn parse_query_arg(input: Text) -> ParseResult<ast::Arg> {
     let (input, _) = tag("@")(input)?;
-    let input = expecting(input, Expecting::AtDirective);
+    let input = expecting(input, crate::error::Expecting::AtDirective);
     cut(alt((parse_limit, parse_offset, parse_sort, parse_where)))(input)
 }
 

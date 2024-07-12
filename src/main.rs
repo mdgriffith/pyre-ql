@@ -296,7 +296,7 @@ async fn main() -> io::Result<()> {
                                             let mut file = fs::File::open(&schema_path)?;
                                             let mut schema_str = String::new();
                                             file.read_to_string(&mut schema_str)?;
-                                            match parser::run(&schema_str) {
+                                            match parser::run(&schema_path, &schema_str) {
                                                 Ok(schema) => {
                                                     let diff =
                                                         diff::diff(&introspection.schema, &schema);
@@ -371,16 +371,19 @@ async fn main() -> io::Result<()> {
                                                         }
                                                     };
                                                 }
-                                                Err(e) => {
-                                                    eprintln!("Failed to parse schema: {:?}", e);
+                                                Err(err) => {
+                                                    eprintln!(
+                                                        "{}",
+                                                        parser::render_error(&schema_str, err)
+                                                    );
                                                 }
                                             }
                                         }
                                         _ => eprintln!("Multiple schema files found!"),
                                     }
                                 }
-                                Err(e) => {
-                                    println!("Failed to connect to database: {:?}", e);
+                                Err(err) => {
+                                    println!("Failed to connect to database: {:?}", err);
                                 }
                             }
                         }
@@ -432,7 +435,7 @@ fn format_schema(options: &Options, schema_file_path: &str) -> io::Result<()> {
     let mut schema_source_str = String::new();
     schema_file.read_to_string(&mut schema_source_str)?;
 
-    match parser::run(&schema_source_str) {
+    match parser::run(&schema_file_path, &schema_source_str) {
         Ok(mut schema) => {
             // Format schema
             format::schema(&mut schema);
@@ -444,7 +447,7 @@ fn format_schema(options: &Options, schema_file_path: &str) -> io::Result<()> {
                 .write_all(formatted.as_bytes())
                 .expect("Failed to write to file");
         }
-        Err(err) => eprintln!("{:?}", err),
+        Err(err) => eprintln!("{}", parser::render_error(&schema_source_str, err)),
     }
 
     Ok(())
@@ -472,7 +475,7 @@ fn format_query(options: &Options, query_file_path: &str) -> io::Result<()> {
     let mut query_source_str = String::new();
     query_file.read_to_string(&mut query_source_str)?;
 
-    match parser::parse_query(&query_source_str) {
+    match parser::parse_query(query_file_path, &query_source_str) {
         Ok(query_list) => {
             // Format query
             let formatted = generate::format::query(&query_list);
@@ -482,7 +485,7 @@ fn format_query(options: &Options, query_file_path: &str) -> io::Result<()> {
                 .write_all(formatted.as_bytes())
                 .expect("Failed to write to file");
         }
-        Err(err) => eprintln!("{:?}", err),
+        Err(err) => eprintln!("{}", parser::render_error(&query_source_str, err)),
     }
 
     Ok(())
@@ -496,7 +499,7 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
             let mut schema_source = String::new();
             file.read_to_string(&mut schema_source)?;
 
-            match parser::run(&schema_source) {
+            match parser::run(&schema_path, &schema_source) {
                 Ok(schema) => {
                     match typecheck::check_schema(&schema) {
                         Err(errorList) => {
@@ -519,7 +522,7 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
                                 let mut query_source_str = String::new();
                                 query_file.read_to_string(&mut query_source_str)?;
 
-                                match parser::parse_query(&query_source_str) {
+                                match parser::parse_query(&query_file_path, &query_source_str) {
                                     Ok(query_list) => {
                                         // Typecheck and generate
                                         let typecheck_result =
@@ -559,14 +562,20 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
                                             }
                                         }
                                     }
-                                    Err(err) => eprintln!("{:?}", err),
+                                    Err(err) => eprintln!(
+                                        "{}",
+                                        parser::render_error(&query_source_str, err)
+                                    ),
                                 }
                             }
                         }
                     }
                 }
 
-                Err(err) => eprintln!("{:?}", err),
+                Err(err) => {
+                    eprintln!("{:#?}", err);
+                    eprintln!("{}", parser::render_error(&schema_source, err));
+                }
             }
         }
 
