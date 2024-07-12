@@ -634,14 +634,14 @@ fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefin
     let (input, _) = multispace0(input)?;
     let (input, start_name_pos) = position(input)?;
     let (input, _) = tag("$")(input)?;
-
+    let input = expecting(input, crate::error::Expecting::ParamDefType);
     let (input, name) = cut(parse_fieldname)(input)?;
     let (input, end_name_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag(":")(input)?;
     let (input, _) = multispace0(input)?;
     let (input, start_type_pos) = position(input)?;
-    let input = expecting(input, crate::error::Expecting::ParamDefType);
+
     let (input, typename) = cut(parse_typename)(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, _) = multispace0(input)?;

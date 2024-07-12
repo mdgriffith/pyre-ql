@@ -379,9 +379,17 @@ fn get_lines(file_contents: &str, show_line_number: bool, start: u32, end: u32) 
 
 fn render_expecting(expecting: &Expecting) -> String {
     match expecting {
-        Expecting::PyreFile => "".to_string(),
-        Expecting::ParamDefinition => "I was expecting a parameter definition".to_string(),
-        Expecting::ParamDefType => "I was expecting a parameter type".to_string(),
+        Expecting::PyreFile => "I ran into an issue parsing this that I didn't quite expect! I would love if you would file an issue on the repo showing the pyre file you're using.. ".to_string(),
+        Expecting::ParamDefinition => return format!(
+            "I was expecting a parameter, like:\n\n        {}\n\n    Hot tip: Running {} will automatically fix this for you.\n",
+            "$id: Int".yellow(),
+            "pyre format".cyan()
+        ),
+        Expecting::ParamDefType => return format!(
+            "I was expecting a parameter type, like:\n\n        {}\n\n    Hot tip: Running {} will automatically fix this for you.\n",
+            "$id: Int".yellow(),
+            "pyre format".cyan()
+        ),
         Expecting::AtDirective => return format!(
             "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}\n        {}",
             "@where".yellow(),
