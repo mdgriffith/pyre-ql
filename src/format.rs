@@ -1,4 +1,6 @@
 use crate::ast;
+use crate::error;
+use crate::typecheck;
 use std::collections::HashMap;
 
 pub fn schema(schem: &mut ast::Schema) {
@@ -157,5 +159,92 @@ where
 {
     if let Some(pos) = vec.iter().rev().position(predicate) {
         vec.insert(vec.len() - pos, value);
+    }
+}
+
+/* Queries
+
+The main thing that query_list does is calculate what the inferred param types are for each query
+
+*/
+pub fn query_list(schem: &ast::Schema, queries: &mut ast::QueryList) {
+    match typecheck::populate_context(schem) {
+        Ok(context) => {
+            let mut query_param_map = HashMap::new();
+
+            for query in queries.queries.iter() {
+                match query {
+                    ast::QueryDef::Query(q) => {
+                        let mut errors: Vec<error::Error> = Vec::new();
+                        let params = typecheck::check_query(&context, &mut errors, q);
+                        query_param_map.insert(q.name.clone(), params);
+                    }
+                    _ => (),
+                }
+            }
+
+            for query in queries.queries.iter_mut() {
+                match query {
+                    ast::QueryDef::Query(ref mut q) => match query_param_map.get_mut(&q.name) {
+                        Some(calculated_params) => {
+                            for arg in q.args.iter_mut() {
+                                match calculated_params.get(&arg.name) {
+                                    Some(param) => {
+                                        match param {
+                                            typecheck::ParamInfo::Defined {
+                                                defined_at,
+                                                type_,
+                                                used,
+                                                type_inferred,
+                                            } => {
+                                                arg.type_ = type_.clone();
+                                            }
+                                            typecheck::ParamInfo::NotDefinedButUsed {
+                                                used_at,
+                                                type_,
+                                            } => {
+                                                arg.type_ = type_.clone();
+                                            }
+                                        }
+
+                                        calculated_params.remove(&arg.name);
+                                    }
+                                    None => (),
+                                }
+                            }
+
+                            for (name, param) in calculated_params.iter() {
+                                let mut param_type = None;
+                                match param {
+                                    typecheck::ParamInfo::Defined {
+                                        defined_at,
+                                        type_,
+                                        used,
+                                        type_inferred,
+                                    } => {
+                                        param_type = type_.clone();
+                                    }
+                                    typecheck::ParamInfo::NotDefinedButUsed { used_at, type_ } => {
+                                        param_type = type_.clone();
+                                    }
+                                }
+
+                                q.args.push(ast::QueryParamDefinition {
+                                    name: name.clone(),
+                                    type_: param_type,
+                                    start_name: None,
+                                    end_name: None,
+                                    start_type: None,
+                                    end_type: None,
+                                });
+                            }
+                        }
+                        None => (),
+                    },
+                    _ => (),
+                }
+            }
+        }
+        Err(errors) => (),
     }
 }

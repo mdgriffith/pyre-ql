@@ -88,7 +88,7 @@ fn to_single_range(start: &Option<ast::Location>, end: &Option<ast::Location>) -
     }
 }
 
-fn populate_context(schem: &ast::Schema) -> Result<Context, Vec<Error>> {
+pub fn populate_context(schem: &ast::Schema) -> Result<Context, Vec<Error>> {
     let mut context = empty_context();
     let mut errors = Vec::new();
 
@@ -567,7 +567,10 @@ pub fn check_queries<'a>(
 
     for mut query in &query_list.queries {
         match query {
-            ast::QueryDef::Query(q) => check_query(&context, &mut errors, &q),
+            ast::QueryDef::Query(q) => {
+                check_query(&context, &mut errors, &q);
+                continue;
+            }
             _ => continue,
         }
     }
@@ -578,19 +581,24 @@ pub fn check_queries<'a>(
     Ok(())
 }
 
-enum ParamUsage {
-    Defined(Option<Range>),
-    Used,
-    NotDefinedButUsed(Option<Range>),
+pub enum ParamInfo {
+    Defined {
+        defined_at: Option<Range>,
+        type_: Option<String>,
+        used: bool,
+        type_inferred: bool,
+    },
+    NotDefinedButUsed {
+        used_at: Option<Range>,
+        type_: Option<String>,
+    },
 }
 
-struct ParamInfo {
-    usage: ParamUsage,
-    defined_at: Option<Range>,
-    type_: String,
-}
-
-fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Query) {
+pub fn check_query(
+    context: &Context,
+    mut errors: &mut Vec<Error>,
+    query: &ast::Query,
+) -> HashMap<String, ParamInfo> {
     // We need to check
     // 1. The field exists on the record in the schema
     //    What type is the field (add to `QueryField`)
@@ -603,32 +611,46 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
 
     // Param types make sense?
     for param_def in &query.args {
-        match context.types.get(&param_def.type_) {
-            None => errors.push(Error {
-                filepath: context.current_filepath.clone(),
-                error_type: ErrorType::UnknownType {
-                    found: param_def.type_.clone(),
-                    known_types: context.types.keys().cloned().collect(),
-                },
-                locations: vec![Location {
-                    contexts: vec![],
-                    primary: to_range(&param_def.start_type, &param_def.end_type),
-                }],
-            }),
-            Some(_) => {}
-        }
+        match &param_def.type_ {
+            None => {
+                param_names.insert(
+                    param_def.name.clone(),
+                    ParamInfo::Defined {
+                        defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
+                        type_: None,
+                        used: false,
+                        type_inferred: false,
+                    },
+                );
+            }
 
-        param_names.insert(
-            param_def.name.clone(),
-            ParamInfo {
-                usage: ParamUsage::Defined(to_single_range(
-                    &param_def.start_name,
-                    &param_def.end_name,
-                )),
-                defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
-                type_: param_def.type_.clone(),
-            },
-        );
+            Some(type_) => {
+                match context.types.get(type_) {
+                    None => errors.push(Error {
+                        filepath: context.current_filepath.clone(),
+                        error_type: ErrorType::UnknownType {
+                            found: type_.clone(),
+                            known_types: context.types.keys().cloned().collect(),
+                        },
+                        locations: vec![Location {
+                            contexts: vec![],
+                            primary: to_range(&param_def.start_type, &param_def.end_type),
+                        }],
+                    }),
+                    Some(_) => {}
+                }
+
+                param_names.insert(
+                    param_def.name.clone(),
+                    ParamInfo::Defined {
+                        defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
+                        type_: Some(type_.clone()),
+                        used: false,
+                        type_inferred: false,
+                    },
+                );
+            }
+        }
     }
 
     // Check fields
@@ -656,31 +678,52 @@ fn check_query(context: &Context, mut errors: &mut Vec<Error>, query: &ast::Quer
         }
     }
 
-    for (param_name, param_info) in param_names {
-        match param_info.usage {
-            ParamUsage::Defined(loc) => errors.push(Error {
-                filepath: context.current_filepath.clone(),
-                error_type: ErrorType::UnusedParam { param: param_name },
-                locations: vec![Location {
-                    contexts: vec![],
-                    primary: loc.into_iter().collect(),
-                }],
-            }),
-            ParamUsage::Used => {}
-            ParamUsage::NotDefinedButUsed(loc) => errors.push(Error {
+    for (param_name, param_info) in param_names.iter() {
+        match &param_info {
+            ParamInfo::Defined {
+                defined_at,
+                type_,
+                used,
+                type_inferred,
+            } => {
+                if *used == false {
+                    errors.push(Error {
+                        filepath: context.current_filepath.clone(),
+                        error_type: ErrorType::UnusedParam {
+                            param: param_name.clone(),
+                        },
+                        locations: vec![Location {
+                            contexts: vec![],
+                            primary: defined_at.clone().into_iter().collect(),
+                        }],
+                    })
+                } else if *type_inferred {
+                    errors.push(Error {
+                        filepath: context.current_filepath.clone(),
+                        error_type: ErrorType::MissingType,
+                        locations: vec![Location {
+                            contexts: vec![],
+                            primary: defined_at.clone().into_iter().collect(),
+                        }],
+                    })
+                }
+            }
+            ParamInfo::NotDefinedButUsed { used_at, type_ } => errors.push(Error {
                 filepath: context.current_filepath.clone(),
                 error_type: ErrorType::UndefinedParam {
-                    param: param_name,
-                    type_: param_info.type_,
+                    param: param_name.clone(),
+                    type_: type_.clone(),
                 },
                 locations: vec![Location {
                     contexts: vec![],
-                    primary: loc.into_iter().collect(),
+                    primary: used_at.clone().into_iter().collect(),
                 }],
             }),
             _ => {}
         }
     }
+
+    param_names
 }
 
 fn check_where_args(
@@ -750,7 +793,7 @@ fn check_where_args(
             }
 
             match column_type {
-                None => (),
+                None => mark_as_used(query_val, errors, params),
                 Some(column_type_string) => {
                     check_value(
                         context,
@@ -771,6 +814,42 @@ fn check_where_args(
     }
 }
 
+fn mark_as_used(
+    value: &ast::QueryValue,
+    errors: &mut Vec<Error>,
+    params: &mut HashMap<String, ParamInfo>,
+) {
+    println!("mark_as_used {:#?}", value);
+    match value {
+        ast::QueryValue::Variable((var_range, var)) => match params.get_mut(var) {
+            None => {
+                params.insert(
+                    var.to_string(),
+                    ParamInfo::NotDefinedButUsed {
+                        used_at: Some(convert_range(var_range)),
+                        type_: None,
+                    },
+                );
+            }
+            Some(param_info) => {
+                match param_info {
+                    ParamInfo::Defined {
+                        defined_at,
+                        ref mut type_,
+                        mut used,
+                        mut type_inferred,
+                    } => {
+                        // mark as used
+                        used = true;
+                    }
+                    ParamInfo::NotDefinedButUsed { used_at, type_ } => (),
+                };
+            }
+        },
+        _ => {}
+    }
+}
+
 fn check_value(
     context: &Context,
     value: &ast::QueryValue,
@@ -786,41 +865,60 @@ fn check_value(
             None => {
                 params.insert(
                     var.to_string(),
-                    ParamInfo {
-                        usage: ParamUsage::NotDefinedButUsed(Some(convert_range(var_range))),
-                        defined_at: None,
-                        type_: table_type_string.to_string(),
+                    ParamInfo::NotDefinedButUsed {
+                        used_at: Some(convert_range(var_range)),
+                        type_: Some(table_type_string.to_string()),
                     },
                 );
             }
             Some(param_info) => {
-                if table_type_string != param_info.type_ {
-                    errors.push(Error {
-                        filepath: context.current_filepath.clone(),
-                        error_type: ErrorType::TypeMismatch {
-                            table: table_name.to_string(),
-                            column_defined_as: table_type_string.to_string(),
-                            variable_name: var.clone(),
-                            variable_defined_as: param_info.type_.clone(),
-                        },
-                        locations: vec![
-                            Location {
-                                contexts: vec![],
-                                primary: param_info
-                                    .defined_at
-                                    .as_ref()
-                                    .map_or_else(Vec::new, |range| vec![range.clone()]),
-                            },
-                            Location {
-                                contexts: vec![], // to_range(&start, &end),
-                                primary: vec![convert_range(var_range)],
-                            },
-                        ],
-                    })
-                }
-                param_info.usage = match param_info.usage {
-                    ParamUsage::Defined(_) | ParamUsage::NotDefinedButUsed(_) => ParamUsage::Used,
-                    ParamUsage::Used => ParamUsage::Used,
+                match param_info {
+                    ParamInfo::Defined {
+                        defined_at,
+                        ref mut type_,
+                        mut used,
+                        mut type_inferred,
+                    } => {
+                        // mark as used
+                        used = true;
+
+                        match &type_ {
+                            None => {
+                                // We can set the type, but also mark it as inferred
+                                // If it's inferred, it will error if exec'ed, but succeed if formatted
+                                *type_ = Some(table_type_string.to_string());
+                                type_inferred = true;
+                            }
+                            Some(type_name) => {
+                                if type_name != table_type_string {
+                                    errors.push(Error {
+                                        filepath: context.current_filepath.clone(),
+                                        error_type: ErrorType::TypeMismatch {
+                                            table: table_name.to_string(),
+                                            column_defined_as: table_type_string.to_string(),
+                                            variable_name: var.clone(),
+                                            variable_defined_as: type_name.clone(),
+                                        },
+                                        locations: vec![
+                                            Location {
+                                                contexts: vec![],
+                                                primary: defined_at
+                                                    .as_ref()
+                                                    .map_or_else(Vec::new, |range| {
+                                                        vec![range.clone()]
+                                                    }),
+                                            },
+                                            Location {
+                                                contexts: vec![], // to_range(&start, &end),
+                                                primary: vec![convert_range(var_range)],
+                                            },
+                                        ],
+                                    })
+                                }
+                            }
+                        }
+                    }
+                    ParamInfo::NotDefinedButUsed { used_at, type_ } => (),
                 };
             }
         },

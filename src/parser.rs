@@ -101,7 +101,7 @@ fn convert_error(input: &str, err: VerboseError<Text>) -> String {
             }],
         };
 
-        crate::error::format_error(text.extra.file, input, error)
+        crate::error::format_error(input, error)
     } else {
         "No errors".to_string()
     }
@@ -654,12 +654,13 @@ fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefin
     let input = expecting(input, crate::error::Expecting::ParamDefType);
     let (input, name) = cut(parse_fieldname)(input)?;
     let (input, end_name_pos) = position(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag(":")(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, start_type_pos) = position(input)?;
+    let (input, _) = space0(input)?;
 
-    let (input, typename) = cut(parse_typename)(input)?;
+    let (input, _) = opt(char(':'))(input)?;
+    let (input, _) = space0(input)?;
+
+    let (input, start_type_pos) = position(input)?;
+    let (input, typename) = cut(opt(parse_typename))(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
 
@@ -667,7 +668,7 @@ fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefin
         input,
         ast::QueryParamDefinition {
             name: name.to_string(),
-            type_: typename.to_string(),
+            type_: typename.map(|t| t.to_string()),
             start_name: Some(to_location(&start_name_pos)),
             end_name: Some(to_location(&end_name_pos)),
             start_type: Some(to_location(&start_type_pos)),

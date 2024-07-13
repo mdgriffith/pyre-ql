@@ -354,9 +354,15 @@ fn to_string_query(query: &ast::Query) -> String {
 // Example: ($arg: String)
 fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition) -> String {
     if (is_first) {
-        format!("${}: {}", param.name, param.type_)
+        match &param.type_ {
+            None => return format!("${}", param.name),
+            Some(type_) => return format!("${}: {}", param.name, type_),
+        }
     } else {
-        format!(", ${}: {}", param.name, param.type_)
+        match &param.type_ {
+            None => return format!(", ${}", param.name),
+            Some(type_) => return format!(", ${}: {}", param.name, type_),
+        }
     }
 }
 

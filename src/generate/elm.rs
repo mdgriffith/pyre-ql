@@ -597,11 +597,12 @@ fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
     result.push_str("    {");
     let mut is_first = true;
     for arg in args {
+        let type_string = &arg.type_.clone().unwrap_or("unknown".to_string());
         if is_first {
-            result.push_str(&format!(" {} : {}\n", arg.name, arg.type_));
+            result.push_str(&format!(" {} : {}\n", arg.name, type_string));
             is_first = false;
         } else {
-            result.push_str(&format!("    , {} : {}\n", arg.name, arg.type_));
+            result.push_str(&format!("    , {} : {}\n", arg.name, type_string));
         }
     }
     result.push_str("    }\n\n\n");
@@ -614,11 +615,12 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
     result.push_str("    Encode.object\n");
     let mut is_first = true;
     for arg in args {
+        let type_string = &arg.type_.clone().unwrap_or("unknown".to_string());
         if is_first {
             result.push_str(&format!(
                 "        [ ( {}, {} input.{} )\n",
                 string::quote(&arg.name),
-                to_type_encoder(&arg.type_, &arg.type_),
+                to_type_encoder(&type_string, &type_string),
                 &arg.name
             ));
             is_first = false;
@@ -626,7 +628,7 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
             result.push_str(&format!(
                 "        , ( {}, {} input.{})\n",
                 string::quote(&arg.name),
-                to_type_encoder(&arg.type_, &arg.type_),
+                to_type_encoder(&type_string, &type_string),
                 &arg.name
             ));
         }
@@ -909,10 +911,11 @@ fn to_elm_typename(type_: &str) -> String {
 
 // Example: ($arg: String)
 fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition) -> String {
+    let type_string = param.type_.clone().unwrap_or("unknown".to_string());
     if (is_first) {
-        format!("{}: {}", param.name, param.type_)
+        format!("{}: {}", param.name, type_string)
     } else {
-        format!(", {}: {}", param.name, param.type_)
+        format!(", {}: {}", param.name, type_string)
     }
 }
 

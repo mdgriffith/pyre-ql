@@ -523,7 +523,11 @@ fn to_query_input_decoder(context: &typecheck::Context, query: &ast::Query, resu
         result.push_str(&format!(
             "\n  {}: {},",
             crate::ext::string::quote(&arg.name),
-            to_ts_type_decoder(true, false, &arg.type_)
+            to_ts_type_decoder(
+                true,
+                false,
+                &arg.type_.clone().unwrap_or("unknown".to_string())
+            )
         ));
     }
     result.push_str("\n});\n");
@@ -664,9 +668,17 @@ fn to_ts_type_decoder(qualified: bool, nullable: bool, type_: &str) -> String {
 // Example: ($arg: String)
 fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition) -> String {
     if (is_first) {
-        format!("{}: {}", param.name, param.type_)
+        format!(
+            "{}: {}",
+            param.name,
+            param.type_.clone().unwrap_or("unknown".to_string())
+        )
     } else {
-        format!(", {}: {}", param.name, param.type_)
+        format!(
+            ", {}: {}",
+            param.name,
+            param.type_.clone().unwrap_or("unknown".to_string())
+        )
     }
 }
 

@@ -39,6 +39,7 @@ pub enum Expecting {
 pub enum ErrorType {
     ParsingError(ParsingErrorDetails),
 
+    MissingType,
     DuplicateDefinition(String),
     DefinitionIsBuiltIn(String),
     DuplicateField {
@@ -124,7 +125,7 @@ pub enum ErrorType {
     },
     UndefinedParam {
         param: String,
-        type_: String,
+        type_: Option<String>,
     },
     NoSetsInSelect {
         field: String,
@@ -210,7 +211,8 @@ I don't recognize this type. Is it one of these?
 
 */
 
-pub fn format_error(filepath: &str, file_contents: &str, error: Error) -> String {
+pub fn format_error(file_contents: &str, error: Error) -> String {
+    let filepath = &error.filepath;
     let path_length = filepath.len();
     let separator = "-".repeat(50 - path_length);
 
@@ -443,6 +445,18 @@ fn to_error_description(error: &Error) -> String {
             result
         }
 
+        ErrorType::MissingType => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "All parameters need a type, like {}\n\n    Hot tip: Running {} will automatically fix this automatically for you!\n",
+                "Int".yellow(),
+                "pyre format".cyan()
+            ));
+
+            result.push_str("\n\n");
+            result
+        }
+
         ErrorType::DuplicateDefinition(name) => {
             let mut result = "".to_string();
             result.push_str(&format!(
@@ -652,12 +666,18 @@ fn to_error_description(error: &Error) -> String {
         }
         ErrorType::UndefinedParam { param, type_ } => {
             let mut result = "".to_string();
-
+            let type_suggestion = match type_ {
+                None => "".to_string(),
+                Some(type_) => format!(
+                    "\n    Add it to your declarations as {}: {}",
+                    format!("${}", param).yellow(),
+                    type_.cyan()
+                ),
+            };
             result.push_str(&format!(
-                "{} is used, but not declared.\n    Add it to your declarations as {}: {}",
+                "{} is used, but not declared.{}",
                 format!("${}", param).yellow(),
-                format!("${}", param).yellow(),
-                type_.cyan(),
+                type_suggestion
             ));
 
             result.push_str("\n\n");

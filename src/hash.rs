@@ -13,8 +13,9 @@ pub fn hash_query_interface(query: &Query) -> String {
 
     // Hash args
     for arg in &query.args {
+        let type_string = arg.type_.clone().unwrap_or("".to_string());
         hasher.update(&arg.name);
-        hasher.update(&arg.type_);
+        hasher.update(type_string);
     }
 
     // Hash fields
@@ -34,8 +35,9 @@ pub fn hash_query_full(query: &Query) -> String {
 
     // Hash args (excluding Location fields)
     for arg in &query.args {
+        let type_string = arg.type_.clone().unwrap_or("".to_string());
         hasher.update(&arg.name);
-        hasher.update(&arg.type_);
+        hasher.update(type_string);
     }
 
     // Hash fields (excluding Location fields)

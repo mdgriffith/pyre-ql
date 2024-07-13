@@ -438,7 +438,7 @@ pub enum QueryOperation {
 #[derive(Debug, Clone)]
 pub struct QueryParamDefinition {
     pub name: String,
-    pub type_: String,
+    pub type_: Option<String>,
     pub start_name: Option<Location>,
     pub end_name: Option<Location>,
 
