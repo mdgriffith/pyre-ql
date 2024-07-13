@@ -380,11 +380,11 @@ fn write_schema(options: &Options, to_stdout: &bool, schema: &ast::Schema) -> io
 
     for schema_file in schema.files.iter() {
         if *to_stdout {
-            println!("{}", generate::format::schema_to_string(&schema_file));
+            println!("{}", generate::to_string::schema_to_string(&schema_file));
             continue;
         }
         let mut output = fs::File::create(options.out_dir.join(schema_file.path.to_string()));
-        let formatted = generate::format::schema_to_string(&schema_file);
+        let formatted = generate::to_string::schema_to_string(&schema_file);
         match output {
             Ok(mut file) => {
                 file.write_all(formatted.as_bytes());
@@ -407,7 +407,7 @@ fn format_query(options: &Options, to_stdout: &bool, query_file_path: &str) -> i
     match parser::parse_query(query_file_path, &query_source_str) {
         Ok(query_list) => {
             // Format query
-            let formatted = generate::format::query(&query_list);
+            let formatted = generate::to_string::query(&query_list);
             if *to_stdout {
                 println!("{}", formatted);
                 return Ok(());
