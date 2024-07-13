@@ -15,7 +15,9 @@ export function activate(context: vscode.ExtensionContext) {
         const filePath = document.uri.fsPath;
 
         try {
-          const { stdout } = await execAsync(`pyre format "${filePath}"`);
+          const { stdout } = await execAsync(
+            `pyre format ${filePath} --to-stdout`
+          );
           const formattedText = stdout;
 
           const fullRange = new vscode.Range(

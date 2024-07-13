@@ -1,6 +1,6 @@
 {
   "name": "pyre",
-  "displayName": "Pyre",
+  "displayName": "Pyre langauge support",
   "description": "",
   "version": "0.0.1",
   "engines": {
@@ -14,6 +14,7 @@
     "build": "tsc -p ./",
     "watch": "tsc -watch -p ./"
   },
+  "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
@@ -25,7 +26,19 @@
         "extensions": [
           ".pyre"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "commands": [
+          {
+            "command": "pyre.format",
+            "title": "Format Pyre Document"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "pyre.format",
+        "title": "Format Pyre Document"
       }
     ],
     "grammars": [
