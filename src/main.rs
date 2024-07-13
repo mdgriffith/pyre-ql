@@ -79,10 +79,12 @@ enum Commands {
         #[arg(long)]
         db: String,
     },
-    // Generate or run a migration
+    // Generate a migration
     Migration {
-        #[command(subcommand)]
-        operation: MigrationOperation,
+        name: String,
+
+        #[arg(long)]
+        db: String,
     },
 }
 
@@ -247,128 +249,101 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        Some(Commands::Migration { operation }) => {
-            match operation {
-                MigrationOperation::Generate { name, db } => {
-                    let maybeConn = db::local(db).await;
-                    match maybeConn {
-                        Err(e) => {
-                            println!("Failed to connect to database: {:?}", e);
-                        }
-                        Ok(conn) => {
-                            let introspection_result = db::introspect(&conn).await;
-                            match introspection_result {
-                                Ok(introspection) => {
-                                    let migration_dir = Path::new(&options.migration_dir);
-                                    let existing_migrations =
-                                        db::read_migration_items(migration_dir).unwrap_or(vec![]);
+        Some(Commands::Migration { name, db }) => {
+            let maybeConn = db::local(db).await;
+            match maybeConn {
+                Err(e) => {
+                    println!("Failed to connect to database: {:?}", e);
+                }
+                Ok(conn) => {
+                    let introspection_result = db::introspect(&conn).await;
+                    match introspection_result {
+                        Ok(introspection) => {
+                            let migration_dir = Path::new(&options.migration_dir);
+                            let existing_migrations =
+                                db::read_migration_items(migration_dir).unwrap_or(vec![]);
 
-                                    let mut not_applied: Vec<String> = vec![];
-                                    for migration_from_file in existing_migrations {
-                                        let mut migrated = false;
-                                        for migration_recorded in
-                                            introspection.migrations_recorded.iter()
-                                        {
-                                            if &migration_from_file == migration_recorded {
-                                                migrated = true;
-                                                break;
-                                            }
-                                        }
-                                        if !migrated {
-                                            not_applied
-                                                .push(migration_from_file.yellow().to_string());
-                                        }
+                            let mut not_applied: Vec<String> = vec![];
+                            for migration_from_file in existing_migrations {
+                                let mut migrated = false;
+                                for migration_recorded in introspection.migrations_recorded.iter() {
+                                    if &migration_from_file == migration_recorded {
+                                        migrated = true;
+                                        break;
                                     }
-                                    if not_applied.len() > 0 {
-                                        println!(
+                                }
+                                if !migrated {
+                                    not_applied.push(migration_from_file.yellow().to_string());
+                                }
+                            }
+                            if not_applied.len() > 0 {
+                                println!(
                                                     "\nIt looks like some migrations have not been applied:\n\n    {}",
                                                     not_applied.join("\n   ")
                                                 );
-                                        println!(
+                                println!(
                                                     "\nRun `pyre migrate` to apply these migrations before generating a new one.",
                                                 );
-                                        return Ok(());
-                                    }
-
-                                    // filepaths to .pyre files
-                                    let paths = filesystem::collect_filepaths(&options.in_dir);
-                                    let schema = parse_schemas(&options, &paths)?;
-
-                                    let diff = diff::diff(&introspection.schema, &schema);
-                                    let sql = migration::to_sql(&schema, &diff);
-
-                                    // Format like {year}{month}{day}{hour}{minute}
-                                    let current_date =
-                                        chrono::Utc::now().format("%Y%m%d%H%M").to_string();
-
-                                    filesystem::create_dir_if_not_exists(&migration_dir);
-
-                                    let new_folder = format!("{}_{}", current_date, name);
-
-                                    let full_path: PathBuf = migration_dir.join(new_folder);
-
-                                    filesystem::create_dir_if_not_exists(&full_path);
-
-                                    // Write the migration file
-                                    let migration_file = options
-                                        .migration_dir
-                                        .join(format!("{}_{}/migration.sql", current_date, name));
-
-                                    let diff_file_path = options
-                                        .migration_dir
-                                        .join(format!("{}_{}/schema.diff", current_date, name));
-
-                                    // Write migration file
-                                    let mut output = fs::File::create(migration_file);
-
-                                    match output {
-                                        Ok(mut file) => {
-                                            file.write_all(sql.as_bytes());
-                                        }
-                                        Err(e) => {
-                                            eprintln!("Failed to create file: {:?}", e);
-                                            return Err(e);
-                                        }
-                                    };
-
-                                    // Write diff
-                                    let diff_file = Path::new(&diff_file_path);
-                                    let mut output = fs::File::create(diff_file);
-
-                                    match output {
-                                        Ok(mut file) => {
-                                            let json_diff = serde_json::to_string(&diff).unwrap();
-                                            file.write_all(json_diff.as_bytes());
-                                        }
-                                        Err(e) => {
-                                            eprintln!("Failed to create file: {:?}", e);
-                                            return Err(e);
-                                        }
-                                    };
-                                }
-                                Err(err) => {
-                                    println!("Failed to connect to database: {:?}", err);
-                                }
+                                return Ok(());
                             }
-                        }
-                    }
-                }
-                MigrationOperation::Apply { db } => {
-                    let maybeConn = db::local(db).await;
-                    match maybeConn {
-                        Ok(conn) => {
-                            let migration_result = db::migrate(&conn, &options.migration_dir).await;
-                            match migration_result {
-                                Ok(()) => {
-                                    println!("Migration finished!");
+
+                            // filepaths to .pyre files
+                            let paths = filesystem::collect_filepaths(&options.in_dir);
+                            let schema = parse_schemas(&options, &paths)?;
+
+                            let diff = diff::diff(&introspection.schema, &schema);
+                            let sql = migration::to_sql(&schema, &diff);
+
+                            // Format like {year}{month}{day}{hour}{minute}
+                            let current_date = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
+
+                            filesystem::create_dir_if_not_exists(&migration_dir);
+
+                            let new_folder = format!("{}_{}", current_date, name);
+
+                            let full_path: PathBuf = migration_dir.join(new_folder);
+
+                            filesystem::create_dir_if_not_exists(&full_path);
+
+                            // Write the migration file
+                            let migration_file = options
+                                .migration_dir
+                                .join(format!("{}_{}/migration.sql", current_date, name));
+
+                            let diff_file_path = options
+                                .migration_dir
+                                .join(format!("{}_{}/schema.diff", current_date, name));
+
+                            // Write migration file
+                            let mut output = fs::File::create(migration_file);
+
+                            match output {
+                                Ok(mut file) => {
+                                    file.write_all(sql.as_bytes());
                                 }
                                 Err(e) => {
-                                    println!("Failed to connect to database: {:?}", e);
+                                    eprintln!("Failed to create file: {:?}", e);
+                                    return Err(e);
                                 }
-                            }
+                            };
+
+                            // Write diff
+                            let diff_file = Path::new(&diff_file_path);
+                            let mut output = fs::File::create(diff_file);
+
+                            match output {
+                                Ok(mut file) => {
+                                    let json_diff = serde_json::to_string(&diff).unwrap();
+                                    file.write_all(json_diff.as_bytes());
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to create file: {:?}", e);
+                                    return Err(e);
+                                }
+                            };
                         }
-                        Err(e) => {
-                            println!("Failed to connect to database: {:?}", e);
+                        Err(err) => {
+                            println!("Failed to connect to database: {:?}", err);
                         }
                     }
                 }
@@ -459,6 +434,7 @@ fn parse_schemas(options: &Options, paths: &filesystem::Found) -> io::Result<ast
         let mut file = fs::File::open(schema_file_path.clone())?;
         let mut schema_source = String::new();
         file.read_to_string(&mut schema_source)?;
+        println!("Parsing schema: {:?}", schema_file_path);
 
         match parser::run(&schema_file_path, &schema_source, &mut schema) {
             Ok(()) => {}
