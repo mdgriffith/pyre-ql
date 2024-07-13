@@ -821,7 +821,7 @@ fn to_error_description(error: &Error) -> String {
                 colored_param
             ));
 
-            result.push_str("\n    Here are the types I know:\n\n");
+            result.push_str("\n\n    Here are the types I know:\n\n");
 
             let mut sorted_types: Vec<String> = known_types.clone();
             sorted_types.sort();
@@ -854,7 +854,7 @@ fn to_error_description(error: &Error) -> String {
             ));
 
             result.push_str(&format!(
-                "\n\nHere are the fields on {}:\n\n",
+                "\n\n    Here are the fields on {}:\n\n",
                 record_name.cyan()
             ));
             let mut largest_fieldname_size: usize = 0;
@@ -869,7 +869,7 @@ fn to_error_description(error: &Error) -> String {
                 let extra_spacing_amount = (largest_fieldname_size - field_name.len()) + 1;
                 let spacing = " ".repeat(extra_spacing_amount);
                 result.push_str(&format!(
-                    "    {}:{}{}\n",
+                    "        {}:{}{}\n",
                     field_name.yellow(),
                     spacing,
                     field_type.cyan()
