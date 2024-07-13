@@ -69,6 +69,10 @@ enum Commands {
         // r#in: String,
         #[arg(required = false)]
         files: Vec<String>,
+
+        /// Output to stdout instead of files
+        #[arg(long, default_value_t = false)]
+        to_stdout: bool,
     },
     // Introspect current db
     Introspect {
@@ -175,14 +179,12 @@ async fn main() -> io::Result<()> {
     let options = prepare_options(&cli);
 
     match &cli.command {
-        Some(Commands::Format { files }) => match files.len() {
+        Some(Commands::Format { files, to_stdout }) => match files.len() {
             0 => {
                 println!("Formatting all files in {}", options.in_dir.display());
                 format_all(&options, filesystem::collect_filepaths(&options.in_dir));
             }
             _ => {
-                println!("Formatting files: {:?}", files);
-
                 for file_path in files {
                     if !file_path.ends_with(".pyre") {
                         println!("{} doesn't end in .pyre, skipping", file_path);
@@ -192,10 +194,13 @@ async fn main() -> io::Result<()> {
                     if filesystem::is_schema_file(file_path) {
                         let mut schema = parse_single_schema(file_path)?;
                         format::schema(&mut schema);
-                        write_schema(&options, &schema);
+                        write_schema(&options, to_stdout, &schema);
                     } else {
-                        format_query(&options, file_path);
+                        format_query(&options, to_stdout, file_path);
                     }
+                }
+                if !to_stdout {
+                    println!("{} files were formatted", files.len());
                 }
             }
         },
@@ -217,7 +222,7 @@ async fn main() -> io::Result<()> {
                                 println!("\nRemove it if you want to generate a new one!");
                             } else {
                                 println!("Schema written to {:?}", path.to_str());
-                                write_schema(&options, &introspection.schema);
+                                write_schema(&options, &false, &introspection.schema);
                             }
                         }
                         Err(e) => {
@@ -360,20 +365,24 @@ fn format_all(options: &Options, paths: filesystem::Found) -> io::Result<()> {
     let mut schema = parse_schemas(&options, &paths)?;
 
     format::schema(&mut schema);
-    write_schema(options, &schema);
+    write_schema(options, &false, &schema);
 
     // Format queries
     for query_file_path in paths.query_files {
-        format_query(&options, &query_file_path);
+        format_query(&options, &false, &query_file_path);
     }
 
     Ok(())
 }
 
-fn write_schema(options: &Options, schema: &ast::Schema) -> io::Result<()> {
+fn write_schema(options: &Options, to_stdout: &bool, schema: &ast::Schema) -> io::Result<()> {
     // Format schema
 
     for schema_file in schema.files.iter() {
+        if *to_stdout {
+            println!("{}", generate::format::schema_to_string(&schema_file));
+            continue;
+        }
         let mut output = fs::File::create(options.out_dir.join(schema_file.path.to_string()));
         let formatted = generate::format::schema_to_string(&schema_file);
         match output {
@@ -390,7 +399,7 @@ fn write_schema(options: &Options, schema: &ast::Schema) -> io::Result<()> {
     Ok(())
 }
 
-fn format_query(options: &Options, query_file_path: &str) -> io::Result<()> {
+fn format_query(options: &Options, to_stdout: &bool, query_file_path: &str) -> io::Result<()> {
     let mut query_file = fs::File::open(query_file_path)?;
     let mut query_source_str = String::new();
     query_file.read_to_string(&mut query_source_str)?;
@@ -399,6 +408,10 @@ fn format_query(options: &Options, query_file_path: &str) -> io::Result<()> {
         Ok(query_list) => {
             // Format query
             let formatted = generate::format::query(&query_list);
+            if *to_stdout {
+                println!("{}", formatted);
+                return Ok(());
+            }
             let path = Path::new(&query_file_path);
             let mut output = fs::File::create(path).expect("Failed to create file");
             output
