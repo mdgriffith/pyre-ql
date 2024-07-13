@@ -212,13 +212,13 @@ I don't recognize this type. Is it one of these?
 
 pub fn format_error(filepath: &str, file_contents: &str, error: Error) -> String {
     let path_length = filepath.len();
-    let separator = "-".repeat(80 - path_length);
+    let separator = "-".repeat(50 - path_length);
 
     let highlight = prepare_highlight(file_contents, &error);
     let description = to_error_description(&error);
 
     format!(
-        "{}{}\n\n{}\n    {}",
+        "{} {}\n\n{}\n    {}",
         filepath.cyan(),
         separator.cyan(),
         highlight,

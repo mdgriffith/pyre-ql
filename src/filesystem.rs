@@ -35,6 +35,8 @@ pub fn collect_filepaths(dir: &Path) -> Found {
     for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
 
+        let relative_path = path.strip_prefix(dir).unwrap_or(path);
+
         // Skip directories
         if path.is_dir() {
             continue;
@@ -48,6 +50,7 @@ pub fn collect_filepaths(dir: &Path) -> Found {
             }
 
             let path = Path::new(file_str);
+
             match path.file_name() {
                 None => continue,
                 Some(os_file_name) => {
@@ -55,7 +58,7 @@ pub fn collect_filepaths(dir: &Path) -> Found {
                         None => continue,
                         Some(file_name) => {
                             // Check if the file is `schema.pyre`
-                            if is_schema_file(file_name) {
+                            if is_schema_file(relative_path.to_str().unwrap()) {
                                 schema_files.push(file_str.to_string());
                             } else {
                                 query_files.push(file_str.to_string());
