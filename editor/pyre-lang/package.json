@@ -1,0 +1,44 @@
+{
+  "name": "pyre",
+  "displayName": "Pyre",
+  "description": "",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "pyre",
+        "aliases": [
+          "Pyre",
+          "pyre"
+        ],
+        "extensions": [
+          ".pyre"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "pyre",
+        "scopeName": "source.pyre",
+        "path": "./syntaxes/pyre.tmLanguage.json"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/vscode": "^1.91.0",
+    "typescript": "^5.5.3"
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "scopeName": "source.pyre",
+  "name": "Pyre",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    { "include": "#string_double" },
+    { "include": "#number" },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#records"
+    },
+    {
+      "include": "#queries"
+    },
+    {
+      "include": "#variables"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.pyre",
+          "match": "//.*$"
+        }
+      ]
+    },
+
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.pyre",
+          "match": "\\b(record|type|query|insert|delete|update)\\b"
+        },
+        {
+          "name": "keyword.other.pyre",
+          "match": "\\b(tablename|link|where)\\b"
+        },
+        {
+          "name": "keyword.other.directive.pyre",
+          "match": "@\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b"
+        }
+      ]
+    },
+    "string_double": {
+      "name": "string.quoted.double.pyre",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.pyre",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "number": {
+      "name": "constant.numeric.pyre",
+      "match": "\\b(?:0x[0-9a-fA-F]+|0o[0-7]+|0b[01]+|(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?)\\b"
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.pyre",
+          "match": "\\b[A-Z_][a-zA-Z0-9_]*\\b"
+        },
+        {
+          "name": "entity.name.other.pyre",
+          "match": "\\b[a-z][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    },
+    "records": {
+      "patterns": [
+        {
+          "name": "entity.name.type.class.pyre",
+          "match": "\\b(record|type)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
+      ]
+    },
+    "queries": {
+      "patterns": [
+        {
+          "name": "entity.name.function.pyre",
+          "match": "\\b(query|insert|delete|update)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "name": "variable.parameter.pyre",
+          "match": "\\$[a-zA-Z_][a-zA-Z0-9_]*"
+        }
+      ]
+    }
+  }
+}
