@@ -1,4 +1,6 @@
 use crate::ast;
+use nom::ToUsize;
+use std::collections::BTreeMap;
 
 pub fn schema_to_string(schema_file: &ast::SchemaFile) -> String {
     let mut result = String::new();
@@ -42,15 +44,104 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             start_name,
             end_name,
         } => {
-            let mut result = format!("record {} {{\n", name);
+            let mut indent_collection: Indentation = collect_indentation(&fields, 4);
 
+            let mut result = format!("record {} {{\n", name);
             for field in fields {
-                result.push_str(&to_string_field(4, &field));
+                result.push_str(&to_string_field(&indent_collection, &field));
             }
             result.push_str("}\n");
             result
         }
     }
+}
+
+#[derive(Debug)]
+struct Indentation {
+    minimum: usize,
+    levels: BTreeMap<usize, FieldIndent>,
+}
+
+fn collect_indentation(fields: &Vec<ast::Field>, indent_minimum: usize) -> Indentation {
+    let mut indent_collection: BTreeMap<usize, FieldIndent> = BTreeMap::new();
+    let mut previous_linenumber: usize = 0;
+    for field in fields {
+        let maybe_field_indent = get_field_indent(indent_minimum, field);
+        match maybe_field_indent {
+            Some(indent) => match indent_collection.get(&previous_linenumber) {
+                Some(previous_indent) => {
+                    if previous_indent.line_end + 1 == indent.line_start {
+                        let merged = merge_indents(previous_indent, &indent);
+
+                        indent_collection.insert(previous_linenumber, merged);
+                    } else {
+                        indent_collection.insert(indent.line_start, indent.clone());
+                        previous_linenumber = indent.line_start.clone();
+                    }
+                }
+                None => {
+                    indent_collection.insert(indent.line_start, indent.clone());
+                    previous_linenumber = indent.line_start.clone();
+                }
+            },
+            None => {
+                previous_linenumber = 0;
+            }
+        }
+    }
+    Indentation {
+        minimum: indent_minimum,
+        levels: indent_collection,
+    }
+}
+
+fn merge_indents(previous_indent: &FieldIndent, indent: &FieldIndent) -> FieldIndent {
+    FieldIndent {
+        line_start: previous_indent.line_start,
+        line_end: indent.line_end,
+        name_column: std::cmp::max(previous_indent.name_column, indent.name_column),
+        type_column: std::cmp::max(previous_indent.type_column, indent.type_column),
+        directive_column: std::cmp::max(previous_indent.directive_column, indent.directive_column),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FieldIndent {
+    line_start: usize,
+    line_end: usize,
+    name_column: usize,
+    type_column: usize,
+    directive_column: usize,
+}
+
+fn get_field_indent(indent_minimum: usize, field: &ast::Field) -> Option<(FieldIndent)> {
+    match field {
+        ast::Field::Column(column) => match (
+            &column.start_name,
+            &column.start_typename,
+            &column.end_typename,
+        ) {
+            (Some(name_loc), Some(type_loc), Some(end_typename)) => {
+                let offset = if indent_minimum > name_loc.column {
+                    indent_minimum - name_loc.column
+                } else {
+                    0
+                };
+
+                return Some(FieldIndent {
+                    line_start: name_loc.line.to_usize(),
+                    line_end: end_typename.line.to_usize(),
+                    name_column: name_loc.column + offset,
+                    type_column: type_loc.column + offset,
+                    directive_column: end_typename.column + 1 + offset,
+                });
+            }
+            _ => (),
+        },
+        _ => (),
+    }
+
+    None
 }
 
 fn to_string_variant(is_first: bool, variant: &ast::Variant) -> String {
@@ -59,9 +150,9 @@ fn to_string_variant(is_first: bool, variant: &ast::Variant) -> String {
     match &variant.data {
         Some(fields) => {
             let mut result = format!("  {}{} {{\n", prefix, variant.name);
-
+            let mut indent_collection: Indentation = collect_indentation(&fields, 8);
             for field in fields {
-                result.push_str(&to_string_field(8, &field));
+                result.push_str(&to_string_field(&indent_collection, &field));
             }
             result.push_str("     }\n");
             result
@@ -70,7 +161,7 @@ fn to_string_variant(is_first: bool, variant: &ast::Variant) -> String {
     }
 }
 
-fn to_string_field(indent: usize, field: &ast::Field) -> String {
+fn to_string_field(indent: &Indentation, field: &ast::Field) -> String {
     match field {
         ast::Field::ColumnLines { count } => {
             if (*count > 2) {
@@ -80,26 +171,62 @@ fn to_string_field(indent: usize, field: &ast::Field) -> String {
             }
         }
         ast::Field::Column(column) => to_string_column(indent, column),
-        ast::Field::ColumnComment { text } => format!("{}//{}\n", " ".repeat(indent), text),
+        ast::Field::ColumnComment { text } => {
+            format!("{}//{}\n", " ".repeat(indent.minimum), text)
+        }
         ast::Field::FieldDirective(directive) => to_string_field_directive(indent, directive),
     }
 }
 
-fn to_string_column(indent: usize, column: &ast::Column) -> String {
-    let spaces = " ".repeat(indent);
+fn to_string_column(indentation: &Indentation, column: &ast::Column) -> String {
+    let initial_indent = " ".repeat(indentation.minimum);
     let nullable = if column.nullable { "?" } else { "" };
+
+    let mut type_indent_len = 1;
+    let mut directive_indent_len = 0;
+
+    let line_number: usize = match &column.start_name {
+        Some(loc) => loc.line.to_usize(),
+        None => 0,
+    };
+
+    let maybe_indent = indentation
+        .levels
+        .range(..=line_number)
+        .next_back()
+        .map(|(_, v)| v);
+
+    match maybe_indent {
+        Some(indent) => {
+            let name_plus_colon = indentation.minimum + 1 + column.name.len();
+
+            if name_plus_colon < indent.type_column {
+                type_indent_len = indent.type_column - name_plus_colon;
+            }
+
+            let name_plus_colon_plus_type =
+                name_plus_colon + type_indent_len + column.type_.len() + nullable.len() + 1;
+            if name_plus_colon_plus_type < indent.directive_column {
+                directive_indent_len = indent.directive_column - name_plus_colon_plus_type;
+            }
+        }
+        None => (),
+    }
+
     format!(
-        "{}{}: {}{}{}\n",
-        spaces,
+        "{}{}:{}{}{}{}{}\n",
+        initial_indent,
         column.name,
+        " ".repeat(type_indent_len),
         column.type_,
         nullable,
+        " ".repeat(directive_indent_len),
         to_string_directives(&column.directives)
     )
 }
 
-fn to_string_field_directive(indent: usize, directive: &ast::FieldDirective) -> String {
-    let spaces = " ".repeat(indent);
+fn to_string_field_directive(indent: &Indentation, directive: &ast::FieldDirective) -> String {
+    let spaces = " ".repeat(indent.minimum);
     match directive {
         ast::FieldDirective::Watched(_) => format!("{}@watch\n", spaces),
         ast::FieldDirective::TableName((range, name)) => {

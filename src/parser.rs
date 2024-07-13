@@ -2,6 +2,7 @@ use crate::ast;
 use crate::error;
 use crate::hash;
 use nom::bytes::complete::take_while1;
+use nom::character::streaming::space0;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while},
@@ -195,13 +196,20 @@ fn parse_record(input: Text) -> ParseResult<ast::Definition> {
 fn parse_field(input: Text) -> ParseResult<ast::Field> {
     alt((
         parse_field_comment,
-        parse_field_directive,
+        parse_table_directive,
         parse_column_field,
+        parse_column_lines,
     ))(input)
 }
 
+fn parse_column_lines(input: Text) -> ParseResult<ast::Field> {
+    let (input, whitespaces) = many1(one_of(" \t\n"))(input)?;
+    let count = whitespaces.iter().filter(|&&c| c == '\n').count();
+
+    Ok((input, ast::Field::ColumnLines { count }))
+}
+
 fn parse_field_comment(input: Text) -> ParseResult<ast::Field> {
-    let (input, _) = multispace0(input)?;
     let (input, _) = tag("//")(input)?;
     let (input, text) = cut(take_until("\n"))(input)?;
     let (input, _) = newline(input)?;
@@ -213,13 +221,12 @@ fn parse_field_comment(input: Text) -> ParseResult<ast::Field> {
     ))
 }
 
-fn parse_field_directive(input: Text) -> ParseResult<ast::Field> {
-    let (input, _) = multispace0(input)?;
+fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
     let (input, start_pos) = position(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaAtDirective);
     let (input, _) = tag("@")(input)?;
 
-    cut(alt((
+    let (input, field_directive) = cut(alt((
         parse_directive_named(
             "watch",
             ast::Field::FieldDirective(ast::FieldDirective::Watched(ast::WatchedDetails {
@@ -231,7 +238,9 @@ fn parse_field_directive(input: Text) -> ParseResult<ast::Field> {
         ),
         parse_tablename(to_location(&start_pos)),
         parse_link,
-    )))(input)
+    )))(input)?;
+
+    Ok((input, field_directive))
 }
 
 fn parse_tablename(start_location: ast::Location) -> impl Fn(Text) -> ParseResult<ast::Field> {
@@ -393,21 +402,24 @@ fn to_location(pos: &Text) -> ast::Location {
 }
 
 fn parse_column(input: Text) -> ParseResult<ast::Column> {
-    let (input, _) = multispace0(input)?;
     let (input, start_pos) = position(input)?;
     let (input, name) = parse_fieldname(input)?;
     let (input, end_name_pos) = position(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = space0(input)?;
     let (input, _) = cut(tag(":"))(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = space0(input)?;
     let (input, start_type_pos) = position(input)?;
     let (input, type_) = cut(parse_typename)(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, is_nullable) = parse_nullable(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = space0(input)?;
     let (input, directives) = many0(parse_column_directive)(input)?;
 
     let (input, end_pos) = position(input)?;
+
+    let (input, _) = space0(input)?;
+    let (input, _) = newline(input)?;
+    let (input, _) = space0(input)?;
 
     Ok((
         input,
@@ -447,12 +459,12 @@ fn parse_column_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
 fn parse_default_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
     let (input, _) = tag("default(")(input)?;
 
-    let (input, _) = multispace0(input)?;
+    let (input, _) = space0(input)?;
     let (input, default) = alt((
         parse_token("now", ast::DefaultValue::Now),
         parse_default_value,
     ))(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = space0(input)?;
     let (input, _) = tag(")")(input)?;
     Ok((input, ast::ColumnDirective::Default(default)))
 }
@@ -602,7 +614,7 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
     let (input, name) = cut(parse_typename)(input)?;
 
     let (input, paramDefinitionsOrNone) = cut(opt(parse_query_param_definitions))(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = space0(input)?;
     let (input, fields) = with_braces(parse_query_field)(input)?;
     let (input, end_pos) = position(input)?;
 
