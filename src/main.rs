@@ -197,6 +197,8 @@ async fn main() -> io::Result<()> {
                 Some(stdin) => {
                     let paths = filesystem::collect_filepaths(&options.in_dir);
                     let mut schema = parse_schemas(&options, &paths)?;
+
+                    // We're assuming this file is a query because we don't have a filepath
                     format_query_to_std_out(&options, &schema, &stdin);
                 }
                 None => {
@@ -204,6 +206,37 @@ async fn main() -> io::Result<()> {
                     format_all(&options, filesystem::collect_filepaths(&options.in_dir));
                 }
             },
+            1 => {
+                let file_path = &files[0];
+
+                match get_stdin()? {
+                    Some(stdin) => {
+                        if filesystem::is_schema_file(file_path) {
+                            let mut schema = parse_single_schema_from_source(file_path, &stdin)?;
+                            format::schema(&mut schema);
+                            // Always write to stdout if stdin is provided
+                            write_schema(&options, &true, &schema);
+                        } else {
+                            let paths = filesystem::collect_filepaths(&options.in_dir);
+                            let mut schema = parse_schemas(&options, &paths)?;
+
+                            format_query_to_std_out(&options, &schema, &stdin);
+                        }
+                    }
+                    None => {
+                        if filesystem::is_schema_file(file_path) {
+                            let mut schema = parse_single_schema(file_path)?;
+                            format::schema(&mut schema);
+                            write_schema(&options, to_stdout, &schema);
+                        } else {
+                            let paths = filesystem::collect_filepaths(&options.in_dir);
+                            let mut schema = parse_schemas(&options, &paths)?;
+
+                            format_query(&options, &schema, to_stdout, file_path);
+                        }
+                    }
+                }
+            }
             _ => {
                 for file_path in files {
                     if !file_path.ends_with(".pyre") && !to_stdout {
@@ -486,6 +519,22 @@ fn parse_single_schema(schema_file_path: &String) -> io::Result<ast::Schema> {
     let mut file = fs::File::open(schema_file_path.clone())?;
     let mut schema_source = String::new();
     file.read_to_string(&mut schema_source)?;
+
+    match parser::run(&schema_file_path, &schema_source, &mut schema) {
+        Ok(()) => {}
+        Err(err) => {
+            eprintln!("{}", parser::render_error(&schema_source, err));
+        }
+    }
+
+    Ok(schema)
+}
+
+fn parse_single_schema_from_source(
+    schema_file_path: &str,
+    schema_source: &str,
+) -> io::Result<ast::Schema> {
+    let mut schema = ast::Schema { files: vec![] };
 
     match parser::run(&schema_file_path, &schema_source, &mut schema) {
         Ok(()) => {}
