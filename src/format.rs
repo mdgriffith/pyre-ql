@@ -173,8 +173,8 @@ fn format_definition(
 
             let mut previous_count: Option<usize> = None;
             let mut removed_fields = HashSet::new();
-
             let mut i = 0;
+
             // Merge adjacent ColumnLines items and have a max count of 2
             for field in fields.iter_mut() {
                 match field {
@@ -224,15 +224,6 @@ fn format_definition(
                 fields.push(ast::Field::FieldDirective(ast::FieldDirective::Link(link)));
             }
         }
-    }
-}
-
-fn insert_after_last_instance<T, F>(vec: &mut Vec<T>, predicate: F, value: T)
-where
-    F: Fn(&T) -> bool,
-{
-    if let Some(pos) = vec.iter().rev().position(predicate) {
-        vec.insert(vec.len() - pos, value);
     }
 }
 

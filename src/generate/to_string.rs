@@ -8,7 +8,7 @@ pub fn schema_to_string(schema_file: &ast::SchemaFile) -> String {
     for definition in &schema_file.definitions {
         result.push_str(&to_string_definition(definition));
     }
-
+    result.push_str("\n");
     result
 }
 
