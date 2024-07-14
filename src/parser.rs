@@ -7,7 +7,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while},
     character::complete::{
-        alpha1, alphanumeric1, char, digit1, multispace0, multispace1, newline, one_of,
+        alpha1, alphanumeric1, char, digit1, line_ending, multispace0, multispace1, newline, one_of,
     },
     combinator::{all_consuming, cut, eof, map_res, opt, recognize},
     error::{Error, VerboseError, VerboseErrorKind},
@@ -178,7 +178,7 @@ fn parse_record(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = cut(multispace0)(input)?;
     let (input, fields) = cut(with_braces(parse_field))(input)?;
     let (input, end_pos) = position(input)?;
-    let (input, _) = newline(input)?;
+    let (input, _) = alt((line_ending, eof))(input)?;
 
     Ok((
         input,
@@ -212,7 +212,7 @@ fn parse_column_lines(input: Text) -> ParseResult<ast::Field> {
 fn parse_field_comment(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = tag("//")(input)?;
     let (input, text) = cut(take_until("\n"))(input)?;
-    let (input, _) = newline(input)?;
+    let (input, _) = alt((line_ending, eof))(input)?;
     Ok((
         input,
         ast::Field::ColumnComment {
@@ -509,7 +509,7 @@ fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = multispace0(input)?;
     let (input, variants) = separated_list0(parse_type_separator, parse_variant)(input)?;
     let (input, end_pos) = position(input)?;
-    let (input, _) = newline(input)?;
+    let (input, _) = alt((line_ending, eof))(input)?;
 
     Ok((
         input,
