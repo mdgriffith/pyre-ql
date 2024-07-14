@@ -223,12 +223,6 @@ fn format_definition(
             for link in links_missing.drain(..) {
                 fields.push(ast::Field::FieldDirective(ast::FieldDirective::Link(link)));
             }
-
-            insert_after_last_instance(
-                fields,
-                ast::is_field_directive,
-                ast::Field::ColumnLines { count: 1 },
-            );
         }
     }
 }
