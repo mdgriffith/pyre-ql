@@ -2,6 +2,7 @@ use crate::ast;
 use crate::error;
 use crate::typecheck;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 pub fn schema(schem: &mut ast::Schema) {
     // Insert some lines before each definition if needed
@@ -38,7 +39,6 @@ pub fn schema(schem: &mut ast::Schema) {
                 end_name,
             } = def
             {
-                // let tablename = ast::get_tablename(name, fields);
                 for field in fields {
                     match field {
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
@@ -129,20 +129,100 @@ fn format_definition(
             start_name,
             end_name,
         } => {
-            fields.retain(|field| !ast::is_link(field));
+            fields.sort_by(ast::column_order);
+            let empty_links = &vec![];
+            let links_on_this_table = links.get(name).unwrap_or(empty_links);
+            let mut links_missing: Vec<ast::LinkDetails> = vec![];
+            let mut links_to_remove: Vec<ast::LinkDetails> = vec![];
 
-            match links.get(name) {
-                Some(all_links) => {
-                    for (is_calculated, link) in all_links {
-                        fields.push(ast::Field::FieldDirective(ast::FieldDirective::Link(
-                            link.clone(),
-                        )));
+            // See if any calculated links are missing
+            for (is_calculated, link) in links_on_this_table {
+                let mut found = false;
+                for field in fields.iter() {
+                    match field {
+                        ast::Field::FieldDirective(ast::FieldDirective::Link(existing_link)) => {
+                            if existing_link.link_name == link.link_name {
+                                found = true;
+                            }
+                        }
+                        _ => (),
                     }
                 }
-                None => (),
+                if !found {
+                    links_missing.push(link.clone());
+                }
             }
 
-            fields.sort_by(ast::column_order);
+            // See if there are links that should be removed
+            for field in fields.iter() {
+                match field {
+                    ast::Field::FieldDirective(ast::FieldDirective::Link(existing_link)) => {
+                        let mut found = false;
+                        for (is_calculated, link) in links_on_this_table {
+                            if link.link_name == existing_link.link_name {
+                                found = true;
+                            }
+                        }
+                        if !found {
+                            links_to_remove.push(existing_link.clone());
+                        }
+                    }
+                    _ => (),
+                }
+            }
+
+            let mut previous_count: Option<usize> = None;
+            let mut removed_fields = HashSet::new();
+
+            let mut i = 0;
+            // Merge adjacent ColumnLines items and have a max count of 2
+            for field in fields.iter_mut() {
+                match field {
+                    ast::Field::ColumnLines { count } => {
+                        if *count == 0 {
+                            removed_fields.insert(i);
+                        } else {
+                            match previous_count {
+                                Some(prev_count) => {
+                                    *count += prev_count;
+                                    *count = (*count).min(2);
+                                    removed_fields.insert(i - 1);
+                                }
+                                None => {
+                                    previous_count = Some(*count);
+                                }
+                            }
+                        }
+                    }
+
+                    _ => {
+                        previous_count = None;
+                    }
+                }
+                i += 1;
+            }
+
+            // Remove the fields that were marked for removal
+            let mut i = 0;
+            fields.retain(|_| {
+                let should_keep = !removed_fields.contains(&i);
+                i += 1;
+                should_keep
+            });
+
+            // Remove unnecessary links
+            fields.retain(|field| {
+                if let ast::Field::FieldDirective(ast::FieldDirective::Link(link)) = field {
+                    !links_to_remove.contains(link)
+                } else {
+                    true
+                }
+            });
+
+            // Add missing links
+            for link in links_missing.drain(..) {
+                fields.push(ast::Field::FieldDirective(ast::FieldDirective::Link(link)));
+            }
 
             insert_after_last_instance(
                 fields,
