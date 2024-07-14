@@ -116,28 +116,34 @@ struct FieldIndent {
 
 fn get_field_indent(indent_minimum: usize, field: &ast::Field) -> Option<(FieldIndent)> {
     match field {
-        ast::Field::Column(column) => match (
-            &column.start_name,
-            &column.start_typename,
-            &column.end_typename,
-        ) {
-            (Some(name_loc), Some(type_loc), Some(end_typename)) => {
-                let offset = if indent_minimum > name_loc.column {
-                    indent_minimum - name_loc.column
-                } else {
-                    0
-                };
+        ast::Field::Column(column) => {
+            match (&column.start_name, &column.end_name, &column.end_typename) {
+                (Some(name_loc), Some(name_end_loc), Some(end_typename)) => {
+                    let apply_offset = |column: usize| -> usize {
+                        if indent_minimum > name_loc.column {
+                            indent_minimum - name_loc.column
+                        } else {
+                            if column == 0 {
+                                return 0;
+                            } else {
+                                column - 1
+                            }
+                        }
+                    };
 
-                return Some(FieldIndent {
-                    line_start: name_loc.line.to_usize(),
-                    line_end: end_typename.line.to_usize(),
-                    name_column: name_loc.column + offset,
-                    type_column: type_loc.column + offset,
-                    directive_column: end_typename.column + 1 + offset,
-                });
+                    let nullable_space = if column.nullable { 1 } else { 0 };
+
+                    return Some(FieldIndent {
+                        line_start: name_loc.line.to_usize(),
+                        line_end: end_typename.line.to_usize(),
+                        name_column: apply_offset(name_loc.column),
+                        type_column: apply_offset(name_end_loc.column + 2),
+                        directive_column: apply_offset(end_typename.column + 1 + nullable_space),
+                    });
+                }
+                _ => (),
             }
-            _ => (),
-        },
+        }
         _ => (),
     }
 
@@ -206,7 +212,7 @@ fn to_string_column(indentation: &Indentation, column: &ast::Column) -> String {
 
             let name_plus_colon_plus_type =
                 name_plus_colon + type_indent_len + column.type_.len() + nullable.len() + 1;
-            if name_plus_colon_plus_type < indent.directive_column {
+            if name_plus_colon_plus_type < indent.directive_column && column.directives.len() > 0 {
                 directive_indent_len = indent.directive_column - name_plus_colon_plus_type;
             }
         }

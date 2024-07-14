@@ -191,13 +191,6 @@ pub fn is_field_directive(field: &Field) -> bool {
     }
 }
 
-pub fn is_column_comment(field: &Field) -> bool {
-    match field {
-        Field::ColumnComment { .. } => true,
-        _ => false,
-    }
-}
-
 pub fn is_column(field: &Field) -> bool {
     match field {
         Field::Column { .. } => true,

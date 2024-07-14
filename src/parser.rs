@@ -273,13 +273,12 @@ fn parse_link(input: Text) -> ParseResult<ast::Field> {
     // { from: userId, to: User.id }
     let (input, _) = multispace1(input)?;
     let (input, fields) = with_braces(parse_link_field)(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = newline(input)?;
 
     // gather into link details
     let (input, link_details) =
         link_field_to_details(input, linkname, start_pos, end_name_pos, fields)?;
-
-    let (input, _) = multispace0(input)?;
 
     return Ok((
         input,

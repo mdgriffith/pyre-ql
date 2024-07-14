@@ -167,6 +167,19 @@ fn prepare_options<'a>(cli: &'a Cli) -> Options<'a> {
     }
 }
 
+fn get_stdin() -> io::Result<Option<String>> {
+    if atty::is(atty::Stream::Stdin) {
+        // The above seems backwards to me
+        // But this is what the docs say: https://github.com/softprops/atty
+        Ok(None)
+    } else {
+        // Read from stdin
+        let mut input = String::new();
+        io::stdin().read_to_string(&mut input)?;
+        Ok(Some(input))
+    }
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let cli = Cli::parse();
@@ -180,13 +193,20 @@ async fn main() -> io::Result<()> {
 
     match &cli.command {
         Some(Commands::Format { files, to_stdout }) => match files.len() {
-            0 => {
-                println!("Formatting all files in {}", options.in_dir.display());
-                format_all(&options, filesystem::collect_filepaths(&options.in_dir));
-            }
+            0 => match get_stdin()? {
+                Some(stdin) => {
+                    let paths = filesystem::collect_filepaths(&options.in_dir);
+                    let mut schema = parse_schemas(&options, &paths)?;
+                    format_query_to_std_out(&options, &schema, &stdin);
+                }
+                None => {
+                    println!("Formatting all files in {}", options.in_dir.display());
+                    format_all(&options, filesystem::collect_filepaths(&options.in_dir));
+                }
+            },
             _ => {
                 for file_path in files {
-                    if !file_path.ends_with(".pyre") {
+                    if !file_path.ends_with(".pyre") && !to_stdout {
                         println!("{} doesn't end in .pyre, skipping", file_path);
                         continue;
                     }
@@ -399,6 +419,31 @@ fn write_schema(options: &Options, to_stdout: &bool, schema: &ast::Schema) -> io
         };
     }
 
+    Ok(())
+}
+
+fn format_query_to_std_out(
+    options: &Options,
+    schema: &ast::Schema,
+    query_source_str: &str,
+) -> io::Result<()> {
+    match parser::parse_query("stdin", query_source_str) {
+        Ok(mut query_list) => {
+            // Format query
+            format::query_list(schema, &mut query_list);
+
+            // Convert to string
+            let formatted = generate::to_string::query(&query_list);
+
+            println!("{}", formatted);
+            return Ok(());
+        }
+        Err(e) => {
+            // println!("Failed to parse query: {:#?}", e);
+            println!("{}", query_source_str);
+            return Ok(());
+        }
+    }
     Ok(())
 }
 
