@@ -45,22 +45,6 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-enum MigrationOperation {
-    Generate {
-        #[arg(long)]
-        name: String,
-
-        #[arg(long)]
-        db: String,
-    },
-    Apply {
-        /// The database connection string
-        #[arg(long)]
-        db: String,
-    },
-}
-
-#[derive(Subcommand)]
 enum Commands {
     /// Format files
     Format {
@@ -78,10 +62,16 @@ enum Commands {
     Introspect {
         #[arg(long)]
         db: String,
+
+        #[arg(long)]
+        auth: Option<String>,
     },
     Migrate {
         #[arg(long)]
         db: String,
+
+        #[arg(long)]
+        auth: Option<String>,
     },
     // Generate a migration
     Migration {
@@ -89,6 +79,9 @@ enum Commands {
 
         #[arg(long)]
         db: String,
+
+        #[arg(long)]
+        auth: Option<String>,
     },
 }
 
@@ -260,8 +253,8 @@ async fn main() -> io::Result<()> {
                 }
             }
         },
-        Some(Commands::Introspect { db }) => {
-            let maybeConn = db::local(db).await;
+        Some(Commands::Introspect { db, auth }) => {
+            let maybeConn = db::connect(db, auth).await;
             match maybeConn {
                 Ok(conn) => {
                     let introspection_result = db::introspect(&conn).await;
@@ -278,7 +271,12 @@ async fn main() -> io::Result<()> {
                                 println!("\nRemove it if you want to generate a new one!");
                             } else {
                                 println!("Schema written to {:?}", path.to_str());
-                                write_schema(&options, &false, &introspection.schema);
+
+                                if (ast::is_empty_schema(&introspection.schema)) {
+                                    println!("I was able to successfully connect to the database, but I couldn't find any tables or views!");
+                                } else {
+                                    write_schema(&options, &false, &introspection.schema);
+                                }
                             }
                         }
                         Err(e) => {
@@ -291,9 +289,9 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        Some(Commands::Migrate { db }) => {
-            let maybeConn = db::local(db).await;
-            match maybeConn {
+        Some(Commands::Migrate { db, auth }) => {
+            let connection_result = db::connect(db, auth).await;
+            match connection_result {
                 Ok(conn) => {
                     let migration_result = db::migrate(&conn, &options.migration_dir).await;
                     match migration_result {
@@ -310,9 +308,9 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        Some(Commands::Migration { name, db }) => {
-            let maybeConn = db::local(db).await;
-            match maybeConn {
+        Some(Commands::Migration { name, db, auth }) => {
+            let connection_result = db::connect(db, auth).await;
+            match connection_result {
                 Err(e) => {
                     println!("Failed to connect to database: {:?}", e);
                 }
@@ -439,7 +437,7 @@ fn write_schema(options: &Options, to_stdout: &bool, schema: &ast::Schema) -> io
             println!("{}", generate::to_string::schema_to_string(&schema_file));
             continue;
         }
-        let mut output = fs::File::create(options.out_dir.join(schema_file.path.to_string()));
+        let mut output = fs::File::create(options.in_dir.join(schema_file.path.to_string()));
         let formatted = generate::to_string::schema_to_string(&schema_file);
         match output {
             Ok(mut file) => {

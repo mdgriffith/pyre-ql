@@ -7,6 +7,16 @@ pub struct Schema {
     pub files: Vec<SchemaFile>,
 }
 
+pub fn is_empty_schema(schema: &Schema) -> bool {
+    for file in schema.files.iter() {
+        if file.definitions.len() > 0 {
+            return true;
+            break;
+        }
+    }
+    return false;
+}
+
 #[derive(Debug)]
 pub struct SchemaFile {
     pub path: String,

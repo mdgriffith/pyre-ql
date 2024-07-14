@@ -5,6 +5,7 @@ use crate::parser;
 use libsql;
 use serde;
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -81,9 +82,53 @@ pub enum Warning {
     WasManuallyModified(String),
 }
 
-pub async fn local(connection: &str) -> Result<libsql::Database, libsql::Error> {
-    // libsql::Builder::new_local(":memory:").build().await
-    libsql::Builder::new_local(connection).build().await
+#[derive(Debug)]
+pub enum DbError {
+    AuthTokenRequired,
+    EnvVarNotFound(String),
+    DatabaseError(libsql::Error),
+}
+
+fn parse_arg_or_env(arg: &str) -> Result<String, DbError> {
+    if arg.starts_with('$') {
+        let env_var_name = &arg[1..];
+        env::var(env_var_name).map_err(|_| DbError::EnvVarNotFound(env_var_name.to_string()))
+    } else {
+        Ok(arg.to_string())
+    }
+}
+
+pub async fn connect(
+    db: &String,
+    maybe_auth_token: &Option<String>,
+) -> Result<libsql::Database, DbError> {
+    let db_value = parse_arg_or_env(&db)?;
+
+    if db_value.starts_with("http://")
+        || db_value.starts_with("https://")
+        || db_value.starts_with("libsql://")
+    {
+        // Remote database
+        match maybe_auth_token {
+            None => return Err(DbError::AuthTokenRequired),
+            Some(token) => {
+                let token_value = parse_arg_or_env(&token)?;
+                let connected_result = libsql::Builder::new_remote(db_value, token_value)
+                    .build()
+                    .await;
+                match connected_result {
+                    Ok(connected) => return Ok(connected),
+                    Err(e) => return Err(DbError::DatabaseError(e)),
+                }
+            }
+        }
+    } else {
+        let connected_result = libsql::Builder::new_local(db_value).build().await;
+        match connected_result {
+            Ok(connected) => return Ok(connected),
+            Err(e) => return Err(DbError::DatabaseError(e)),
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]

@@ -129,7 +129,6 @@ fn format_definition(
             start_name,
             end_name,
         } => {
-            fields.sort_by(ast::column_order);
             let empty_links = &vec![];
             let links_on_this_table = links.get(name).unwrap_or(empty_links);
             let mut links_missing: Vec<ast::LinkDetails> = vec![];

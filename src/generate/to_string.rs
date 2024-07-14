@@ -396,7 +396,6 @@ fn to_string_query_field(indent: usize, field: &ast::QueryField) -> String {
         Some(val) => {
             result.push_str(" = ");
             result.push_str(&value_to_string(val));
-            result.push_str(" ");
         }
         None => {}
     }
