@@ -11,8 +11,14 @@ pub struct Schema {
 
 #[derive(Debug)]
 pub struct Found {
-    pub schema_files: Vec<String>,
+    pub schema_files: Vec<SchemaFile>,
     pub query_files: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct SchemaFile {
+    pub path: String,
+    pub content: String,
 }
 
 fn read(schema: &Schema) -> String {
@@ -28,8 +34,17 @@ pub fn is_schema_file(file_path: &str) -> bool {
     file_path == "schema.pyre" || file_path.contains("schema")
 }
 
-pub fn collect_filepaths(dir: &Path) -> Found {
-    let mut schema_files: Vec<String> = vec![];
+pub fn get_schema_source<'a>(filepath: &'a str, found: &'a Found) -> Option<&'a str> {
+    for schema_file in &found.schema_files {
+        if schema_file.path == filepath {
+            return Some(&schema_file.content);
+        }
+    }
+    return None;
+}
+
+pub fn collect_filepaths(dir: &Path) -> io::Result<Found> {
+    let mut schema_files: Vec<SchemaFile> = vec![];
     let mut query_files: Vec<String> = vec![];
 
     for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
@@ -59,7 +74,16 @@ pub fn collect_filepaths(dir: &Path) -> Found {
                         Some(file_name) => {
                             // Check if the file is `schema.pyre`
                             if is_schema_file(relative_path.to_str().unwrap()) {
-                                schema_files.push(file_str.to_string());
+                                let mut file = fs::File::open(file_str)?;
+                                let mut schema_source = String::new();
+                                file.read_to_string(&mut schema_source)?;
+
+                                let schema_file = SchemaFile {
+                                    path: file_str.to_string(),
+                                    content: schema_source,
+                                };
+
+                                schema_files.push(schema_file);
                             } else {
                                 query_files.push(file_str.to_string());
                             }
@@ -69,10 +93,10 @@ pub fn collect_filepaths(dir: &Path) -> Found {
             }
         }
     }
-    Found {
+    Ok(Found {
         schema_files,
         query_files,
-    }
+    })
 }
 
 pub fn create_dir_if_not_exists(path: &Path) -> io::Result<()> {

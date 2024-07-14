@@ -195,7 +195,7 @@ async fn main() -> io::Result<()> {
         Some(Commands::Format { files, to_stdout }) => match files.len() {
             0 => match get_stdin()? {
                 Some(stdin) => {
-                    let paths = filesystem::collect_filepaths(&options.in_dir);
+                    let paths = filesystem::collect_filepaths(&options.in_dir)?;
                     let mut schema = parse_schemas(&options, &paths)?;
 
                     // We're assuming this file is a query because we don't have a filepath
@@ -203,7 +203,7 @@ async fn main() -> io::Result<()> {
                 }
                 None => {
                     println!("Formatting all files in {}", options.in_dir.display());
-                    format_all(&options, filesystem::collect_filepaths(&options.in_dir));
+                    format_all(&options, filesystem::collect_filepaths(&options.in_dir)?);
                 }
             },
             1 => {
@@ -217,7 +217,7 @@ async fn main() -> io::Result<()> {
                             // Always write to stdout if stdin is provided
                             write_schema(&options, &true, &schema);
                         } else {
-                            let paths = filesystem::collect_filepaths(&options.in_dir);
+                            let paths = filesystem::collect_filepaths(&options.in_dir)?;
                             let mut schema = parse_schemas(&options, &paths)?;
 
                             format_query_to_std_out(&options, &schema, &stdin);
@@ -229,7 +229,7 @@ async fn main() -> io::Result<()> {
                             format::schema(&mut schema);
                             write_schema(&options, to_stdout, &schema);
                         } else {
-                            let paths = filesystem::collect_filepaths(&options.in_dir);
+                            let paths = filesystem::collect_filepaths(&options.in_dir)?;
                             let mut schema = parse_schemas(&options, &paths)?;
 
                             format_query(&options, &schema, to_stdout, file_path);
@@ -249,7 +249,7 @@ async fn main() -> io::Result<()> {
                         format::schema(&mut schema);
                         write_schema(&options, to_stdout, &schema);
                     } else {
-                        let paths = filesystem::collect_filepaths(&options.in_dir);
+                        let paths = filesystem::collect_filepaths(&options.in_dir)?;
                         let mut schema = parse_schemas(&options, &paths)?;
 
                         format_query(&options, &schema, to_stdout, file_path);
@@ -349,7 +349,7 @@ async fn main() -> io::Result<()> {
                             }
 
                             // filepaths to .pyre files
-                            let paths = filesystem::collect_filepaths(&options.in_dir);
+                            let paths = filesystem::collect_filepaths(&options.in_dir)?;
                             let schema = parse_schemas(&options, &paths)?;
 
                             let diff = diff::diff(&introspection.schema, &schema);
@@ -411,7 +411,7 @@ async fn main() -> io::Result<()> {
             }
         }
         None => {
-            execute(&options, filesystem::collect_filepaths(&options.in_dir));
+            execute(&options, filesystem::collect_filepaths(&options.in_dir)?);
         }
     }
     Ok(())
@@ -548,15 +548,11 @@ fn parse_single_schema_from_source(
 
 fn parse_schemas(options: &Options, paths: &filesystem::Found) -> io::Result<ast::Schema> {
     let mut schema = ast::Schema { files: vec![] };
-    for schema_file_path in paths.schema_files.iter() {
-        let mut file = fs::File::open(schema_file_path.clone())?;
-        let mut schema_source = String::new();
-        file.read_to_string(&mut schema_source)?;
-
-        match parser::run(&schema_file_path, &schema_source, &mut schema) {
+    for source in paths.schema_files.iter() {
+        match parser::run(&source.path, &source.content, &mut schema) {
             Ok(()) => {}
             Err(err) => {
-                eprintln!("{}", parser::render_error(&schema_source, err));
+                eprintln!("{}", parser::render_error(&source.content, err));
             }
         }
     }
@@ -569,15 +565,15 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
 
     match typecheck::check_schema(&schema) {
         Err(errorList) => {
-            let mut errors = "".to_string();
-
             // TODO
-            // for err in errorList {
-            //     let formatted_error = error::format_error(&schema_source, err);
-            //     errors.push_str(&formatted_error);
-            // }
+            for err in errorList {
+                let schema_source =
+                    filesystem::get_schema_source(&err.filepath, &paths).unwrap_or("");
 
-            println!("{}", errors);
+                let formatted_error = error::format_error(&schema_source, &err);
+
+                print!("{}", &formatted_error);
+            }
         }
         Ok(mut context) => {
             // Generate schema files
@@ -619,7 +615,7 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
                                 let mut errors = "".to_string();
                                 for err in errorList {
                                     let formatted_error =
-                                        error::format_error(&query_source_str, err);
+                                        error::format_error(&query_source_str, &err);
                                     errors.push_str(&formatted_error);
                                 }
 

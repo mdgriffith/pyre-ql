@@ -101,7 +101,7 @@ fn convert_error(input: &str, err: VerboseError<Text>) -> String {
             }],
         };
 
-        crate::error::format_error(input, error)
+        crate::error::format_error(input, &error)
     } else {
         "No errors".to_string()
     }

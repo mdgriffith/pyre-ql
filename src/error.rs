@@ -211,7 +211,7 @@ I don't recognize this type. Is it one of these?
 
 */
 
-pub fn format_error(file_contents: &str, error: Error) -> String {
+pub fn format_error(file_contents: &str, error: &Error) -> String {
     let filepath = &error.filepath;
     let path_length = filepath.len();
     let separator = "-".repeat(50 - path_length);
