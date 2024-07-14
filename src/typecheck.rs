@@ -581,6 +581,7 @@ pub fn check_queries<'a>(
     Ok(())
 }
 
+#[derive(Debug)]
 pub enum ParamInfo {
     Defined {
         defined_at: Option<Range>,
@@ -819,7 +820,6 @@ fn mark_as_used(
     errors: &mut Vec<Error>,
     params: &mut HashMap<String, ParamInfo>,
 ) {
-    println!("mark_as_used {:#?}", value);
     match value {
         ast::QueryValue::Variable((var_range, var)) => match params.get_mut(var) {
             None => {
@@ -876,18 +876,18 @@ fn check_value(
                     ParamInfo::Defined {
                         defined_at,
                         ref mut type_,
-                        mut used,
-                        mut type_inferred,
+                        ref mut used,
+                        ref mut type_inferred,
                     } => {
                         // mark as used
-                        used = true;
+                        *used = true;
 
                         match &type_ {
                             None => {
                                 // We can set the type, but also mark it as inferred
                                 // If it's inferred, it will error if exec'ed, but succeed if formatted
                                 *type_ = Some(table_type_string.to_string());
-                                type_inferred = true;
+                                *type_inferred = true;
                             }
                             Some(type_name) => {
                                 if type_name != table_type_string {
