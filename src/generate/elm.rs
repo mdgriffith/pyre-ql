@@ -205,9 +205,6 @@ pub fn to_schema_decoders(schem: &ast::Schema) -> String {
 
     result.push_str("\n\n");
 
-    result.push_str("bool : Decode.Decoder Bool\n");
-    result.push_str("bool =\n");
-
     for file in &schem.files {
         for definition in &file.definitions {
             result.push_str(&to_decoder_definition(definition));
@@ -344,6 +341,8 @@ fn to_type_decoder(column: &ast::Column) -> String {
         "String" => "Db.Read.string".to_string(),
         "Int" => "Db.Read.int".to_string(),
         "Float" => "Db.Read.float".to_string(),
+        "DateTime" => "Db.Read.dateTime".to_string(),
+        "Boolean" => "Db.Read.bool".to_string(),
         _ => format!(
             "Db.Decode.{}",
             crate::ext::string::decapitalize(&column.type_)
@@ -364,12 +363,12 @@ pub fn to_schema_encoders(schem: &ast::Schema) -> String {
     let mut result = String::new();
 
     result.push_str(
-        "module Db.Encode exposing (..)\n\nimport Db\nimport Json.Encode as Encode\n\n\n",
+        "module Db.Encode exposing (..)\n\nimport Db\nimport Json.Encode as Encode\nimport Time\n\n\n",
     );
 
     result.push_str("dateTime : Time.Posix -> Encode.Value\n");
     result.push_str("dateTime time =\n");
-    result.push_str("    Encode.string (Time.posixToMillis time)\n\n");
+    result.push_str("    Encode.int (Time.posixToMillis time)\n\n");
 
     for file in &schem.files {
         for definition in &file.definitions {
