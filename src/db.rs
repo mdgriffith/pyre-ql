@@ -497,11 +497,9 @@ async fn create_migration_table_if_not_exists(
         r#"
 CREATE TABLE IF NOT EXISTS {} (
     id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    schema TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    name TEXT NOT NULL
 );"#,
-        MIGRATION_TABLE
+        crate::ext::string::quote(MIGRATION_TABLE)
     );
     conn.execute_batch(create_migration_table).await
 }
@@ -511,8 +509,8 @@ async fn record_migration(
     migration_name: &str,
 ) -> Result<u64, libsql::Error> {
     let insert_migration = &format!(
-        r#"INSERT INTO {} (name, schema) VALUES (?);"#,
-        MIGRATION_TABLE
+        r#"INSERT INTO {} (name) VALUES (?);"#,
+        crate::ext::string::quote(MIGRATION_TABLE)
     );
     conn.execute(insert_migration, libsql::params![migration_name])
         .await
