@@ -768,7 +768,9 @@ fn render_where_params(args: &Vec<ast::Arg>, table_alias: &str) -> Vec<String> {
 
 fn render_value(value: &ast::QueryValue) -> String {
     match value {
-        ast::QueryValue::Variable((r, v)) => format!("${}", v),
+        ast::QueryValue::Variable((r, var)) => {
+            format!("${}", var.name)
+        }
         ast::QueryValue::String((r, s)) => format!("'{}'", s),
         ast::QueryValue::Int((r, i)) => i.to_string(),
         ast::QueryValue::Float((r, f)) => f.to_string(),

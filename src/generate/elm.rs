@@ -614,7 +614,14 @@ fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
 fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
     let mut result = "encode : Input -> Encode.Value\n".to_string();
     result.push_str("encode input =\n");
-    result.push_str("    Encode.object\n");
+    result.push_str("    Encode.object");
+
+    if args.len() == 0 {
+        result.push_str(" []\n\n\n");
+        return result;
+    } else {
+        result.push_str("\n");
+    }
     let mut is_first = true;
     for arg in args {
         let type_string = &arg.type_.clone().unwrap_or("unknown".to_string());
@@ -918,17 +925,6 @@ fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition)
         format!("{}: {}", param.name, type_string)
     } else {
         format!(", {}: {}", param.name, type_string)
-    }
-}
-
-fn value_to_string(value: &ast::QueryValue) -> String {
-    match value {
-        ast::QueryValue::Variable((range, name)) => format!("${}", name),
-        ast::QueryValue::String((range, value)) => format!("\"{}\"", value),
-        ast::QueryValue::Int((range, value)) => value.to_string(),
-        ast::QueryValue::Float((range, value)) => value.to_string(),
-        ast::QueryValue::Bool((range, value)) => value.to_string(),
-        ast::QueryValue::Null(range) => "null".to_string(),
     }
 }
 

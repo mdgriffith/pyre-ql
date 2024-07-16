@@ -909,7 +909,37 @@ fn parse_variable(input: Text) -> ParseResult<ast::QueryValue> {
         start: to_location(&start_pos),
         end: to_location(&end_pos),
     };
-    Ok((input, ast::QueryValue::Variable((range, name.to_string()))))
+    Ok((
+        input,
+        ast::QueryValue::Variable((
+            range,
+            ast::VariableDetails {
+                session_field: None,
+                name: name.to_string(),
+            },
+        )),
+    ))
+}
+
+fn parse_session_variable(input: Text) -> ParseResult<ast::QueryValue> {
+    let (input, start_pos) = position(input)?;
+    let (input, _) = tag("Session.")(input)?;
+    let (input, name) = parse_fieldname(input)?;
+    let (input, end_pos) = position(input)?;
+    let range = ast::Range {
+        start: to_location(&start_pos),
+        end: to_location(&end_pos),
+    };
+    Ok((
+        input,
+        ast::QueryValue::Variable((
+            range,
+            ast::VariableDetails {
+                session_field: Some(name.to_string()),
+                name: format!("session_{}", name.to_string()),
+            },
+        )),
+    ))
 }
 
 fn parse_value(input: Text) -> ParseResult<ast::QueryValue> {
@@ -921,14 +951,9 @@ fn parse_value(input: Text) -> ParseResult<ast::QueryValue> {
         parse_located_token("true", |range| ast::QueryValue::Bool((range, true))),
         parse_located_token("false", |range| ast::QueryValue::Bool((range, false))),
         parse_variable,
+        parse_session_variable,
         parse_string,
         parse_number,
-        // tag("true"),
-        // tag("false"),
-        // parse_number,
-        // parse_string,
-        // parse_array,
-        // parse_object,
     ))(input)
 }
 

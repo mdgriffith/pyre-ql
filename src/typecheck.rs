@@ -8,6 +8,7 @@ use std::collections::HashSet;
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Context {
     pub current_filepath: String,
+    pub session: Option<ast::SessionDetails>,
     pub types: HashMap<String, DefInfo>,
     pub tables: HashMap<String, ast::RecordDetails>,
     pub variants: HashMap<String, (Option<Range>, Vec<VariantDef>)>,
@@ -32,6 +33,7 @@ pub fn get_linked_table<'a>(
 fn empty_context() -> Context {
     let mut context = Context {
         current_filepath: "".to_string(),
+        session: None,
         types: HashMap::new(),
         tables: HashMap::new(),
         variants: HashMap::new(),
@@ -92,6 +94,7 @@ pub fn populate_context(schem: &ast::Schema) -> Result<Context, Vec<Error>> {
     let mut context = empty_context();
     let mut errors = Vec::new();
 
+    context.session = schem.session.clone();
     for file in schem.files.iter() {
         for definition in &file.definitions {
             match definition {
@@ -577,14 +580,16 @@ pub fn check_queries<'a>(
     schem: &ast::Schema,
     query_list: &ast::QueryList,
     context: &Context,
-) -> Result<(), Vec<Error>> {
+) -> Result<HashMap<String, HashMap<String, ParamInfo>>, Vec<Error>> {
     let mut errors: Vec<Error> = Vec::new();
+    let mut all_params: HashMap<String, HashMap<String, ParamInfo>> = HashMap::new();
     check_schema_definitions(&context, schem, &mut errors);
 
     for mut query in &query_list.queries {
         match query {
             ast::QueryDef::Query(q) => {
-                check_query(&context, &mut errors, &q);
+                let query_params = check_query(&context, &mut errors, &q);
+                all_params.insert(q.name.clone(), query_params);
                 continue;
             }
             _ => continue,
@@ -594,7 +599,7 @@ pub fn check_queries<'a>(
         return Err(errors);
     }
 
-    Ok(())
+    Ok(all_params)
 }
 
 #[derive(Debug)]
@@ -604,6 +609,8 @@ pub enum ParamInfo {
         type_: Option<String>,
         used: bool,
         type_inferred: bool,
+        from_session: bool,
+        session_name: Option<String>,
     },
     NotDefinedButUsed {
         used_at: Option<Range>,
@@ -628,15 +635,19 @@ pub fn check_query(
 
     // Param types make sense?
     for param_def in &query.args {
+        // formatted name
+        let param_name = format!("${}", param_def.name);
         match &param_def.type_ {
             None => {
                 param_names.insert(
-                    param_def.name.clone(),
+                    param_name,
                     ParamInfo::Defined {
                         defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
                         type_: None,
                         used: false,
                         type_inferred: false,
+                        from_session: false,
+                        session_name: None,
                     },
                 );
             }
@@ -658,14 +669,40 @@ pub fn check_query(
                 }
 
                 param_names.insert(
-                    param_def.name.clone(),
+                    param_name,
                     ParamInfo::Defined {
                         defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
                         type_: Some(type_.clone()),
                         used: false,
                         type_inferred: false,
+                        from_session: false,
+                        session_name: None,
                     },
                 );
+            }
+        }
+    }
+
+    match &context.session {
+        None => (),
+        Some(session) => {
+            for field in &session.fields {
+                match field {
+                    ast::Field::Column(col) => {
+                        param_names.insert(
+                            ast::session_field_name(col),
+                            ParamInfo::Defined {
+                                defined_at: None,
+                                type_: Some(col.type_.clone()),
+                                used: false,
+                                type_inferred: false,
+                                from_session: true,
+                                session_name: Some(col.name.clone()),
+                            },
+                        );
+                    }
+                    _ => (),
+                }
             }
         }
     }
@@ -702,8 +739,10 @@ pub fn check_query(
                 type_,
                 used,
                 type_inferred,
+                from_session,
+                ..
             } => {
-                if *used == false {
+                if !from_session && *used == false {
                     errors.push(Error {
                         filepath: context.current_filepath.clone(),
                         error_type: ErrorType::UnusedParam {
@@ -714,7 +753,7 @@ pub fn check_query(
                             primary: defined_at.clone().into_iter().collect(),
                         }],
                     })
-                } else if *type_inferred {
+                } else if !from_session && *type_inferred {
                     errors.push(Error {
                         filepath: context.current_filepath.clone(),
                         error_type: ErrorType::MissingType,
@@ -837,31 +876,29 @@ fn mark_as_used(
     params: &mut HashMap<String, ParamInfo>,
 ) {
     match value {
-        ast::QueryValue::Variable((var_range, var)) => match params.get_mut(var) {
-            None => {
-                params.insert(
-                    var.to_string(),
-                    ParamInfo::NotDefinedButUsed {
-                        used_at: Some(convert_range(var_range)),
-                        type_: None,
-                    },
-                );
+        ast::QueryValue::Variable((var_range, var)) => {
+            let var_name = ast::to_pyre_variable_name(var);
+            match params.get_mut(&var_name) {
+                None => {
+                    params.insert(
+                        var_name,
+                        ParamInfo::NotDefinedButUsed {
+                            used_at: Some(convert_range(var_range)),
+                            type_: None,
+                        },
+                    );
+                }
+                Some(param_info) => {
+                    match param_info {
+                        ParamInfo::Defined { ref mut used, .. } => {
+                            // mark as used
+                            *used = true;
+                        }
+                        ParamInfo::NotDefinedButUsed { used_at, type_ } => (),
+                    };
+                }
             }
-            Some(param_info) => {
-                match param_info {
-                    ParamInfo::Defined {
-                        defined_at,
-                        ref mut type_,
-                        mut used,
-                        mut type_inferred,
-                    } => {
-                        // mark as used
-                        used = true;
-                    }
-                    ParamInfo::NotDefinedButUsed { used_at, type_ } => (),
-                };
-            }
-        },
+        }
         _ => {}
     }
 }
@@ -877,67 +914,73 @@ fn check_value(
     table_type_string: &str,
 ) {
     match value {
-        ast::QueryValue::Variable((var_range, var)) => match params.get_mut(var) {
-            None => {
-                params.insert(
-                    var.to_string(),
-                    ParamInfo::NotDefinedButUsed {
-                        used_at: Some(convert_range(var_range)),
-                        type_: Some(table_type_string.to_string()),
-                    },
-                );
-            }
-            Some(param_info) => {
-                match param_info {
-                    ParamInfo::Defined {
-                        defined_at,
-                        ref mut type_,
-                        ref mut used,
-                        ref mut type_inferred,
-                    } => {
-                        // mark as used
-                        *used = true;
+        ast::QueryValue::Variable((var_range, var)) => {
+            let var_name = ast::to_pyre_variable_name(var);
 
-                        match &type_ {
-                            None => {
-                                // We can set the type, but also mark it as inferred
-                                // If it's inferred, it will error if exec'ed, but succeed if formatted
-                                *type_ = Some(table_type_string.to_string());
-                                *type_inferred = true;
-                            }
-                            Some(type_name) => {
-                                if type_name != table_type_string {
-                                    errors.push(Error {
-                                        filepath: context.current_filepath.clone(),
-                                        error_type: ErrorType::TypeMismatch {
-                                            table: table_name.to_string(),
-                                            column_defined_as: table_type_string.to_string(),
-                                            variable_name: var.clone(),
-                                            variable_defined_as: type_name.clone(),
-                                        },
-                                        locations: vec![
-                                            Location {
-                                                contexts: vec![],
-                                                primary: defined_at
-                                                    .as_ref()
-                                                    .map_or_else(Vec::new, |range| {
-                                                        vec![range.clone()]
-                                                    }),
+            match params.get_mut(&var_name) {
+                None => {
+                    params.insert(
+                        var_name,
+                        ParamInfo::NotDefinedButUsed {
+                            used_at: Some(convert_range(var_range)),
+                            type_: Some(table_type_string.to_string()),
+                        },
+                    );
+                }
+                Some(param_info) => {
+                    println!("Check info {:#?}", param_info);
+                    match param_info {
+                        ParamInfo::Defined {
+                            defined_at,
+                            ref mut type_,
+                            ref mut used,
+                            ref mut type_inferred,
+                            ..
+                        } => {
+                            // mark as used
+                            *used = true;
+
+                            match &type_ {
+                                None => {
+                                    // We can set the type, but also mark it as inferred
+                                    // If it's inferred, it will error if exec'ed, but succeed if formatted
+                                    *type_ = Some(table_type_string.to_string());
+                                    *type_inferred = true;
+                                }
+                                Some(type_name) => {
+                                    if type_name != table_type_string {
+                                        errors.push(Error {
+                                            filepath: context.current_filepath.clone(),
+                                            error_type: ErrorType::TypeMismatch {
+                                                table: table_name.to_string(),
+                                                column_defined_as: table_type_string.to_string(),
+                                                variable_name: var.name.clone(),
+                                                variable_defined_as: type_name.clone(),
                                             },
-                                            Location {
-                                                contexts: vec![], // to_range(&start, &end),
-                                                primary: vec![convert_range(var_range)],
-                                            },
-                                        ],
-                                    })
+                                            locations: vec![
+                                                Location {
+                                                    contexts: vec![],
+                                                    primary: defined_at
+                                                        .as_ref()
+                                                        .map_or_else(Vec::new, |range| {
+                                                            vec![range.clone()]
+                                                        }),
+                                                },
+                                                Location {
+                                                    contexts: vec![], // to_range(&start, &end),
+                                                    primary: vec![convert_range(var_range)],
+                                                },
+                                            ],
+                                        })
+                                    }
                                 }
                             }
                         }
-                    }
-                    ParamInfo::NotDefinedButUsed { used_at, type_ } => (),
-                };
+                        ParamInfo::NotDefinedButUsed { used_at, type_ } => (),
+                    };
+                }
             }
-        },
+        }
         _ => {}
     }
 }

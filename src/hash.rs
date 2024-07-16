@@ -110,7 +110,7 @@ fn hash_query_value(hasher: &mut Sha256, value: &QueryValue) {
     match value {
         QueryValue::Variable((_, var)) => {
             hasher.update("variable");
-            hasher.update(var);
+            hasher.update(&var.name);
         }
         QueryValue::String((_, s)) => {
             hasher.update("string");

@@ -256,12 +256,7 @@ pub fn query_list(schem: &ast::Schema, queries: &mut ast::QueryList) {
                                 match calculated_params.get(&arg.name) {
                                     Some(param) => {
                                         match param {
-                                            typecheck::ParamInfo::Defined {
-                                                defined_at,
-                                                type_,
-                                                used,
-                                                type_inferred,
-                                            } => {
+                                            typecheck::ParamInfo::Defined { type_, .. } => {
                                                 arg.type_ = type_.clone();
                                             }
                                             typecheck::ParamInfo::NotDefinedButUsed {
@@ -281,12 +276,7 @@ pub fn query_list(schem: &ast::Schema, queries: &mut ast::QueryList) {
                             for (name, param) in calculated_params.iter() {
                                 let mut param_type = None;
                                 match param {
-                                    typecheck::ParamInfo::Defined {
-                                        defined_at,
-                                        type_,
-                                        used,
-                                        type_inferred,
-                                    } => {
+                                    typecheck::ParamInfo::Defined { type_, .. } => {
                                         param_type = type_.clone();
                                     }
                                     typecheck::ParamInfo::NotDefinedButUsed { used_at, type_ } => {

@@ -2,6 +2,7 @@ use crate::ast;
 use crate::ext::string;
 use crate::generate::sql;
 use crate::typecheck;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -264,6 +265,7 @@ fn to_type_decoder(type_: &str) -> String {
 pub fn write_queries(
     dir: &Path,
     context: &typecheck::Context,
+    params: &HashMap<String, HashMap<String, typecheck::ParamInfo>>,
     query_list: &ast::QueryList,
 ) -> io::Result<()> {
     write_runner(dir, context, query_list);
@@ -272,6 +274,8 @@ pub fn write_queries(
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
+                let params = params.get(&q.name).unwrap();
+
                 let target_path = dir.join(&format!(
                     "query/{}.ts",
                     crate::ext::string::decapitalize(&q.name)
@@ -279,7 +283,7 @@ pub fn write_queries(
 
                 let mut output = fs::File::create(target_path).expect("Failed to create file");
                 output
-                    .write_all(to_query_file(&context, &q).as_bytes())
+                    .write_all(to_query_file(&context, &params, &q).as_bytes())
                     .expect("Failed to write to file");
             }
             _ => continue,
@@ -422,7 +426,11 @@ fn format_ts_list(items: Vec<String>) -> String {
     result
 }
 
-fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
+fn to_query_file(
+    context: &typecheck::Context,
+    params: &HashMap<String, typecheck::ParamInfo>,
+    query: &ast::Query,
+) -> String {
     let mut result = "".to_string();
     result.push_str("import * as Ark from 'arktype';\n");
     result.push_str("import * as Db from '../db';\n");
@@ -473,6 +481,8 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     }
     result.push_str("});\n\n");
 
+    let session_args = get_session_args(params);
+
     let validate = format!(
         r#"
 export const query = Db.toRunner({{
@@ -489,7 +499,7 @@ type Input = typeof Input.infer
 "#,
         query.interface_hash,
         "Session.Session",
-        "[]",
+        session_args,
         format_ts_list(watchers)
     );
 
@@ -522,6 +532,44 @@ type Input = typeof Input.infer
     // }
     //
 
+    result
+}
+
+fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
+    let mut result = "[ ".to_string();
+    let mut first = true;
+    for (name, info) in params {
+        match info {
+            typecheck::ParamInfo::Defined {
+                from_session,
+                used,
+                session_name,
+                ..
+            } => {
+                if *from_session && *used {
+                    match session_name {
+                        None => continue,
+                        Some(session_name_string) => {
+                            if first {
+                                result.push_str(&format!(
+                                    "{}",
+                                    crate::ext::string::quote(session_name_string)
+                                ));
+                            } else {
+                                result.push_str(&format!(
+                                    ", {}",
+                                    crate::ext::string::quote(session_name_string)
+                                ));
+                            }
+                            first = false;
+                        }
+                    }
+                }
+            }
+            _ => continue,
+        }
+    }
+    result.push_str("]");
     result
 }
 
@@ -687,17 +735,6 @@ fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition)
             param.name,
             param.type_.clone().unwrap_or("unknown".to_string())
         )
-    }
-}
-
-fn value_to_string(value: &ast::QueryValue) -> String {
-    match value {
-        ast::QueryValue::Variable((range, name)) => format!("${}", name),
-        ast::QueryValue::String((range, value)) => format!("\"{}\"", value),
-        ast::QueryValue::Int((range, value)) => value.to_string(),
-        ast::QueryValue::Float((range, value)) => value.to_string(),
-        ast::QueryValue::Bool((range, value)) => value.to_string(),
-        ast::QueryValue::Null(range) => "null".to_string(),
     }
 }
 

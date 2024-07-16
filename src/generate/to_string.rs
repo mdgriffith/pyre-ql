@@ -476,7 +476,7 @@ fn format_where(where_arg: &ast::WhereArg) -> String {
 
 fn value_to_string(value: &ast::QueryValue) -> String {
     match value {
-        ast::QueryValue::Variable((r, name)) => format!("${}", name),
+        ast::QueryValue::Variable((r, var)) => ast::to_pyre_variable_name(var),
         ast::QueryValue::String((r, value)) => format!("\"{}\"", value),
         ast::QueryValue::Int((r, value)) => value.to_string(),
         ast::QueryValue::Float((r, value)) => value.to_string(),

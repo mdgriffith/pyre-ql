@@ -608,7 +608,7 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
                             typecheck::check_queries(&schema, &query_list, &mut context);
 
                         match typecheck_result {
-                            Ok(()) => {
+                            Ok(query_params) => {
                                 filesystem::create_dir_if_not_exists(
                                     &out_path(&options, "elm").join("Query"),
                                 );
@@ -623,6 +623,7 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
                                 generate::typescript::write_queries(
                                     &out(&options, Path::new("typescript")),
                                     &context,
+                                    &query_params,
                                     &query_list,
                                 );
                             }

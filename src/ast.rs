@@ -588,12 +588,30 @@ pub enum WhereArg {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum QueryValue {
-    Variable((Range, String)),
+    Variable((Range, VariableDetails)),
     String((Range, String)),
     Int((Range, i32)),
     Float((Range, f32)),
     Bool((Range, bool)),
     Null(Range),
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct VariableDetails {
+    pub name: String,
+    pub session_field: Option<String>,
+}
+
+pub fn to_pyre_variable_name(var: &VariableDetails) -> String {
+    match &var.session_field {
+        Some(session_field) => format!("Session.{}", session_field),
+        None => format!("${}", var.name),
+    }
+}
+
+pub fn session_field_name(col: &Column) -> String {
+    // field.name.to_string()
+    format!("Session.{}", col.name)
 }
 
 #[derive(Debug, Clone)]
