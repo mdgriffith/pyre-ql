@@ -269,20 +269,26 @@ fn render_from(
         let table = context.tables.get(&field.name).unwrap();
 
         let table_name = ast::get_tablename(&table.name, &table.fields);
-        let mut from_vals = &to_from(
+        let mut from_vals = &mut to_from(
             context,
             &ast::get_aliased_name(&field),
             table,
             &ast::collect_query_fields(&field.fields),
         );
+
+        // the from statements are naturally in reverse order
+        // Because we're walking outwards from the root, and `.push` ing the join statements
+        // Now re reverse them so they're in the correct order.
+        from_vals.reverse();
+
         result.push_str(&format!("  {}", quote(&table_name)));
         if (from_vals.is_empty()) {
             result.push_str("\n");
         } else {
             result.push_str("\n  ");
+            result.push_str(&from_vals.join("\n  "));
+            result.push_str("\n");
         }
-
-        result.push_str(&from_vals.join(",\n  "));
     }
 }
 
@@ -540,7 +546,7 @@ fn to_subfrom(
                 &ast::collect_query_fields(&query_field.fields),
             );
             let join = format!(
-                "left join {} on {}.{} = {}.{}\n",
+                "left join {} on {}.{} = {}.{}",
                 quote(&foreign_table_name),
                 quote(&table_name),
                 quote(&link.local_ids.join("")),
