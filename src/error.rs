@@ -39,6 +39,7 @@ pub enum Expecting {
 pub enum ErrorType {
     ParsingError(ParsingErrorDetails),
 
+    MultipleSessionDeinitions,
     MissingType,
     DuplicateDefinition(String),
     DefinitionIsBuiltIn(String),
@@ -440,6 +441,17 @@ fn to_error_description(error: &Error) -> String {
         ErrorType::ParsingError(parsingDetails) => {
             let mut result = "".to_string();
             result.push_str(&format!("{}", render_expecting(&parsingDetails.expecting)));
+
+            result.push_str("\n\n");
+            result
+        }
+
+        ErrorType::MultipleSessionDeinitions => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "I found multiple {} definitions, but there should only be one!",
+                "session".cyan(),
+            ));
 
             result.push_str("\n\n");
             result

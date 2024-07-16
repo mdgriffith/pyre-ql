@@ -94,8 +94,6 @@ fn out_path(options: &Options, file: &str) -> PathBuf {
 }
 
 fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Result<()> {
-    let formatted_ts = generate::typescript::schema(&schema);
-
     filesystem::create_dir_if_not_exists(&out_path(options, "typescript"));
     filesystem::create_dir_if_not_exists(&out_path(options, "typescript").join("db"));
 
@@ -108,10 +106,20 @@ fn generate_typescript_schema(options: &Options, schema: &ast::Schema) -> io::Re
         .write_all(generate::typescript::DB_ENGINE.as_bytes())
         .expect("Failed to write to file");
 
+    // Session types as db/session.ts
+    let ts_session_path_str = out(options, Path::new("typescript/db/session.ts"));
+    let ts_session_path = Path::new(&ts_session_path_str);
+    let mut output = fs::File::create(ts_session_path).expect("Failed to create file");
+    let session_ts = generate::typescript::session(&schema);
+    output
+        .write_all(session_ts.as_bytes())
+        .expect("Failed to write to file");
+
     // Schema-level data types
     let ts_db_data_path = out(options, Path::new("typescript/db/data.ts"));
     let ts_data_path = Path::new(&ts_db_data_path);
     let mut output_data = fs::File::create(ts_data_path).expect("Failed to create file");
+    let formatted_ts = generate::typescript::schema(&schema);
     output_data
         .write_all(formatted_ts.as_bytes())
         .expect("Failed to write to file");
@@ -512,7 +520,10 @@ fn format_query(
 }
 
 fn parse_single_schema(schema_file_path: &String) -> io::Result<ast::Schema> {
-    let mut schema = ast::Schema { files: vec![] };
+    let mut schema = ast::Schema {
+        files: vec![],
+        session: None,
+    };
 
     let mut file = fs::File::open(schema_file_path.clone())?;
     let mut schema_source = String::new();
@@ -532,7 +543,10 @@ fn parse_single_schema_from_source(
     schema_file_path: &str,
     schema_source: &str,
 ) -> io::Result<ast::Schema> {
-    let mut schema = ast::Schema { files: vec![] };
+    let mut schema = ast::Schema {
+        files: vec![],
+        session: None,
+    };
 
     match parser::run(&schema_file_path, &schema_source, &mut schema) {
         Ok(()) => {}
@@ -545,7 +559,10 @@ fn parse_single_schema_from_source(
 }
 
 fn parse_schemas(options: &Options, paths: &filesystem::Found) -> io::Result<ast::Schema> {
-    let mut schema = ast::Schema { files: vec![] };
+    let mut schema = ast::Schema {
+        files: vec![],
+        session: None,
+    };
     for source in paths.schema_files.iter() {
         match parser::run(&source.path, &source.content, &mut schema) {
             Ok(()) => {}

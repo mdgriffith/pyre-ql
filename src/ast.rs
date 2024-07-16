@@ -4,7 +4,16 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub struct Schema {
+    pub session: Option<SessionDetails>,
     pub files: Vec<SchemaFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct SessionDetails {
+    pub fields: Vec<Field>,
+
+    pub start: Option<Location>,
+    pub end: Option<Location>,
 }
 
 pub fn is_empty_schema(schema: &Schema) -> bool {
@@ -24,7 +33,10 @@ pub struct SchemaFile {
 }
 
 pub fn empty_schema() -> Schema {
-    Schema { files: Vec::new() }
+    Schema {
+        session: None,
+        files: Vec::new(),
+    }
 }
 
 #[repr(u8)]
@@ -42,6 +54,7 @@ pub enum Definition {
         start: Option<Location>,
         end: Option<Location>,
     },
+    Session(SessionDetails),
     Record {
         name: String,
         fields: Vec<Field>,

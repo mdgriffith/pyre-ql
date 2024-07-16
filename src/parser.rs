@@ -112,16 +112,37 @@ fn parse_schema<'a>(input: Text<'a>, schema: &'a mut ast::Schema) -> ParseResult
     let (input, definitions) = many1(parse_definition)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = eof(input)?;
+    add_session(schema, &definitions);
+
     let file = ast::SchemaFile {
         path: input.extra.file.to_string(),
         definitions,
     };
+
     schema.files.push(file);
     Ok((input, ()))
 }
 
+fn add_session(schema: &mut ast::Schema, definitions: &Vec<ast::Definition>) {
+    for definition in definitions {
+        match definition {
+            ast::Definition::Session(session) => {
+                schema.session = Some(session.clone());
+                return;
+            }
+            _ => (),
+        }
+    }
+}
+
 fn parse_definition(input: Text) -> ParseResult<ast::Definition> {
-    alt((parse_comment, parse_tagged, parse_record, parse_lines))(input)
+    alt((
+        parse_comment,
+        parse_tagged,
+        parse_record,
+        parse_session,
+        parse_lines,
+    ))(input)
 }
 
 fn parse_lines(input: Text) -> ParseResult<ast::Definition> {
@@ -190,6 +211,26 @@ fn parse_record(input: Text) -> ParseResult<ast::Definition> {
             start_name: Some(to_location(&start_name_pos)),
             end_name: Some(to_location(&end_name_pos)),
         },
+    ))
+}
+
+fn parse_session(input: Text) -> ParseResult<ast::Definition> {
+    let (input, start_pos) = position(input)?;
+    let (input, _) = tag("session")(input)?;
+    let (input, _) = cut(multispace1)(input)?;
+
+    let (input, _) = cut(multispace0)(input)?;
+    let (input, fields) = cut(with_braces(parse_field))(input)?;
+    let (input, end_pos) = position(input)?;
+    let (input, _) = alt((line_ending, eof))(input)?;
+
+    Ok((
+        input,
+        ast::Definition::Session(ast::SessionDetails {
+            fields,
+            start: Some(to_location(&start_pos)),
+            end: Some(to_location(&end_pos)),
+        }),
     ))
 }
 

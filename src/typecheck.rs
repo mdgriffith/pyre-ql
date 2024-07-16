@@ -436,10 +436,26 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
         }
     }
 
+    let mut session_found = false;
+
     // Check definitions
     for file in schem.files.iter() {
         for definition in &file.definitions {
             match definition {
+                ast::Definition::Session(session) => {
+                    if session_found {
+                        errors.push(Error {
+                            filepath: file.path.clone(),
+                            error_type: ErrorType::MultipleSessionDeinitions,
+                            locations: vec![Location {
+                                contexts: to_range(&session.start, &session.end),
+                                primary: vec![],
+                            }],
+                        });
+                    } else {
+                        session_found = true;
+                    }
+                }
                 ast::Definition::Record {
                     name,
                     fields,

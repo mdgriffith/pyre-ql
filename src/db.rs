@@ -371,6 +371,7 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
 
                     // Prepare Schema
                     let mut schema = ast::Schema {
+                        session: None,
                         files: vec![ast::SchemaFile {
                             path: "schema.pyre".to_string(),
                             definitions,

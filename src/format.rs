@@ -114,6 +114,7 @@ fn format_definition(
         ast::Definition::Lines { count } => {
             *count = std::cmp::max(1, std::cmp::min(*count, 2));
         }
+        ast::Definition::Session(_) => (),
         ast::Definition::Comment { text } => (),
         ast::Definition::Tagged {
             name,

@@ -77,6 +77,7 @@ fn to_string_definition(definition: &ast::Definition) -> String {
                 "\n".repeat(*count as usize)
             }
         }
+        ast::Definition::Session(_) => "".to_string(),
         ast::Definition::Comment { text } => "".to_string(),
         ast::Definition::Tagged {
             name,
@@ -222,6 +223,7 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
                 "\n".repeat(*count as usize)
             }
         }
+        ast::Definition::Session(_) => "".to_string(),
         ast::Definition::Comment { text } => "".to_string(),
         ast::Definition::Tagged {
             name,
@@ -382,6 +384,7 @@ fn to_encoder_definition(definition: &ast::Definition) -> String {
     match definition {
         ast::Definition::Lines { count } => "".to_string(),
         ast::Definition::Comment { text } => "".to_string(),
+        ast::Definition::Session(_) => "".to_string(),
         ast::Definition::Tagged {
             name,
             variants,

@@ -22,6 +22,16 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             }
         }
         ast::Definition::Comment { text } => format!("//{}\n", text),
+        ast::Definition::Session(session) => {
+            let mut indent_collection: Indentation = collect_indentation(&session.fields, 4);
+
+            let mut result = "session {{\n".to_string();
+            for field in &session.fields {
+                result.push_str(&to_string_field(&indent_collection, &field));
+            }
+            result.push_str("}\n");
+            result
+        }
         ast::Definition::Tagged {
             name,
             variants,
