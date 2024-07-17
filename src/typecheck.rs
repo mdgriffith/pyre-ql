@@ -928,7 +928,6 @@ fn check_value(
                     );
                 }
                 Some(param_info) => {
-                    println!("Check info {:#?}", param_info);
                     match param_info {
                         ParamInfo::Defined {
                             defined_at,

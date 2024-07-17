@@ -253,7 +253,11 @@ pub fn query_list(schem: &ast::Schema, queries: &mut ast::QueryList) {
                     ast::QueryDef::Query(ref mut q) => match query_param_map.get_mut(&q.name) {
                         Some(calculated_params) => {
                             for arg in q.args.iter_mut() {
-                                match calculated_params.get(&arg.name) {
+                                // Add $ to the front of the arg name
+                                let param_name = format!("${}", arg.name);
+
+                                //
+                                match calculated_params.get(&param_name) {
                                     Some(param) => {
                                         match param {
                                             typecheck::ParamInfo::Defined { type_, .. } => {
@@ -267,7 +271,7 @@ pub fn query_list(schem: &ast::Schema, queries: &mut ast::QueryList) {
                                             }
                                         }
 
-                                        calculated_params.remove(&arg.name);
+                                        calculated_params.remove(&param_name);
                                     }
                                     None => (),
                                 }
