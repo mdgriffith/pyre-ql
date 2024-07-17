@@ -445,14 +445,18 @@ fn write_schema(options: &Options, to_stdout: &bool, schema: &ast::Schema) -> io
             println!("{}", generate::to_string::schema_to_string(&schema_file));
             continue;
         }
-        let mut output = fs::File::create(options.in_dir.join(schema_file.path.to_string()));
+        let target_filepath = schema_file.path.to_string();
+        let mut output = fs::File::create(&target_filepath);
         let formatted = generate::to_string::schema_to_string(&schema_file);
         match output {
             Ok(mut file) => {
                 file.write_all(formatted.as_bytes());
             }
             Err(e) => {
-                eprintln!("Failed to create file: {:?}", e);
+                eprintln!(
+                    "Failed to write schema file: {:?} {:?}",
+                    &target_filepath, e
+                );
                 return Err(e);
             }
         };
