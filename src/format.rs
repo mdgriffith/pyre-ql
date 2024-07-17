@@ -278,24 +278,19 @@ pub fn query_list(schem: &ast::Schema, queries: &mut ast::QueryList) {
                             }
 
                             for (name, param) in calculated_params.iter() {
-                                let mut param_type = None;
                                 match param {
-                                    typecheck::ParamInfo::Defined { type_, .. } => {
-                                        param_type = type_.clone();
-                                    }
+                                    typecheck::ParamInfo::Defined { .. } => (),
                                     typecheck::ParamInfo::NotDefinedButUsed { used_at, type_ } => {
-                                        param_type = type_.clone();
+                                        q.args.push(ast::QueryParamDefinition {
+                                            name: name.clone(),
+                                            type_: type_.clone(),
+                                            start_name: None,
+                                            end_name: None,
+                                            start_type: None,
+                                            end_type: None,
+                                        });
                                     }
                                 }
-
-                                q.args.push(ast::QueryParamDefinition {
-                                    name: name.clone(),
-                                    type_: param_type,
-                                    start_name: None,
-                                    end_name: None,
-                                    start_type: None,
-                                    end_type: None,
-                                });
                             }
                         }
                         None => (),
