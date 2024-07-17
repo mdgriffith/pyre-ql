@@ -25,7 +25,7 @@ fn to_string_definition(definition: &ast::Definition) -> String {
         ast::Definition::Session(session) => {
             let mut indent_collection: Indentation = collect_indentation(&session.fields, 4);
 
-            let mut result = "session {{\n".to_string();
+            let mut result = "session {\n".to_string();
             for field in &session.fields {
                 result.push_str(&to_string_field(&indent_collection, &field));
             }
