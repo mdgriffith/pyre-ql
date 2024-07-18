@@ -2,7 +2,7 @@ use crate::ast;
 use crate::error;
 use crate::hash;
 use nom::bytes::complete::take_while1;
-use nom::character::streaming::space0;
+use nom::character::streaming::{space0, space1};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while},
@@ -852,9 +852,17 @@ fn parse_and_or(input: Text) -> ParseResult<AndOr> {
 fn parse_where(input: Text) -> ParseResult<ast::Arg> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("where")(input)?;
-    let (input, _) = multispace1(input)?;
-    let (input, where_arg) = parse_where_arg(input)?;
-    Ok((input, ast::Arg::Where(where_arg)))
+    let (input, _) = space1(input)?;
+    let (input, where_arg) = with_braces(parse_where_arg)(input)?;
+
+    if where_arg.len() == 1 {
+        Ok((
+            input,
+            ast::Arg::Where(where_arg.into_iter().next().unwrap()),
+        ))
+    } else {
+        Ok((input, ast::Arg::Where(ast::WhereArg::And(where_arg))))
+    }
 }
 
 fn parse_where_arg(input: Text) -> ParseResult<ast::WhereArg> {
