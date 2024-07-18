@@ -537,6 +537,21 @@ pub fn collect_query_fields(fields: &Vec<ArgField>) -> Vec<&QueryField> {
     args
 }
 
+pub fn collect_primary_fields(fields: &Vec<ArgField>) -> Vec<&QueryField> {
+    let mut args = Vec::new();
+    for field in fields {
+        match field {
+            ArgField::Field(arg) => {
+                if arg.fields.is_empty() {
+                    args.push(arg)
+                }
+            }
+            _ => {}
+        }
+    }
+    args
+}
+
 pub fn collect_query_args(fields: &Vec<ArgField>) -> Vec<Arg> {
     let mut args = Vec::new();
     for field in fields {

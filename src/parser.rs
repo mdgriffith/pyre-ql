@@ -731,6 +731,17 @@ where
     }
 }
 
+fn parens<'a, F, T>(parse_term: F) -> impl Fn(Text) -> ParseResult<T>
+where
+    F: Fn(Text) -> ParseResult<T>,
+{
+    move |input: Text| {
+        let (input, _) = tag("(")(input)?;
+        let (input, terms) = parse_term(input)?;
+        let (input, _) = tag(")")(input)?;
+        Ok((input, terms))
+    }
+}
 fn parse_set(input: Text) -> ParseResult<ast::QueryValue> {
     let (input, _) = tag("=")(input)?;
     let (input, _) = multispace0(input)?;

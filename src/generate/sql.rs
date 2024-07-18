@@ -1,3 +1,6 @@
+pub mod cte;
+pub mod to_sql;
+
 use crate::ast;
 use crate::ext::string;
 use crate::typecheck;
@@ -218,11 +221,48 @@ pub fn delete_to_string(
     result
 }
 
+/*
+
+Given a query, we have 3 choices for generating sql.
+1. Normal: A normal join
+2. Batch: Flatten and batch the queries
+3. CTE: Use a CTE
+
+Batches are basically like a CTE, but where we have to do the join in the application layer.
+
+So, our first approach is going to be using a CTE.
+
+For selects, here's how we choose what strategy to take.
+
+1. We default to using the join.
+2. If there is a limit/offset, we use the CTE form.
+3. If there is a @where on anything but the top-level table, we need to use a CTE
+
+
+2 is because the limit applies to the result, but conceptually we want it to apply to the table it's attached to.
+So, if we add an @limit 1 to our query for users and their blogposts, we will only return 1 user and maybe 1 blogpost.
+And if the limit is 2, we could return 1-2 users and 1-2 blogposts.
+
+With 'where' it's the same conceptual problem.
+
+
+
+
+*/
 pub fn select_to_string(
     context: &typecheck::Context,
     query: &ast::Query,
     query_fields: &Vec<&ast::QueryField>,
 ) -> String {
+    if cte::should_use_cte(query) {
+        let mut result = "".to_string();
+
+        for query_top_field in query_fields {
+            cte::select_to_string(context, query, query_top_field, &mut result);
+        }
+
+        return result;
+    }
     let mut result = "select\n".to_string();
 
     // Selection
