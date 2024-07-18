@@ -596,23 +596,6 @@ fn to_flat_query_decoder(
     fields: &Vec<&ast::QueryField>,
     result: &mut String,
 ) {
-    // let mut result = format!(
-    //     "decode{} : Db.Read.Query {}\n",
-    //     crate::ext::string::capitalize(table_alias),
-    //     crate::ext::string::capitalize(table_alias)
-    // );
-
-    let identifiers = format!("[]");
-
-    // result.push_str(&format!(
-    //     "decode{} =\n",
-    //     crate::ext::string::capitalize(table_alias)
-    // ));
-    // result.push_str(&format!(
-    //     "    Db.Read.query {} {}\n",
-    //     crate::ext::string::capitalize(table_alias),
-    //     identifiers
-    // ));
     for field in fields {
         let table_field = &table
             .fields
@@ -645,32 +628,15 @@ fn to_table_field_flat_decoder(
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
             let spaces = " ".repeat(indent);
 
-            let foreign_table_alias = match query_field.alias {
-                Some(ref alias) => &alias,
-                None => &link.foreign_tablename,
-            };
-
             let table = typecheck::get_linked_table(context, &link).unwrap();
 
             to_flat_query_decoder(
                 context,
-                foreign_table_alias,
+                &ast::get_aliased_name(&query_field),
                 table,
                 &ast::collect_query_fields(&query_field.fields),
                 result,
             )
-
-            // result.push_str(&format!(
-            //     "{}|> Db.Read.nested\n{}({})\n{}({})\n{}decode{}\n",
-            //     spaces,
-            //     // ID columns
-            //     " ".repeat(indent + 4),
-            //     format_db_id(table_alias, &link.local_ids),
-            //     " ".repeat(indent + 4),
-            //     format_db_id(foreign_table_alias, &link.foreign_ids),
-            //     " ".repeat(indent + 4),
-            //     (crate::ext::string::capitalize(&ast::get_aliased_name(query_field))) // (capitalize(&link.link_name)) // ast::get_select_alias(table_alias, table_field, query_field),
-            // ));
         }
 
         _ => (),
