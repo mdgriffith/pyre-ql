@@ -385,7 +385,7 @@ fn render_limit(
             match field {
                 ast::ArgField::Arg(located_arg) => {
                     if let ast::Arg::Limit(val) = &located_arg.arg {
-                        result.push_str(&format!("limit {}\n", render_value(val)));
+                        result.push_str(&format!("limit {}\n", to_sql::render_value(val)));
                         break;
                     }
                 }
@@ -405,7 +405,7 @@ fn render_offset(
             match field {
                 ast::ArgField::Arg(located_arg) => {
                     if let ast::Arg::Offset(val) = &located_arg.arg {
-                        result.push_str(&format!("offset {}\n", render_value(val)));
+                        result.push_str(&format!("offset {}\n", to_sql::render_value(val)));
                         break;
                     }
                 }
@@ -691,7 +691,7 @@ fn to_field_set_values(
 
                     str.push_str(&column.name);
                     str.push_str(" = ");
-                    str.push_str(&render_value(&val));
+                    str.push_str(&to_sql::render_value(&val));
 
                     result.push(str);
                 }
@@ -723,7 +723,7 @@ fn to_field_insert_values(
             None => (),
             Some(val) => {
                 let spaces = " ".repeat(2);
-                let str = render_value(&val);
+                let str = to_sql::render_value(&val);
                 result.push(str);
             }
         }
@@ -806,19 +806,6 @@ fn render_where_params(args: &Vec<ast::Arg>, table_alias: &str) -> Vec<String> {
     result
 }
 
-fn render_value(value: &ast::QueryValue) -> String {
-    match value {
-        ast::QueryValue::Variable((r, var)) => {
-            format!("${}", var.name)
-        }
-        ast::QueryValue::String((r, s)) => format!("'{}'", s),
-        ast::QueryValue::Int((r, i)) => i.to_string(),
-        ast::QueryValue::Float((r, f)) => f.to_string(),
-        ast::QueryValue::Bool((r, b)) => b.to_string(),
-        ast::QueryValue::Null(r) => "null".to_string(),
-    }
-}
-
 fn render_where_arg(arg: &ast::WhereArg, table_alias: &str) -> String {
     match arg {
         ast::WhereArg::Column(name, operator, value) => {
@@ -836,7 +823,7 @@ fn render_where_arg(arg: &ast::WhereArg, table_alias: &str) -> String {
                 ast::Operator::Like => "like",
                 ast::Operator::NotLike => "not like",
             };
-            let value = render_value(value);
+            let value = to_sql::render_value(value);
             format!("{} {} {}", qualified_column_name, operator, value)
         }
         ast::WhereArg::And(args) => {
