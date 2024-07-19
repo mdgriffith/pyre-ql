@@ -684,8 +684,13 @@ fn to_query_decoder(
         crate::ext::string::capitalize(table_alias),
         crate::ext::string::capitalize(table_alias)
     );
+    let mut primary_key = vec![];
+    match ast::get_primary_id_field_name(&table.fields) {
+        Some(id) => primary_key.push(id),
+        None => (),
+    }
 
-    let identifiers = format!("[]");
+    let identifiers = format!("[ {} ]", format_db_id(table_alias, &primary_key),);
 
     result.push_str(&format!(
         "decode{} =\n",
@@ -767,10 +772,7 @@ fn to_table_field_decoder(
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
             let spaces = " ".repeat(indent);
 
-            let foreign_table_alias = match query_field.alias {
-                Some(ref alias) => &alias,
-                None => &link.foreign_tablename,
-            };
+            let foreign_table_alias = ast::get_aliased_name(query_field);
 
             return format!(
                 "{}|> Db.Read.nested\n{}({})\n{}({})\n{}decode{}\n",
@@ -779,7 +781,7 @@ fn to_table_field_decoder(
                 " ".repeat(indent + 4),
                 format_db_id(table_alias, &link.local_ids),
                 " ".repeat(indent + 4),
-                format_db_id(foreign_table_alias, &link.foreign_ids),
+                format_db_id(&foreign_table_alias, &link.foreign_ids),
                 " ".repeat(indent + 4),
                 (crate::ext::string::capitalize(&ast::get_aliased_name(query_field))) // (capitalize(&link.link_name)) // ast::get_select_alias(table_alias, table_field, query_field),
             );

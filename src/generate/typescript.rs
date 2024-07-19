@@ -643,15 +643,6 @@ fn to_table_field_flat_decoder(
     }
 }
 
-fn format_db_id(table_alias: &str, ids: &Vec<String>) -> String {
-    let mut result = String::new();
-    for id in ids {
-        let formatted = format!("{}__{}", table_alias, id);
-        result.push_str(&format!("Db.Read.id \"{}\"", formatted));
-    }
-    result
-}
-
 fn to_ts_typename(qualified: bool, type_: &str) -> String {
     match type_ {
         "String" => "string".to_string(),

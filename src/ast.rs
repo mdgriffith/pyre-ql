@@ -133,6 +133,20 @@ pub fn has_default_value(col: &Column) -> bool {
     })
 }
 
+pub fn get_primary_id_field_name(fields: &Vec<Field>) -> Option<String> {
+    for field in fields.iter() {
+        match field {
+            Field::Column(col) => {
+                if is_primary_key(col) {
+                    return Some(col.name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 pub fn is_field_primary_key(field_names: &Vec<String>, field: &Vec<Field>) -> bool {
     field.iter().any(|f| match f {
         Field::Column(col) => is_primary_key(col) && field_names.contains(&col.name),
