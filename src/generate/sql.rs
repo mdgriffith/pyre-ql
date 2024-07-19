@@ -1,4 +1,5 @@
 pub mod cte;
+pub mod insert;
 pub mod to_sql;
 
 use crate::ast;
@@ -112,89 +113,45 @@ a limit/offset. In that case, we need to use a CTE or a batched appraoch to get 
 pub fn to_string(
     context: &typecheck::Context,
     query: &ast::Query,
-    query_fields: &Vec<&ast::QueryField>,
+    table: &ast::RecordDetails,
+    table_field: &ast::QueryField,
 ) -> String {
     match query.operation {
-        ast::QueryOperation::Select => select_to_string(context, query, query_fields),
-        ast::QueryOperation::Insert => insert_to_string(context, query, query_fields),
-        ast::QueryOperation::Update => update_to_string(context, query, query_fields),
-        ast::QueryOperation::Delete => delete_to_string(context, query, query_fields),
+        ast::QueryOperation::Select => select_to_string(context, query, table, table_field),
+        ast::QueryOperation::Insert => insert::insert_to_string(context, query, table, table_field),
+        ast::QueryOperation::Update => update_to_string(context, query, table, table_field),
+        ast::QueryOperation::Delete => delete_to_string(context, query, table, table_field),
     }
-}
-
-pub fn insert_to_string(
-    context: &typecheck::Context,
-    query: &ast::Query,
-    query_fields: &Vec<&ast::QueryField>,
-) -> String {
-    // INSERT INTO users (username, credit) VALUES ('john_doe', 100);
-    let mut field_names: Vec<String> = Vec::new();
-    let mut table_name = query.name.clone();
-    for table_field in query_fields {
-        let table = context.tables.get(&table_field.name).unwrap();
-
-        let table_name = ast::get_tablename(&table.name, &table.fields);
-        let mut new_fieldnames = &to_fieldnames(
-            context,
-            &ast::get_aliased_name(&table_field),
-            table,
-            &ast::collect_query_fields(&table_field.fields),
-        );
-        field_names.append(&mut new_fieldnames.clone());
-    }
-
-    let mut result = format!("insert into {} ({})\n", table_name, field_names.join(", "));
-
-    let mut values: Vec<String> = Vec::new();
-    for table_field in query_fields {
-        let table = context.tables.get(&table_field.name).unwrap();
-        let mut new_values = &to_field_insert_values(
-            context,
-            &ast::get_aliased_name(&table_field),
-            table,
-            &ast::collect_query_fields(&table_field.fields),
-        );
-        values.append(&mut new_values.clone());
-    }
-
-    result.push_str(&format!("values ({});", values.join(", ")));
-    result
 }
 
 pub fn update_to_string(
     context: &typecheck::Context,
     query: &ast::Query,
-    query_fields: &Vec<&ast::QueryField>,
+    table: &ast::RecordDetails,
+    query_table_field: &ast::QueryField,
 ) -> String {
-    let mut table_name = query.name.clone();
-    for table_field in query_fields {
-        let table = context.tables.get(&table_field.name).unwrap();
+    let table_name = ast::get_tablename(&table.name, &table.fields);
 
-        table_name = ast::get_tablename(&table.name, &table.fields);
-    }
     let mut result = format!("update {}\n", table_name);
 
     // UPDATE users
     // SET credit = 150
     // WHERE username = 'john_doe';
-    //
 
     let mut values: Vec<String> = Vec::new();
-    for table_field in query_fields {
-        let table = context.tables.get(&table_field.name).unwrap();
-        let mut new_values = &to_field_set_values(
-            context,
-            &ast::get_aliased_name(&table_field),
-            table,
-            &ast::collect_query_fields(&table_field.fields),
-        );
-        values.append(&mut new_values.clone());
-    }
+
+    let mut new_values = &to_field_set_values(
+        context,
+        &ast::get_aliased_name(&query_table_field),
+        table,
+        &ast::collect_query_fields(&query_table_field.fields),
+    );
+    values.append(&mut new_values.clone());
 
     result.push_str(&format!("set {}", values.join(", ")));
 
     result.push_str("\n");
-    render_where(context, query_fields, &mut result);
+    render_where(context, table, query_table_field, &mut result);
     result.push_str(";");
     result
 }
@@ -202,20 +159,16 @@ pub fn update_to_string(
 pub fn delete_to_string(
     context: &typecheck::Context,
     query: &ast::Query,
-    query_fields: &Vec<&ast::QueryField>,
+    table: &ast::RecordDetails,
+    query_table_field: &ast::QueryField,
 ) -> String {
-    let mut table_name = query.name.clone();
-    for table_field in query_fields {
-        let table = context.tables.get(&table_field.name).unwrap();
-
-        table_name = ast::get_tablename(&table.name, &table.fields);
-    }
+    let table_name = ast::get_tablename(&table.name, &table.fields);
 
     let mut result = format!("delete from {}\n", table_name);
     // DELETE FROM users
     // WHERE username = 'john_doe';
 
-    render_where(context, query_fields, &mut result);
+    render_where(context, table, query_table_field, &mut result);
     result.push_str(";");
 
     result
@@ -252,47 +205,44 @@ With 'where' it's the same conceptual problem.
 pub fn select_to_string(
     context: &typecheck::Context,
     query: &ast::Query,
-    query_fields: &Vec<&ast::QueryField>,
+    table: &ast::RecordDetails,
+    query_table_field: &ast::QueryField,
 ) -> String {
     if cte::should_use_cte(query) {
         let mut result = "".to_string();
 
-        for query_top_field in query_fields {
-            cte::select_to_string(context, query, query_top_field, &mut result);
-        }
+        cte::select_to_string(context, query, query_table_field, &mut result);
 
         return result;
     }
     let mut result = "select\n".to_string();
 
     // Selection
-    for field in query_fields {
-        let table = context.tables.get(&field.name).unwrap();
-        let selected = &to_selection(
-            context,
-            &ast::get_aliased_name(&field),
-            table,
-            &ast::collect_query_fields(&field.fields),
-        );
-        result.push_str("  ");
-        result.push_str(&selected.join(",\n  "));
-        result.push_str("\n");
-    }
+
+    let selected = &to_selection(
+        context,
+        &ast::get_aliased_name(&query_table_field),
+        table,
+        &ast::collect_query_fields(&query_table_field.fields),
+    );
+    result.push_str("  ");
+    result.push_str(&selected.join(",\n  "));
+    result.push_str("\n");
 
     // FROM
-    render_from(context, query_fields, &mut result);
+    render_from(context, table, query_table_field, &mut result);
 
     // WHERE
-    render_where(context, query_fields, &mut result);
+    render_where(context, table, query_table_field, &mut result);
 
     // Order by
-    render_order_by(context, query_fields, &mut result);
+    render_order_by(context, table, query_table_field, &mut result);
 
     // LIMIT
-    render_limit(context, query_fields, &mut result);
+    render_limit(context, table, query_table_field, &mut result);
 
     // OFFSET
-    render_offset(context, query_fields, &mut result);
+    render_offset(context, table, query_table_field, &mut result);
 
     result.push_str(";");
 
@@ -301,64 +251,57 @@ pub fn select_to_string(
 
 fn render_from(
     context: &typecheck::Context,
-    query_fields: &Vec<&ast::QueryField>,
+    table: &ast::RecordDetails,
+    query_table_field: &ast::QueryField,
     result: &mut String,
 ) {
     result.push_str("from\n");
-    for field in query_fields {
-        let table = context.tables.get(&field.name).unwrap();
 
-        let table_name = ast::get_tablename(&table.name, &table.fields);
-        let mut from_vals = &mut to_from(
-            context,
-            &ast::get_aliased_name(&field),
-            table,
-            &ast::collect_query_fields(&field.fields),
-        );
+    let table_name = ast::get_tablename(&table.name, &table.fields);
+    let mut from_vals = &mut to_from(
+        context,
+        &ast::get_aliased_name(&query_table_field),
+        table,
+        &ast::collect_query_fields(&query_table_field.fields),
+    );
 
-        // the from statements are naturally in reverse order
-        // Because we're walking outwards from the root, and `.push` ing the join statements
-        // Now re reverse them so they're in the correct order.
-        from_vals.reverse();
+    // the from statements are naturally in reverse order
+    // Because we're walking outwards from the root, and `.push` ing the join statements
+    // Now re reverse them so they're in the correct order.
+    from_vals.reverse();
 
-        result.push_str(&format!("  {}", quote(&table_name)));
-        if (from_vals.is_empty()) {
-            result.push_str("\n");
-        } else {
-            result.push_str("\n  ");
-            result.push_str(&from_vals.join("\n  "));
-            result.push_str("\n");
-        }
+    result.push_str(&format!("  {}", quote(&table_name)));
+    if (from_vals.is_empty()) {
+        result.push_str("\n");
+    } else {
+        result.push_str("\n  ");
+        result.push_str(&from_vals.join("\n  "));
+        result.push_str("\n");
     }
 }
 
 fn render_order_by(
     context: &typecheck::Context,
-    query_fields: &Vec<&ast::QueryField>,
+    table: &ast::RecordDetails,
+    query_table_field: &ast::QueryField,
     result: &mut String,
 ) {
     let mut order_vals = vec![];
-    for query_field in query_fields {
-        let table = context.tables.get(&query_field.name).unwrap();
-        let table_alias = &ast::get_aliased_name(&query_field);
 
-        for field in &query_field.fields {
-            match field {
-                ast::ArgField::Arg(located_arg) => {
-                    if let ast::Arg::OrderBy(dir, col) = &located_arg.arg {
-                        let dir_str = ast::direction_to_string(dir);
-                        order_vals.push(format!(
-                            "{}.{} {}",
-                            quote(table_alias),
-                            quote(col),
-                            dir_str
-                        ));
-                    }
+    let table_alias = &ast::get_aliased_name(&query_table_field);
+
+    for field in &query_table_field.fields {
+        match field {
+            ast::ArgField::Arg(located_arg) => {
+                if let ast::Arg::OrderBy(dir, col) = &located_arg.arg {
+                    let dir_str = ast::direction_to_string(dir);
+                    order_vals.push(format!("{}.{} {}", quote(table_alias), quote(col), dir_str));
                 }
-                _ => continue,
             }
+            _ => continue,
         }
     }
+
     if (!&order_vals.is_empty()) {
         result.push_str("order by ");
 
@@ -377,70 +320,70 @@ fn render_order_by(
 
 fn render_limit(
     context: &typecheck::Context,
-    query_fields: &Vec<&ast::QueryField>,
+    table: &ast::RecordDetails,
+    query_table_field: &ast::QueryField,
     result: &mut String,
 ) {
-    for query_field in query_fields {
-        for field in &query_field.fields {
-            match field {
-                ast::ArgField::Arg(located_arg) => {
-                    if let ast::Arg::Limit(val) = &located_arg.arg {
-                        result.push_str(&format!("limit {}\n", to_sql::render_value(val)));
-                        break;
-                    }
+    for field in &query_table_field.fields {
+        match field {
+            ast::ArgField::Arg(located_arg) => {
+                if let ast::Arg::Limit(val) = &located_arg.arg {
+                    result.push_str(&format!("limit {}\n", to_sql::render_value(val)));
+                    break;
                 }
-                _ => continue,
             }
+            _ => continue,
         }
     }
 }
 
 fn render_offset(
     context: &typecheck::Context,
-    query_fields: &Vec<&ast::QueryField>,
+    table: &ast::RecordDetails,
+    query_table_field: &ast::QueryField,
     result: &mut String,
 ) {
-    for query_field in query_fields {
-        for field in &query_field.fields {
-            match field {
-                ast::ArgField::Arg(located_arg) => {
-                    if let ast::Arg::Offset(val) = &located_arg.arg {
-                        result.push_str(&format!("offset {}\n", to_sql::render_value(val)));
-                        break;
-                    }
+    for field in &query_table_field.fields {
+        match field {
+            ast::ArgField::Arg(located_arg) => {
+                if let ast::Arg::Offset(val) = &located_arg.arg {
+                    result.push_str(&format!("offset {}\n", to_sql::render_value(val)));
+                    break;
                 }
-                _ => continue,
             }
+            _ => continue,
         }
     }
 }
 
 fn render_where(
     context: &typecheck::Context,
-    query_fields: &Vec<&ast::QueryField>,
+    table: &ast::RecordDetails,
+    query_table_field: &ast::QueryField,
     result: &mut String,
 ) {
     let mut where_vals = vec![];
-    for query_field in query_fields {
-        let table = context.tables.get(&query_field.name).unwrap();
-        let table_alias = &ast::get_aliased_name(&query_field);
-        let table_name = ast::get_tablename(&table.name, &table.fields);
 
-        let new_params =
-            render_where_params(&ast::collect_query_args(&query_field.fields), &table_name);
+    let table_alias = &ast::get_aliased_name(&query_table_field);
+    let table_name = ast::get_tablename(&table.name, &table.fields);
 
-        where_vals.extend(new_params);
+    let new_params = render_where_params(
+        &ast::collect_query_args(&query_table_field.fields),
+        &table_name,
+    );
 
-        let new_where_vals = to_where(
-            context,
-            &table_name,
-            table_alias,
-            table,
-            &ast::collect_query_fields(&query_field.fields),
-        );
+    where_vals.extend(new_params);
 
-        where_vals.extend(new_where_vals);
-    }
+    let new_where_vals = to_where(
+        context,
+        &table_name,
+        table_alias,
+        table,
+        &ast::collect_query_fields(&query_table_field.fields),
+    );
+
+    where_vals.extend(new_where_vals);
+
     if (!&where_vals.is_empty()) {
         result.push_str("where\n  ");
         let mut first = true;
@@ -601,71 +544,6 @@ fn to_subfrom(
     }
 }
 
-// Field names
-
-fn to_fieldnames(
-    context: &typecheck::Context,
-    table_alias: &str,
-    table: &ast::RecordDetails,
-    fields: &Vec<&ast::QueryField>,
-) -> Vec<String> {
-    let mut result = vec![];
-
-    for field in fields {
-        let table_field = &table
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
-            .unwrap();
-
-        let table_name = ast::get_tablename(&table.name, &table.fields);
-
-        result.append(&mut to_table_fieldname(
-            2,
-            context,
-            &table_name,
-            table_alias,
-            &table_field,
-            &field,
-        ));
-    }
-
-    result
-}
-
-fn to_table_fieldname(
-    indent: usize,
-    context: &typecheck::Context,
-    table_name: &str,
-    table_alias: &str,
-    table_field: &ast::Field,
-    query_field: &ast::QueryField,
-) -> Vec<String> {
-    match table_field {
-        ast::Field::Column(column) => {
-            let spaces = " ".repeat(indent);
-            let str = query_field.name.to_string();
-            return vec![str];
-        }
-        // ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-        //     let spaces = " ".repeat(indent);
-
-        //     let foreign_table_alias = match query_field.alias {
-        //         Some(ref alias) => &alias,
-        //         None => &link.foreign_tablename,
-        //     };
-        //     let link_table = typecheck::get_linked_table(context, &link).unwrap();
-        //     return to_selection(
-        //         context,
-        //         &ast::get_aliased_name(&query_field),
-        //         link_table,
-        //         &ast::collect_query_fields(&query_field.fields),
-        //     );
-        // }
-        _ => vec![],
-    }
-}
-
 // SET values
 
 fn to_field_set_values(
@@ -697,35 +575,6 @@ fn to_field_set_values(
                 }
                 _ => (),
             },
-        }
-    }
-
-    result
-}
-
-// Insert
-fn to_field_insert_values(
-    context: &typecheck::Context,
-    table_alias: &str,
-    table: &ast::RecordDetails,
-    fields: &Vec<&ast::QueryField>,
-) -> Vec<String> {
-    let mut result = vec![];
-
-    for field in fields {
-        let table_field = &table
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
-            .unwrap();
-
-        match &field.set {
-            None => (),
-            Some(val) => {
-                let spaces = " ".repeat(2);
-                let str = to_sql::render_value(&val);
-                result.push(str);
-            }
         }
     }
 
