@@ -1,3 +1,4 @@
+pub mod watched;
 use crate::ast;
 use crate::ext::string;
 use crate::generate::sql;
@@ -269,7 +270,7 @@ pub fn write_queries(
     query_list: &ast::QueryList,
 ) -> io::Result<()> {
     write_runner(dir, context, query_list);
-    write_watched(dir, context);
+    watched::write(dir, context);
 
     for operation in &query_list.queries {
         match operation {
@@ -290,67 +291,6 @@ pub fn write_queries(
         }
     }
     Ok(())
-}
-
-fn operation_name(operation: ast::QueryOperation) -> String {
-    match operation {
-        ast::QueryOperation::Select => "Queried",
-        ast::QueryOperation::Insert => "Added",
-        ast::QueryOperation::Update => "Updated",
-        ast::QueryOperation::Delete => "Deleted",
-    }
-    .to_string()
-}
-fn write_watched(dir: &Path, context: &typecheck::Context) {
-    let target_path = dir.join("watched.ts");
-
-    let mut content = String::new();
-
-    content
-        .push_str("\n\n// All tables that are currently being watched\nexport enum WatchedKind {");
-    let mut at_least_one_watched = false;
-    for (name, record) in &context.tables {
-        for watched_operation in ast::to_watched_operations(record) {
-            content.push_str(&format!(
-                "\n  {}{},",
-                record.name,
-                operation_name(watched_operation)
-            ));
-        }
-    }
-    content.push_str("\n}");
-
-    for (name, record) in &context.tables {
-        for watched_operation in ast::to_watched_operations(record) {
-            let name = format!("{}{}", record.name, operation_name(watched_operation));
-            content.push_str(&format!(
-                "\n\nexport interface {} {{\n  kind: WatchedKind.{};\n  data: {};\n}}",
-                name, name, "{}"
-            ));
-        }
-    }
-
-    content.push_str("\n\nexport type Watched");
-    let mut at_least_one_constructor = false;
-    for (name, record) in &context.tables {
-        for watched_operation in ast::to_watched_operations(record) {
-            let name = format!("{}{}", record.name, operation_name(watched_operation));
-            if !at_least_one_constructor {
-                content.push_str(&format!("\n    = {}", name));
-                at_least_one_constructor = true;
-            } else {
-                content.push_str(&format!("\n    | {}", name));
-            }
-        }
-    }
-    if !at_least_one_constructor {
-        content.push_str(" = {};")
-    }
-
-    let mut output = fs::File::create(target_path).expect("Failed to create file");
-    output
-        .write_all(content.as_bytes())
-        .expect("Failed to write to file");
 }
 
 fn write_runner(dir: &Path, context: &typecheck::Context, query_list: &ast::QueryList) {
@@ -449,7 +389,11 @@ fn to_query_file(
         let table = context.tables.get(&field.name).unwrap();
 
         for watched_operation in ast::to_watched_operations(table) {
-            let name = format!("{}{}", table.name, operation_name(watched_operation));
+            let name = format!(
+                "{}{}",
+                table.name,
+                watched::operation_name(&watched_operation)
+            );
             watchers.push(format!(
                 "{{ kind: Watched.WatchedKind.{}, data: {{}} }}",
                 name
