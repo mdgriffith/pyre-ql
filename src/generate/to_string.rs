@@ -476,6 +476,15 @@ fn format_where(where_arg: &ast::WhereArg) -> String {
 
 fn value_to_string(value: &ast::QueryValue) -> String {
     match value {
+        ast::QueryValue::Fn(func) => format!(
+            "{}({})",
+            func.name,
+            func.args
+                .iter()
+                .map(|value| value_to_string(value))
+                .collect::<Vec<String>>()
+                .join(", ")
+        ),
         ast::QueryValue::Variable((r, var)) => ast::to_pyre_variable_name(var),
         ast::QueryValue::String((r, value)) => format!("\"{}\"", value),
         ast::QueryValue::Int((r, value)) => value.to_string(),

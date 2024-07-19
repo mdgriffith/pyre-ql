@@ -108,6 +108,13 @@ fn hash_where_arg(hasher: &mut Sha256, where_arg: &WhereArg) {
 
 fn hash_query_value(hasher: &mut Sha256, value: &QueryValue) {
     match value {
+        QueryValue::Fn(func) => {
+            hasher.update("fn");
+            hasher.update(&func.name);
+            for arg in &func.args {
+                hash_query_value(hasher, arg);
+            }
+        }
         QueryValue::Variable((_, var)) => {
             hasher.update("variable");
             hasher.update(&var.name);

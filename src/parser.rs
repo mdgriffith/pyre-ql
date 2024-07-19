@@ -941,6 +941,39 @@ fn parse_variable(input: Text) -> ParseResult<ast::QueryValue> {
     ))
 }
 
+fn parse_fn(input: Text) -> ParseResult<ast::QueryValue> {
+    let (input, start_pos) = position(input)?;
+    let (input, name) = parse_fieldname(input)?;
+    let (input, end_name_pos) = position(input)?;
+    let (input, _) = tag("(")(input)?;
+    let (input, start_args_pos) = position(input)?;
+    let (input, args) = separated_list1(char(','), parse_value)(input)?;
+    let (input, end_args_pos) = position(input)?;
+    let (input, _) = tag(")")(input)?;
+    let (input, end_pos) = position(input)?;
+
+    let range = ast::Range {
+        start: to_location(&start_pos),
+        end: to_location(&end_pos),
+    };
+    Ok((
+        input,
+        ast::QueryValue::Fn(ast::FnDetails {
+            name: name.to_string(),
+            args,
+            location: range,
+            location_fn_name: ast::Range {
+                start: to_location(&start_pos),
+                end: to_location(&end_name_pos),
+            },
+            location_arg: ast::Range {
+                start: to_location(&start_args_pos),
+                end: to_location(&end_args_pos),
+            },
+        }),
+    ))
+}
+
 fn parse_session_variable(input: Text) -> ParseResult<ast::QueryValue> {
     let (input, start_pos) = position(input)?;
     let (input, _) = tag("Session.")(input)?;
@@ -974,6 +1007,7 @@ fn parse_value(input: Text) -> ParseResult<ast::QueryValue> {
         parse_session_variable,
         parse_string,
         parse_number,
+        parse_fn,
     ))(input)
 }
 

@@ -617,12 +617,24 @@ pub enum WhereArg {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum QueryValue {
+    Fn(FnDetails),
+
     Variable((Range, VariableDetails)),
     String((Range, String)),
     Int((Range, i32)),
     Float((Range, f32)),
     Bool((Range, bool)),
     Null(Range),
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct FnDetails {
+    pub name: String,
+    pub args: Vec<QueryValue>,
+
+    pub location: Range,
+    pub location_fn_name: Range,
+    pub location_arg: Range,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

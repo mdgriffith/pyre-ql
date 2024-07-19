@@ -7,6 +7,15 @@ pub fn format_tablename(name: &str) -> String {
 
 pub fn render_value(value: &ast::QueryValue) -> String {
     match value {
+        ast::QueryValue::Fn(func) => format!(
+            "{}({})",
+            func.name,
+            func.args
+                .iter()
+                .map(|value| render_value(value))
+                .collect::<Vec<String>>()
+                .join(", ")
+        ),
         ast::QueryValue::Variable((r, var)) => {
             format!("${}", var.name)
         }
