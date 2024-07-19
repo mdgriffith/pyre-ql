@@ -39,6 +39,10 @@ pub enum Expecting {
 pub enum ErrorType {
     ParsingError(ParsingErrorDetails),
 
+    UnknownFunction {
+        found: String,
+        known_functions: Vec<String>,
+    },
     MultipleSessionDeinitions,
     MissingType,
     DuplicateDefinition(String),
@@ -120,6 +124,10 @@ pub enum ErrorType {
         column_defined_as: String,
         variable_name: String,
         variable_defined_as: String,
+    },
+    LiteralTypeMismatch {
+        expecting_type: String,
+        found: String,
     },
     UnusedParam {
         param: String,
@@ -457,6 +465,27 @@ fn to_error_description(error: &Error) -> String {
             result
         }
 
+        ErrorType::UnknownFunction {
+            found,
+            known_functions,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "I don't recognize this function: {}\n\n",
+                found.cyan(),
+            ));
+
+            if known_functions.len() > 0 {
+                result.push_str("\nHere are the functions I know:\n");
+                for func in known_functions {
+                    result.push_str(&format!("    {}\n", func.cyan()));
+                }
+            }
+
+            result.push_str("\n\n");
+            result
+        }
+
         ErrorType::MissingType => {
             let mut result = "".to_string();
             result.push_str(&format!(
@@ -535,6 +564,21 @@ fn to_error_description(error: &Error) -> String {
                     result.push_str(&format!("    {}\n", table.cyan()));
                 }
             }
+
+            result.push_str("\n\n");
+            result
+        }
+
+        ErrorType::LiteralTypeMismatch {
+            expecting_type,
+            found,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "I was expecting {}, but found {}.\n",
+                expecting_type.yellow(),
+                found.cyan()
+            ));
 
             result.push_str("\n\n");
             result
