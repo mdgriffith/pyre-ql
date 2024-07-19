@@ -1282,7 +1282,7 @@ fn check_table_query(
                             if link.link_name == field.name {
                                 is_known_field = true;
                                 has_nested_selected = true;
-                                check_link(context, operation, errors, link, field, params)
+                                check_link(context, operation, errors, table, link, field, params)
                             }
                             ()
                         }
@@ -1500,6 +1500,7 @@ fn check_link(
     context: &Context,
     operation: &ast::QueryOperation,
     mut errors: &mut Vec<Error>,
+    local_table: &ast::RecordDetails,
     link: &ast::LinkDetails,
     field: &ast::QueryField,
     params: &mut HashMap<String, ParamInfo>,
@@ -1507,16 +1508,32 @@ fn check_link(
     // Links are only allowed in selects at the moment
     match operation {
         ast::QueryOperation::Insert => {
-            errors.push(Error {
-                filepath: context.current_filepath.clone(),
-                error_type: ErrorType::LinksDisallowedInInserts {
-                    field: link.link_name.clone(),
-                },
-                locations: vec![Location {
-                    contexts: vec![],
-                    primary: to_range(&field.start, &field.end),
-                }],
-            });
+            // Nested inserts are only allowed if the local_id is a primary key
+            let primary_key_field_name = ast::get_primary_id_field_name(&local_table.fields);
+
+            match primary_key_field_name {
+                None => (),
+                Some(primary_key_name) => {
+                    let are_primary = link
+                        .local_ids
+                        .iter()
+                        .all(|s: &String| s == &primary_key_name);
+                    if (!are_primary) {
+                        errors.push(Error {
+                            filepath: context.current_filepath.clone(),
+                            error_type: ErrorType::LinksDisallowedInInserts {
+                                field: link.link_name.clone(),
+                                table_name: local_table.name.clone(),
+                                local_ids: link.local_ids.clone(),
+                            },
+                            locations: vec![Location {
+                                contexts: vec![],
+                                primary: to_range(&field.start, &field.end),
+                            }],
+                        });
+                    }
+                }
+            }
             return ();
         }
         ast::QueryOperation::Update => {

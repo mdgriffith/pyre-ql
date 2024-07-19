@@ -144,6 +144,8 @@ pub enum ErrorType {
     },
     LinksDisallowedInInserts {
         field: String,
+        table_name: String,
+        local_ids: Vec<String>,
     },
     LinksDisallowedInDeletes {
         field: String,
@@ -808,14 +810,19 @@ fn to_error_description(error: &Error) -> String {
             result
         }
 
-        ErrorType::LinksDisallowedInInserts { field } => {
+        ErrorType::LinksDisallowedInInserts {
+            field,
+            table_name,
+            local_ids,
+        } => {
             let mut result = "".to_string();
-
             result.push_str(&format!(
-                "{} is a {}, which isn't allowed in a {}",
+                "Nested inserts are only allowed if you start with a primary key.\n\n{} links via {}, which isn't the primary key of the {} table.",
                 field.yellow(),
-                "@link".yellow(),
-                "insert".cyan()
+                local_ids.clone().join(", ").yellow(),
+                table_name.yellow(),
+
+
             ));
 
             result.push_str("\n\n");
