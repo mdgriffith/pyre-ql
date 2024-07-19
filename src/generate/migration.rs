@@ -124,6 +124,7 @@ fn column_directive_to_string(column: &Column, directive: &ColumnDirective) -> S
 
 fn value_to_string(value: &QueryValue) -> String {
     match value {
+        QueryValue::Fn(func) => "".to_string(), // not allowed
         QueryValue::Variable((r, name)) => "".to_string(), // not allowed
         QueryValue::String((r, value)) => format!("'{}'", value),
         QueryValue::Int((r, value)) => value.to_string(),

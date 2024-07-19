@@ -9,9 +9,18 @@ use std::collections::HashSet;
 pub struct Context {
     pub current_filepath: String,
     pub session: Option<ast::SessionDetails>,
+    pub funcs: HashMap<String, FuncDefinition>,
+
     pub types: HashMap<String, DefInfo>,
     pub tables: HashMap<String, ast::RecordDetails>,
     pub variants: HashMap<String, (Option<Range>, Vec<VariantDef>)>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct FuncDefinition {
+    name: String,
+    arg_types: Vec<String>,
+    return_type: String,
 }
 
 fn convert_range(range: &ast::Range) -> Range {
@@ -30,10 +39,76 @@ pub fn get_linked_table<'a>(
         .get(&crate::ext::string::decapitalize(&link.foreign_tablename))
 }
 
+fn insert_fn(map: &mut HashMap<String, FuncDefinition>, def: FuncDefinition) {
+    map.insert(def.name.clone(), def);
+}
+
+#[rustfmt::skip]
+fn get_default_fns() -> HashMap<String, FuncDefinition> {
+    let mut default_funcs = HashMap::new();
+
+    // Mathematical Functions
+    insert_fn(&mut default_funcs, FuncDefinition { name: "max".to_string(), arg_types: vec!["number".to_string(),"number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "min".to_string(), arg_types: vec!["number".to_string(),"number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "abs".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "acos".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "asin".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "atan".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "atan2".to_string(), arg_types: vec!["number".to_string(), "number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "ceil".to_string(), arg_types: vec!["number".to_string()], return_type: "Int".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "cos".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "exp".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "floor".to_string(), arg_types: vec!["number".to_string()], return_type: "Int".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "ln".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "log".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "mod".to_string(), arg_types: vec!["number".to_string(), "number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "pi".to_string(), arg_types: vec![], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "pow".to_string(), arg_types: vec!["number".to_string(), "number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "random".to_string(), arg_types: vec![], return_type: "Int".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "randomblob".to_string(), arg_types: vec!["Int".to_string()], return_type: "Blob".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "round".to_string(), arg_types: vec!["number".to_string()], return_type: "Int".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "sign".to_string(), arg_types: vec!["number".to_string()], return_type: "Int".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "sin".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "sqrt".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "tan".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "trunc".to_string(), arg_types: vec!["number".to_string()], return_type: "Int".to_string() });
+
+    // String Functions
+    insert_fn(&mut default_funcs, FuncDefinition { name: "length".to_string(), arg_types: vec!["String".to_string()], return_type: "Int".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "lower".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "upper".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "substr".to_string(), arg_types: vec!["String".to_string(), "Int".to_string(), "Int".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "trim".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "ltrim".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "rtrim".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "replace".to_string(), arg_types: vec!["String".to_string(), "String".to_string(), "String".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "like".to_string(), arg_types: vec!["String".to_string(), "String".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "hex".to_string(), arg_types: vec!["Blob".to_string()], return_type: "String".to_string() });
+
+    // Date and Time Functions
+    insert_fn(&mut default_funcs, FuncDefinition { name: "date".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "time".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "datetime".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "julianday".to_string(), arg_types: vec!["String".to_string()], return_type: "Float".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "strftime".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
+
+    // Control Flow Functions
+    insert_fn(&mut default_funcs, FuncDefinition { name: "ifnull".to_string(), arg_types: vec!["String".to_string(), "String".to_string()], return_type: "String".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "nullif".to_string(), arg_types: vec!["String".to_string(), "String".to_string()], return_type: "String".to_string() });
+
+    // Other Functions
+    insert_fn(&mut default_funcs, FuncDefinition { name: "total_changes".to_string(), arg_types: vec![], return_type: "Int".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "changes".to_string(), arg_types: vec![], return_type: "Int".to_string() });
+    insert_fn(&mut default_funcs, FuncDefinition { name: "last_insert_rowid".to_string(), arg_types: vec![], return_type: "Int".to_string() });
+
+    default_funcs
+}
+
 fn empty_context() -> Context {
     let mut context = Context {
         current_filepath: "".to_string(),
         session: None,
+        funcs: get_default_fns(),
         types: HashMap::new(),
         tables: HashMap::new(),
         variants: HashMap::new(),
@@ -805,6 +880,7 @@ fn check_where_args(
         ast::WhereArg::Column(field_name, operator, query_val) => {
             let mut is_known_field = false;
             let mut column_type: Option<String> = None;
+            let mut is_nullable = false;
             for col in &table.fields {
                 if is_known_field {
                     continue;
@@ -814,6 +890,7 @@ fn check_where_args(
                         if &column.name == field_name {
                             is_known_field = true;
                             column_type = Some(column.type_.clone());
+                            is_nullable = column.nullable;
                         }
                     }
                     ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
@@ -860,6 +937,7 @@ fn check_where_args(
                         params,
                         &table.name,
                         &column_type_string,
+                        is_nullable,
                     );
                 }
             }
@@ -912,8 +990,110 @@ fn check_value(
     params: &mut HashMap<String, ParamInfo>,
     table_name: &str,
     table_type_string: &str,
+    is_nullable: bool,
 ) {
     match value {
+        ast::QueryValue::String((range, _)) => {
+            if table_type_string != "String" {
+                errors.push(Error {
+                    filepath: context.current_filepath.clone(),
+                    error_type: ErrorType::LiteralTypeMismatch {
+                        expecting_type: table_type_string.to_string(),
+                        found: "String".to_string(),
+                    },
+                    locations: vec![Location {
+                        contexts: vec![], // to_range(&start, &end),
+                        primary: vec![convert_range(range)],
+                    }],
+                })
+            }
+        }
+        ast::QueryValue::Int((range, _)) => {
+            if table_type_string != "Int" {
+                errors.push(Error {
+                    filepath: context.current_filepath.clone(),
+                    error_type: ErrorType::LiteralTypeMismatch {
+                        expecting_type: table_type_string.to_string(),
+                        found: "Int".to_string(),
+                    },
+                    locations: vec![Location {
+                        contexts: vec![], // to_range(&start, &end),
+                        primary: vec![convert_range(range)],
+                    }],
+                })
+            }
+        }
+        ast::QueryValue::Float((range, _)) => {
+            if table_type_string != "Float" {
+                errors.push(Error {
+                    filepath: context.current_filepath.clone(),
+                    error_type: ErrorType::LiteralTypeMismatch {
+                        expecting_type: table_type_string.to_string(),
+                        found: "Float".to_string(),
+                    },
+                    locations: vec![Location {
+                        contexts: vec![], // to_range(&start, &end),
+                        primary: vec![convert_range(range)],
+                    }],
+                })
+            }
+        }
+        ast::QueryValue::Bool((range, _)) => {
+            if table_type_string != "Bool" {
+                errors.push(Error {
+                    filepath: context.current_filepath.clone(),
+                    error_type: ErrorType::LiteralTypeMismatch {
+                        expecting_type: table_type_string.to_string(),
+                        found: "Bool".to_string(),
+                    },
+                    locations: vec![Location {
+                        contexts: vec![], // to_range(&start, &end),
+                        primary: vec![convert_range(range)],
+                    }],
+                })
+            }
+        }
+        ast::QueryValue::Null(..) => {}
+        ast::QueryValue::Fn(func) => {
+            let found = context.funcs.get(&func.name);
+            match found {
+                None => errors.push(Error {
+                    filepath: context.current_filepath.clone(),
+                    error_type: ErrorType::UnknownFunction {
+                        found: func.name.clone(),
+                        known_functions: context.funcs.keys().cloned().collect(),
+                    },
+                    locations: vec![Location {
+                        contexts: vec![],
+                        primary: vec![convert_range(&func.location_fn_name)],
+                    }],
+                }),
+                Some(func_definition) => {
+                    if func_definition.arg_types.len() != func.args.len() {
+                        errors.push(Error {
+                            filepath: context.current_filepath.clone(),
+                            error_type: ErrorType::UnknownFunction {
+                                found: func.name.clone(),
+                                known_functions: context.funcs.keys().cloned().collect(),
+                            },
+                            locations: vec![Location {
+                                contexts: vec![],
+                                primary: vec![convert_range(&func.location_fn_name)],
+                            }],
+                        });
+                    } else {
+                        for (arg, arg_type) in
+                            func.args.iter().zip(func_definition.arg_types.iter())
+                        {
+                            check_value(
+                                context, arg, start, end, errors, params, table_name, arg_type,
+                                false,
+                            );
+                        }
+                    }
+                }
+            }
+        }
         ast::QueryValue::Variable((var_range, var)) => {
             let var_name = ast::to_pyre_variable_name(var);
 
@@ -1033,6 +1213,7 @@ fn check_table_query(
                             params,
                             &table.name,
                             "Int",
+                            false,
                         );
                     }
                     ast::Arg::Offset(offset_value) => {
@@ -1050,6 +1231,7 @@ fn check_table_query(
                             params,
                             &table.name,
                             "Int",
+                            false,
                         );
                     }
                     ast::Arg::Where(whereArgs) => {
@@ -1253,6 +1435,7 @@ fn check_field(
                 params,
                 &column.name,
                 &column.type_,
+                column.nullable,
             );
         }
         None => {}
