@@ -688,7 +688,7 @@ fn to_error_description(error: &Error) -> String {
             };
             result.push_str(&format!(
                 "{} is used, but not declared.{}",
-                format!("${}", param).yellow(),
+                param.yellow(),
                 type_suggestion
             ));
 
