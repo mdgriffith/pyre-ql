@@ -583,6 +583,7 @@ fn to_error_description(error: &Error) -> String {
             result.push_str("\n\n");
             result
         }
+
         ErrorType::TypeMismatch {
             table,
 
