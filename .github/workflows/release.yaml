@@ -38,6 +38,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify and check if on main
+        id: verify-check-branch
+        run: |
+          BRANCH=$(git branch -r --contains $GITHUB_SHA | grep 'origin/main' | wc -l)
+          if [ "$BRANCH" -eq "0" ]; then
+            echo "This tag is not based on the main branch."
+            exit 1
+          else
+            echo "This tag is based on the main branch."
+          fi
+
       # Cache cargo & target directories
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
