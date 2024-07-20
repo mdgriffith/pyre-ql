@@ -60,6 +60,10 @@ jobs:
           args: "--locked --release"
           strip: true
 
+      # List files in the current directory
+      - name: List files
+        run: ls -R
+
       # Publish Release if tags are `test-release'.
       - name: Publish release artifacts
         if: contains(github.ref, 'refs/tags/test-release')
