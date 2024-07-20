@@ -91,4 +91,4 @@ jobs:
         with:
           draft: true
           files: "${{ matrix.platform.name }}"
-          body_path: "releases/${GITHUB_REF#refs/tags/}.md"
+          body_path: "releases/${{ github.ref#refs/tags/ }}.md"
