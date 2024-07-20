@@ -2,22 +2,23 @@ on:
   push:
     branches:
       - main
+    tags:
+      - test-release
+      - version-*
 
 name: Prepare release
 jobs:
   release:
     name: Release - ${{ matrix.platform.release_for }}
-    if: startsWith( github.ref, 'refs/tags/v' ) || github.ref == 'refs/tags/test-release'
     strategy:
       matrix:
         platform:
-          - os_name: Linux-x86_64
+          - release_for: Linux-x86_64
             os: ubuntu-20.04
             target: x86_64-unknown-linux-musl
             bin: pyre
             name: pyre-Linux-x86_64-musl.tar.gz
-            cross: false
-            cargo_command: cargo
+            command: build
 
           - release_for: Windows-x86_64
             os: windows-latest
@@ -49,17 +50,17 @@ jobs:
 
       # Publish Release if tags are `test-release'.
       - name: Publish release artifacts
+        if: contains(github.ref, 'refs/tags/test-release')
         uses: actions/upload-artifact@v3
         with:
-          name: ubi-${{ matrix.platform.os_name }}
-          path: "ubi*"
-        if: github.ref == 'refs/tags/test-release'
+          name: pyre-${{ matrix.platform.os_name }}
+          path: "pyre*"
 
       # Publish Github release if tag begins with `v`
       - name: Publish GitHub release
+        if: startsWith( github.ref, 'refs/tags/v' )
         uses: softprops/action-gh-release@v1
         with:
           draft: true
-          files: "ubi*"
+          files: "pyre*"
           body_path: Changes.md
-        if: startsWith( github.ref, 'refs/tags/v' )
