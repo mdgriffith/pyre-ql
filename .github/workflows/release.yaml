@@ -77,7 +77,7 @@ jobs:
         if: contains(github.ref, 'refs/tags/test-release')
         uses: actions/upload-artifact@v4
         with:
-          name: pyre-${{ matrix.platform.os_name }}
+          name: pyre-${{ matrix.platform.os }}
           path: "target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}"
 
       # Publish Github release if tag begins with `v`
