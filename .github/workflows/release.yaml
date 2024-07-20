@@ -1,0 +1,60 @@
+name: Prepare release
+jobs:
+  release:
+    name: Release - ${{ matrix.platform.release_for }}
+    if: startsWith( github.ref, 'refs/tags/v' ) || github.ref == 'refs/tags/test-release'
+    strategy:
+      matrix:
+        platform:
+          - os_name: Linux-x86_64
+            os: ubuntu-20.04
+            target: x86_64-unknown-linux-musl
+            bin: pyre
+            name: pyre-Linux-x86_64-musl.tar.gz
+            cross: false
+            cargo_command: cargo
+
+          - release_for: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: pyre.exe
+            name: pyre-Windows-x86_64.zip
+            command: both
+
+          - release_for: macOS-x86_64
+            os: macOS-latest
+            target: x86_64-apple-darwin
+            bin: pyre
+            name: pyre-Darwin-x86_64.tar.gz
+            command: both
+
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      # Build binary
+      - name: Build binary
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          command: ${{ matrix.platform.command }}
+          target: ${{ matrix.platform.target }}
+          args: "--locked --release"
+          strip: true
+
+      # Publish Release if tags are `test-release'.
+      - name: Publish release artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ubi-${{ matrix.platform.os_name }}
+          path: "ubi*"
+        if: github.ref == 'refs/tags/test-release'
+
+      # Publish Github release if tag begins with `v`
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          files: "ubi*"
+          body_path: Changes.md
+        if: startsWith( github.ref, 'refs/tags/v' )
