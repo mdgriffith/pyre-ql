@@ -60,31 +60,31 @@ jobs:
           args: "--locked --release"
           strip: true
 
-      # Package as archive
-      # - name: Package as archive
-      #   shell: bash
-      #   run: |
-      #     cd target/${{ matrix.platform.target }}/release
-      #     if [[ "${{ matrix.platform.os }}" == "windows-latest" ]]; then
-      #       7z a ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
-      #     else
-      #       tar czvf ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
-      #     fi
-      #     cd -
-
       # Publish Release if tags are `test-release'.
       - name: Publish release artifacts
         if: contains(github.ref, 'refs/tags/test-release')
         uses: actions/upload-artifact@v4
         with:
-          name: pyre-${{ matrix.platform.os }}
+          name: pyre-${{ matrix.platform.name }}
           path: "target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}"
 
-      # Publish Github release if tag begins with `v`
+      # Package as archive
+      - name: Package as for github release
+        shell: bash
+        run: |
+          cd target/${{ matrix.platform.target }}/release
+          if [[ "${{ matrix.platform.os }}" == "windows-latest" ]]; then
+            7z a ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
+          else
+            tar czvf ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
+          fi
+          cd -
+
+      # Publish Github release if tag begins with `version-`
       - name: Publish GitHub release
         if: startsWith( github.ref, 'refs/tags/version-' )
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: "pyre*"
+          files: "${{ matrix.platform.name }}"
           body_path: Changes.md
