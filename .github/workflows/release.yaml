@@ -37,14 +37,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify branch
-        id: verify-branch
-        run: |
-          if [ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]; then
-            echo "This tag is not based on the main branch."
-            exit 1
-          fi
-
       # Cache cargo & target directories
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
