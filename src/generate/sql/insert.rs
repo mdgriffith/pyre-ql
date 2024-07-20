@@ -1,5 +1,6 @@
 use crate::ast;
 use crate::ext::string;
+use crate::generate::sql::select;
 use crate::generate::sql::to_sql;
 use crate::typecheck;
 use std::fs;
@@ -60,18 +61,10 @@ pub fn insert_to_string(
     let mut initial_selection =
         initial_select(initial_indent, context, query, table, query_table_field);
     let parent_table_alias = &get_temp_table_name(&query_table_field);
-    let mut initial_returning: Vec<String> = vec![];
-    match ast::get_primary_id_field_name(&table.fields) {
-        Some(id) => initial_returning.push(id),
-        None => (),
+    if (last_link_index != 0) {
+        initial_selection.push_str(&format!("\n{}returning *", " ".repeat(initial_indent)));
     }
-    if (initial_returning.len() > 0) {
-        initial_selection.push_str(&format!(
-            "\n{}returning {}",
-            " ".repeat(initial_indent),
-            initial_returning.clone().join(", ")
-        ));
-    }
+
     let mut rendered_initial = false;
 
     for (i, query_field) in all_query_fields.iter().enumerate() {
@@ -97,7 +90,7 @@ pub fn insert_to_string(
                 let is_last = i == last_link_index;
 
                 let inner_selection = &insert_linked(
-                    if (is_last) { 0 } else { 4 },
+                    if (is_last) { 4 } else { 4 },
                     context,
                     query,
                     parent_table_alias,
@@ -108,15 +101,11 @@ pub fn insert_to_string(
 
                 let temp_table_alias = &get_temp_table_name(&query_field);
 
-                if !is_last {
-                    result.push_str(" ");
-                    result.push_str(temp_table_alias);
-                    result.push_str(" as (");
-                    result.push_str(inner_selection);
-                    result.push_str("\n),");
-                } else {
-                    result.push_str(inner_selection);
-                }
+                result.push_str(" ");
+                result.push_str(temp_table_alias);
+                result.push_str(" as (");
+                result.push_str(inner_selection);
+                result.push_str("\n    returning *\n),");
             }
             _ => (),
         }
@@ -124,6 +113,26 @@ pub fn insert_to_string(
 
     if !rendered_initial {
         result.push_str(&initial_selection);
+    } else {
+        // Select the final result
+        result.push_str("\nselect\n");
+        let selected = &select::to_selection(
+            context,
+            &ast::get_aliased_name(&query_table_field),
+            table,
+            &ast::collect_query_fields(&query_table_field.fields),
+            &select::TableAliasKind::Insert,
+        );
+        result.push_str("  ");
+        result.push_str(&selected.join(",\n  "));
+        result.push_str("\n");
+        select::render_from(
+            context,
+            table,
+            query_table_field,
+            &select::TableAliasKind::Insert,
+            &mut result,
+        );
     }
     result.push_str(";");
 
@@ -217,12 +226,6 @@ pub fn insert_linked(
         ));
     }
 
-    let mut returning: Vec<String> = vec![];
-    match ast::get_primary_id_field_name(&table.fields) {
-        Some(id) => returning.push(id),
-        None => (),
-    }
-
     for query_field in &all_query_fields {
         let table_field = &table
             .fields
@@ -246,13 +249,6 @@ pub fn insert_linked(
         insert_values.join(", ")
     ));
     result.push_str(&format!("{}from {}", indent_str, parent_table_name));
-    if (returning.len() > 0) {
-        result.push_str(&format!(
-            "\n{}returning {}",
-            indent_str,
-            returning.clone().join(", ")
-        ));
-    }
 
     for query_field in all_query_fields {
         let table_field = &table
