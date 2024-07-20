@@ -85,21 +85,26 @@ jobs:
           cd -
 
       # Extract version number from tag and set it as an environment variable on Linux/macOS
+      # I can't get the same
       - name: Extract version number on Linux/macOS
         if: runner.os != 'Windows'
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
-      # Extract version number from tag and set it as an environment variable on Windows
-      - name: Extract version number on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $env:GITHUB_ENV
-
       # Publish Github release if tag begins with `version-`
       - name: Publish GitHub release
-        if: startsWith( github.ref, 'refs/tags/version-' )
+        if: startsWith( github.ref, 'refs/tags/version-' ) && runner.os != 'Windows'
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: "${{ matrix.platform.name }}"
           body_path: "releases/${{ env.VERSION }}.md"
+
+      # Publish Github release if tag begins with `version-`
+      # (No body_path on Windows)
+      # This is a hack because the version extraction doesn't work on the windows machine.
+      - name: Publish GitHub release (windows)
+        if: startsWith( github.ref, 'refs/tags/version-' ) && runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: "${{ matrix.platform.name }}"
