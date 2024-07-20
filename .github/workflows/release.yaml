@@ -51,10 +51,6 @@ jobs:
         run: sudo apt-get install --yes build-essential
         if: contains(matrix.platform.target, 'musl')
 
-      # - name: Link g++
-      #   run: sudo ln -s /bin/g++ /bin/musl-g++
-      #   if: contains(matrix.platform.target, 'musl')
-
       # Build binary
       - name: Build binary
         uses: houseabsolute/actions-rust-cross@v0
@@ -70,7 +66,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: pyre-${{ matrix.platform.os_name }}
-          path: "pyre*"
+          path: "pyre-*"
 
       # Publish Github release if tag begins with `v`
       - name: Publish GitHub release
