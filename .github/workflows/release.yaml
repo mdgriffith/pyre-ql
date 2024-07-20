@@ -78,7 +78,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pyre-${{ matrix.platform.os_name }}
-          path: "target/${{ matrix.platform.target }}/release/${{ matrix.platform.name }}"
+          path: "target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }}"
 
       # Publish Github release if tag begins with `v`
       - name: Publish GitHub release
