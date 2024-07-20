@@ -42,7 +42,7 @@ function create_release_file() {
     local version=$1
     local release_dir="releases"
     mkdir -p "$release_dir"
-    local release_file="$release_dir/release-${version}.md"
+    local release_file="$release_dir/version-${version}.md"
     touch "$release_file"
     echo "Created release file: $release_file"
 }
@@ -64,11 +64,11 @@ function main() {
 
     # Print colorful output
     echo -e "\033[32mBumped version from $current_version to $new_version\033[0m"
-    echo -e "\033[32mUpdated Cargo.toml and created releases/release-${new_version}.md\033[0m"
+    echo -e "\033[32mUpdated Cargo.toml and created releases/version-${new_version}.md\033[0m"
 
     # Next steps summary
     echo -e "\033[33mNext steps:\033[0m"
-    echo -e "\033[33m1. Write release notes in releases/release-${new_version}.md\033[0m"
+    echo -e "\033[33m1. Write release notes in releases/version-${new_version}.md\033[0m"
     echo -e "\033[33m2. Add a git tag for the new version:\033[0m"
     echo -e "\033[33m   git tag version-${new_version}\033[0m"
     echo -e "\033[33m3. Push changes and tags to the origin:\033[0m"
