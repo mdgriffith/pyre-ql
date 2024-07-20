@@ -97,7 +97,7 @@ jobs:
         with:
           draft: true
           files: "${{ matrix.platform.name }}"
-          body_path: "releases/${{ env.VERSION }}.md"
+          body_path: "docs/releases/${{ env.VERSION }}.md"
 
       # Publish Github release if tag begins with `version-`
       # (No body_path on Windows)
