@@ -90,7 +90,7 @@ pub fn insert_to_string(
                 let is_last = i == last_link_index;
 
                 let inner_selection = &insert_linked(
-                    if (is_last) { 4 } else { 4 },
+                    4,
                     context,
                     query,
                     parent_table_alias,
