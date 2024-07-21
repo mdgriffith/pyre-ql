@@ -154,6 +154,32 @@ fn get_field_indent(indent_minimum: usize, field: &ast::Field) -> Option<(FieldI
                 _ => (),
             }
         }
+        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+            match (&link.start_name, &link.end_name) {
+                (Some(name_loc), Some(name_end_loc)) => {
+                    let apply_offset = |column: usize| -> usize {
+                        if indent_minimum > name_loc.column {
+                            indent_minimum - name_loc.column
+                        } else {
+                            if column == 0 {
+                                return 0;
+                            } else {
+                                column - 1
+                            }
+                        }
+                    };
+
+                    return Some(FieldIndent {
+                        line_start: name_loc.line.to_usize(),
+                        line_end: name_loc.line.to_usize(),
+                        name_column: apply_offset(name_loc.column),
+                        type_column: apply_offset(name_end_loc.column + 2),
+                        directive_column: apply_offset(name_end_loc.column + 2),
+                    });
+                }
+                _ => (),
+            }
+        }
         _ => (),
     }
 
@@ -253,12 +279,74 @@ fn to_string_field_directive(indent: &Indentation, directive: &ast::FieldDirecti
             format!("{}@tablename \"{}\"\n", spaces, name)
         }
         ast::FieldDirective::Link(details) => {
-            let mut result = format!("{}@link ", spaces);
-            result.push_str(&to_string_link_details(details));
-            result.push_str("\n");
-            result
+            to_string_link_details_shorthand(indent, details)
+            // let mut result = format!("{}@link ", spaces);
+            // result.push_str(&to_string_link_details(details));
+            // result.push_str("\n");
+            // result
         }
     }
+}
+
+fn to_string_link_details_shorthand(
+    indentation: &Indentation,
+    details: &ast::LinkDetails,
+) -> String {
+    let spaces = " ".repeat(indentation.minimum);
+    let mut result = format!("{}{}", spaces, details.link_name);
+
+    let line_number: usize = match &details.start_name {
+        Some(loc) => loc.line.to_usize(),
+        None => 0,
+    };
+
+    let mut type_indent_len = 1;
+
+    let maybe_indent = indentation
+        .levels
+        .range(..=line_number)
+        .next_back()
+        .map(|(_, v)| v);
+
+    match maybe_indent {
+        Some(indent) => {
+            let name_plus_colon = indentation.minimum + 1 + details.link_name.len();
+
+            if name_plus_colon < indent.type_column {
+                type_indent_len = indent.type_column - name_plus_colon;
+            }
+
+            result.push_str(&" ".repeat(type_indent_len));
+        }
+        None => result.push_str(" "),
+    }
+
+    result.push_str("@link(");
+    let mut added = false;
+    for id in &details.local_ids {
+        if added {
+            result.push_str(", ");
+        }
+        if id == "id" {
+            continue;
+        } else {
+            result.push_str(id);
+        }
+        added = true
+    }
+    for id in &details.foreign_ids {
+        if added {
+            result.push_str(", ");
+        }
+        result.push_str(&details.foreign_tablename);
+        result.push_str(".");
+        result.push_str(id);
+        added = true
+    }
+
+    result.push_str(")\n");
+
+    result
 }
 
 fn to_string_link_details(details: &ast::LinkDetails) -> String {

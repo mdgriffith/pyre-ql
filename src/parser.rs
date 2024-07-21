@@ -5,7 +5,7 @@ use nom::bytes::complete::take_while1;
 use nom::character::streaming::{space0, space1};
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until, take_while},
+    bytes::complete::{tag, take_until, take_while, take_while_m_n},
     character::complete::{
         alpha1, alphanumeric1, char, digit1, line_ending, multispace0, multispace1, newline, one_of,
     },
@@ -166,9 +166,12 @@ fn parse_comment(input: Text) -> ParseResult<ast::Definition> {
         },
     ))
 }
-
 fn parse_typename(input: Text) -> ParseResult<&str> {
-    let (input, val) = alphanumeric1(input)?;
+    let (input, val) = recognize(tuple((
+        take_while1(|c: char| c.is_uppercase()), // First character needs to be uppercase
+        many0(alt((alphanumeric1, take_while1(|c: char| c == '_')))), // Followed by alphanumeric or underscores
+    )))(input)?;
+
     Ok((input, val.fragment()))
 }
 
@@ -189,10 +192,17 @@ fn parse_fieldname(input: Text) -> ParseResult<&str> {
     Ok((input, val.fragment()))
 }
 
+fn parse_qualified(input: Text) -> ParseResult<(&str, &str)> {
+    let (input, typename) = parse_typename(input)?;
+    let (input, _) = tag(".")(input)?;
+    let (input, fieldname) = parse_fieldname(input)?;
+    Ok((input, (typename, fieldname)))
+}
+
 fn parse_record(input: Text) -> ParseResult<ast::Definition> {
     let (input, start_pos) = position(input)?;
     let (input, _) = tag("record")(input)?;
-    let (input, _) = cut(multispace1)(input)?;
+    let (input, _) = cut(space1)(input)?;
     let (input, start_name_pos) = position(input)?;
     let (input, name) = cut(parse_typename)(input)?;
     let (input, end_name_pos) = position(input)?;
@@ -218,8 +228,6 @@ fn parse_session(input: Text) -> ParseResult<ast::Definition> {
     let (input, start_pos) = position(input)?;
     let (input, _) = tag("session")(input)?;
     let (input, _) = cut(multispace1)(input)?;
-
-    let (input, _) = cut(multispace0)(input)?;
     let (input, fields) = cut(with_braces(parse_field))(input)?;
     let (input, end_pos) = position(input)?;
     let (input, _) = alt((line_ending, eof))(input)?;
@@ -238,7 +246,7 @@ fn parse_field(input: Text) -> ParseResult<ast::Field> {
     alt((
         parse_field_comment,
         parse_table_directive,
-        parse_column_field,
+        parse_column,
         parse_column_lines,
     ))(input)
 }
@@ -280,7 +288,7 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
         parse_tablename(to_location(&start_pos)),
         parse_link,
     )))(input)?;
-
+    let input = expecting(input, crate::error::Expecting::SchemaColumn);
     Ok((input, field_directive))
 }
 
@@ -428,11 +436,6 @@ fn parse_link_field(input: Text) -> ParseResult<LinkField> {
     }
 }
 
-fn parse_column_field(input: Text) -> ParseResult<ast::Field> {
-    let (input, column) = parse_column(input)?;
-    Ok((input, ast::Field::Column(column)))
-}
-
 fn to_location(pos: &Text) -> ast::Location {
     ast::Location {
         offset: pos.location_offset(),
@@ -440,12 +443,49 @@ fn to_location(pos: &Text) -> ast::Location {
         column: pos.get_column(),
     }
 }
-
-fn parse_column(input: Text) -> ParseResult<ast::Column> {
+fn parse_column(input: Text) -> ParseResult<ast::Field> {
     let (input, start_pos) = position(input)?;
+    let input = expecting(input, crate::error::Expecting::SchemaColumn);
     let (input, name) = parse_fieldname(input)?;
     let (input, end_name_pos) = position(input)?;
+
     let (input, _) = space0(input)?;
+    let (input, maybe_link) = cut(opt(tag("@link")))(input)?;
+
+    if let Some(_) = maybe_link {
+        let (input, _) = cut(tag("("))(input)?;
+        let input = expecting(input, crate::error::Expecting::LinkDirective);
+        // We're parsing either
+        //          fieldname @link(local_id, ForeignTable.foreignId)
+        //          fieldname @link(ForeignTable.foreignId)
+        let (input, first_arg) = opt(|input| {
+            let (input, first_arg) = parse_fieldname(input)?;
+            let (input, _) = tag(",")(input)?;
+            let (input, _) = space0(input)?;
+            Ok((input, first_arg.to_string()))
+        })(input)?;
+
+        let (input, (foreign_table, foreign_key)) = parse_qualified(input)?;
+        let link_details = ast::LinkDetails {
+            link_name: name.to_string(),
+            local_ids: vec![first_arg.unwrap_or("id".to_string())],
+            foreign_tablename: foreign_table.to_string(),
+            foreign_ids: vec![foreign_key.to_string()],
+
+            start_name: Some(to_location(&start_pos)),
+            end_name: Some(to_location(&end_name_pos)),
+        };
+        let (input, _) = tag(")")(input)?;
+        let (input, _) = space0(input)?;
+        let (input, _) = newline(input)?;
+        let (input, _) = space0(input)?;
+
+        return Ok((
+            input,
+            ast::Field::FieldDirective(ast::FieldDirective::Link(link_details)),
+        ));
+    };
+
     let (input, _) = cut(opt(tag(":")))(input)?;
     let (input, _) = space0(input)?;
     let (input, start_type_pos) = position(input)?;
@@ -463,7 +503,7 @@ fn parse_column(input: Text) -> ParseResult<ast::Column> {
 
     Ok((
         input,
-        ast::Column {
+        ast::Field::Column(ast::Column {
             name: name.to_string(),
             type_: type_.to_string(),
             nullable: is_nullable,
@@ -477,7 +517,7 @@ fn parse_column(input: Text) -> ParseResult<ast::Column> {
 
             start_typename: Some(to_location(&start_type_pos)),
             end_typename: Some(to_location(&end_type_pos)),
-        },
+        }),
     ))
 }
 
