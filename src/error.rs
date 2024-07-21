@@ -31,6 +31,7 @@ pub enum Expecting {
     // Schema stuff
     SchemaAtDirective,
     SchemaFieldAtDirective,
+    SchemaColumn,
 
     LinkDirective,
 }
@@ -422,6 +423,10 @@ fn render_expecting(expecting: &Expecting) -> String {
             "@id".yellow(),
             "@unique".yellow(),
             "@default".yellow()
+        ),
+        Expecting::SchemaColumn => return format!(
+            "I was expecting a column, like:\n\n        {}",
+            "id    Int".yellow()
         ),
         Expecting::LinkDirective => {
             let example =           format!("{} posts {{ from: id, to: Post.authorUserId }}", "@link".yellow());
