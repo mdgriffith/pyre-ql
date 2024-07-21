@@ -572,6 +572,7 @@ fn parse_schemas(options: &Options, paths: &filesystem::Found) -> io::Result<ast
             Ok(()) => {}
             Err(err) => {
                 eprintln!("{}", parser::render_error(&source.content, err));
+                std::process::exit(1);
             }
         }
     }
@@ -591,8 +592,9 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
 
                 let formatted_error = error::format_error(&schema_source, &err);
 
-                print!("{}", &formatted_error);
+                eprintln!("{}", &formatted_error);
             }
+            std::process::exit(1);
         }
         Ok(mut context) => {
             // Generate schema files
@@ -639,12 +641,14 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
                                     errors.push_str(&formatted_error);
                                 }
 
-                                println!("{}", errors);
+                                eprintln!("{}", errors);
+                                std::process::exit(1);
                             }
                         }
                     }
                     Err(err) => {
-                        eprintln!("{}", parser::render_error(&query_source_str, err))
+                        eprintln!("{}", parser::render_error(&query_source_str, err));
+                        std::process::exit(1);
                     }
                 }
             }
