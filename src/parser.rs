@@ -9,7 +9,7 @@ use nom::{
     character::complete::{
         alpha1, alphanumeric1, char, digit1, line_ending, multispace0, multispace1, newline, one_of,
     },
-    combinator::{all_consuming, cut, eof, map_res, opt, recognize},
+    combinator::{all_consuming, cut, eof, map_res, opt, recognize, value},
     error::{Error, VerboseError, VerboseErrorKind},
     multi::{many0, many1, separated_list0, separated_list1},
     sequence::{delimited, terminated, tuple},
@@ -717,6 +717,24 @@ fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefin
     ))
 }
 
+fn parse_block_separator(input: Text) -> ParseResult<()> {
+    alt((value((), char(',')), value((), newline)))(input)
+}
+
+fn with_comma_sep_braces<'a, F, T>(parse_term: F) -> impl Fn(Text) -> ParseResult<Vec<T>>
+where
+    F: Fn(Text) -> ParseResult<T>,
+{
+    move |input: Text| {
+        let (input, _) = tag("{")(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, terms) = separated_list0(parse_block_separator, &parse_term)(input)?;
+        let (input, _) = multispace0(input)?;
+        let (input, _) = tag("}")(input)?;
+        Ok((input, terms))
+    }
+}
+
 fn with_braces<'a, F, T>(parse_term: F) -> impl Fn(Text) -> ParseResult<Vec<T>>
 where
     F: Fn(Text) -> ParseResult<T>,
@@ -865,7 +883,7 @@ fn parse_where(input: Text) -> ParseResult<ast::Arg> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("where")(input)?;
     let (input, _) = space1(input)?;
-    let (input, where_arg) = with_braces(parse_where_arg)(input)?;
+    let (input, where_arg) = with_comma_sep_braces(parse_where_arg)(input)?;
 
     if where_arg.len() == 1 {
         Ok((
@@ -880,7 +898,7 @@ fn parse_where(input: Text) -> ParseResult<ast::Arg> {
 fn parse_where_arg(input: Text) -> ParseResult<ast::WhereArg> {
     let (input, _) = multispace0(input)?;
     let (input, where_col) = parse_query_where(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = space0(input)?;
     let (input, maybe_and_or) = opt(parse_and_or)(input)?;
     match maybe_and_or {
         Some(AndOr::And) => {
