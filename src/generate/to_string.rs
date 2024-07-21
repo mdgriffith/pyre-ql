@@ -384,10 +384,7 @@ fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition)
 
 fn to_string_field_arg(indent: usize, field_arg: &ast::ArgField) -> String {
     match field_arg {
-        ast::ArgField::Arg(arg) => {
-            let spaces = " ".repeat(indent);
-            format!("{}{}", spaces, &to_string_param(&arg.arg))
-        }
+        ast::ArgField::Arg(arg) => to_string_param(indent, &arg.arg),
         ast::ArgField::Field(field) => to_string_query_field(indent, field),
         ast::ArgField::Line { count } => "\n".repeat(count.clone()),
     }
@@ -427,18 +424,47 @@ fn to_string_query_field(indent: usize, field: &ast::QueryField) -> String {
 }
 
 // Example: (arg = $id)
-fn to_string_param(arg: &ast::Arg) -> String {
+fn to_string_param(indent_size: usize, arg: &ast::Arg) -> String {
+    let indent = " ".repeat(indent_size);
     match arg {
         ast::Arg::Limit(lim) => {
-            format!("@limit {}\n", value_to_string(lim))
+            format!("{}@limit {}\n", indent, value_to_string(lim))
         }
         ast::Arg::Offset(off) => {
-            format!("@offset {}\n", value_to_string(off))
+            format!("{}@offset {}\n", indent, value_to_string(off))
         }
         ast::Arg::OrderBy(direction, column) => {
-            format!("@sort {} {}\n", column, ast::direction_to_string(direction))
+            format!(
+                "{}@sort {} {}\n",
+                indent,
+                column,
+                ast::direction_to_string(direction)
+            )
         }
-        ast::Arg::Where(where_arg) => format!("@where {}\n", format_where(where_arg)),
+        ast::Arg::Where(ast::WhereArg::And(and)) => {
+            let mut result = format!("{}@where {{", indent);
+            let inner_indent = " ".repeat(indent_size + 4);
+            for arg in and {
+                result.push_str("\n");
+                result.push_str(&inner_indent);
+                result.push_str(&format_where(arg));
+            }
+            result.push_str(&format!("\n{}}}\n", indent));
+            result
+        }
+        ast::Arg::Where(ast::WhereArg::Or(or)) => {
+            let mut result = format!("{}@where {{", indent);
+            let inner_indent = " ".repeat(indent_size + 4);
+            for arg in or {
+                result.push_str(&format!("\n{}|| ", inner_indent));
+                result.push_str(&format_where(arg));
+            }
+            result.push_str(&format!("\n{}}}\n", indent));
+            result
+        }
+        ast::Arg::Where(where_arg) => {
+            format!("{}@where {{ {} }}\n", indent, format_where(where_arg))
+        }
     }
 }
 
