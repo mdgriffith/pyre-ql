@@ -446,7 +446,7 @@ fn parse_column(input: Text) -> ParseResult<ast::Column> {
     let (input, name) = parse_fieldname(input)?;
     let (input, end_name_pos) = position(input)?;
     let (input, _) = space0(input)?;
-    let (input, _) = cut(tag(":"))(input)?;
+    let (input, _) = cut(opt(tag(":")))(input)?;
     let (input, _) = space0(input)?;
     let (input, start_type_pos) = position(input)?;
     let (input, type_) = cut(parse_typename)(input)?;

@@ -229,15 +229,19 @@ fn to_string_column(indentation: &Indentation, column: &ast::Column) -> String {
         None => (),
     }
 
+    let type_indent = " ".repeat(type_indent_len);
+    let directive_indent = " ".repeat(directive_indent_len);
+    let directives = to_string_directives(&column.directives);
+
     format!(
-        "{}{}:{}{}{}{}{}\n",
-        initial_indent,
-        column.name,
-        " ".repeat(type_indent_len),
-        column.type_,
-        nullable,
-        " ".repeat(directive_indent_len),
-        to_string_directives(&column.directives)
+        "{initial_indent}{name}{type_indent}{type_}{nullable}{directive_indent}{directives}\n",
+        initial_indent = initial_indent,
+        name = column.name,
+        type_indent = type_indent,
+        type_ = column.type_,
+        nullable = nullable,
+        directive_indent = directive_indent,
+        directives = directives
     )
 }
 
