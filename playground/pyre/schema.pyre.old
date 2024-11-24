@@ -1,0 +1,47 @@
+
+record User {
+    @tablename "users"
+    @link accounts { from: id, to: Account.userId }
+    @link posts { from: id, to: Post.authorUserId }
+
+    id: Int @id
+    name: String
+    status: Status
+    createdAt: DateTime @default(now)
+}
+
+type Status
+   = Active
+   | Inactive
+   | Special {
+        reason: String
+     }
+   | Special2 {
+        reason2: String
+        error: String
+     }
+
+
+record Account {
+    @tablename "accounts"
+    @link users { from: userId, to: User.id }
+
+    id: Int @id
+    userId: Int
+    name: String
+    status: Status
+}
+
+
+record Post {
+    @tablename "posts"
+    @watch
+    @link users { from: authorUserId, to: User.id }
+
+    id: Int @id
+    createdAt: DateTime @default(now)
+    authorUserId: Int
+    title: String
+    content: String
+    status: Status
+}

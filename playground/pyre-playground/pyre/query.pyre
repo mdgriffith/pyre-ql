@@ -1,0 +1,55 @@
+// My Query
+query MyQuery($id: Int) {
+    user {
+        @where { id = $id }
+        @limit 5
+
+        id
+        createdAt
+        username: name
+        myAccounts: accounts {
+            id
+            name
+            status
+        }
+    }
+}
+
+
+insert UserNew($name: String, $status: Status) {
+    user {
+        name = $name
+        status = $status
+    }
+}
+
+insert AddBlogPosts($userId: Int, $status: Status, $at: DateTime) {
+    post {
+        authorUserId = $userId
+        createdAt = $at
+        title = "My First Post"
+        content = "This is my first post"
+        status = $status
+    }
+    job {
+        name = "My First Job"
+    }
+}
+
+
+delete RemoveAccount($accountId: Int) {
+    account {
+        @where { id = $accountId }
+        id
+    }
+}
+
+
+update UpdateBlogPosts($userId: Int, $status: Status) {
+    post {
+        @where { authorUserId = $userId }
+        title = "My First Post"
+        content = "This is my first post"
+        status = $status
+    }
+}

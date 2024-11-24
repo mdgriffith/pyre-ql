@@ -1,0 +1,55 @@
+// My Query
+query MyQuery($id: Int) {
+    user {
+        @where { id = $id }
+        id
+        createdAt
+        username: name
+    }
+}
+
+
+insert RulebookAdd($name: String) {
+    rulebook {
+        name = $name
+        publisherId = null
+        updatedAt = null
+        authors {
+            userId = Session.userId
+            updatedAt = null
+        }
+    }
+}
+
+
+query Init {
+    user {
+        @where { id = Session.userId }
+        id
+        name
+        email
+        rulebooks: rulebooksOwneds {
+            id
+            myRulebooks: rulebooks {
+                id
+                name
+                rules {
+                    id
+                    path
+                    text
+                }
+                sources: ruleSources {
+                    id
+                    source
+                }
+            }
+        }
+    }
+    otherUser: user {
+        @where { id = Session.userId }
+        id
+        createdAt
+        username: name
+    }
+}
+
