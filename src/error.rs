@@ -1023,6 +1023,60 @@ pub fn format_json(errors: &Vec<Error>) -> serde_json::Value {
         
         let title = to_error_title(&error.error_type);
         let description = to_error_description(&error, false);
+        
+        // Add filepath
+        error_json.insert("filepath".to_string(), serde_json::Value::String(error.filepath.clone()));
+        
+        // Add locations
+        let mut locations = Vec::new();
+        for location in &error.locations {
+            let mut location_json = serde_json::Map::new();
+            
+            // Add primary ranges
+            let mut primary_ranges = Vec::new();
+            for range in &location.primary {
+                let mut range_json = serde_json::Map::new();
+                
+                // Create start object
+                let mut start = serde_json::Map::new();
+                start.insert("line".to_string(), serde_json::Value::Number(range.start.line.into()));
+                start.insert("column".to_string(), serde_json::Value::Number(range.start.column.into()));
+                range_json.insert("start".to_string(), serde_json::Value::Object(start));
+                
+                // Create end object
+                let mut end = serde_json::Map::new();
+                end.insert("line".to_string(), serde_json::Value::Number(range.end.line.into()));
+                end.insert("column".to_string(), serde_json::Value::Number(range.end.column.into()));
+                range_json.insert("end".to_string(), serde_json::Value::Object(end));
+                
+                primary_ranges.push(serde_json::Value::Object(range_json));
+            }
+            location_json.insert("primary".to_string(), serde_json::Value::Array(primary_ranges));
+            
+            // Add context ranges
+            let mut context_ranges = Vec::new();
+            for range in &location.contexts {
+                let mut range_json = serde_json::Map::new();
+                
+                // Create start object
+                let mut start = serde_json::Map::new();
+                start.insert("line".to_string(), serde_json::Value::Number(range.start.line.into()));
+                start.insert("column".to_string(), serde_json::Value::Number(range.start.column.into()));
+                range_json.insert("start".to_string(), serde_json::Value::Object(start));
+                
+                // Create end object
+                let mut end = serde_json::Map::new();
+                end.insert("line".to_string(), serde_json::Value::Number(range.end.line.into()));
+                end.insert("column".to_string(), serde_json::Value::Number(range.end.column.into()));
+                range_json.insert("end".to_string(), serde_json::Value::Object(end));
+                
+                context_ranges.push(serde_json::Value::Object(range_json));
+            }
+            location_json.insert("contexts".to_string(), serde_json::Value::Array(context_ranges));
+            
+            locations.push(serde_json::Value::Object(location_json));
+        }
+        error_json.insert("locations".to_string(), serde_json::Value::Array(locations));
 
         error_json.insert("title".to_string(), serde_json::Value::String(title));
         error_json.insert("description".to_string(), serde_json::Value::String(description));
