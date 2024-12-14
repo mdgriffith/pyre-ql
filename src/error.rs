@@ -970,3 +970,39 @@ fn to_error_description(error: &Error) -> String {
         }
     }
 }
+
+
+
+// JSON error format
+fn get_error_title(error_type: &ErrorType) -> String {
+    match error_type {
+        ErrorType::ParsingError(_) => "Parsing Error",
+        ErrorType::UnknownFunction { .. } => "Unknown Function",
+        ErrorType::MultipleSessionDeinitions => "Multiple Session Definitions", 
+        ErrorType::MissingType => "Missing Type",
+        ErrorType::DuplicateDefinition(_) => "Duplicate Definition",
+        ErrorType::DefinitionIsBuiltIn(_) => "Definition Is Built-in",
+        _ => "Error"
+    }.to_string()
+}
+
+pub fn format_json(errors: &Vec<Error>) -> serde_json::Value {
+    let mut json_errors = Vec::new();
+
+    for error in errors {
+        let mut error_json = serde_json::Map::new();
+        
+        let title = get_error_title(&error.error_type);
+        let description = to_error_description(&error);
+
+        error_json.insert("title".to_string(), serde_json::Value::String(title));
+        error_json.insert("description".to_string(), serde_json::Value::String(description));
+
+        json_errors.push(serde_json::Value::Object(error_json));
+    }
+
+    serde_json::Value::Array(json_errors)
+}
+
+
+

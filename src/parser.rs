@@ -85,6 +85,29 @@ pub fn render_error(input: &str, err: nom::Err<VerboseError<Text>>) -> String {
     }
 }
 
+pub fn convert_parsing_error(err: nom::Err<VerboseError<Text>>) -> Option<crate::error::Error> {
+    match err {
+        nom::Err::Error(error) | nom::Err::Failure(error) => {
+            error.errors.get(0).map(|(text, _)| crate::error::Error {
+                filepath: text.extra.file.to_string(),
+                error_type: crate::error::ErrorType::ParsingError(
+                    crate::error::ParsingErrorDetails {
+                        expecting: text.extra.expecting.clone(),
+                    },
+                ),
+                locations: vec![crate::error::Location {
+                    contexts: vec![],
+                    primary: vec![crate::error::Range {
+                        start: to_location(text),
+                        end: to_location(text),
+                    }],
+                }],
+            })
+        }
+        nom::Err::Incomplete(_) => None,
+    }
+}
+
 fn convert_error(input: &str, err: VerboseError<Text>) -> String {
     if let Some((text, error_kind)) = err.errors.get(0) {
         let error = crate::error::Error {

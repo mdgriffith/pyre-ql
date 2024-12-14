@@ -58,6 +58,15 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         to_stdout: bool,
     },
+    Check {
+        //
+        #[arg(required = false)]
+        files: Vec<String>,
+
+        /// Format errors as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     // Introspect current db
     Introspect {
         #[arg(long)]
@@ -261,6 +270,19 @@ async fn main() -> io::Result<()> {
                 }
             }
         },
+        Some(Commands::Check { files, json }) => {
+            match check(&options, filesystem::collect_filepaths(&options.in_dir)?) {
+                Ok(errors) => {
+                    let formatted_error = error::format_json(&errors);
+                    println!("{}", serde_json::to_string_pretty(&formatted_error).unwrap());
+                    // eprintln!("{}", &formatted_error);
+                }
+                Err(e) => {
+                    eprintln!("Error checking files: {}", e);
+                    std::process::exit(1);
+                }
+            };
+        }
         Some(Commands::Introspect { db, auth }) => {
             let maybeConn = db::connect(db, auth).await;
             match maybeConn {
@@ -578,6 +600,45 @@ fn parse_schemas(options: &Options, paths: &filesystem::Found) -> io::Result<ast
     }
 
     Ok(schema)
+}
+
+fn check(options: &Options, paths: filesystem::Found) -> io::Result<Vec<error::Error>> {
+    let schema = parse_schemas(&options, &paths)?;
+
+    match typecheck::check_schema(&schema) {
+        Err(errors) => Ok(errors),
+        Ok(mut context) => {
+            let mut all_errors = Vec::new();
+
+            for query_file_path in paths.query_files {
+                let mut query_file = fs::File::open(query_file_path.clone())?;
+                let mut query_source_str = String::new();
+                query_file.read_to_string(&mut query_source_str)?;
+
+                match parser::parse_query(&query_file_path, &query_source_str) {
+                    Ok(query_list) => {
+                        context.current_filepath = query_file_path.clone();
+                        let typecheck_result =
+                            typecheck::check_queries(&schema, &query_list, &mut context);
+
+                        match typecheck_result {
+                            Ok(_) => {}
+                            Err(errors) => {
+                                all_errors.extend(errors);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        if let Some(parsing_error) = parser::convert_parsing_error(err) {
+                            all_errors.push(parsing_error);
+                        }
+                    }
+                }
+            }
+
+            Ok(all_errors)
+        }
+    }
 }
 
 fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
