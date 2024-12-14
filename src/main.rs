@@ -273,9 +273,24 @@ async fn main() -> io::Result<()> {
         Some(Commands::Check { files, json }) => {
             match check(&options, filesystem::collect_filepaths(&options.in_dir)?) {
                 Ok(errors) => {
-                    let formatted_error = error::format_json(&errors);
-                    println!("{}", serde_json::to_string_pretty(&formatted_error).unwrap());
-                    // eprintln!("{}", &formatted_error);
+                    let has_errors = !errors.is_empty();
+                    if *json {
+                        let formatted_errors = errors.iter().map(|file_error| {
+                            error::format_json(&file_error.errors)
+                        }).collect::<Vec<_>>();
+                        println!("{}", serde_json::to_string_pretty(&formatted_errors).unwrap());
+                        // eprintln!("{}", &formatted_error);
+                    } else {
+                        for file_error in errors {
+                            for err in &file_error.errors {
+                                let formatted_error = error::format_error(&file_error.source, err);
+                                eprintln!("{}", formatted_error);
+                            }
+                        }
+                    }
+                    if has_errors {
+                        std::process::exit(1);
+                    }
                 }
                 Err(e) => {
                     eprintln!("Error checking files: {}", e);
@@ -602,15 +617,29 @@ fn parse_schemas(options: &Options, paths: &filesystem::Found) -> io::Result<ast
     Ok(schema)
 }
 
-fn check(options: &Options, paths: filesystem::Found) -> io::Result<Vec<error::Error>> {
+
+#[derive(Debug)]
+struct FileError {
+    source: String,
+    errors: Vec<error::Error>
+}
+
+
+fn check(options: &Options, paths: filesystem::Found) -> io::Result<Vec<FileError>> {
     let schema = parse_schemas(&options, &paths)?;
+    let mut all_file_errors = Vec::new();
 
     match typecheck::check_schema(&schema) {
-        Err(errors) => Ok(errors),
+        Err(errors) => {
+            // Schema errors get grouped under "schema.pyre" or similar
+            all_file_errors.push(FileError {
+                source: "schema.pyre".to_string(),
+                errors: errors,
+            });
+        }
         Ok(mut context) => {
-            let mut all_errors = Vec::new();
-
             for query_file_path in paths.query_files {
+                let mut file_errors = Vec::new();
                 let mut query_file = fs::File::open(query_file_path.clone())?;
                 let mut query_source_str = String::new();
                 query_file.read_to_string(&mut query_source_str)?;
@@ -624,21 +653,28 @@ fn check(options: &Options, paths: filesystem::Found) -> io::Result<Vec<error::E
                         match typecheck_result {
                             Ok(_) => {}
                             Err(errors) => {
-                                all_errors.extend(errors);
+                                file_errors.extend(errors);
                             }
                         }
                     }
                     Err(err) => {
                         if let Some(parsing_error) = parser::convert_parsing_error(err) {
-                            all_errors.push(parsing_error);
+                            file_errors.push(parsing_error);
                         }
                     }
                 }
-            }
 
-            Ok(all_errors)
+                if !file_errors.is_empty() {
+                    all_file_errors.push(FileError {
+                        source: query_source_str,
+                        errors: file_errors,
+                    });
+                }
+            }
         }
     }
+
+    Ok(all_file_errors)
 }
 
 fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
