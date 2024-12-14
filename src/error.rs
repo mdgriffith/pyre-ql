@@ -229,10 +229,10 @@ pub fn format_error(file_contents: &str, error: &Error) -> String {
     let separator = "-".repeat(50 - path_length);
 
     let highlight = prepare_highlight(file_contents, &error);
-    let description = to_error_description(&error);
+    let description = to_error_description(&error, true);
 
     format!(
-        "{} {}\n\n{}\n    {}",
+        "{} {}\n\n{}\n    {}\n\n",
         filepath.cyan(),
         separator.cyan(),
         highlight,
@@ -392,58 +392,65 @@ fn get_lines(file_contents: &str, show_line_number: bool, start: u32, end: u32) 
     result
 }
 
-fn render_expecting(expecting: &Expecting) -> String {
+
+fn render_expecting(expecting: &Expecting, in_color: bool) -> String {
+    
     match expecting {
         Expecting::PyreFile => "I ran into an issue parsing this that I didn't quite expect! I would love if you would file an issue on the repo showing the pyre file you're using.. ".to_string(),
         Expecting::ParamDefinition => return format!(
             "I was expecting a parameter, like:\n\n        {}\n\n    Hot tip: Running {} will automatically fix this for you.\n",
-            "$id: Int".yellow(),
-            "pyre format".cyan()
+            yellow_if(in_color, "$id: Int"),
+            cyan_if(in_color, "pyre format")
         ),
         Expecting::ParamDefType => return format!(
             "I was expecting a parameter type, like:\n\n        {}\n\n    Hot tip: Running {} will automatically fix this for you.\n",
-            "$id: Int".yellow(),
-            "pyre format".cyan()
+            yellow_if(in_color, "$id: Int"),
+            cyan_if(in_color, "pyre format")
         ),
         Expecting::AtDirective => return format!(
             "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}\n        {}",
-            "@where".yellow(),
-            "@sort".yellow(),
-            "@limit".yellow(),
-            "@offset".yellow()
+            yellow_if(in_color, "@where"),
+            yellow_if(in_color, "@sort"),
+            yellow_if(in_color, "@limit"),
+            yellow_if(in_color, "@offset")
         ),
         Expecting::SchemaAtDirective => return format!(
             "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}",
-            "@watch".yellow(),
-            "@tablename".yellow(),
-            "@link".yellow()
+            yellow_if(in_color, "@watch"),
+            yellow_if(in_color, "@tablename"),
+            yellow_if(in_color, "@link")
         ),
         Expecting::SchemaFieldAtDirective => return format!(
             "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}",
-            "@id".yellow(),
-            "@unique".yellow(),
-            "@default".yellow()
+            yellow_if(in_color, "@id"),
+            yellow_if(in_color, "@unique"),
+            yellow_if(in_color, "@default")
         ),
         Expecting::SchemaColumn => return format!(
             "I was expecting a column, like:\n\n        {}",
-            "id    Int".yellow()
+            yellow_if(in_color, "id    Int")
         ),
         Expecting::LinkDirective => {
-            let example =           format!("{} posts {{ from: id, to: Post.authorUserId }}", "@link".yellow());
-            let example_breakdown =           format!("                            {} {}", "^^^^".cyan(), "^^^^^^^^^^^^".cyan());
-            let example_breakdown_connector = format!("                            {}    {}", "|".cyan(), "|".cyan());
-            let example_breakdown_labels =    format!("                {}    {}", "Foreign table".cyan(), "Foreign key".cyan());
-
+            let example = format!("{} posts {{ from: id, to: Post.authorUserId }}", 
+                yellow_if(in_color, "@link"));
+            let example_breakdown = format!("                            {} {}", 
+                cyan_if(in_color, "^^^^"), 
+                cyan_if(in_color, "^^^^^^^^^^^^"));
+            let example_breakdown_connector = format!("                            {}    {}", 
+                cyan_if(in_color, "|"), 
+                cyan_if(in_color, "|"));
+            let example_breakdown_labels = format!("                {}    {}", 
+                cyan_if(in_color, "Foreign table"), 
+                cyan_if(in_color, "Foreign key"));
 
             return format!(
                 "This {} looks off, I'm expecting something that looks like this:\n\n        {}\n        {}\n        {}\n        {}",
-                "@link".yellow(),
+                yellow_if(in_color, "@link"),
                 example,
                 example_breakdown,
                 example_breakdown_connector,
                 example_breakdown_labels
             )
-
         }
 
 
@@ -451,13 +458,30 @@ fn render_expecting(expecting: &Expecting) -> String {
     }
 }
 
-fn to_error_description(error: &Error) -> String {
+
+
+fn cyan_if(in_color: bool, text: &str) -> String {
+    if in_color {
+        text.cyan().to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+fn yellow_if(in_color: bool, text: &str) -> String {
+    if in_color {
+        text.yellow().to_string()
+    } else {
+        text.to_string() 
+    }
+}
+
+fn to_error_description(error: &Error, in_color: bool) -> String {
     match &error.error_type {
         ErrorType::ParsingError(parsingDetails) => {
             let mut result = "".to_string();
-            result.push_str(&format!("{}", render_expecting(&parsingDetails.expecting)));
+            result.push_str(&format!("{}", render_expecting(&parsingDetails.expecting, in_color)));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -465,10 +489,9 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "I found multiple {} definitions, but there should only be one!",
-                "session".cyan(),
+                cyan_if(in_color, "session"),
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -479,17 +502,19 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "I don't recognize this function: {}\n\n",
-                found.cyan(),
+                cyan_if(in_color, found),
             ));
 
             if known_functions.len() > 0 {
                 result.push_str("\nHere are the functions I know:\n");
                 for func in known_functions {
-                    result.push_str(&format!("    {}\n", func.cyan()));
+                    result.push_str(&format!(
+                        "    {}\n",
+                        cyan_if(in_color, func)
+                    ));
                 }
             }
 
-            result.push_str("\n\n");
             result
         }
 
@@ -497,11 +522,10 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "All parameters need a type, like {}\n\n    Hot tip: Running {} will automatically fix this automatically for you!\n",
-                "Int".yellow(),
-                "pyre format".cyan()
+                yellow_if(in_color, "Int"),
+                cyan_if(in_color, "pyre format")
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -509,10 +533,9 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "There are two definitions for {}\n",
-                name.yellow()
+                yellow_if(in_color, name)
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -520,21 +543,19 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "The {} type is a built-in type, try using another name.\n",
-                name.yellow()
+                yellow_if(in_color, name)
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::DuplicateField { record, field } => {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "There are multiple definitions for {} on {}.\n",
-                field.yellow(),
-                record.cyan()
+                yellow_if(in_color, field),
+                cyan_if(in_color, record)
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::DuplicateVariant {
@@ -544,35 +565,38 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "{} has more than one variant named {}.\n",
-                base_variant.typename.yellow(),
-                base_variant.variant_name.cyan()
+                yellow_if(in_color, &base_variant.typename),
+                cyan_if(in_color, &base_variant.variant_name)
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::DuplicateQueryField { query, field } => {
             let mut result = "".to_string();
-            result.push_str(&format!("{} is listed multiple times.\n", field.yellow()));
+            result.push_str(&format!(
+                "{} is listed multiple times.\n",
+                yellow_if(in_color, field)
+            ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::UnknownTable { found, existing } => {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "I don't recognize the '{}' table, is that a typo?\n",
-                found.yellow()
+                yellow_if(in_color, found)
             ));
 
             if existing.len() > 0 {
                 result.push_str("\nThese tables might be similar\n");
                 for table in existing {
-                    result.push_str(&format!("    {}\n", table.cyan()));
+                    result.push_str(&format!(
+                        "    {}\n",
+                        cyan_if(in_color, table)
+                    ));
                 }
             }
 
-            result.push_str("\n\n");
             result
         }
 
@@ -583,17 +607,15 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "I was expecting {}, but found {}.\n",
-                expecting_type.yellow(),
-                found.cyan()
+                yellow_if(in_color, expecting_type),
+                cyan_if(in_color, found)
             ));
 
-            result.push_str("\n\n");
             result
         }
 
         ErrorType::TypeMismatch {
             table,
-
             column_defined_as,
             variable_name,
             variable_defined_as,
@@ -601,12 +623,11 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "{} is defined as {}, but I'm expecting a {}.\n",
-                format!("${}", variable_name).yellow(),
-                variable_defined_as.yellow(),
-                column_defined_as.cyan()
+                yellow_if(in_color, &format!("${}", variable_name)),
+                yellow_if(in_color, variable_defined_as),
+                cyan_if(in_color, column_defined_as)
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -618,12 +639,11 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "{} is trying to link to the {} column on the {} table, but that column doesn't exist.\n",
-                link_name.yellow(),
-                unknown_foreign_field.yellow(),
-                foreign_table.yellow(),
+                yellow_if(in_color, link_name),
+                yellow_if(in_color, unknown_foreign_field),
+                yellow_if(in_color, foreign_table),
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -634,11 +654,10 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "{} is trying to link using the {} column, but that column doesn't exist.",
-                link_name.yellow(),
-                unknown_local_field.yellow(),
+                yellow_if(in_color, link_name),
+                yellow_if(in_color, unknown_local_field),
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::LinkToUnknownTable {
@@ -648,11 +667,10 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "{} is trying to link to the {} table, but that table doesn't exist.",
-                link_name.yellow(),
-                unknown_table.yellow(),
+                yellow_if(in_color, link_name),
+                yellow_if(in_color, unknown_table),
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -661,10 +679,9 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} doesn't have a primary key, let's add one!",
-                record.cyan()
+                cyan_if(in_color, record)
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -673,10 +690,9 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} has multiple primary keys, let's only have one.",
-                record.cyan()
+                cyan_if(in_color, record)
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -685,10 +701,9 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} has has multiple @tablename definitions, let's only have one.",
-                record.cyan()
+                cyan_if(in_color, record)
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -697,11 +712,10 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} has multiple {}, let's only have one!",
-                query.cyan(),
-                "@limits".yellow()
+                cyan_if(in_color, query),
+                yellow_if(in_color, "@limits")
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::MultipleOffsets { query } => {
@@ -709,11 +723,10 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} has multiple {}, let's only have one!",
-                query.cyan(),
-                "@offsets".yellow()
+                cyan_if(in_color, query),
+                yellow_if(in_color, "@offsets")
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::MultipleWheres { query } => {
@@ -721,11 +734,10 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} has multiple {}, let's only have one!",
-                query.cyan(),
-                "@wheres".yellow()
+                cyan_if(in_color, query),
+                yellow_if(in_color, "@wheres")
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::UndefinedParam { param, type_ } => {
@@ -734,17 +746,16 @@ fn to_error_description(error: &Error) -> String {
                 None => "".to_string(),
                 Some(type_) => format!(
                     "\n    Add it to your declarations as {}: {}",
-                    format!("${}", param).yellow(),
-                    type_.cyan()
+                    yellow_if(in_color, param),
+                    cyan_if(in_color, type_)
                 ),
             };
             result.push_str(&format!(
                 "{} is used, but not declared.{}",
-                param.yellow(),
+                yellow_if(in_color, param),
                 type_suggestion
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::LinkSelectionIsEmpty {
@@ -756,24 +767,22 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} is a link to the {} table, but doesn't select any fields.  Let's select some!",
-                link_name.cyan(),
-                foreign_table.cyan()
+                cyan_if(in_color, link_name),
+                cyan_if(in_color, foreign_table)
             ));
 
-            result.push_str("\n\n");
             result
         }
 
         ErrorType::UnusedParam { param } => {
             let mut result = "".to_string();
-            let colored_param = format!("${}", param).yellow();
+            let colored_param = yellow_if(in_color,  param);
 
             result.push_str(&format!(
                 "{} isn't being used. Let's either use it or remove it.",
                 colored_param
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::InsertColumnIsNotSet { field } => {
@@ -781,10 +790,9 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} is required but not set to anything.",
-                field.yellow(),
+                yellow_if(in_color, field),
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::LinksDisallowedInDeletes { field } => {
@@ -792,12 +800,11 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} is a {}, which isn't allowed in a {}",
-                field.yellow(),
-                "@link".yellow(),
-                "delete".cyan()
+                yellow_if(in_color, field),
+                yellow_if(in_color, "@link"),
+                cyan_if(in_color, "delete")
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -806,12 +813,11 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} is a {}, which isn't allowed in a {}",
-                field.yellow(),
-                "@link".yellow(),
-                "update".cyan()
+                yellow_if(in_color, field),
+                yellow_if(in_color, "@link"),
+                cyan_if(in_color, "update")
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -823,14 +829,11 @@ fn to_error_description(error: &Error) -> String {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "Nested inserts are only allowed if you start with a primary key.\n\n{} links via {}, which isn't the primary key of the {} table.",
-                field.yellow(),
-                local_ids.clone().join(", ").yellow(),
-                table_name.yellow(),
-
-
+                yellow_if(in_color, field),
+                yellow_if(in_color, &local_ids.clone().join(", ")),
+                yellow_if(in_color, table_name),
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -839,11 +842,9 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "This query has a limit/offset, but also queries nested values.\n\n{} isn't able to handle this situation yet and can only handle @limit and @offset in a query with no nested fields.",
-                "Pyre".yellow(),
-
+                yellow_if(in_color, "Pyre"),
             ));
 
-            result.push_str("\n\n");
             result
         }
 
@@ -852,11 +853,10 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} is being set, which isn't allowed in a {}",
-                format!("${}", field).yellow(),
-                "query".cyan()
+                yellow_if(in_color, &format!("${}", field)),
+                cyan_if(in_color, "query")
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::NoSetsInDelete { field } => {
@@ -864,20 +864,21 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} is being set, which isn't allowed in a {}",
-                format!("${}", field).yellow(),
-                "delete".cyan()
+                yellow_if(in_color, &format!("${}", field)),
+                cyan_if(in_color, "delete")
             ));
 
-            result.push_str("\n\n");
             result
         }
 
         ErrorType::InsertMissingColumn { field } => {
             let mut result = "".to_string();
 
-            result.push_str(&format!("This insert is missing {}", field.yellow()));
+            result.push_str(&format!(
+                "This insert is missing {}",
+                yellow_if(in_color, field)
+            ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::NoFieldsSelected => {
@@ -885,7 +886,6 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str("There are no fields selected for this table, let's add some!");
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::WhereOnLinkIsntAllowed { link_name } => {
@@ -893,17 +893,16 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} is a {}, which can't be in a {}",
-                link_name.cyan(),
-                "@link".cyan(),
-                "@where".yellow(),
+                cyan_if(in_color, link_name),
+                cyan_if(in_color, "@link"),
+                yellow_if(in_color, "@where"),
             ));
 
-            result.push_str("\n\n");
             result
         }
         ErrorType::UnknownType { found, known_types } => {
             let mut result = "".to_string();
-            let colored_param = format!("{}", found).cyan();
+            let colored_param = cyan_if(in_color, found);
 
             result.push_str(&format!(
                 "I don't recognize the {} type, is that a typo?",
@@ -915,10 +914,12 @@ fn to_error_description(error: &Error) -> String {
             let mut sorted_types: Vec<String> = known_types.clone();
             sorted_types.sort();
             for typename in sorted_types {
-                result.push_str(&format!("        {}\n", typename.cyan()));
+                result.push_str(&format!(
+                    "        {}\n",
+                    cyan_if(in_color, &typename)
+                ));
             }
 
-            result.push_str("\n\n");
             result
         }
 
@@ -928,7 +929,7 @@ fn to_error_description(error: &Error) -> String {
             known_fields,
         } => {
             let mut result = "".to_string();
-            let colored_param = format!("{}", found).yellow();
+            let colored_param = yellow_if(in_color, found);
             let mut a_or_an = "a";
 
             if found.starts_with('a') {
@@ -937,14 +938,14 @@ fn to_error_description(error: &Error) -> String {
 
             result.push_str(&format!(
                 "{} doesn't have {} {} field, is that a typo?",
-                record_name.cyan(),
+                cyan_if(in_color, record_name),
                 a_or_an,
                 colored_param
             ));
 
             result.push_str(&format!(
                 "\n\n    Here are the fields on {}:\n\n",
-                record_name.cyan()
+                cyan_if(in_color, record_name)
             ));
             let mut largest_fieldname_size: usize = 0;
             for (field_name, _) in known_fields {
@@ -959,13 +960,12 @@ fn to_error_description(error: &Error) -> String {
                 let spacing = " ".repeat(extra_spacing_amount);
                 result.push_str(&format!(
                     "        {}:{}{}\n",
-                    field_name.yellow(),
+                    yellow_if(in_color, &field_name),
                     spacing,
-                    field_type.cyan()
+                    cyan_if(in_color, &field_type)
                 ));
             }
 
-            result.push_str("\n\n");
             result
         }
     }
@@ -993,7 +993,7 @@ pub fn format_json(errors: &Vec<Error>) -> serde_json::Value {
         let mut error_json = serde_json::Map::new();
         
         let title = get_error_title(&error.error_type);
-        let description = to_error_description(&error);
+        let description = to_error_description(&error, false);
 
         error_json.insert("title".to_string(), serde_json::Value::String(title));
         error_json.insert("description".to_string(), serde_json::Value::String(description));
