@@ -275,9 +275,12 @@ async fn main() -> io::Result<()> {
                 Ok(errors) => {
                     let has_errors = !errors.is_empty();
                     if *json {
-                        let formatted_errors = errors.iter().map(|file_error| {
-                            error::format_json(&file_error.errors)
-                        }).collect::<Vec<_>>();
+                        let mut formatted_errors = Vec::new();
+                        for file_error in errors {
+                            for error in &file_error.errors {
+                                formatted_errors.push(error::format_json(error));
+                            }
+                        }
                         println!("{}", serde_json::to_string_pretty(&formatted_errors).unwrap());
                         // eprintln!("{}", &formatted_error);
                     } else {
