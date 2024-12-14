@@ -16,6 +16,17 @@
   },
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "properties": {
+        "[pyre]": {
+          "editor.formatOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable format on save for Pyre files."
+          }
+        }
+      }
+    },
     "languages": [
       {
         "id": "pyre",
@@ -26,13 +37,7 @@
         "extensions": [
           ".pyre"
         ],
-        "configuration": "./language-configuration.json",
-        "commands": [
-          {
-            "command": "pyre.format",
-            "title": "Format Pyre Document"
-          }
-        ]
+        "configuration": "./language-configuration.json"
       }
     ],
     "commands": [
