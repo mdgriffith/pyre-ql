@@ -974,15 +974,44 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
 
 // JSON error format
-fn get_error_title(error_type: &ErrorType) -> String {
+fn to_error_title(error_type: &ErrorType) -> String {
     match error_type {
         ErrorType::ParsingError(_) => "Parsing Error",
         ErrorType::UnknownFunction { .. } => "Unknown Function",
-        ErrorType::MultipleSessionDeinitions => "Multiple Session Definitions", 
+        ErrorType::MultipleSessionDeinitions => "Multiple Session Definitions",
         ErrorType::MissingType => "Missing Type",
         ErrorType::DuplicateDefinition(_) => "Duplicate Definition",
         ErrorType::DefinitionIsBuiltIn(_) => "Definition Is Built-in",
-        _ => "Error"
+        ErrorType::DuplicateField { .. } => "Duplicate Field",
+        ErrorType::DuplicateVariant { .. } => "Duplicate Variant",
+        ErrorType::UnknownType { .. } => "Unknown Type",
+        ErrorType::NoPrimaryKey { .. } => "No Primary Key",
+        ErrorType::MultiplePrimaryKeys { .. } => "Multiple Primary Keys",
+        ErrorType::MultipleTableNames { .. } => "Multiple Table Names",
+        ErrorType::LinkToUnknownTable { .. } => "Link To Unknown Table",
+        ErrorType::LinkToUnknownField { .. } => "Link To Unknown Field",
+        ErrorType::LinkToUnknownForeignField { .. } => "Link To Unknown Foreign Field",
+        ErrorType::LinkSelectionIsEmpty { .. } => "Link Selection Is Empty",
+        ErrorType::UnknownTable { .. } => "Unknown Table",
+        ErrorType::DuplicateQueryField { .. } => "Duplicate Query Field",
+        ErrorType::NoFieldsSelected => "No Fields Selected",
+        ErrorType::UnknownField { .. } => "Unknown Field",
+        ErrorType::MultipleLimits { .. } => "Multiple Limits",
+        ErrorType::MultipleOffsets { .. } => "Multiple Offsets",
+        ErrorType::MultipleWheres { .. } => "Multiple Wheres",
+        ErrorType::WhereOnLinkIsntAllowed { .. } => "Where On Link Not Allowed",
+        ErrorType::TypeMismatch { .. } => "Type Mismatch",
+        ErrorType::LiteralTypeMismatch { .. } => "Literal Type Mismatch",
+        ErrorType::UnusedParam { .. } => "Unused Parameter",
+        ErrorType::UndefinedParam { .. } => "Undefined Parameter",
+        ErrorType::NoSetsInSelect { .. } => "No Sets In Select",
+        ErrorType::NoSetsInDelete { .. } => "No Sets In Delete",
+        ErrorType::LinksDisallowedInInserts { .. } => "Links Not Allowed In Inserts",
+        ErrorType::LinksDisallowedInDeletes { .. } => "Links Not Allowed In Deletes",
+        ErrorType::LinksDisallowedInUpdates { .. } => "Links Not Allowed In Updates",
+        ErrorType::InsertColumnIsNotSet { .. } => "Insert Column Not Set",
+        ErrorType::InsertMissingColumn { .. } => "Insert Missing Column",
+        ErrorType::LimitOffsetOnlyInFlatRecord => "Limit/Offset Only In Flat Record"
     }.to_string()
 }
 
@@ -992,7 +1021,7 @@ pub fn format_json(errors: &Vec<Error>) -> serde_json::Value {
     for error in errors {
         let mut error_json = serde_json::Map::new();
         
-        let title = get_error_title(&error.error_type);
+        let title = to_error_title(&error.error_type);
         let description = to_error_description(&error, false);
 
         error_json.insert("title".to_string(), serde_json::Value::String(title));
