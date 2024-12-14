@@ -23,7 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
             document.positionAt(0),
             document.positionAt(document.getText().length),
           );
-          pyre.appendLine("Replacing")
+         
 
 
           return [vscode.TextEdit.replace(fullRange, formattedText)];
@@ -51,41 +51,7 @@ export function activate(context: vscode.ExtensionContext) {
       checkErrors(document, diagnostics);
     }
   });
-
-
 }
 
-
-// const pyreCommand = "/Users/mattgriffith/projects/vendr/pyre-ql/target/debug/pyre" // "pyre"
-
-// async function formatPyre(input: string, filepath: string): Promise<string> {
-//   return new Promise((resolve, reject) => {
-//     const pyreProcess = spawn(pyreCommand, ["format", filepath]);
-//     let stdout = "";
-//     let stderr = "";
-
-//     pyreProcess.stdout.on("data", (data) => {
-//       stdout += data.toString();
-//     });
-
-//     pyreProcess.stderr.on("data", (data) => {
-//       stderr += data.toString();
-//       pyre.appendLine(`Err: ${data.toString()}`)
-//     });
-
-//     pyreProcess.on("close", (code) => {
-//       pyre.appendLine(`Close: ${code}`)
-//       pyre.appendLine(stdout)
-//       if (code === 0) {
-//         resolve(stdout);
-//       } else {
-//         reject(new Error(`Pyre format failed: ${stderr}`));
-//       }
-//     });
-
-//     pyreProcess.stdin.write(input);
-//     pyreProcess.stdin.end();
-//   });
-// }
 
 export function deactivate() { }
