@@ -1,6 +1,5 @@
 import { Hono } from "hono";
-import * as Db from "../generated/typescript/db";
-import * as Query from "../generated/typescript/query";
+import * as Query from "../pyre/generated/typescript/query";
 
 const app = new Hono();
 
@@ -20,7 +19,9 @@ app.post("/db/:req", async (c) => {
     authToken: undefined,
   };
 
-  const result = await Query.run(env, req, args);
+  const session = {}
+
+  const result = await Query.run(env, req, session, args);
 
   if (result.kind === "success") {
     console.log("RESULT  ", result);

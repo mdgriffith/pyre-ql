@@ -2,8 +2,6 @@
 query MyQuery($id: Int) {
     user {
         @where { id = $id }
-        @limit 5
-
         id
         createdAt
         username: name
@@ -22,6 +20,7 @@ insert UserNew($name: String, $status: Status) {
         status = $status
     }
 }
+
 
 insert AddBlogPosts($userId: Int, $status: Status, $at: DateTime) {
     post {
@@ -53,3 +52,5 @@ update UpdateBlogPosts($userId: Int, $status: Status) {
         status = $status
     }
 }
+
+
