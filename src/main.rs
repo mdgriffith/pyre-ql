@@ -610,12 +610,15 @@ fn parse_schemas(options: &Options, paths: &filesystem::Found) -> io::Result<ast
         files: vec![],
         session: None,
     };
-    for source in paths.schema_files.iter() {
-        match parser::run(&source.path, &source.content, &mut schema) {
-            Ok(()) => {}
-            Err(err) => {
-                eprintln!("{}", parser::render_error(&source.content, err));
-                std::process::exit(1);
+    
+    for (namespace, schema_files) in paths.schema_files.iter() {
+        for source in schema_files.iter() {
+            match parser::run(&source.path, &source.content, &mut schema) {
+                Ok(()) => {}
+                Err(err) => {
+                    eprintln!("{}", parser::render_error(&source.content, err));
+                    std::process::exit(1);
+                }
             }
         }
     }
