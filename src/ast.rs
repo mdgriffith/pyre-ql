@@ -2,8 +2,17 @@ use crate::ext::string;
 use nom_locate;
 use serde::{Deserialize, Serialize};
 
+
+
+
+#[derive(Debug)]
+pub struct Database {
+    schemas: Vec<Schema>
+}
+
 #[derive(Debug)]
 pub struct Schema {
+    pub namespace: Option<String>,
     pub session: Option<SessionDetails>,
     pub files: Vec<SchemaFile>,
 }
@@ -34,6 +43,7 @@ pub struct SchemaFile {
 
 pub fn empty_schema() -> Schema {
     Schema {
+        namespace: None,
         session: None,
         files: Vec::new(),
     }

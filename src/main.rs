@@ -565,6 +565,7 @@ fn format_query(
 
 fn parse_single_schema(schema_file_path: &String) -> io::Result<ast::Schema> {
     let mut schema = ast::Schema {
+        namespace: None,
         files: vec![],
         session: None,
     };
@@ -588,8 +589,9 @@ fn parse_single_schema_from_source(
     schema_source: &str,
 ) -> io::Result<ast::Schema> {
     let mut schema = ast::Schema {
-        files: vec![],
+        namespace: None,
         session: None,
+        files: vec![],
     };
 
     match parser::run(&schema_file_path, &schema_source, &mut schema) {
@@ -604,6 +606,7 @@ fn parse_single_schema_from_source(
 
 fn parse_schemas(options: &Options, paths: &filesystem::Found) -> io::Result<ast::Schema> {
     let mut schema = ast::Schema {
+        namespace: None,
         files: vec![],
         session: None,
     };
