@@ -8,12 +8,11 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 
 const ELM_READ_MODULE: &str = include_str!("../static/elm/src/Db/Read.elm");
-
-pub fn write(out_path: &Path, schema: &ast::Schema) -> io::Result<()> {
+pub fn write(out_path: &Path, database: &ast::Database) -> io::Result<()> {
     filesystem::create_dir_if_not_exists(&out_path.join("elm"));
     filesystem::create_dir_if_not_exists(&out_path.join("elm/Db"));
 
-    let formatted_elm = write_schema(&schema);
+    let formatted_elm = write_schema(database);
 
     // Top level Elm files
     let elm_db_path = out_path.join("elm/Db.elm");
@@ -33,7 +32,7 @@ pub fn write(out_path: &Path, schema: &ast::Schema) -> io::Result<()> {
 
     // Elm Decoders
     let elm_db_decode_path = out_path.join("elm/Db/Decode.elm");
-    let elm_decoders = to_schema_decoders(&schema);
+    let elm_decoders = to_schema_decoders(database);
     let elm_decoder_file = Path::new(&elm_db_decode_path);
     let mut output = fs::File::create(elm_decoder_file).expect("Failed to create file");
     output
@@ -42,7 +41,7 @@ pub fn write(out_path: &Path, schema: &ast::Schema) -> io::Result<()> {
 
     // Elm Encoders
     let elm_db_encode_path = out_path.join("elm/Db/Encode.elm");
-    let elm_encoders = to_schema_encoders(&schema);
+    let elm_encoders = to_schema_encoders(database);
     let elm_encoder_file = Path::new(&elm_db_encode_path);
     let mut output = fs::File::create(elm_encoder_file).expect("Failed to create file");
     output
@@ -52,16 +51,18 @@ pub fn write(out_path: &Path, schema: &ast::Schema) -> io::Result<()> {
     Ok(())
 }
 
-pub fn write_schema(schem: &ast::Schema) -> String {
+pub fn write_schema(database: &ast::Database) -> String {
     let mut result = String::new();
 
     result.push_str("module Db exposing (..)\n\nimport Time\n\n\n");
 
     result.push_str("type alias DateTime =\n    Time.Posix\n\n\n");
 
-    for file in &schem.files {
-        for definition in &file.definitions {
-            result.push_str(&to_string_definition(definition));
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for definition in &file.definitions {
+                result.push_str(&to_string_definition(definition));
+            }
         }
     }
 
@@ -188,8 +189,7 @@ bool =
                             Decode.succeed True
                 )
                 ]"#;
-
-pub fn to_schema_decoders(schem: &ast::Schema) -> String {
+pub fn to_schema_decoders(database: &ast::Database) -> String {
     let mut result = String::new();
 
     result.push_str("module Db.Decode exposing (..)\n\n");
@@ -206,9 +206,11 @@ pub fn to_schema_decoders(schem: &ast::Schema) -> String {
 
     result.push_str("\n\n");
 
-    for file in &schem.files {
-        for definition in &file.definitions {
-            result.push_str(&to_decoder_definition(definition));
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for definition in &file.definitions {
+                result.push_str(&to_decoder_definition(definition));
+            }
         }
     }
     result
@@ -360,8 +362,7 @@ fn to_type_decoder(column: &ast::Column) -> String {
 
 // Encoders!
 //
-
-pub fn to_schema_encoders(schem: &ast::Schema) -> String {
+pub fn to_schema_encoders(database: &ast::Database) -> String {
     let mut result = String::new();
 
     result.push_str(
@@ -372,9 +373,11 @@ pub fn to_schema_encoders(schem: &ast::Schema) -> String {
     result.push_str("dateTime time =\n");
     result.push_str("    Encode.int (Time.posixToMillis time)\n\n");
 
-    for file in &schem.files {
-        for definition in &file.definitions {
-            result.push_str(&to_encoder_definition(definition));
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for definition in &file.definitions {
+                result.push_str(&to_encoder_definition(definition));
+            }
         }
     }
     result

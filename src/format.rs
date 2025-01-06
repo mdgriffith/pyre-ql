@@ -4,6 +4,13 @@ use crate::typecheck;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+pub fn database(database: &mut ast::Database) {
+    for schem in database.schemas.iter_mut() {
+        schema(schem);
+    }
+}
+
+
 pub fn schema(schem: &mut ast::Schema) {
     // Insert some lines before each definition if needed
     let mut i = 0;
@@ -226,14 +233,15 @@ fn format_definition(
         }
     }
 }
-
 /* Queries
 
-The main thing that query_list does is calculate what the inferred param types are for each query
+The main thing that query_list does is calculate what the inferred param types are for each query.
+
+Which is why it needs the full schema
 
 */
-pub fn query_list(schem: &ast::Schema, queries: &mut ast::QueryList) {
-    match typecheck::populate_context(schem) {
+pub fn query_list(db_schema: &ast::Database, queries: &mut ast::QueryList) {
+    match typecheck::populate_context(db_schema) {
         Ok(context) => {
             let mut query_param_map = HashMap::new();
 

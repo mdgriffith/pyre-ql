@@ -124,11 +124,11 @@ fn empty_context() -> Context {
     context
 }
 
-pub fn check_schema(schem: &ast::Schema) -> Result<Context, Vec<Error>> {
-    let context = populate_context(schem)?;
+pub fn check_schema(db: &ast::Database) -> Result<Context, Vec<Error>> {
+    let context = populate_context(db)?;
 
     let mut errors: Vec<Error> = Vec::new();
-    check_schema_definitions(&context, schem, &mut errors);
+    check_schema_definitions(&context, db, &mut errors);
 
     if (!errors.is_empty()) {
         return Err(errors);
@@ -164,305 +164,308 @@ fn to_single_range(start: &Option<ast::Location>, end: &Option<ast::Location>) -
         },
     }
 }
-
-pub fn populate_context(schem: &ast::Schema) -> Result<Context, Vec<Error>> {
+pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>> {
     let mut context = empty_context();
     let mut errors = Vec::new();
 
-    context.session = schem.session.clone();
-    for file in schem.files.iter() {
-        for definition in &file.definitions {
-            match definition {
-                ast::Definition::Record {
-                    name,
-                    fields,
-                    start,
-                    end,
-                    start_name,
-                    end_name,
-                } => {
-                    match context.types.get(name) {
-                        None => (),
-                        Some(DefInfo::Def(loc)) => {
-                            let mut locations: Vec<Location> = vec![];
-                            locations.push(Location {
-                                contexts: vec![],
-                                primary: loc.clone().into_iter().collect(),
-                            });
-                            locations.push(Location {
-                                contexts: vec![],
-                                primary: to_range(start_name, end_name),
-                            });
-                            errors.push(Error {
-                                filepath: file.path.clone(),
-                                error_type: ErrorType::DuplicateDefinition(name.clone()),
-                                locations,
-                            });
+    for schema in &database.schemas {
+        context.session = schema.session.clone();
+        for file in &schema.files {
+            for definition in &file.definitions {
+                match definition {
+                    ast::Definition::Record {
+                        name,
+                        fields,
+                        start,
+                        end,
+                        start_name,
+                        end_name,
+                    } => {
+                        match context.types.get(name) {
+                            None => (),
+                            Some(DefInfo::Def(loc)) => {
+                                let mut locations: Vec<Location> = vec![];
+                                locations.push(Location {
+                                    contexts: vec![],
+                                    primary: loc.clone().into_iter().collect(),
+                                });
+                                locations.push(Location {
+                                    contexts: vec![],
+                                    primary: to_range(start_name, end_name),
+                                });
+                                errors.push(Error {
+                                    filepath: file.path.clone(),
+                                    error_type: ErrorType::DuplicateDefinition(name.clone()),
+                                    locations,
+                                });
+                            }
+                            Some(DefInfo::Builtin) => {
+                                let mut locations: Vec<Location> = vec![];
+                                locations.push(Location {
+                                    contexts: vec![],
+                                    primary: to_range(start_name, end_name),
+                                });
+                                errors.push(Error {
+                                    filepath: file.path.clone(),
+                                    error_type: ErrorType::DefinitionIsBuiltIn(name.clone()),
+                                    locations,
+                                });
+                            }
                         }
-                        Some(DefInfo::Builtin) => {
-                            let mut locations: Vec<Location> = vec![];
-                            locations.push(Location {
-                                contexts: vec![],
-                                primary: to_range(start_name, end_name),
-                            });
-                            errors.push(Error {
-                                filepath: file.path.clone(),
-                                error_type: ErrorType::DefinitionIsBuiltIn(name.clone()),
-                                locations,
-                            });
-                        }
+                        context.types.insert(
+                            name.clone(),
+                            DefInfo::Def(to_single_range(start_name, end_name)),
+                        );
+                        context.tables.insert(
+                            crate::ext::string::decapitalize(&name),
+                            ast::RecordDetails {
+                                name: name.clone(),
+                                fields: fields.clone(),
+                                start: start.clone(),
+                                end: end.clone(),
+                                start_name: start_name.clone(),
+                                end_name: end_name.clone(),
+                            },
+                        );
                     }
-                    context.types.insert(
-                        name.clone(),
-                        DefInfo::Def(to_single_range(start_name, end_name)),
-                    );
-                    context.tables.insert(
-                        crate::ext::string::decapitalize(&name),
-                        ast::RecordDetails {
-                            name: name.clone(),
-                            fields: fields.clone(),
-                            start: start.clone(),
-                            end: end.clone(),
-                            start_name: start_name.clone(),
-                            end_name: end_name.clone(),
-                        },
-                    );
-                }
-                ast::Definition::Tagged {
-                    name,
-                    variants,
-                    start,
-                    end,
-                } => {
-                    match context.types.get(name) {
-                        None => (),
-                        Some(DefInfo::Def(loc)) => {
-                            let mut locations: Vec<Location> = vec![];
-                            locations.push(Location {
-                                contexts: vec![],
-                                primary: loc.clone().into_iter().collect(),
-                            });
-                            locations.push(Location {
-                                contexts: vec![],
-                                primary: to_range(start, end),
-                            });
-                            errors.push(Error {
-                                filepath: file.path.clone(),
-                                error_type: ErrorType::DuplicateDefinition(name.clone()),
-                                locations,
-                            });
+                    ast::Definition::Tagged {
+                        name,
+                        variants,
+                        start,
+                        end,
+                    } => {
+                        match context.types.get(name) {
+                            None => (),
+                            Some(DefInfo::Def(loc)) => {
+                                let mut locations: Vec<Location> = vec![];
+                                locations.push(Location {
+                                    contexts: vec![],
+                                    primary: loc.clone().into_iter().collect(),
+                                });
+                                locations.push(Location {
+                                    contexts: vec![],
+                                    primary: to_range(start, end),
+                                });
+                                errors.push(Error {
+                                    filepath: file.path.clone(),
+                                    error_type: ErrorType::DuplicateDefinition(name.clone()),
+                                    locations,
+                                });
+                            }
+                            Some(DefInfo::Builtin) => {
+                                let mut locations: Vec<Location> = vec![];
+                                locations.push(Location {
+                                    contexts: vec![],
+                                    primary: to_range(start, end),
+                                });
+                                errors.push(Error {
+                                    filepath: file.path.clone(),
+                                    error_type: ErrorType::DefinitionIsBuiltIn(name.clone()),
+                                    locations,
+                                });
+                            }
                         }
-                        Some(DefInfo::Builtin) => {
-                            let mut locations: Vec<Location> = vec![];
-                            locations.push(Location {
-                                contexts: vec![],
-                                primary: to_range(start, end),
-                            });
-                            errors.push(Error {
-                                filepath: file.path.clone(),
-                                error_type: ErrorType::DefinitionIsBuiltIn(name.clone()),
-                                locations,
-                            });
-                        }
-                    }
-                    context
-                        .types
-                        .insert(name.clone(), DefInfo::Def(to_single_range(start, end)));
-
-                    for mut variant in variants {
-                        let variant_def = VariantDef {
-                            typename: name.clone(),
-                            variant_name: variant.name.clone(),
-                            range: to_single_range(&variant.start_name, &variant.end_name),
-                        };
-
-                        let type_range = to_single_range(&start, &end);
-
                         context
-                            .variants
-                            .entry(variant.name.clone())
-                            .or_insert_with(|| (type_range, Vec::new()))
-                            .1
-                            .push(variant_def);
+                            .types
+                            .insert(name.clone(), DefInfo::Def(to_single_range(start, end)));
+
+                        for mut variant in variants {
+                            let variant_def = VariantDef {
+                                typename: name.clone(),
+                                variant_name: variant.name.clone(),
+                                range: to_single_range(&variant.start_name, &variant.end_name),
+                            };
+
+                            let type_range = to_single_range(&start, &end);
+
+                            context
+                                .variants
+                                .entry(variant.name.clone())
+                                .or_insert_with(|| (type_range, Vec::new()))
+                                .1
+                                .push(variant_def);
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     }
 
-    for file in schem.files.iter() {
-        for definition in &file.definitions {
-            match definition {
-                ast::Definition::Record {
-                    name,
-                    fields,
-                    start,
-                    end,
-                    start_name,
-                    end_name,
-                } => {
-                    let mut tablenames: Vec<Range> = Vec::new();
-                    let mut has_primary_id = false;
-                    let mut field_names = HashSet::new();
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for definition in &file.definitions {
+                match definition {
+                    ast::Definition::Record {
+                        name,
+                        fields,
+                        start,
+                        end,
+                        start_name,
+                        end_name,
+                    } => {
+                        let mut tablenames: Vec<Range> = Vec::new();
+                        let mut has_primary_id = false;
+                        let mut field_names = HashSet::new();
 
-                    for field in fields {
-                        match field {
-                            ast::Field::Column(column) => {
-                                if field_names.contains(&column.name) {
-                                    errors.push(Error {
-                                        filepath: file.path.clone(),
-                                        error_type: ErrorType::DuplicateField {
-                                            record: name.clone(),
-                                            field: column.name.clone(),
-                                        },
-                                        locations: vec![Location {
-                                            contexts: to_range(&start, &end),
-                                            primary: to_range(&column.start, &column.end),
-                                        }],
-                                    });
-                                }
-                                if (column
-                                    .directives
-                                    .iter()
-                                    .any(|item| *item == ast::ColumnDirective::PrimaryKey))
-                                {
-                                    if has_primary_id {
+                        for field in fields {
+                            match field {
+                                ast::Field::Column(column) => {
+                                    if field_names.contains(&column.name) {
                                         errors.push(Error {
                                             filepath: file.path.clone(),
-                                            error_type: ErrorType::MultiplePrimaryKeys {
+                                            error_type: ErrorType::DuplicateField {
                                                 record: name.clone(),
-                                                field: name.clone(),
+                                                field: column.name.clone(),
                                             },
                                             locations: vec![Location {
                                                 contexts: to_range(&start, &end),
-                                                primary: to_range(
-                                                    &column.start_name,
-                                                    &column.end_name,
-                                                ),
+                                                primary: to_range(&column.start, &column.end),
                                             }],
                                         });
                                     }
-                                    has_primary_id = true;
+                                    if (column
+                                        .directives
+                                        .iter()
+                                        .any(|item| *item == ast::ColumnDirective::PrimaryKey))
+                                    {
+                                        if has_primary_id {
+                                            errors.push(Error {
+                                                filepath: file.path.clone(),
+                                                error_type: ErrorType::MultiplePrimaryKeys {
+                                                    record: name.clone(),
+                                                    field: name.clone(),
+                                                },
+                                                locations: vec![Location {
+                                                    contexts: to_range(&start, &end),
+                                                    primary: to_range(
+                                                        &column.start_name,
+                                                        &column.end_name,
+                                                    ),
+                                                }],
+                                            });
+                                        }
+                                        has_primary_id = true;
+                                    }
+
+                                    field_names.insert(name.clone());
                                 }
+                                ast::Field::FieldDirective(ast::FieldDirective::TableName((
+                                    tablename_range,
+                                    tablename,
+                                ))) => tablenames.push(convert_range(tablename_range)),
+                                ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                                    let maybe_foreign_table = get_linked_table(&context, link);
 
-                                field_names.insert(name.clone());
-                            }
-                            ast::Field::FieldDirective(ast::FieldDirective::TableName((
-                                tablename_range,
-                                tablename,
-                            ))) => tablenames.push(convert_range(tablename_range)),
-                            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                                let maybe_foreign_table = get_linked_table(&context, link);
+                                    if field_names.contains(&link.link_name) {
+                                        errors.push(Error {
+                                            filepath: file.path.clone(),
+                                            error_type: ErrorType::DuplicateField {
+                                                record: name.clone(),
+                                                field: link.link_name.clone(),
+                                            },
+                                            locations: vec![Location {
+                                                contexts: vec![],
+                                                primary: to_range(&start, &end),
+                                            }],
+                                        });
+                                    }
 
-                                if field_names.contains(&link.link_name) {
-                                    errors.push(Error {
-                                        filepath: file.path.clone(),
-                                        error_type: ErrorType::DuplicateField {
-                                            record: name.clone(),
-                                            field: link.link_name.clone(),
-                                        },
-                                        locations: vec![Location {
-                                            contexts: vec![],
-                                            primary: to_range(&start, &end),
-                                        }],
-                                    });
-                                }
-
-                                match maybe_foreign_table {
-                                    Some(foreign_table) => {
-                                        for foreign_id in &link.foreign_ids {
-                                            if !foreign_table
-                                                .fields
-                                                .iter()
-                                                .any(|f| ast::has_fieldname(f, foreign_id))
-                                            {
-                                                errors.push(Error {
-                                                    filepath: file.path.clone(),
-                                                    error_type:
-                                                        ErrorType::LinkToUnknownForeignField {
-                                                            link_name: link.link_name.clone(),
-                                                            foreign_table: link
-                                                                .foreign_tablename
-                                                                .clone(),
-                                                            unknown_foreign_field: foreign_id
-                                                                .clone(),
-                                                        },
-                                                    locations: vec![Location {
-                                                        contexts: to_range(&start, &end),
-                                                        primary: to_range(
-                                                            &link.start_name,
-                                                            &link.end_name,
-                                                        ),
-                                                    }],
-                                                });
+                                    match maybe_foreign_table {
+                                        Some(foreign_table) => {
+                                            for foreign_id in &link.foreign_ids {
+                                                if !foreign_table
+                                                    .fields
+                                                    .iter()
+                                                    .any(|f| ast::has_fieldname(f, foreign_id))
+                                                {
+                                                    errors.push(Error {
+                                                        filepath: file.path.clone(),
+                                                        error_type:
+                                                            ErrorType::LinkToUnknownForeignField {
+                                                                link_name: link.link_name.clone(),
+                                                                foreign_table: link
+                                                                    .foreign_tablename
+                                                                    .clone(),
+                                                                unknown_foreign_field: foreign_id
+                                                                    .clone(),
+                                                            },
+                                                        locations: vec![Location {
+                                                            contexts: to_range(&start, &end),
+                                                            primary: to_range(
+                                                                &link.start_name,
+                                                                &link.end_name,
+                                                            ),
+                                                        }],
+                                                    });
+                                                }
                                             }
                                         }
+                                        None => {
+                                            errors.push(Error {
+                                                filepath: file.path.clone(),
+                                                error_type: ErrorType::LinkToUnknownTable {
+                                                    link_name: link.link_name.clone(),
+                                                    unknown_table: link.foreign_tablename.clone(),
+                                                },
+                                                locations: vec![Location {
+                                                    contexts: to_range(&start, &end),
+                                                    primary: to_range(&link.start_name, &link.end_name),
+                                                }],
+                                            });
+                                        }
                                     }
-                                    None => {
-                                        errors.push(Error {
-                                            filepath: file.path.clone(),
-                                            error_type: ErrorType::LinkToUnknownTable {
-                                                link_name: link.link_name.clone(),
-                                                unknown_table: link.foreign_tablename.clone(),
-                                            },
-                                            locations: vec![Location {
-                                                contexts: to_range(&start, &end),
-                                                primary: to_range(&link.start_name, &link.end_name),
-                                            }],
-                                        });
-                                    }
-                                }
 
-                                // Check that the local ids exist
-                                for local_id in &link.local_ids {
-                                    if !fields.iter().any(|f| ast::has_fieldname(f, local_id)) {
-                                        errors.push(Error {
-                                            filepath: file.path.clone(),
-                                            error_type: ErrorType::LinkToUnknownField {
-                                                link_name: link.link_name.clone(),
-                                                unknown_local_field: local_id.clone(),
-                                            },
-                                            locations: vec![Location {
-                                                contexts: to_range(&start, &end),
-                                                primary: to_range(&link.start_name, &link.end_name),
-                                            }],
-                                        });
+                                    // Check that the local ids exist
+                                    for local_id in &link.local_ids {
+                                        if !fields.iter().any(|f| ast::has_fieldname(f, local_id)) {
+                                            errors.push(Error {
+                                                filepath: file.path.clone(),
+                                                error_type: ErrorType::LinkToUnknownField {
+                                                    link_name: link.link_name.clone(),
+                                                    unknown_local_field: local_id.clone(),
+                                                },
+                                                locations: vec![Location {
+                                                    contexts: to_range(&start, &end),
+                                                    primary: to_range(&link.start_name, &link.end_name),
+                                                }],
+                                            });
+                                        }
                                     }
                                 }
+                                _ => {}
                             }
-                            _ => {}
+                        }
+
+                        if tablenames.len() > 1 {
+                            errors.push(Error {
+                                filepath: file.path.clone(),
+                                error_type: ErrorType::MultipleTableNames {
+                                    record: name.clone(),
+                                },
+                                locations: vec![Location {
+                                    contexts: to_range(&start, &end),
+                                    primary: tablenames,
+                                }],
+                            });
+                        }
+
+                        if !has_primary_id {
+                            errors.push(Error {
+                                filepath: file.path.clone(),
+                                error_type: ErrorType::NoPrimaryKey {
+                                    record: name.clone(),
+                                },
+                                locations: vec![Location {
+                                    contexts: vec![],
+                                    primary: to_range(&start_name, &end_name),
+                                }],
+                            });
                         }
                     }
 
-                    if tablenames.len() > 1 {
-                        errors.push(Error {
-                            filepath: file.path.clone(),
-                            error_type: ErrorType::MultipleTableNames {
-                                record: name.clone(),
-                            },
-                            locations: vec![Location {
-                                contexts: to_range(&start, &end),
-                                primary: tablenames,
-                            }],
-                        });
-                    }
-
-                    if !has_primary_id {
-                        errors.push(Error {
-                            filepath: file.path.clone(),
-                            error_type: ErrorType::NoPrimaryKey {
-                                record: name.clone(),
-                            },
-                            locations: vec![Location {
-                                contexts: vec![],
-                                primary: to_range(&start_name, &end_name),
-                            }],
-                        });
-                    }
+                    _ => {}
                 }
-
-                _ => {}
             }
         }
     }
@@ -473,8 +476,7 @@ pub fn populate_context(schem: &ast::Schema) -> Result<Context, Vec<Error>> {
         return Ok(context);
     }
 }
-
-fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: &mut Vec<Error>) {
+fn check_schema_definitions(context: &Context, database: &ast::Database, mut errors: &mut Vec<Error>) {
     let vars = context.variants.clone();
     for (variant_name, (maybe_type_range, mut instances)) in vars {
         if instances.len() > 1 {
@@ -517,133 +519,135 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
     let mut session_found = false;
 
     // Check definitions
-    for file in schem.files.iter() {
-        for definition in &file.definitions {
-            match definition {
-                ast::Definition::Session(session) => {
-                    if session_found {
-                        errors.push(Error {
-                            filepath: file.path.clone(),
-                            error_type: ErrorType::MultipleSessionDeinitions,
-                            locations: vec![Location {
-                                contexts: to_range(&session.start, &session.end),
-                                primary: vec![],
-                            }],
-                        });
-                    } else {
-                        session_found = true;
-                    }
-                }
-                ast::Definition::Record {
-                    name,
-                    fields,
-                    start,
-                    end,
-                    start_name,
-                    end_name,
-                } => {
-                    let mut field_names: HashMap<String, Option<Range>> = HashMap::new();
-                    for column in ast::collect_columns(fields) {
-                        // Type exists check
-                        if !context.types.contains_key(&column.type_) {
+    for schema in database.schemas.iter() {
+        for file in schema.files.iter() {
+            for definition in &file.definitions {
+                match definition {
+                    ast::Definition::Session(session) => {
+                        if session_found {
                             errors.push(Error {
                                 filepath: file.path.clone(),
-                                error_type: ErrorType::UnknownType {
-                                    found: column.type_.clone(),
-                                    known_types: context.types.keys().cloned().collect(),
-                                },
+                                error_type: ErrorType::MultipleSessionDeinitions,
                                 locations: vec![Location {
-                                    contexts: to_range(start, end),
-                                    primary: to_range(&column.start, &column.end),
+                                    contexts: to_range(&session.start, &session.end),
+                                    primary: vec![],
                                 }],
                             });
+                        } else {
+                            session_found = true;
                         }
-
-                        // Duplicate field check
-                        match field_names.get(&column.name) {
-                            None => (),
-                            Some(duplicate_maybe_range) => {
-                                let mut ranges: Vec<Range> = vec![];
-
-                                match duplicate_maybe_range {
-                                    None => (),
-                                    Some(new_range) => {
-                                        ranges.push(new_range.clone());
-                                    }
-                                }
-
-                                match to_single_range(&column.start_name, &column.end_name) {
-                                    None => (),
-                                    Some(new_range) => {
-                                        ranges.push(new_range);
-                                    }
-                                }
-
+                    }
+                    ast::Definition::Record {
+                        name,
+                        fields,
+                        start,
+                        end,
+                        start_name,
+                        end_name,
+                    } => {
+                        let mut field_names: HashMap<String, Option<Range>> = HashMap::new();
+                        for column in ast::collect_columns(fields) {
+                            // Type exists check
+                            if !context.types.contains_key(&column.type_) {
                                 errors.push(Error {
                                     filepath: file.path.clone(),
-                                    error_type: ErrorType::DuplicateField {
-                                        record: name.clone(),
-                                        field: column.name.clone(),
+                                    error_type: ErrorType::UnknownType {
+                                        found: column.type_.clone(),
+                                        known_types: context.types.keys().cloned().collect(),
                                     },
                                     locations: vec![Location {
                                         contexts: to_range(start, end),
-                                        primary: ranges,
+                                        primary: to_range(&column.start, &column.end),
                                     }],
                                 });
                             }
-                        }
-                        field_names.insert(
-                            column.name.clone(),
-                            to_single_range(&column.start_name, &column.end_name),
-                        );
-                    }
-                }
-                ast::Definition::Tagged {
-                    name,
-                    variants,
-                    start,
-                    end,
-                } => {
-                    for variant in variants {
-                        if let Some(fields) = &variant.data {
-                            for field in ast::collect_columns(&fields) {
-                                if !context.types.contains_key(&field.type_) {
-                                    let mut contexts: Vec<Range> = vec![];
 
-                                    match to_single_range(&start, &end) {
+                            // Duplicate field check
+                            match field_names.get(&column.name) {
+                                None => (),
+                                Some(duplicate_maybe_range) => {
+                                    let mut ranges: Vec<Range> = vec![];
+
+                                    match duplicate_maybe_range {
                                         None => (),
                                         Some(new_range) => {
-                                            contexts.push(new_range);
+                                            ranges.push(new_range.clone());
                                         }
                                     }
 
-                                    match to_single_range(&variant.start, &variant.end) {
+                                    match to_single_range(&column.start_name, &column.end_name) {
                                         None => (),
                                         Some(new_range) => {
-                                            contexts.push(new_range);
+                                            ranges.push(new_range);
                                         }
                                     }
 
                                     errors.push(Error {
                                         filepath: file.path.clone(),
-                                        error_type: ErrorType::UnknownType {
-                                            found: field.type_.clone(),
-                                            known_types: context.types.keys().cloned().collect(),
+                                        error_type: ErrorType::DuplicateField {
+                                            record: name.clone(),
+                                            field: column.name.clone(),
                                         },
                                         locations: vec![Location {
-                                            contexts,
-                                            primary: to_range(
-                                                &field.start_typename,
-                                                &field.end_typename,
-                                            ),
+                                            contexts: to_range(start, end),
+                                            primary: ranges,
                                         }],
                                     });
                                 }
                             }
+                            field_names.insert(
+                                column.name.clone(),
+                                to_single_range(&column.start_name, &column.end_name),
+                            );
                         }
                     }
+                    ast::Definition::Tagged {
+                        name,
+                        variants,
+                        start,
+                        end,
+                    } => {
+                        for variant in variants {
+                            if let Some(fields) = &variant.data {
+                                for field in ast::collect_columns(&fields) {
+                                    if !context.types.contains_key(&field.type_) {
+                                        let mut contexts: Vec<Range> = vec![];
+
+                                        match to_single_range(&start, &end) {
+                                            None => (),
+                                            Some(new_range) => {
+                                                contexts.push(new_range);
+                                            }
+                                        }
+
+                                        match to_single_range(&variant.start, &variant.end) {
+                                            None => (),
+                                            Some(new_range) => {
+                                                contexts.push(new_range);
+                                            }
+                                        }
+
+                                        errors.push(Error {
+                                            filepath: file.path.clone(),
+                                            error_type: ErrorType::UnknownType {
+                                                found: field.type_.clone(),
+                                                known_types: context.types.keys().cloned().collect(),
+                                            },
+                                            locations: vec![Location {
+                                                contexts,
+                                                primary: to_range(
+                                                    &field.start_typename,
+                                                    &field.end_typename,
+                                                ),
+                                            }],
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     }
@@ -652,13 +656,13 @@ fn check_schema_definitions(context: &Context, schem: &ast::Schema, mut errors: 
 // Check query
 
 pub fn check_queries<'a>(
-    schem: &ast::Schema,
+    database: &ast::Database,
     query_list: &ast::QueryList,
     context: &Context,
 ) -> Result<HashMap<String, HashMap<String, ParamInfo>>, Vec<Error>> {
     let mut errors: Vec<Error> = Vec::new();
     let mut all_params: HashMap<String, HashMap<String, ParamInfo>> = HashMap::new();
-    check_schema_definitions(&context, schem, &mut errors);
+    check_schema_definitions(&context, database, &mut errors);
 
     for mut query in &query_list.queries {
         match query {

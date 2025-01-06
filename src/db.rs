@@ -72,7 +72,7 @@ fn table_indices(table_name: &str) -> String {
 
 #[derive(Debug)]
 pub struct Introspection {
-    pub schema: ast::Schema,
+    pub schema: ast::Database,
     pub migrations_recorded: Vec<String>,
     pub warnings: Vec<Warning>,
 }
@@ -380,8 +380,12 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                     };
                     format::schema(&mut schema);
 
+                    let new_database = ast::Database {
+                        schemas: vec![schema]
+                    };
+
                     Ok(Introspection {
-                        schema,
+                        schema: new_database,
                         migrations_recorded,
                         warnings: vec![],
                     })

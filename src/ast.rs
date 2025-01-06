@@ -7,8 +7,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub struct Database {
-    schemas: Vec<Schema>
+    pub schemas: Vec<Schema>
 }
+
+pub fn get_schema_by_name<'a>(db: &'a Database, name: &str) -> Option<&'a Schema> {
+    db.schemas.iter().find(|schema| schema.namespace.as_deref() == Some(name))
+}
+
 
 #[derive(Debug)]
 pub struct Schema {
@@ -23,6 +28,10 @@ pub struct SessionDetails {
 
     pub start: Option<Location>,
     pub end: Option<Location>,
+}
+
+pub fn is_empty_db(db: &Database) -> bool {
+    db.schemas.iter().all(|schema| is_empty_schema(schema))
 }
 
 pub fn is_empty_schema(schema: &Schema) -> bool {

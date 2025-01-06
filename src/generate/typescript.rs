@@ -8,13 +8,15 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-pub fn schema(schem: &ast::Schema) -> String {
+pub fn schema(database: &ast::Database) -> String {
     let mut result = String::new();
 
-    result.push_str("\n\n");
-    for file in &schem.files {
-        for definition in &file.definitions {
-            result.push_str(&to_string_definition(definition));
+    for schema in &database.schemas {
+        result.push_str("\n\n");
+        for file in &schema.files {
+            for definition in &file.definitions {
+                result.push_str(&to_string_definition(definition));
+            }
         }
     }
     result
@@ -145,16 +147,18 @@ fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> Stri
 // DECODE
 //
 
-pub fn to_schema_decoders(schem: &ast::Schema) -> String {
+pub fn to_schema_decoders(database: &ast::Database) -> String {
     let mut result = String::new();
 
     result.push_str("import * as Ark from 'arktype';");
 
     result.push_str("\n\n");
 
-    for file in &schem.files {
-        for definition in &file.definitions {
-            result.push_str(&to_decoder_definition(definition));
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for definition in &file.definitions {
+                result.push_str(&to_decoder_definition(definition));
+            }
         }
     }
     result
@@ -654,15 +658,18 @@ fn operator_to_string(operator: &ast::Operator) -> &str {
     }
 }
 
-pub fn session(schema: &ast::Schema) -> String {
+
+pub fn session(database: &ast::Database) -> Option<String> {
     let mut result = String::new();
 
     result.push_str("import * as Ark from 'arktype';\n");
-    match &schema.session {
-        None => {
-            result.push_str("\n\nexport const Session = Ark.type({});");
-            result.push_str("\n\nexport type Session = {};\n\n");
-        }
+
+    let session = database.schemas.iter().find_map(|schema| {
+        schema.session.clone()
+    });
+
+    match session {
+        None => None,
         Some(session) => {
             result.push_str("\n\nexport const Session = Ark.type({\n");
             for field in &session.fields {
@@ -693,10 +700,10 @@ pub fn session(schema: &ast::Schema) -> String {
                 }
             }
             result.push_str("};\n\n");
+
+            Some(result)
         }
     }
-
-    result
 }
 
 //
