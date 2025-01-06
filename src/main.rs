@@ -25,15 +25,15 @@ mod typecheck;
 #[derive(Parser)]
 #[command(name = "pyre")]
 #[command(about = "A CLI tool for pyre operations", long_about = None)]
+#[command(arg_required_else_help = true)]
 struct Cli {
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 
-    /// The input directory to read from (when no subcommand is provided)
+    /// The input directory to read from.
     #[arg(long, global = true)]
     r#in: Option<String>,
 
-    /// The output directory to write to (when no subcommand is provided)
     #[arg(long, global = true)]
     out: Option<String>,
 
@@ -46,11 +46,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+
+    /// Generate files for querying your pyre schema.
+    Generate {
+        
+        /// Directory where output files will be written.
+        #[arg(long, default_value = "pyre/generated")]
+        out: String,
+    },
     /// Format files
     Format {
-        /// The input directory to read from
-        // #[arg(long)]
-        // r#in: String,
+
         #[arg(required = false)]
         files: Vec<String>,
 
@@ -58,8 +64,9 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         to_stdout: bool,
     },
+
+    /// Typecheck your schema and queries.
     Check {
-        //
         #[arg(required = false)]
         files: Vec<String>,
 
@@ -67,23 +74,33 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
-    // Introspect current db
+
+    /// Introspect a database and generate a pyre schema.
     Introspect {
+        
+        /// A local filename, or a url, or an environment variable if prefixed with a $.
+        database: String,
+
+        ///
         #[arg(long)]
-        db: String,
+        namespace: Option<String>,
 
         #[arg(long)]
         auth: Option<String>,
     },
+
+    /// Execute any migrations that are needed.
     Migrate {
-        #[arg(long)]
-        db: String,
+        /// A local filename, or a url, or an environment variable if prefixed with a $.
+        database: String,
 
         #[arg(long)]
         auth: Option<String>,
     },
-    // Generate a migration
+
+    /// Generate a migration
     Migration {
+        /// The migration name.
         name: String,
 
         #[arg(long)]
@@ -203,7 +220,10 @@ async fn main() -> io::Result<()> {
     let options = prepare_options(&cli);
 
     match &cli.command {
-        Some(Commands::Format { files, to_stdout }) => match files.len() {
+        Commands::Generate { out } => {
+            execute(&options, filesystem::collect_filepaths(&options.in_dir)?);
+        },
+        Commands::Format { files, to_stdout } => match files.len() {
             0 => match get_stdin()? {
                 Some(stdin) => {
                     let paths = filesystem::collect_filepaths(&options.in_dir)?;
@@ -271,7 +291,7 @@ async fn main() -> io::Result<()> {
                 }
             }
         },
-        Some(Commands::Check { files, json }) => {
+        Commands::Check { files, json } => {
             match check(&options, filesystem::collect_filepaths(&options.in_dir)?) {
                 Ok(errors) => {
                     let has_errors = !errors.is_empty();
@@ -302,8 +322,8 @@ async fn main() -> io::Result<()> {
                 }
             };
         }
-        Some(Commands::Introspect { db, auth }) => {
-            let maybeConn = db::connect(db, auth).await;
+        Commands::Introspect { database, auth , namespace} => {
+            let maybeConn = db::connect(database, auth).await;
             match maybeConn {
                 Ok(conn) => {
                     let introspection_result = db::introspect(&conn).await;
@@ -338,8 +358,8 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        Some(Commands::Migrate { db, auth }) => {
-            let connection_result = db::connect(db, auth).await;
+        Commands::Migrate { database, auth } => {
+            let connection_result = db::connect(database, auth).await;
             match connection_result {
                 Ok(conn) => {
                     let migration_result = db::migrate(&conn, &options.migration_dir).await;
@@ -357,7 +377,7 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        Some(Commands::Migration { name, db, auth }) => {
+        Commands::Migration { name, db, auth } => {
             let connection_result = db::connect(db, auth).await;
             match connection_result {
                 Err(e) => {
@@ -414,9 +434,7 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        None => {
-            execute(&options, filesystem::collect_filepaths(&options.in_dir)?);
-        }
+        
     }
     Ok(())
 }
