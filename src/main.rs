@@ -305,7 +305,11 @@ async fn main() -> io::Result<()> {
                     let introspection_result = db::introspect(&conn, &full_namespace).await;
                     match introspection_result {
                         Ok(mut introspection) => {
-                            let path: PathBuf = Path::new(&options.in_dir).join("schema.pyre");
+                            let path: PathBuf = if full_namespace != db::DEFAULT_SCHEMANAME {
+                                Path::new(&options.in_dir).join("schema").join(&full_namespace).join("schema.pyre")
+                            } else {
+                                Path::new(&options.in_dir).join("schema.pyre")
+                            };
 
                             if path.exists() {
                                 println!(
