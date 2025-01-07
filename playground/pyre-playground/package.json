@@ -2,7 +2,7 @@
   "name": "pyre-playground",
   "scripts": {
     "dev": "bun run --hot src/index.ts",
-    "introspect": "pyre introspect --db=test.db"
+    "introspect": "pyre introspect test.db"
   },
   "dependencies": {
     "@libsql/client": "^0.7.0",
