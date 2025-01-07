@@ -167,7 +167,7 @@ fn to_subselection(
 
             let foreign_table_alias = match query_field.alias {
                 Some(ref alias) => &alias,
-                None => &link.foreign_tablename,
+                None => &link.foreign.table,
             };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
             return to_selection(
@@ -276,7 +276,7 @@ fn to_subfrom(
 
             let foreign_table_alias = match query_field.alias {
                 Some(ref alias) => &alias,
-                None => &link.foreign_tablename,
+                None => &link.foreign.table,
             };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
             let foreign_table_name = get_tablename(table_alias_kind, &link_table);
@@ -294,7 +294,7 @@ fn to_subfrom(
                 string::quote(&table_name),
                 string::quote(&link.local_ids.join("")),
                 string::quote(&foreign_table_name),
-                string::quote(&link.foreign_ids.join("")),
+                string::quote(&link.foreign.fields.join("")),
             );
             inner_list.push(join);
             return inner_list;
@@ -473,11 +473,11 @@ fn to_subwhere(
 
             let foreign_table_alias = match query_field.alias {
                 Some(ref alias) => &alias,
-                None => &link.foreign_tablename,
+                None => &link.foreign.table,
             };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
             let foreign_table_name =
-                ast::get_tablename(&link.foreign_tablename, &link_table.fields);
+                ast::get_tablename(&link.foreign.table, &link_table.fields);
             let mut inner_list = to_where(
                 context,
                 &foreign_table_name,

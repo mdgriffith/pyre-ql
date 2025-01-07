@@ -254,9 +254,8 @@ pub fn is_column_space(field: &Field) -> bool {
 }
 
 pub fn link_equivalent(a: &LinkDetails, b: &LinkDetails) -> bool {
-    a.foreign_tablename == b.foreign_tablename
-        && a.local_ids == b.local_ids
-        && a.foreign_ids == b.foreign_ids
+    a.local_ids == b.local_ids
+        && a.foreign == b.foreign
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -288,19 +287,21 @@ pub fn link_identity(local_table: &str, link: &LinkDetails) -> String {
         "{}_{}_{}_{}_fk",
         local_table,
         &link.local_ids.join("_"),
-        link.foreign_tablename,
-        &link.foreign_ids.join("_"),
+        link.foreign.table,
+        &link.foreign.fields.join("-"),
     )
 }
 
 pub fn to_reciprocal(local_namespace: &str, local_table: &str, link: &LinkDetails) -> LinkDetails {
     LinkDetails {
         link_name: string::pluralize(&string::decapitalize(local_table)),
-        local_ids: link.foreign_ids.clone(),
+        local_ids: link.foreign.fields.clone(),
 
-        foreign_schema: local_namespace.to_string(),
-        foreign_tablename: local_table.to_string(),
-        foreign_ids: link.local_ids.clone(),
+        foreign: Qualified {
+            schema: local_namespace.to_string(),
+            table: local_table.to_string(),
+            fields: link.local_ids.clone(),
+        },
         start_name: None,
         end_name: None,
     }
@@ -311,15 +312,15 @@ pub fn get_foreign_tablename(schema: &Schema, link: &LinkDetails) -> String {
         for definition in file.definitions.iter() {
             match definition {
                 Definition::Record { name, fields, .. } => {
-                    if name == &link.foreign_tablename {
-                        return get_tablename(&link.foreign_tablename, fields);
+                    if name == &link.foreign.table {
+                        return get_tablename(&link.foreign.table, fields);
                     }
                 }
                 _ => {}
             }
         }
     }
-    link.foreign_tablename.clone()
+    link.foreign.table.clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -327,13 +328,20 @@ pub struct LinkDetails {
     pub link_name: String,
     pub local_ids: Vec<String>,
 
-    pub foreign_schema: String,
-    pub foreign_tablename: String,
-    pub foreign_ids: Vec<String>,
+    pub foreign: Qualified,
 
     pub start_name: Option<Location>,
     pub end_name: Option<Location>,
 }
+
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct Qualified {
+    pub schema: String,
+    pub table: String,
+    pub fields: Vec<String>,
+}
+
 
 pub fn collect_columns(fields: &Vec<Field>) -> Vec<Column> {
     let mut columns = Vec::new();

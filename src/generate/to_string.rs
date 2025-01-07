@@ -334,11 +334,11 @@ fn to_string_link_details_shorthand(
         }
         added = true
     }
-    for id in &details.foreign_ids {
+    for id in &details.foreign.fields {
         if added {
             result.push_str(", ");
         }
-        result.push_str(&details.foreign_tablename);
+        result.push_str(&details.foreign.table);
         result.push_str(".");
         result.push_str(id);
         added = true
@@ -364,16 +364,16 @@ fn to_string_link_details(details: &ast::LinkDetails) -> String {
     }
 
     result.push_str(", to: ");
-    if (*&details.foreign_ids.len() > 1) {
-        for id in &details.foreign_ids {
-            result.push_str(&details.foreign_tablename);
+    if (*&details.foreign.fields.len() > 1) {
+        for id in &details.foreign.fields {
+            result.push_str(&details.foreign.table);
             result.push_str(".");
             result.push_str(id);
             result.push_str(", ");
         }
     } else {
-        for id in &details.foreign_ids {
-            result.push_str(&details.foreign_tablename);
+        for id in &details.foreign.fields {
+            result.push_str(&details.foreign.table);
             result.push_str(".");
             result.push_str(id);
         }

@@ -51,7 +51,7 @@ pub fn schema(schem: &mut ast::Schema) {
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                             add_link(&mut links, &name, &link, true);
                             let reciprocal = ast::to_reciprocal(&schem.namespace, &name, link);
-                            add_link(&mut links, &link.foreign_tablename, &reciprocal, false);
+                            add_link(&mut links, &link.foreign.table, &reciprocal, false);
                         }
                         _ => (),
                     }

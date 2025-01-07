@@ -205,7 +205,7 @@ pub fn insert_linked(
         table,
         &ast::collect_query_fields(&query_table_field.fields),
     );
-    field_names.push(link.foreign_ids.clone().join(", "));
+    field_names.push(link.foreign.fields.clone().join(", "));
     field_names.append(&mut new_fieldnames.clone());
 
     let mut result = format!(

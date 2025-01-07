@@ -71,7 +71,7 @@ fn add_definition_sql(schema: &Schema, definition: &Definition) -> String {
                         string::quote(&link_identity(&name, &link)),
                         string::quote(&link.local_ids.join(", ")),
                         string::quote(&foreign_table),
-                        string::quote(&link.foreign_ids.join(", "))
+                        string::quote(&link.foreign.fields.join(", "))
                     ))
                 })
                 .collect();

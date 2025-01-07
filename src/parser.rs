@@ -217,12 +217,8 @@ fn parse_fieldname(input: Text) -> ParseResult<&str> {
 }
 
 
-struct Qualified {
-    schema: String,
-    table: String,
-    fieldname: String,
-}
-fn parse_qualified(input: Text) -> ParseResult<Qualified> {
+
+fn parse_qualified(input: Text) -> ParseResult<ast::Qualified> {
     let (input, first) = parse_typename(input)?;
     let (input, _) = tag(".")(input)?;
     
@@ -245,19 +241,19 @@ fn parse_qualified(input: Text) -> ParseResult<Qualified> {
     match result {
         (Some(table), field) => {
             // Got schema.table.field
-            Ok((input, Qualified {
+            Ok((input, ast::Qualified {
                 schema: first.to_string(),
                 table: table.to_string(), 
-                fieldname: field.to_string()
+                fields: vec![field.to_string()]
             }))
         }
         (None, field) => {
             let namespace = input.extra.namespace.to_string();
             // Got table.field
-            Ok((input, Qualified {
+            Ok((input, ast::Qualified {
                 schema: namespace,
                 table: first.to_string(),
-                fieldname: field.to_string()
+                fields: vec![field.to_string()]
             }))
         }
     }
@@ -422,9 +418,12 @@ fn link_field_to_details<'a, 'b>(
     let mut details = ast::LinkDetails {
         link_name: linkname.to_string(),
         local_ids: vec![],
-        foreign_schema: "".to_string(),
-        foreign_tablename: "".to_string(),
-        foreign_ids: vec![],
+        
+        foreign: ast::Qualified {
+            schema: "".to_string(),
+            table: "".to_string(),
+            fields: vec![],
+        },
 
         start_name: Some(to_location(&start_pos)),
         end_name: Some(to_location(&end_name_pos)),
@@ -450,8 +449,8 @@ fn link_field_to_details<'a, 'b>(
                     }));
                 } else {
                     has_to = true;
-                    details.foreign_tablename = table;
-                    details.foreign_ids = id;
+                    details.foreign.table = table;
+                    details.foreign.fields = id;
                 }
             }
         }
@@ -536,12 +535,8 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
         let link_details = ast::LinkDetails {
             link_name: name.to_string(),
             local_ids: vec![first_arg.unwrap_or("id".to_string())],
-
             
-            foreign_schema: foreign.schema.to_string(),
-            foreign_tablename: foreign.table.to_string(),
-            foreign_ids: vec![foreign.fieldname.to_string()],
-
+            foreign: foreign,
             start_name: Some(to_location(&start_pos)),
             end_name: Some(to_location(&end_name_pos)),
         };

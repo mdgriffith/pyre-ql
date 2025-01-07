@@ -36,7 +36,7 @@ pub fn get_linked_table<'a>(
 ) -> Option<&'a ast::RecordDetails> {
     context
         .tables
-        .get(&crate::ext::string::decapitalize(&link.foreign_tablename))
+        .get(&crate::ext::string::decapitalize(&link.foreign.table))
 }
 
 fn insert_fn(map: &mut HashMap<String, FuncDefinition>, def: FuncDefinition) {
@@ -373,7 +373,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
 
                                     match maybe_foreign_table {
                                         Some(foreign_table) => {
-                                            for foreign_id in &link.foreign_ids {
+                                            for foreign_id in &link.foreign.fields {
                                                 if !foreign_table
                                                     .fields
                                                     .iter()
@@ -385,7 +385,8 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                                             ErrorType::LinkToUnknownForeignField {
                                                                 link_name: link.link_name.clone(),
                                                                 foreign_table: link
-                                                                    .foreign_tablename
+                                                                    .foreign
+                                                                    .table
                                                                     .clone(),
                                                                 unknown_foreign_field: foreign_id
                                                                     .clone(),
@@ -406,7 +407,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                                 filepath: file.path.clone(),
                                                 error_type: ErrorType::LinkToUnknownTable {
                                                     link_name: link.link_name.clone(),
-                                                    unknown_table: link.foreign_tablename.clone(),
+                                                    unknown_table: link.foreign.table.clone(),
                                                 },
                                                 locations: vec![Location {
                                                     contexts: to_range(&start, &end),
@@ -1492,7 +1493,7 @@ fn get_column_reference(fields: &Vec<ast::Field>) -> Vec<(String, String)> {
                 known_fields.push((column.name.clone(), column.type_.clone()))
             }
             ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                known_fields.push((link.link_name.clone(), link.foreign_tablename.clone()))
+                known_fields.push((link.link_name.clone(), link.foreign.table.clone()))
             }
             _ => (),
         }
@@ -1575,7 +1576,7 @@ fn check_link(
             filepath: context.current_filepath.clone(),
             error_type: ErrorType::LinkSelectionIsEmpty {
                 link_name: link.link_name.clone(),
-                foreign_table: link.foreign_tablename.clone(),
+                foreign_table: link.foreign.table.clone(),
                 foreign_table_fields: known_fields,
             },
             locations: vec![Location {
@@ -1587,12 +1588,12 @@ fn check_link(
     } else {
         let table = context
             .tables
-            .get(&crate::ext::string::decapitalize(&link.foreign_tablename));
+            .get(&crate::ext::string::decapitalize(&link.foreign.table));
         match table {
             None => errors.push(Error {
                 filepath: context.current_filepath.clone(),
                 error_type: ErrorType::UnknownTable {
-                    found: link.foreign_tablename.clone(),
+                    found: link.foreign.table.clone(),
                     existing: vec![],
                 },
                 locations: vec![Location {

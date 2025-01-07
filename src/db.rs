@@ -242,9 +242,11 @@ pub async fn introspect(db: &libsql::Database, namespace: &str) -> Result<Intros
                                             link_name: to_formatted_tablename_lower(&fk.table),
                                             local_ids: vec![fk.from],
 
-                                            foreign_schema: namespace.to_string(),
-                                            foreign_tablename: to_formatted_tablename(&fk.table),
-                                            foreign_ids: vec![fk.to],
+                                            foreign: ast::Qualified {
+                                                schema: namespace.to_string(),
+                                                table: to_formatted_tablename(&fk.table),
+                                                fields: vec![fk.to],
+                                            },
 
                                             start_name: None,
                                             end_name: None,

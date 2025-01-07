@@ -784,7 +784,7 @@ fn to_table_field_decoder(
                 " ".repeat(indent + 4),
                 format_db_id(table_alias, &link.local_ids),
                 " ".repeat(indent + 4),
-                format_db_id(&foreign_table_alias, &link.foreign_ids),
+                format_db_id(&foreign_table_alias, &link.foreign.fields),
                 " ".repeat(indent + 4),
                 (crate::ext::string::capitalize(&ast::get_aliased_name(query_field))) // (capitalize(&link.link_name)) // ast::get_select_alias(table_alias, table_field, query_field),
             );
