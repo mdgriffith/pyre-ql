@@ -48,29 +48,29 @@ pub fn get_schema_source<'a>(filepath: &'a str, found: &'a Found) -> Option<&'a 
     None
 }
 
+// Helper function to get namespace from path
+// This function takes a path and a base directory as input and returns the namespace
+// of the path relative to the base directory. It assumes the path is in the format
+// "/base/schema/{namespace}/file.pyre". If the path is not a subdirectory of
+// the base directory, it returns "default" as the namespace.
+// 
+// Examples:
+// - "/base/schema/namespace1/file.pyre" -> "namespace1"
+// - "/base/schema/namespace2/subdir/file.pyre" -> "namespace2"
+// - "/not/base/schema/namespace/file.pyre" -> "default"
+pub fn get_namespace(path: &Path, base_dir: &Path) -> String {
+    path.strip_prefix(base_dir)
+        .ok()
+        .and_then(|p| p.components().nth(1))
+        .and_then(|c| c.as_os_str().to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "default".to_string())
+}
+
 pub fn collect_filepaths(dir: &Path) -> io::Result<Found> {
     let mut schema_files: HashMap<String, Vec<SchemaFile>> = HashMap::new();
     let mut query_files: Vec<String> = vec![];
     let mut namespaces: Vec<String> = vec![];
-
-    // Helper function to get namespace from path
-    // This function takes a path and a base directory as input and returns the namespace
-    // of the path relative to the base directory. It assumes the path is in the format
-    // "/base/schema/{namespace}/file.pyre". If the path is not a subdirectory of
-    // the base directory, it returns "default" as the namespace.
-    // 
-    // Examples:
-    // - "/base/schema/namespace1/file.pyre" -> "namespace1"
-    // - "/base/schema/namespace2/subdir/file.pyre" -> "namespace2"
-    // - "/not/base/schema/namespace/file.pyre" -> "default"
-    fn get_namespace(path: &Path, base_dir: &Path) -> String {
-        path.strip_prefix(base_dir)
-            .ok()
-            .and_then(|p| p.components().nth(1))
-            .and_then(|c| c.as_os_str().to_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "default".to_string())
-    }
 
     for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();

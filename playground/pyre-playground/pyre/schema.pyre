@@ -1,43 +1,45 @@
 
 record User {
     @tablename "users"
-    @link accounts { from: id, to: Account.userId }
-    @link posts { from: id, to: Post.authorUserId }
+    accounts       @link(Account.userId)
+    posts          @link(Post.authorUserId)
 
-    id: Int @id
-    name: String?
-    status: Status
-    createdAt: DateTime @default(now)
+    id        Int      @id
+    name      String?
+    status    Status
+    createdAt DateTime @default(now)
 }
 
 record Account {
     @tablename "accounts"
-    @link user { from: userId, to: User.id }
 
-    id: Int @id
-    userId: Int
-    name: String
-    status: String
+    id     Int    @id
+    userId Int
+    name   String
+    status String
+    users @link(userId, User.id)
 }
 
 record Job {
     @tablename "jobs"
     @watch
 
-    id: Int @id
-    name: String
+
+    id   Int    @id
+    name String
 }
+
 
 record Post {
     @tablename "posts"
-    @link user { from: authorUserId, to: User.id }
 
-    id: Int @id
-    createdAt: DateTime @default(now)
-    authorUserId: Int
-    title: String
-    content: String
-    status: Status
+    id           Int   @id
+    createdAt    DateTime @default(now)
+    authorUserId Int
+    title        String
+    content      String
+    status       Status
+    users @link(authorUserId, User.id)
 }
 
 
@@ -45,9 +47,11 @@ type Status
    = Active
    | Inactive
    | Special {
-        reason: String
+        reason String
      }
    | Special2 {
-        reason2: String
-        error: String
+        reason2 String
+        error   String
      }
+
+

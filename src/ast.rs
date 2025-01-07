@@ -11,13 +11,13 @@ pub struct Database {
 }
 
 pub fn get_schema_by_name<'a>(db: &'a Database, name: &str) -> Option<&'a Schema> {
-    db.schemas.iter().find(|schema| schema.namespace.as_deref() == Some(name))
+    db.schemas.iter().find(|schema| &schema.namespace == name)
 }
 
 
 #[derive(Debug)]
 pub struct Schema {
-    pub namespace: Option<String>,
+    pub namespace: String,
     pub session: Option<SessionDetails>,
     pub files: Vec<SchemaFile>,
 }
@@ -48,14 +48,6 @@ pub fn is_empty_schema(schema: &Schema) -> bool {
 pub struct SchemaFile {
     pub path: String,
     pub definitions: Vec<Definition>,
-}
-
-pub fn empty_schema() -> Schema {
-    Schema {
-        namespace: None,
-        session: None,
-        files: Vec::new(),
-    }
 }
 
 #[repr(u8)]
@@ -301,10 +293,12 @@ pub fn link_identity(local_table: &str, link: &LinkDetails) -> String {
     )
 }
 
-pub fn to_reciprocal(local_table: &str, link: &LinkDetails) -> LinkDetails {
+pub fn to_reciprocal(local_namespace: &str, local_table: &str, link: &LinkDetails) -> LinkDetails {
     LinkDetails {
         link_name: string::pluralize(&string::decapitalize(local_table)),
         local_ids: link.foreign_ids.clone(),
+
+        foreign_schema: local_namespace.to_string(),
         foreign_tablename: local_table.to_string(),
         foreign_ids: link.local_ids.clone(),
         start_name: None,
@@ -333,6 +327,7 @@ pub struct LinkDetails {
     pub link_name: String,
     pub local_ids: Vec<String>,
 
+    pub foreign_schema: String,
     pub foreign_tablename: String,
     pub foreign_ids: Vec<String>,
 

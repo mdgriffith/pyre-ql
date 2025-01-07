@@ -10,6 +10,8 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+pub const DEFAULT_SCHEMANAME: &str = "_default";
+
 const MIGRATION_TABLE: &str = "_pyre_migrations";
 
 // List all tables
@@ -196,7 +198,7 @@ fn to_formatted_tablename_lower(table_name: &str) -> String {
     string::snake_to_camel_and_singular(table_name)
 }
 
-pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::Error> {
+pub async fn introspect(db: &libsql::Database, namespace: &str) -> Result<Introspection, libsql::Error> {
     match db.connect() {
         Ok(conn) => {
             let args: Vec<String> = vec![];
@@ -240,6 +242,7 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                                             link_name: to_formatted_tablename_lower(&fk.table),
                                             local_ids: vec![fk.from],
 
+                                            foreign_schema: namespace.to_string(),
                                             foreign_tablename: to_formatted_tablename(&fk.table),
                                             foreign_ids: vec![fk.to],
 
@@ -305,7 +308,7 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                                     } else {
                                         let parsed = parser::parse_number(parser::Text::new_extra(
                                             &str,
-                                            parser::PLACEHOLDER_CONTEXT,
+                                            parser::placeholder_context(),
                                         ));
                                         match parsed {
                                             Ok((_, val)) => {
@@ -371,7 +374,7 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
 
                     // Prepare Schema
                     let mut schema = ast::Schema {
-                        namespace: None,
+                        namespace: namespace.to_string(),
                         session: None,
                         files: vec![ast::SchemaFile {
                             path: "schema.pyre".to_string(),
@@ -447,7 +450,7 @@ pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(
             return Err(MigrationError::IoError(err));
         }
         Ok(migration_files) => {
-            let introspection_result = introspect(&db).await;
+            let introspection_result = introspect(&db, DEFAULT_SCHEMANAME).await;
             match introspection_result {
                 Err(err) => {
                     return Err(MigrationError::SqlError(err));

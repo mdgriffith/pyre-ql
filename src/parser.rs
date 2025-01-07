@@ -22,13 +22,17 @@ pub type Text<'a> = LocatedSpan<&'a str, ParseContext<'a>>;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParseContext<'a> {
     pub file: &'a str,
+    pub namespace: String,
     pub expecting: crate::error::Expecting,
 }
 
-pub const PLACEHOLDER_CONTEXT: ParseContext = ParseContext {
-    file: "placeholder.txt",
-    expecting: crate::error::Expecting::PyreFile,
-};
+pub fn placeholder_context<'a>() -> ParseContext<'a> {
+    ParseContext {
+        file: "placeholder.txt",
+        namespace: String::from("default"),
+        expecting: crate::error::Expecting::PyreFile,
+    }
+}
 
 fn expecting(input: Text, expecting: crate::error::Expecting) -> Text {
     input.map_extra(|mut ctxt| {
@@ -48,17 +52,14 @@ pub fn run<'a>(
         input_string,
         ParseContext {
             file: path,
+            namespace: schema.namespace.clone(),
             expecting: crate::error::Expecting::PyreFile,
         },
     );
 
     match parse_schema(input, schema) {
-        Ok((remaining, ())) => {
-            return Ok(());
-        }
-        Err(e) => {
-            return Err(e);
-        }
+        Ok((_, ())) => Ok(()),
+        Err(e) => Err(e)
     }
 }
 
@@ -215,11 +216,51 @@ fn parse_fieldname(input: Text) -> ParseResult<&str> {
     Ok((input, val.fragment()))
 }
 
-fn parse_qualified(input: Text) -> ParseResult<(&str, &str)> {
-    let (input, typename) = parse_typename(input)?;
+
+struct Qualified {
+    schema: String,
+    table: String,
+    fieldname: String,
+}
+fn parse_qualified(input: Text) -> ParseResult<Qualified> {
+    let (input, first) = parse_typename(input)?;
     let (input, _) = tag(".")(input)?;
-    let (input, fieldname) = parse_fieldname(input)?;
-    Ok((input, (typename, fieldname)))
+    
+    // Try to parse just a fieldname first
+    let (input, result) = alt((
+        // Try fieldname only
+        |input| {
+            let (input, field) = parse_fieldname(input)?;
+            Ok((input, (None, field)))
+        },
+        // Try typename + fieldname
+        |input| {
+            let (input, table) = parse_typename(input)?;
+            let (input, _) = tag(".")(input)?;
+            let (input, field) = parse_fieldname(input)?;
+            Ok((input, (Some(table), field)))
+        }
+    ))(input)?;
+
+    match result {
+        (Some(table), field) => {
+            // Got schema.table.field
+            Ok((input, Qualified {
+                schema: first.to_string(),
+                table: table.to_string(), 
+                fieldname: field.to_string()
+            }))
+        }
+        (None, field) => {
+            let namespace = input.extra.namespace.to_string();
+            // Got table.field
+            Ok((input, Qualified {
+                schema: namespace,
+                table: first.to_string(),
+                fieldname: field.to_string()
+            }))
+        }
+    }
 }
 
 fn parse_record(input: Text) -> ParseResult<ast::Definition> {
@@ -333,6 +374,8 @@ fn parse_tablename(start_location: ast::Location) -> impl Fn(Text) -> ParseResul
     }
 }
 
+
+// This is deprecated and will be moved pretty quick
 fn parse_link(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = tag("link")(input)?;
     let input = expecting(input, crate::error::Expecting::LinkDirective);
@@ -379,6 +422,7 @@ fn link_field_to_details<'a, 'b>(
     let mut details = ast::LinkDetails {
         link_name: linkname.to_string(),
         local_ids: vec![],
+        foreign_schema: "".to_string(),
         foreign_tablename: "".to_string(),
         foreign_ids: vec![],
 
@@ -488,12 +532,15 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
             Ok((input, first_arg.to_string()))
         })(input)?;
 
-        let (input, (foreign_table, foreign_key)) = parse_qualified(input)?;
+        let (input, foreign) = parse_qualified(input)?;
         let link_details = ast::LinkDetails {
             link_name: name.to_string(),
             local_ids: vec![first_arg.unwrap_or("id".to_string())],
-            foreign_tablename: foreign_table.to_string(),
-            foreign_ids: vec![foreign_key.to_string()],
+
+            
+            foreign_schema: foreign.schema.to_string(),
+            foreign_tablename: foreign.table.to_string(),
+            foreign_ids: vec![foreign.fieldname.to_string()],
 
             start_name: Some(to_location(&start_pos)),
             end_name: Some(to_location(&end_name_pos)),
@@ -659,6 +706,7 @@ pub fn parse_query<'a>(
         input_str,
         ParseContext {
             file: path,
+            namespace: "queries_dont_need_a_default_namespace".to_string(),
             expecting: crate::error::Expecting::PyreFile,
         },
     );

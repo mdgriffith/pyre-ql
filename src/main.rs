@@ -300,7 +300,9 @@ async fn main() -> io::Result<()> {
             let maybeConn = db::connect(database, auth).await;
             match maybeConn {
                 Ok(conn) => {
-                    let introspection_result = db::introspect(&conn).await;
+                    
+                    let full_namespace = namespace.clone().unwrap_or(db::DEFAULT_SCHEMANAME.to_string());
+                    let introspection_result = db::introspect(&conn, &full_namespace).await;
                     match introspection_result {
                         Ok(mut introspection) => {
                             let path: PathBuf = Path::new(&options.in_dir).join("schema.pyre");
@@ -358,7 +360,7 @@ async fn main() -> io::Result<()> {
                     println!("Failed to connect to database: {:?}", e);
                 }
                 Ok(conn) => {
-                    let introspection_result = db::introspect(&conn).await;
+                    let introspection_result = db::introspect(&conn, db::DEFAULT_SCHEMANAME).await;
                     match introspection_result {
                         Ok(introspection) => {
                             let migration_dir = Path::new(migration_dir);
@@ -570,7 +572,7 @@ fn format_query(
 
 fn parse_single_schema(schema_file_path: &String) -> io::Result<ast::Schema> {
     let mut schema = ast::Schema {
-        namespace: None,
+        namespace: db::DEFAULT_SCHEMANAME.to_string(),
         files: vec![],
         session: None,
     };
@@ -593,8 +595,9 @@ fn parse_single_schema_from_source(
     schema_file_path: &str,
     schema_source: &str,
 ) -> io::Result<ast::Schema> {
+
     let mut schema = ast::Schema {
-        namespace: None,
+        namespace: db::DEFAULT_SCHEMANAME.to_string(),
         session: None,
         files: vec![],
     };
@@ -616,7 +619,7 @@ fn parse_database_schemas(options: &Options, paths: &filesystem::Found) -> io::R
 
     for (namespace, schema_files) in paths.schema_files.iter() {
         let mut schema = ast::Schema {
-            namespace: Some(namespace.clone()),
+            namespace: namespace.clone(),
             session: None,
             files: vec![],
         };

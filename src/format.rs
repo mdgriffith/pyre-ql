@@ -50,7 +50,7 @@ pub fn schema(schem: &mut ast::Schema) {
                     match field {
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                             add_link(&mut links, &name, &link, true);
-                            let reciprocal = ast::to_reciprocal(&name, link);
+                            let reciprocal = ast::to_reciprocal(&schem.namespace, &name, link);
                             add_link(&mut links, &link.foreign_tablename, &reciprocal, false);
                         }
                         _ => (),
