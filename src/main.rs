@@ -31,17 +31,12 @@ struct Cli {
     command: Commands,
 
     /// The input directory to read from.
-    #[arg(long, global = true)]
-    r#in: Option<String>,
-
-    #[arg(long, global = true)]
-    out: Option<String>,
+    #[arg(long, global = true, default_value = "pyre")]
+    r#in: String,
 
     #[arg(long, global = true)]
     version: bool,
 
-    #[arg(long, global = true)]
-    migrations: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -96,6 +91,10 @@ enum Commands {
 
         #[arg(long)]
         auth: Option<String>,
+
+        /// Directory where migration files are stored.
+        #[arg(long, default_value = "pyre/migrations")]
+        migration_dir: String,
     },
 
     /// Generate a migration
@@ -108,24 +107,21 @@ enum Commands {
 
         #[arg(long)]
         auth: Option<String>,
+
+        /// Directory where migration files are stored.
+        #[arg(long, default_value = "pyre/migrations")]
+        migration_dir: String,
     },
 }
 
-fn out(options: &Options, file: &Path) -> PathBuf {
-    options.out_dir.join(file)
-}
 
-fn out_path(options: &Options, file: &str) -> PathBuf {
-    Path::new(&options.out_dir).join(file)
-}
-
-fn generate_typescript_schema(options: &Options, database: &ast::Database) -> io::Result<()> {
-    filesystem::create_dir_if_not_exists(&out_path(options, "typescript"));
-    filesystem::create_dir_if_not_exists(&out_path(options, "typescript").join("db"));
+fn generate_typescript_schema(options: &Options, database: &ast::Database, out_dir: &Path) -> io::Result<()> {
+    filesystem::create_dir_if_not_exists(&out_dir.join("typescript"));
+    filesystem::create_dir_if_not_exists(&out_dir.join("typescript").join("db"));
 
     // Top level TS files
     // DB engine as db.ts
-    let ts_db_path = out(options, Path::new("typescript/db.ts"));
+    let ts_db_path = &out_dir.join(Path::new("typescript/db.ts"));
     let ts_file = Path::new(&ts_db_path);
     let mut output = fs::File::create(ts_file).expect("Failed to create file");
     output
@@ -133,7 +129,7 @@ fn generate_typescript_schema(options: &Options, database: &ast::Database) -> io
         .expect("Failed to write to file");
 
     // Session types as db/session.ts
-    let ts_session_path_str = out(options, Path::new("typescript/db/session.ts"));
+    let ts_session_path_str = &out_dir.join(Path::new("typescript/db/session.ts"));
     let ts_session_path = Path::new(&ts_session_path_str);
     let mut output = fs::File::create(ts_session_path).expect("Failed to create file");
     if let Some(session_ts) = generate::typescript::session(&database) {
@@ -143,7 +139,7 @@ fn generate_typescript_schema(options: &Options, database: &ast::Database) -> io
     }
 
     // Schema-level data types
-    let ts_db_data_path = out(options, Path::new("typescript/db/data.ts"));
+    let ts_db_data_path = &out_dir.join(Path::new("typescript/db/data.ts"));
     let ts_data_path = Path::new(&ts_db_data_path);
     let mut output_data = fs::File::create(ts_data_path).expect("Failed to create file");
     let formatted_ts = generate::typescript::schema(&database);
@@ -152,7 +148,7 @@ fn generate_typescript_schema(options: &Options, database: &ast::Database) -> io
         .expect("Failed to write to file");
 
     // TS Decoders
-    let ts_db_decoder_path = out(options, Path::new("typescript/db/decode.ts"));
+    let ts_db_decoder_path = &out_dir.join(Path::new("typescript/db/decode.ts"));
     let ts_decoders = generate::typescript::to_schema_decoders(&database);
     let ts_decoder_file = Path::new(&ts_db_decoder_path);
     let mut output = fs::File::create(ts_decoder_file).expect("Failed to create file");
@@ -165,33 +161,11 @@ fn generate_typescript_schema(options: &Options, database: &ast::Database) -> io
 
 struct Options<'a> {
     in_dir: &'a Path,
-    out_dir: &'a Path,
-    migration_dir: &'a Path,
 }
 
 fn prepare_options<'a>(cli: &'a Cli) -> Options<'a> {
-    let mut in_dir = Path::new("pyre");
-    match &cli.r#in {
-        Some(dir) => in_dir = Path::new(dir),
-        None => (),
-    }
-
-    let mut out_dir = Path::new("pyre/generated");
-    match &cli.out {
-        Some(dir) => out_dir = Path::new(dir),
-        None => (),
-    }
-
-    let mut migration_dir = Path::new("pyre/migrations");
-    match &cli.migrations {
-        Some(dir) => migration_dir = Path::new(dir),
-        None => (),
-    }
-
     Options {
-        in_dir: &in_dir,
-        out_dir: &out_dir,
-        migration_dir: &migration_dir,
+        in_dir: Path::new(&cli.r#in),
     }
 }
 
@@ -221,7 +195,7 @@ async fn main() -> io::Result<()> {
 
     match &cli.command {
         Commands::Generate { out } => {
-            execute(&options, filesystem::collect_filepaths(&options.in_dir)?);
+            execute(&options, filesystem::collect_filepaths(&options.in_dir)?, Path::new(out));
         },
         Commands::Format { files, to_stdout } => match files.len() {
             0 => match get_stdin()? {
@@ -358,11 +332,11 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        Commands::Migrate { database, auth } => {
+        Commands::Migrate { database, auth, migration_dir } => {
             let connection_result = db::connect(database, auth).await;
             match connection_result {
                 Ok(conn) => {
-                    let migration_result = db::migrate(&conn, &options.migration_dir).await;
+                    let migration_result = db::migrate(&conn, Path::new(&migration_dir)).await;
                     match migration_result {
                         Ok(()) => {
                             println!("Migration finished!");
@@ -377,7 +351,7 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        Commands::Migration { name, db, auth } => {
+        Commands::Migration { name, db, auth, migration_dir } => {
             let connection_result = db::connect(db, auth).await;
             match connection_result {
                 Err(e) => {
@@ -387,7 +361,7 @@ async fn main() -> io::Result<()> {
                     let introspection_result = db::introspect(&conn).await;
                     match introspection_result {
                         Ok(introspection) => {
-                            let migration_dir = Path::new(&options.migration_dir);
+                            let migration_dir = Path::new(migration_dir);
                             let existing_migrations =
                                 db::read_migration_items(migration_dir).unwrap_or(vec![]);
 
@@ -723,7 +697,7 @@ fn check(options: &Options, paths: filesystem::Found) -> io::Result<Vec<FileErro
     Ok(all_file_errors)
 }
 
-fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
+fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::Result<()> {
     let schema = parse_database_schemas(&options, &paths)?;
 
     match typecheck::check_schema(&schema) {
@@ -741,8 +715,8 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
         }
         Ok(mut context) => {
             // Generate schema files
-            generate::elm::write(&options.out_dir, &schema);
-            generate_typescript_schema(&options, &schema);
+            generate::elm::write(out_dir, &schema);
+            generate_typescript_schema(&options, &schema, out_dir);
 
             for query_file_path in paths.query_files {
                 let mut query_file = fs::File::open(query_file_path.clone())?;
@@ -759,18 +733,18 @@ fn execute(options: &Options, paths: filesystem::Found) -> io::Result<()> {
                         match typecheck_result {
                             Ok(query_params) => {
                                 filesystem::create_dir_if_not_exists(
-                                    &out_path(&options, "elm").join("Query"),
+                                    &out_dir.join( "elm").join("Query"),
                                 );
                                 filesystem::create_dir_if_not_exists(
-                                    &out_path(&options, "typescript").join("query"),
+                                    &out_dir.join( "typescript").join("query"),
                                 );
                                 generate::elm::write_queries(
-                                    &out(&options, Path::new("elm")),
+                                    &out_dir.join("elm"),
                                     &context,
                                     &query_list,
                                 );
                                 generate::typescript::write_queries(
-                                    &out(&options, Path::new("typescript")),
+                                    &out_dir.join("typescript"),
                                     &context,
                                     &query_params,
                                     &query_list,
