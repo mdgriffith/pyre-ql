@@ -80,7 +80,6 @@ pub enum ErrorType {
         link_name: String,
         unknown_local_field: String,
     },
-
     LinkToUnknownForeignField {
         link_name: String,
         foreign_table: String,
@@ -90,6 +89,10 @@ pub enum ErrorType {
         link_name: String,
         foreign_table: String,
         foreign_table_fields: Vec<(String, String)>,
+    },
+    LinkToUnknownSchema {
+        unknown_schema_name: String,
+        known_schemas: HashSet<String>
     },
 
     // Query Validation Errors
@@ -257,6 +260,10 @@ fn divider(indent: usize) -> String {
     format!("    | {}...\n", " ".repeat(indent * 4))
         .truecolor(120, 120, 120)
         .to_string()
+}
+
+fn join_hashset(set: &HashSet<String>, sep: &str) -> String {
+    set.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(sep)
 }
 
 fn render_highlight_location(file_contents: &str, rendered: &mut String, location: &Location) {
@@ -774,6 +781,33 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result
         }
 
+        ErrorType::LinkToUnknownSchema {
+            unknown_schema_name,
+            known_schemas
+        } => {
+            if known_schemas.len() == 1 {
+                let mut result = "".to_string();
+
+                result.push_str(&format!(
+                    "I don't recognize {} as a schema. There's only one schema, {}, so nothing should be qualified.",
+                    cyan_if(in_color, unknown_schema_name),
+                    cyan_if(in_color, &join_hashset(known_schemas, "\n    "))
+                ));
+
+                result
+            } else {
+                let mut result = "".to_string();
+
+                result.push_str(&format!(
+                    "I don't recognize {} as a schema. Here are the schemas I know about:\n{}",
+                    cyan_if(in_color, unknown_schema_name),
+                    cyan_if(in_color, &join_hashset(known_schemas, "\n    "))
+                ));
+
+                result
+            }            
+        }
+
         ErrorType::UnusedParam { param } => {
             let mut result = "".to_string();
             let colored_param = yellow_if(in_color,  param);
@@ -987,11 +1021,12 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::UnknownType { .. } => "Unknown Type",
         ErrorType::NoPrimaryKey { .. } => "No Primary Key",
         ErrorType::MultiplePrimaryKeys { .. } => "Multiple Primary Keys",
-        ErrorType::MultipleTableNames { .. } => "Multiple Table Names",
-        ErrorType::LinkToUnknownTable { .. } => "Link To Unknown Table",
-        ErrorType::LinkToUnknownField { .. } => "Link To Unknown Field",
-        ErrorType::LinkToUnknownForeignField { .. } => "Link To Unknown Foreign Field",
+        ErrorType::MultipleTableNames { .. } => "Multiple table names",
+        ErrorType::LinkToUnknownTable { .. } => "Link to unknown table",
+        ErrorType::LinkToUnknownField { .. } => "Link to unknown field",
+        ErrorType::LinkToUnknownForeignField { .. } => "Link to Unknown Foreign Field",
         ErrorType::LinkSelectionIsEmpty { .. } => "Link Selection Is Empty",
+        ErrorType::LinkToUnknownSchema {..} => "Link to Unknown Schema",
         ErrorType::UnknownTable { .. } => "Unknown Table",
         ErrorType::DuplicateQueryField { .. } => "Duplicate Query Field",
         ErrorType::NoFieldsSelected => "No Fields Selected",
