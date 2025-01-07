@@ -15,7 +15,7 @@ devbox shell
 ## Getting Started
 
 ```
-cargo run -- --help
+cargo run
 ```
 
 ## Examples

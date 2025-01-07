@@ -44,7 +44,7 @@ enum Commands {
 
     /// Generate files for querying your pyre schema.
     Generate {
-        
+
         /// Directory where output files will be written.
         #[arg(long, default_value = "pyre/generated")]
         out: String,
@@ -72,7 +72,7 @@ enum Commands {
 
     /// Introspect a database and generate a pyre schema.
     Introspect {
-        
+
         /// A local filename, or a url, or an environment variable if prefixed with a $.
         database: String,
 
@@ -393,7 +393,7 @@ async fn main() -> io::Result<()> {
 
 
                             let diff = diff::diff(&introspection.schema, &current_db);
-                            
+
                             for (namespace, (schema_diff)) in diff.iter() {
                                 if let Some(schema) = ast::get_schema_by_name(&current_db, &namespace) {
                                     write_migration(schema, schema_diff, migration_dir, namespace);
@@ -408,7 +408,7 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        
+
     }
     Ok(())
 }
@@ -432,7 +432,7 @@ fn write_migration(
     let namespace_folder = base_migration_folder.join(namespace.clone());
     filesystem::create_dir_if_not_exists(&namespace_folder);
 
-    
+
     // Write the migration files
     let migration_file = namespace_folder.join(format!("{}_migration.sql", current_date));
     let diff_file_path = namespace_folder.join(format!("{}_schema.diff", current_date));
