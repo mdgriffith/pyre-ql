@@ -1,0 +1,121 @@
+{
+  "lockfile_version": "1",
+  "packages": {
+    "cargo@latest": {
+      "last_modified": "2024-12-23T21:10:33Z",
+      "resolved": "github:NixOS/nixpkgs/de1864217bfa9b5845f465e771e0ecb48b30e02d#cargo",
+      "source": "devbox-search",
+      "version": "1.83.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/ikfdri2li81zaq727y0g1wsl903mj1fi-cargo-1.83.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/ikfdri2li81zaq727y0g1wsl903mj1fi-cargo-1.83.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/ih71bn1yzc6dj1yidzsmdan4b7w5r39k-cargo-1.83.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/ih71bn1yzc6dj1yidzsmdan4b7w5r39k-cargo-1.83.0"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/p0d8l6w4n4di0kmiic375zl0f3ig1pzs-cargo-1.83.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/p0d8l6w4n4di0kmiic375zl0f3ig1pzs-cargo-1.83.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/q2p507l5rmfw7c4n5pr6gcd5p2gyws2c-cargo-1.83.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/q2p507l5rmfw7c4n5pr6gcd5p2gyws2c-cargo-1.83.0"
+        }
+      }
+    },
+    "iconv@latest": {
+      "last_modified": "2025-01-03T14:51:55Z",
+      "resolved": "github:NixOS/nixpkgs/a27871180d30ebee8aa6b11bf7fef8a52f024733#iconv",
+      "source": "devbox-search",
+      "version": "2.40-36",
+      "systems": {
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "bin",
+              "path": "/nix/store/hyn8hi7nwz4fs24kxlm9w1a0hg9xgnmq-glibc-2.40-36-bin",
+              "default": true
+            },
+            {
+              "name": "debug",
+              "path": "/nix/store/y7fv996xz85ffr1i259bj3ssqbwbv0fs-glibc-2.40-36-debug"
+            },
+            {
+              "name": "dev",
+              "path": "/nix/store/d9w1msymf7rmqdljh86bfr2zgb3r0zma-glibc-2.40-36-dev"
+            },
+            {
+              "name": "getent",
+              "path": "/nix/store/cr6ybjf1q76r9var7y300yvv2al1xnwg-glibc-2.40-36-getent"
+            },
+            {
+              "name": "out",
+              "path": "/nix/store/myf5swnbwk96kzs654k75s9fnfxhyaiz-glibc-2.40-36"
+            },
+            {
+              "name": "static",
+              "path": "/nix/store/xish5nfblkmpp6jnbmgrflzi7839w36y-glibc-2.40-36-static"
+            }
+          ],
+          "store_path": "/nix/store/hyn8hi7nwz4fs24kxlm9w1a0hg9xgnmq-glibc-2.40-36-bin"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "bin",
+              "path": "/nix/store/1c6bmxrrhm8bd26ai2rjqld2yyjrxhds-glibc-2.40-36-bin",
+              "default": true
+            },
+            {
+              "name": "debug",
+              "path": "/nix/store/9agwbwbsh5g70wkzrb887pkn3c1jw5b5-glibc-2.40-36-debug"
+            },
+            {
+              "name": "dev",
+              "path": "/nix/store/kj8hbqx4ds9qm9mq7hyikxyfwwg13kzj-glibc-2.40-36-dev"
+            },
+            {
+              "name": "getent",
+              "path": "/nix/store/yjakygrl2hy5fqnyzq394864smw01jhw-glibc-2.40-36-getent"
+            },
+            {
+              "name": "out",
+              "path": "/nix/store/65h17wjrrlsj2rj540igylrx7fqcd6vq-glibc-2.40-36"
+            },
+            {
+              "name": "static",
+              "path": "/nix/store/jbv9kcr08y41vd0czlxqgjq767y6p00p-glibc-2.40-36-static"
+            }
+          ],
+          "store_path": "/nix/store/1c6bmxrrhm8bd26ai2rjqld2yyjrxhds-glibc-2.40-36-bin"
+        }
+      }
+    }
+  }
+}
