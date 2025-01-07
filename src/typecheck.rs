@@ -8,6 +8,7 @@ use std::collections::HashSet;
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Context {
     pub current_filepath: String,
+    pub valid_namespaces: HashSet<String>,
     pub session: Option<ast::SessionDetails>,
     pub funcs: HashMap<String, FuncDefinition>,
 
@@ -107,6 +108,7 @@ fn get_default_fns() -> HashMap<String, FuncDefinition> {
 fn empty_context() -> Context {
     let mut context = Context {
         current_filepath: "".to_string(),
+        valid_namespaces: HashSet::new(),
         session: None,
         funcs: get_default_fns(),
         types: HashMap::new(),
@@ -164,12 +166,24 @@ fn to_single_range(start: &Option<ast::Location>, end: &Option<ast::Location>) -
         },
     }
 }
+
+
+/// Gathers information for a context.
+/// Also checks for a number of errors
 pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>> {
     let mut context = empty_context();
     let mut errors = Vec::new();
+    context.valid_namespaces = database.schemas.iter().map(|schema| schema.namespace.clone()).collect();
 
+    
+
+    // Check for duplicate records
+    // Check for duplicate types
+    // Gather table names
+    // Gather type names
     for schema in &database.schemas {
         context.session = schema.session.clone();
+        
         for file in &schema.files {
             for definition in &file.definitions {
                 match definition {
@@ -292,6 +306,9 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
         }
     }
 
+    // Check for duplicate fields
+    // Check for duplicate tablenames
+    // 
     for schema in &database.schemas {
         for file in &schema.files {
             for definition in &file.definitions {
@@ -350,11 +367,28 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
 
                                     field_names.insert(name.clone());
                                 }
+
                                 ast::Field::FieldDirective(ast::FieldDirective::TableName((
                                     tablename_range,
                                     tablename,
                                 ))) => tablenames.push(convert_range(tablename_range)),
+
                                 ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+
+                                    if !context.valid_namespaces.contains(&link.foreign.schema) {
+                                        errors.push(Error {
+                                            filepath: file.path.clone(),
+                                            error_type: ErrorType::LinkToUnknownSchema {
+                                                unknown_schema_name: link.foreign.schema.clone(),
+                                                known_schemas: context.valid_namespaces.clone(),
+                                            },
+                                            locations: vec![Location {
+                                                contexts: vec![],
+                                                primary: to_range(&start, &end),
+                                            }],
+                                        });
+                                    }
+
                                     let maybe_foreign_table = get_linked_table(&context, link);
 
                                     if field_names.contains(&link.link_name) {
@@ -477,6 +511,8 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
         return Ok(context);
     }
 }
+
+
 fn check_schema_definitions(context: &Context, database: &ast::Database, mut errors: &mut Vec<Error>) {
     let vars = context.variants.clone();
     for (variant_name, (maybe_type_range, mut instances)) in vars {
@@ -1510,7 +1546,6 @@ fn check_link(
     field: &ast::QueryField,
     params: &mut HashMap<String, ParamInfo>,
 ) {
-    // Links are only allowed in selects at the moment
     match operation {
         ast::QueryOperation::Insert => {
             // Nested inserts are only allowed if the local_id is a primary key
