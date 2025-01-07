@@ -60,7 +60,7 @@ fn add_definition_sql(schema: &Schema, definition: &Definition) -> String {
             let link_constraints: Vec<String> = collect_links(fields)
                 .iter()
                 .filter_map(|link| {
-                    // Skip the cosntraint if the local_id is referncing the primary key of this table.
+                    // Skip the constraint if the local_id is referencing the primary key of this table.
                     if is_field_primary_key(&link.local_ids, &fields) {
                         return None;
                     }
