@@ -663,47 +663,43 @@ pub fn session(database: &ast::Database) -> Option<String> {
     let mut result = String::new();
 
     result.push_str("import * as Ark from 'arktype';\n");
-
     let session = database.schemas.iter().find_map(|schema| {
         schema.session.clone()
-    });
+    }).unwrap_or_else(|| ast::default_session_details());
 
-    match session {
-        None => None,
-        Some(session) => {
-            result.push_str("\n\nexport const Session = Ark.type({\n");
-            for field in &session.fields {
-                match field {
-                    ast::Field::Column(column) => {
-                        result.push_str(&format!(
-                            "  {}: {},\n",
-                            column.name,
-                            to_ts_type_decoder(true, column.nullable, &column.type_)
-                        ));
-                    }
-                    _ => (),
-                }
+    
+    // Generate session file
+    result.push_str("\n\nexport const Session = Ark.type({\n");
+    for field in &session.fields {
+        match field {
+            ast::Field::Column(column) => {
+                result.push_str(&format!(
+                    "  {}: {},\n",
+                    column.name,
+                    to_ts_type_decoder(true, column.nullable, &column.type_)
+                ));
             }
-            result.push_str("});\n\n");
-
-            result.push_str("\n\nexport type Session = {\n");
-            for field in &session.fields {
-                match field {
-                    ast::Field::Column(column) => {
-                        result.push_str(&format!(
-                            "  {}: {};\n",
-                            column.name,
-                            to_ts_typename(true, &column.type_)
-                        ));
-                    }
-                    _ => (),
-                }
-            }
-            result.push_str("};\n\n");
-
-            Some(result)
+            _ => (),
         }
     }
+    result.push_str("});\n\n");
+    result.push_str("\n\nexport type Session = {\n");
+    for field in &session.fields {
+        match field {
+            ast::Field::Column(column) => {
+                result.push_str(&format!(
+                    "  {}: {};\n",
+                    column.name,
+                    to_ts_typename(true, &column.type_)
+                ));
+            }
+            _ => (),
+        }
+    }
+    result.push_str("};\n\n");
+    Some(result)
+       
+    
 }
 
 //

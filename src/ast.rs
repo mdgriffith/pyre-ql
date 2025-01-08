@@ -2,24 +2,28 @@ use crate::ext::string;
 use nom_locate;
 use serde::{Deserialize, Serialize};
 
-
-
-
 #[derive(Debug)]
 pub struct Database {
-    pub schemas: Vec<Schema>
+    pub schemas: Vec<Schema>,
 }
 
 pub fn get_schema_by_name<'a>(db: &'a Database, name: &str) -> Option<&'a Schema> {
     db.schemas.iter().find(|schema| &schema.namespace == name)
 }
 
-
 #[derive(Debug)]
 pub struct Schema {
     pub namespace: String,
     pub session: Option<SessionDetails>,
     pub files: Vec<SchemaFile>,
+}
+
+pub fn default_session_details() -> SessionDetails {
+    SessionDetails {
+        fields: Vec::new(),
+        start: None,
+        end: None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -254,8 +258,7 @@ pub fn is_column_space(field: &Field) -> bool {
 }
 
 pub fn link_equivalent(a: &LinkDetails, b: &LinkDetails) -> bool {
-    a.local_ids == b.local_ids
-        && a.foreign == b.foreign
+    a.local_ids == b.local_ids && a.foreign == b.foreign
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -334,14 +337,12 @@ pub struct LinkDetails {
     pub end_name: Option<Location>,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Qualified {
     pub schema: String,
     pub table: String,
     pub fields: Vec<String>,
 }
-
 
 pub fn collect_columns(fields: &Vec<Field>) -> Vec<Column> {
     let mut columns = Vec::new();
