@@ -1,23 +1,23 @@
 
 record User {
     @tablename "users"
-    accounts       @link(Account.userId)
-    posts          @link(Post.authorUserId)
+    accounts @link(Account.userId)
+    posts    @link(Post.authorUserId)
 
-    id        Int      @id
+    id        Int     @id
     name      String?
     status    Status
     createdAt DateTime @default(now)
 }
 
+
 record Account {
     @tablename "accounts"
-
-    id     Int    @id
+    id     Int   @id
     userId Int
     name   String
     status String
-    users @link(userId, User.id)
+    users  @link(userId, User.id)
 }
 
 record Job {
@@ -25,21 +25,20 @@ record Job {
     @watch
 
 
-    id   Int    @id
+    id   Int   @id
     name String
 }
 
 
 record Post {
     @tablename "posts"
-
-    id           Int   @id
+    id           Int     @id
     createdAt    DateTime @default(now)
     authorUserId Int
     title        String
     content      String
     status       Status
-    users @link(authorUserId, User.id)
+    users        @link(authorUserId, User.id)
 }
 
 
@@ -53,5 +52,7 @@ type Status
         reason2 String
         error   String
      }
+
+
 
 
