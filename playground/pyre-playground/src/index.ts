@@ -4,7 +4,11 @@ import * as Query from "../pyre/generated/typescript/query";
 const app = new Hono();
 
 app.get("/", (c) => {
-  return c.text("Hello Hono!");
+  return c.text(`
+You're running a server with 🔥 Pyre 🔥 
+
+Database Path: file:${process.cwd()}/db/playground.db
+`);
 });
 
 app.post("/db/:req", async (c) => {
@@ -15,7 +19,7 @@ app.post("/db/:req", async (c) => {
   console.log("RECEIVED ARGS", req, args);
 
   const env = {
-    url: "file:/Users/mattgriffith/projects/mdgriffith/pyre-ql/playground/pyre-playground/test.db",
+    url: `file:${process.cwd()}/db/playground.db`,
     authToken: undefined,
   };
 

@@ -1,12 +1,13 @@
 {
   "name": "pyre-playground",
   "scripts": {
+    "init": "touch db/playground.db; pyre migrate db/playground.db",
     "dev": "bun run --hot src/index.ts",
     "introspect": "pyre introspect test.db"
   },
   "dependencies": {
     "@libsql/client": "^0.7.0",
-    "arktype": "^2.0.0-dev.26",
+    "arktype": "^2.0.0-rc.32",
     "hono": "^4.4.10"
   },
   "devDependencies": {
