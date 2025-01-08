@@ -3,7 +3,9 @@
   "scripts": {
     "init": "touch db/playground.db; pyre migrate db/playground.db",
     "dev": "bun run --hot src/index.ts",
-    "introspect": "pyre introspect test.db"
+    "introspect": "pyre introspect test.db",
+    "seed": "bash scripts/seed.sh",
+    "list-users": "bash scripts/list_users.sh"
   },
   "dependencies": {
     "@libsql/client": "^0.7.0",

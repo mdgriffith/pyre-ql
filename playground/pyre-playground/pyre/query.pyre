@@ -14,6 +14,15 @@ query MyQuery($id: Int) {
 }
 
 
+query UsersAll {
+    user {
+        id
+        createdAt
+        username: name
+    }
+}
+
+
 insert UserNew($name: String, $status: Status) {
     user {
         name = $name
