@@ -749,7 +749,8 @@ pub fn check_query(
     //
     let mut param_names: HashMap<String, ParamInfo> = HashMap::new();
 
-    // Param types make sense?
+    // Check that all param types are known
+    // Gather them in param_names so we can calculate usage.
     for param_def in &query.args {
         // formatted name
         let param_name = format!("${}", param_def.name);
@@ -799,6 +800,8 @@ pub fn check_query(
         }
     }
 
+
+    // Add session fields to the param_names collection
     match &context.session {
         None => (),
         Some(session) => {
@@ -823,7 +826,8 @@ pub fn check_query(
         }
     }
 
-    // Check fields
+    
+    // Verify that all fields exist in the schema
     for field in &query.fields {
         match context.tables.get(&field.name) {
             None => errors.push(Error {
@@ -841,6 +845,7 @@ pub fn check_query(
                 context,
                 errors,
                 &query.operation,
+                None,
                 table,
                 field,
                 &mut param_names,
@@ -848,6 +853,7 @@ pub fn check_query(
         }
     }
 
+    // Check for unused or undefined parameters and add errors accordingly
     for (param_name, param_info) in param_names.iter() {
         match &param_info {
             ParamInfo::Defined {
@@ -1209,6 +1215,7 @@ fn check_table_query(
     context: &Context,
     mut errors: &mut Vec<Error>,
     operation: &ast::QueryOperation,
+    through_link: Option<&ast::LinkDetails>,
     table: &ast::RecordDetails,
     query: &ast::QueryField,
     params: &mut HashMap<String, ParamInfo>,
@@ -1349,6 +1356,10 @@ fn check_table_query(
         }
     }
 
+
+
+
+    // Only one @limit allowed
     let limit_len = limits.len();
     if limit_len > 1 {
         errors.push(Error {
@@ -1362,6 +1373,8 @@ fn check_table_query(
             }],
         });
     }
+
+    // Only one @offset is allowed
     let offset_len = offsets.len();
     if offset_len > 1 {
         errors.push(Error {
@@ -1376,6 +1389,7 @@ fn check_table_query(
         });
     }
 
+    
     if ((offset_len > 0 || limit_len > 0) && has_nested_selected) {
         errors.push(Error {
             filepath: context.current_filepath.clone(),
@@ -1402,13 +1416,37 @@ fn check_table_query(
 
     match operation {
         ast::QueryOperation::Insert => {
+            let mut missing_fields = vec![];
+
+            if let Some(link) = through_link {
+                for field in &link.foreign.fields {
+                    if queried_fields.contains_key(field) {
+                        errors.push(Error {
+                            filepath: context.current_filepath.clone(),
+                            error_type: ErrorType::InsertNestedValueAutomaticallySet {
+                                field: field.clone(),
+                            },
+                            locations: vec![Location {
+                                contexts: vec![],
+                                primary: to_range(&query.start, &query.end),
+                            }],
+                        });
+                        return;
+                    }
+                }
+            }
+
             for col in ast::collect_columns(&table.fields) {
-                if ast::is_primary_key(&col) || ast::has_default_value(&col) {
-                    // Primary keys aren't required and those with defaults aren't required
+                if ast::is_primary_key(&col) 
+                    || ast::has_default_value(&col) 
+                    || through_link.map_or(false, |link| link.foreign.fields.contains(&col.name)) {
+                    // Primary keys, fields with defaults, and  aren't required
                     // (for the moment, we should differentiate between auto-incrementing
                     // and non-auto-incrementing primary keys)
                     continue;
                 }
+
+                
                 match queried_fields.get(&col.name) {
                     Some(is_set) => {
                         if (!is_set) {
@@ -1424,18 +1462,26 @@ fn check_table_query(
                             })
                         }
                     }
-                    None => errors.push(Error {
-                        filepath: context.current_filepath.clone(),
-                        error_type: ErrorType::InsertMissingColumn {
-                            field: col.name.clone(),
-                        },
-                        locations: vec![Location {
-                            contexts: vec![],
-                            primary: to_range(&query.start, &query.end),
-                        }],
-                    }),
+                    None => {
+                        missing_fields.push(col.name.clone());
+                    },
                 }
             }
+
+            if !missing_fields.is_empty() {
+                errors.push(Error {
+                    filepath: context.current_filepath.clone(),
+                    error_type: ErrorType::InsertMissingColumn {
+                        fields: missing_fields.clone(),
+                    },
+                    locations: vec![Location {
+                        contexts: vec![],
+                        primary: to_range(&query.start, &query.end),
+                    }],
+                });
+            }
+
+
         }
         _ => {}
     }
@@ -1573,8 +1619,7 @@ fn check_link(
                         });
                     }
                 }
-            }
-            return ();
+            };
         }
         ast::QueryOperation::Update => {
             errors.push(Error {
@@ -1636,7 +1681,7 @@ fn check_link(
                     primary: to_range(&field.start, &field.end),
                 }],
             }),
-            Some(table) => check_table_query(context, errors, operation, table, field, params),
+            Some(table) => check_table_query(context, errors, operation, Some(link),table, field, params),
         }
     }
 }
