@@ -2,17 +2,17 @@ use crate::ast;
 use nom::ToUsize;
 use std::collections::BTreeMap;
 
-pub fn schema_to_string(schema_file: &ast::SchemaFile) -> String {
+pub fn schema_to_string(namespace: &str, schema_file: &ast::SchemaFile) -> String {
     let mut result = String::new();
 
     for definition in &schema_file.definitions {
-        result.push_str(&to_string_definition(definition));
+        result.push_str(&to_string_definition(namespace, definition));
     }
     result.push_str("\n");
     result
 }
 
-fn to_string_definition(definition: &ast::Definition) -> String {
+fn to_string_definition(namespace: &str, definition: &ast::Definition) -> String {
     match definition {
         ast::Definition::Lines { count } => {
             if (*count > 2) {
@@ -27,7 +27,7 @@ fn to_string_definition(definition: &ast::Definition) -> String {
 
             let mut result = "session {\n".to_string();
             for field in &session.fields {
-                result.push_str(&to_string_field(&indent_collection, &field));
+                result.push_str(&to_string_field(namespace, &indent_collection, &field));
             }
             result.push_str("}\n");
             result
@@ -41,7 +41,7 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             let mut result = format!("type {}\n", name);
             let mut is_first = true;
             for variant in variants {
-                result.push_str(&to_string_variant(is_first, variant));
+                result.push_str(&to_string_variant(namespace, is_first, variant));
                 is_first = false;
             }
             result
@@ -58,7 +58,7 @@ fn to_string_definition(definition: &ast::Definition) -> String {
 
             let mut result = format!("record {} {{\n", name);
             for field in fields {
-                result.push_str(&to_string_field(&indent_collection, &field));
+                result.push_str(&to_string_field(namespace, &indent_collection, &field));
             }
             result.push_str("}\n");
             result
@@ -186,7 +186,7 @@ fn get_field_indent(indent_minimum: usize, field: &ast::Field) -> Option<(FieldI
     None
 }
 
-fn to_string_variant(is_first: bool, variant: &ast::Variant) -> String {
+fn to_string_variant(namespace: &str, is_first: bool, variant: &ast::Variant) -> String {
     let prefix = if is_first { " = " } else { " | " };
 
     match &variant.data {
@@ -194,7 +194,7 @@ fn to_string_variant(is_first: bool, variant: &ast::Variant) -> String {
             let mut result = format!("  {}{} {{\n", prefix, variant.name);
             let mut indent_collection: Indentation = collect_indentation(&fields, 8);
             for field in fields {
-                result.push_str(&to_string_field(&indent_collection, &field));
+                result.push_str(&to_string_field(namespace, &indent_collection, &field));
             }
             result.push_str("     }\n");
             result
@@ -203,7 +203,7 @@ fn to_string_variant(is_first: bool, variant: &ast::Variant) -> String {
     }
 }
 
-fn to_string_field(indent: &Indentation, field: &ast::Field) -> String {
+fn to_string_field(namespace: &str, indent: &Indentation, field: &ast::Field) -> String {
     match field {
         ast::Field::ColumnLines { count } => {
             if (*count > 2) {
@@ -216,7 +216,7 @@ fn to_string_field(indent: &Indentation, field: &ast::Field) -> String {
         ast::Field::ColumnComment { text } => {
             format!("{}//{}\n", " ".repeat(indent.minimum), text)
         }
-        ast::Field::FieldDirective(directive) => to_string_field_directive(indent, directive),
+        ast::Field::FieldDirective(directive) => to_string_field_directive(namespace, indent, directive),
     }
 }
 
@@ -271,7 +271,7 @@ fn to_string_column(indentation: &Indentation, column: &ast::Column) -> String {
     )
 }
 
-fn to_string_field_directive(indent: &Indentation, directive: &ast::FieldDirective) -> String {
+fn to_string_field_directive(namespace: &str, indent: &Indentation, directive: &ast::FieldDirective) -> String {
     let spaces = " ".repeat(indent.minimum);
     match directive {
         ast::FieldDirective::Watched(_) => format!("{}@watch\n", spaces),
@@ -279,16 +279,13 @@ fn to_string_field_directive(indent: &Indentation, directive: &ast::FieldDirecti
             format!("{}@tablename \"{}\"\n", spaces, name)
         }
         ast::FieldDirective::Link(details) => {
-            to_string_link_details_shorthand(indent, details)
-            // let mut result = format!("{}@link ", spaces);
-            // result.push_str(&to_string_link_details(details));
-            // result.push_str("\n");
-            // result
+            to_string_link_details_shorthand(namespace, indent, details)
         }
     }
 }
 
 fn to_string_link_details_shorthand(
+    namespace: &str,
     indentation: &Indentation,
     details: &ast::LinkDetails,
 ) -> String {
@@ -337,6 +334,11 @@ fn to_string_link_details_shorthand(
     for id in &details.foreign.fields {
         if added {
             result.push_str(", ");
+        }
+
+        if details.foreign.schema != namespace {
+            result.push_str(&details.foreign.schema);
+            result.push('.');
         }
         result.push_str(&details.foreign.table);
         result.push_str(".");

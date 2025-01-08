@@ -504,12 +504,12 @@ fn write_schema(options: &Options, to_stdout: &bool, schema: &ast::Schema) -> io
     // Format schema
     for schema_file in &schema.files {
         if *to_stdout {
-            println!("{}", generate::to_string::schema_to_string(schema_file));
+            println!("{}", generate::to_string::schema_to_string(&schema.namespace, schema_file));
             continue;
         }
         let target_filepath = schema_file.path.to_string();
         let mut output = fs::File::create(&target_filepath)?;
-        let formatted = generate::to_string::schema_to_string(schema_file);
+        let formatted = generate::to_string::schema_to_string(&schema.namespace, schema_file);
         output.write_all(formatted.as_bytes())?;
     }
     Ok(())
