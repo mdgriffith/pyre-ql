@@ -161,9 +161,11 @@ pub enum ErrorType {
         field: String,
     },
     InsertMissingColumn {
-        field: String,
+        fields: Vec<String>,
     },
-
+    InsertNestedValueAutomaticallySet {
+        field: String 
+    },
     LimitOffsetOnlyInFlatRecord,
 }
 
@@ -905,12 +907,23 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result
         }
 
-        ErrorType::InsertMissingColumn { field } => {
+        ErrorType::InsertMissingColumn { fields } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
                 "This insert is missing {}",
-                yellow_if(in_color, field)
+                yellow_if(in_color, &fields.join(", "))
+            ));
+
+            result
+        }
+        ErrorType::InsertNestedValueAutomaticallySet {field} => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "Pyre is setting {} automatically based on your {}, no need to set it manually.",
+                yellow_if(in_color, field),
+                yellow_if(in_color, "@link")
             ));
 
             result
@@ -1046,6 +1059,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::LinksDisallowedInUpdates { .. } => "Links Not Allowed In Updates",
         ErrorType::InsertColumnIsNotSet { .. } => "Insert Column Not Set",
         ErrorType::InsertMissingColumn { .. } => "Insert Missing Column",
+        ErrorType::InsertNestedValueAutomaticallySet { .. } => "Can't set automatic field",
         ErrorType::LimitOffsetOnlyInFlatRecord => "Limit/Offset Only In Flat Record"
     }.to_string()
 }
