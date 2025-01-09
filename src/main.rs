@@ -376,13 +376,15 @@ async fn main() -> io::Result<()> {
             // Otherwise, is disallowed
             check_namespace_requirements(namespace, &options);
 
+            let target_namespace = namespace.clone().unwrap_or_else(|| db::DEFAULT_SCHEMANAME.to_string());
+
             let connection_result = db::connect(db, auth).await;
             match connection_result {
                 Err(e) => {
                     println!("Failed to connect to database: {:?}", e);
                 }
                 Ok(conn) => {
-                    let introspection_result = db::introspect(&conn, db::DEFAULT_SCHEMANAME).await;
+                    let introspection_result = db::introspect(&conn, &target_namespace).await;
                     match introspection_result {
                         Ok(introspection) => {
                             let migration_dir = Path::new(migration_dir);
