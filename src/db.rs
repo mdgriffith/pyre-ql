@@ -461,8 +461,11 @@ impl MigrationError {
     pub fn format_error(&self) -> String {
         match self {
             MigrationError::SqlError(sql_error) => error::format_libsql_error(sql_error),
-            MigrationError::MigrationReadIoError(e, path) => {
-                error::format_custom_error("Migration Read Error", &format!("Error reading migration file at {}: {}", path.display(), e))
+            MigrationError::MigrationReadIoError(io_error, path) => {
+                error::format_custom_error("Migration Read Error", 
+                    &format!("I was looking for migrations in {},\nbut ran into the following issue:\n\n{}", 
+                    error::yellow_if(true, &path.display().to_string()),
+                    io_error))
             }
         }
     }
