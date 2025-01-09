@@ -76,7 +76,7 @@ enum Commands {
         /// A local filename, or a url, or an environment variable if prefixed with a $.
         database: String,
 
-        ///
+        /// The Pyre namespace to store this schema under.
         #[arg(long)]
         namespace: Option<String>,
 
@@ -91,6 +91,10 @@ enum Commands {
 
         #[arg(long)]
         auth: Option<String>,
+
+         /// The Pyre schema to migrate
+         #[arg(long)]
+         namespace: Option<String>,
 
         /// Directory where migration files are stored.
         #[arg(long, default_value = "pyre/migrations")]
@@ -107,6 +111,10 @@ enum Commands {
 
         #[arg(long)]
         auth: Option<String>,
+
+        /// The Pyre namespace to generate a migration for.
+        #[arg(long)]
+        namespace: Option<String>,
 
         /// Directory where migration files are stored.
         #[arg(long, default_value = "pyre/migrations")]
@@ -338,7 +346,12 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        Commands::Migrate { database, auth, migration_dir } => {
+        Commands::Migrate { database, auth, migration_dir, namespace } => {
+
+            // Namespace is required if there are multiple dbs
+            // Otherwise, is disallowed
+            check_namespace_requirements(namespace, &options);
+
             let connection_result = db::connect(database, auth).await;
             match connection_result {
                 Ok(conn) => {
@@ -357,7 +370,12 @@ async fn main() -> io::Result<()> {
                 }
             }
         }
-        Commands::Migration { name, db, auth, migration_dir } => {
+        Commands::Migration { name, db, auth, migration_dir, namespace } => {
+
+            // Namespace is required if there are multiple dbs
+            // Otherwise, is disallowed
+            check_namespace_requirements(namespace, &options);
+
             let connection_result = db::connect(db, auth).await;
             match connection_result {
                 Err(e) => {
@@ -418,6 +436,56 @@ async fn main() -> io::Result<()> {
     }
     Ok(())
 }
+
+fn check_namespace_requirements(namespace: &Option<String>, options: &Options) {
+    let namespaces_result = filesystem::read_namespaces(Path::new(&options.in_dir));
+    match namespaces_result {
+        Ok(namespaces_found) => {
+            match namespaces_found {
+                filesystem::NamespacesFound::Default => {
+                    if let Some(namespace) = namespace {
+                        println!("{}", error::format_custom_error("Namespace is not needed", "It looks like you only have one schema, which means you don't need to provide a namespace."));
+                        std::process::exit(1);
+                    }
+                }
+                filesystem::NamespacesFound::MultipleNamespaces(namespaces) => {
+                    if let Some(namespace) = namespace {
+                        if !namespaces.contains(namespace.as_str()) {
+                            let error_body = format!("{} is not one of the allowed namespaces:\n{}", 
+                                error::yellow_if(true, namespace),
+                                error::format_yellow_list(true, namespaces.into_iter().collect::<Vec<_>>())
+                            );                                    
+                            let error_message = error::format_custom_error("Unknown Schema", &error_body);
+                            println!("{}", error_message);
+                            std::process::exit(1);
+                        }
+                    } else {
+                        let error_body = format!("It looks like you have multiple schemas:\n{}\n Let me know which one you want to migrate by passing {}",
+                            error::format_yellow_list(true, namespaces.into_iter().collect::<Vec<_>>()),
+                            error::cyan_if(true, "--namespace SCHEMA_TO_MIGRATE")
+                        );                                    
+                        let error_message = error::format_custom_error("Unknown Schema", &error_body);
+                        println!("{}", error_message);
+                        std::process::exit(1);
+                    }
+                }
+                filesystem::NamespacesFound::EmptySchemaDir | filesystem::NamespacesFound::NothingFound => {
+                    println!("{}", error::format_custom_error("Schema Not Found", "I was trying to find the schema, but it's not available."));
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(err) => {
+            println!("Error reading namespaces: {:?}", err);
+            std::process::exit(1);
+        }
+    }
+}
+
+
+
+
+
 
 
 
