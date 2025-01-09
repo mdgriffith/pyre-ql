@@ -2,6 +2,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use walkdir::WalkDir;
 
 #[derive(Debug)]
@@ -47,6 +48,54 @@ pub fn get_schema_source<'a>(filepath: &'a str, found: &'a Found) -> Option<&'a 
     }
     None
 }
+
+#[derive(Debug)]
+pub enum NamespacesFound {
+    Default,
+    MultipleNamespaces(HashSet<String>),
+    EmptySchemaDir,
+    NothingFound,
+}
+
+pub fn read_namespaces(dir: &Path) -> io::Result<NamespacesFound> {
+    
+    // Single schema file
+    let schema_pyre_path = dir.join("schema.pyre");
+    if schema_pyre_path.exists() {
+        return Ok(NamespacesFound::Default);
+    }
+
+    // Check if there's a schema directory
+    let schema_dir = dir.join("schema");
+    let mut namespaces: HashSet<String> = HashSet::new();
+    let mut has_filepaths = false;
+
+    if schema_dir.exists() && schema_dir.is_dir() {
+        for entry in fs::read_dir(&schema_dir)? {
+            match entry {
+                Ok(entry) => {
+                    if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                        namespaces.insert(entry.file_name().to_str().unwrap_or_default().to_string());
+                    } else {
+                        has_filepaths = true;
+                    }
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        if namespaces.is_empty() && !has_filepaths {
+            return Ok(NamespacesFound::EmptySchemaDir);
+        } else if namespaces.is_empty() {
+            return Ok(NamespacesFound::Default);
+        } else {
+            return Ok(NamespacesFound::MultipleNamespaces(namespaces));
+        }
+    }
+
+    Ok(NamespacesFound::NothingFound)
+}
+
+
 
 // Helper function to get namespace from path
 // This function takes a path and a base directory as input and returns the namespace
