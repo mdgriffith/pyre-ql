@@ -328,13 +328,13 @@ async fn main() -> io::Result<()> {
                                 }
                             }
                         }
-                        Err(e) => {
-                            println!("Failed to connect to database: {:?}", e);
+                        Err(libsql_error) => {
+                            println!("{}", error::format_libsql_error(&libsql_error));
                         }
                     }
                 }
-                Err(e) => {
-                    println!("Failed to connect to database: {:?}", e);
+                Err(err) => {
+                    println!("{}", err.format_error());
                 }
             }
         }
@@ -347,13 +347,13 @@ async fn main() -> io::Result<()> {
                         Ok(()) => {
                             println!("Migration finished!");
                         }
-                        Err(e) => {
-                            println!("Failed to connect to database: {:?}", e);
+                        Err(migration_error) => {
+                            println!("{}", migration_error.format_error());
                         }
                     }
                 }
-                Err(e) => {
-                    println!("Failed to connect to database: {:?}", e);
+                Err(err) => {
+                    println!("{}", err.format_error());
                 }
             }
         }

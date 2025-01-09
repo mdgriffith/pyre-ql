@@ -2,6 +2,7 @@ use crate::ast;
 use crate::ext::string;
 use crate::format;
 use crate::parser;
+use crate::error;
 use libsql;
 use serde;
 use std::collections::HashMap;
@@ -90,6 +91,18 @@ pub enum DbError {
     EnvVarNotFound(String),
     DatabaseError(libsql::Error),
 }
+
+impl DbError {
+    pub fn format_error(&self) -> String {
+        match self {
+            DbError::AuthTokenRequired => error::format_custom_error("Authentication Error", "Authentication token is required"),
+            DbError::EnvVarNotFound(var) => error::format_custom_error("Unknown Environment Variable", &format!("Environment variable {} not found", var)),
+            DbError::DatabaseError(e) => error::format_custom_error("Database Error", &format!("Database error: {:?}", e)),
+        }
+    }
+}
+
+
 
 fn parse_arg_or_env(arg: &str) -> Result<String, DbError> {
     if arg.starts_with('$') {
@@ -441,15 +454,27 @@ where
 #[derive(Debug)]
 pub enum MigrationError {
     SqlError(libsql::Error),
-    IoError(std::io::Error),
+    MigrationReadIoError(std::io::Error, PathBuf),
 }
+
+impl MigrationError {
+    pub fn format_error(&self) -> String {
+        match self {
+            MigrationError::SqlError(sql_error) => error::format_libsql_error(sql_error),
+            MigrationError::MigrationReadIoError(e, path) => {
+                error::format_custom_error("Migration Read Error", &format!("Error reading migration file at {}: {}", path.display(), e))
+            }
+        }
+    }
+}
+
 
 pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(), MigrationError> {
     // Read migration directory
     let mut migration_file_result = read_migrations(migration_folder);
     match migration_file_result {
         Err(err) => {
-            return Err(MigrationError::IoError(err));
+            return Err(MigrationError::MigrationReadIoError(err, migration_folder.to_path_buf()));
         }
         Ok(migration_files) => {
             let introspection_result = introspect(&db, DEFAULT_SCHEMANAME).await;
