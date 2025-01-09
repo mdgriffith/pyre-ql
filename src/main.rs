@@ -434,8 +434,12 @@ fn write_migration(
 
     filesystem::create_dir_if_not_exists(base_migration_folder);
 
-    // Write the namespace folder
-    let namespace_folder = base_migration_folder.join(namespace.clone());
+    // Only use a namespace folder if it's not the default one.
+    let namespace_folder = if namespace != &db::DEFAULT_SCHEMANAME {
+        base_migration_folder.join(namespace.clone())
+    } else {
+        base_migration_folder.to_path_buf()
+    };
     filesystem::create_dir_if_not_exists(&namespace_folder);
 
 
