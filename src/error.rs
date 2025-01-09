@@ -243,7 +243,7 @@ pub fn format_error(file_contents: &str, error: &Error) -> String {
     let description = to_error_description(&error, true);
 
     format!(
-        "{} {}\n\n{}\n    {}\n\n",
+        "{} {}\n\n{}\n    {}\n",
         filepath.cyan(),
         separator.cyan(),
         highlight,
@@ -490,6 +490,16 @@ pub fn yellow_if(in_color: bool, text: &str) -> String {
         text.to_string() 
     }
 }
+
+pub fn format_yellow_list(in_color: bool, items: Vec<String>) -> String {
+    let mut result = "".to_string();
+    for item in items {
+        result.push_str(&format!("    {}\n", yellow_if(in_color, &item)));
+    }
+    result
+}
+
+
 
 fn to_error_description(error: &Error, in_color: bool) -> String {
     match &error.error_type {
