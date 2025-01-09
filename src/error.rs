@@ -207,6 +207,12 @@ pub struct Range {
     pub end: ast::Location,
 }
 
+
+pub fn format_custom_error(title: &str, body: &str) -> String {
+    format!("{}-------------{}\n\n{}", title, "-".repeat(title.len()), body)
+}
+
+
 /* Error formats!
 
 
@@ -1132,4 +1138,32 @@ pub fn format_json(error: &Error) -> serde_json::Value {
 }
 
 
+pub fn format_libsql_error(e: &libsql::Error) -> String {
+    match e {
+        libsql::Error::ConnectionFailed(s) => format_custom_error("Connection Failed", s),
+        libsql::Error::SqliteFailure(_, s) => format_custom_error("SQLite Failure", s),
+        libsql::Error::NullValue => format_custom_error("Null Value", "Null value encountered"),
+        libsql::Error::Misuse(s) => format_custom_error("API Misuse", s),
+        libsql::Error::ExecuteReturnedRows => format_custom_error("Execute Returned Rows", "Execute returned rows"),
+        libsql::Error::QueryReturnedNoRows => format_custom_error("Query Returned No Rows", "Query returned no rows"),
+        libsql::Error::InvalidColumnName(s) => format_custom_error("Invalid Column Name", s),
+        libsql::Error::ToSqlConversionFailure(e) => format_custom_error("SQL Conversion Failure", &format!("{}", e)),
+        libsql::Error::SyncNotSupported(s) => format_custom_error("Sync Not Supported", s),
+        libsql::Error::ColumnNotFound(_) => format_custom_error("Column Not Found", "Column not found"),
+        libsql::Error::Hrana(e) => format_custom_error("Hrana", &format!("{}", e)),
+        libsql::Error::WriteDelegation(e) => format_custom_error("Write Delegation", &format!("{}", e)),
+        libsql::Error::Bincode(e) => format_custom_error("Bincode", &format!("{}", e)),
+        libsql::Error::InvalidColumnIndex => format_custom_error("Invalid Column Index", "Invalid column index"),
+        libsql::Error::InvalidColumnType => format_custom_error("Invalid Column Type", "Invalid column type"),
+        libsql::Error::Sqlite3SyntaxError(_, _, s) => format_custom_error("SQLite3 Syntax Error", s),
+        libsql::Error::Sqlite3UnsupportedStatement => format_custom_error("SQLite3 Unsupported Statement", "Unsupported statement"),
+        libsql::Error::Sqlite3ParserError(e) => format_custom_error("SQLite3 Parser Error", &format!("{}", e)),
+        libsql::Error::RemoteSqliteFailure(_, _, s) => format_custom_error("Remote SQLite Failure", s),
+        libsql::Error::Replication(e) => format_custom_error("Replication", &format!("{}", e)),
+        libsql::Error::InvalidUTF8Path => format_custom_error("Invalid UTF-8 Path", "Path has invalid UTF-8"),
+        libsql::Error::FreezeNotSupported(s) => format_custom_error("Freeze Not Supported", s),
+        libsql::Error::InvalidParserState(s) => format_custom_error("Invalid Parser State", s),
+        libsql::Error::InvalidTlsConfiguration(e) => format_custom_error("Invalid TLS Configuration", &format!("{}", e)),
+    }
+}
 
