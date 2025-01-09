@@ -475,7 +475,7 @@ fn render_expecting(expecting: &Expecting, in_color: bool) -> String {
 
 
 
-fn cyan_if(in_color: bool, text: &str) -> String {
+pub fn cyan_if(in_color: bool, text: &str) -> String {
     if in_color {
         text.cyan().to_string()
     } else {
@@ -483,7 +483,7 @@ fn cyan_if(in_color: bool, text: &str) -> String {
     }
 }
 
-fn yellow_if(in_color: bool, text: &str) -> String {
+pub fn yellow_if(in_color: bool, text: &str) -> String {
     if in_color {
         text.yellow().to_string()
     } else {
