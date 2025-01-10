@@ -3,9 +3,6 @@ name = "pyre"
 version = "0.1.1"
 edition = "2021"
 
-[workspace]
-[profile.dev]
-rustflags = ["-A", "warnings"]
 
 [[bin]]
 name = "pyre"
