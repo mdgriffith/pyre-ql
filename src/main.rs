@@ -25,6 +25,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
 
+    /// Get started using Pyre.  Generates a starter schema.
+    Init {
+        /// Generate a setup that has multiple database schemas.
+        #[arg(long, default_value_t = false)]
+        multidb: bool,
+    },
+
     /// Generate files for querying your pyre schema.
     Generate {
 
@@ -32,6 +39,7 @@ enum Commands {
         #[arg(long, default_value = "pyre/generated")]
         out: String,
     },
+
     /// Format files
     Format {
 
@@ -120,23 +128,26 @@ async fn main() -> io::Result<()> {
     };
 
     match &cli.command {
+        Commands::Init { multidb } => {
+            command::init(&options, *multidb)?;
+        }
         Commands::Generate { out } => {
-            command::generate(&options, out);
+            command::generate(&options, out)?;
         },
         Commands::Format { files, to_stdout } => {
-            command::format(&options, files, *to_stdout);
+            command::format(&options, files, *to_stdout)?;
         },
         Commands::Check { files, json } => {
-            command::check(&options, files.clone(), *json);
+            command::check(&options, files.clone(), *json)?;
         }
         Commands::Introspect { database, auth, namespace } => {
-            command::introspect(&options, database, auth, namespace).await;
+            command::introspect(&options, database, auth, namespace).await?;
         }
         Commands::Migrate { database, auth, migration_dir, namespace } => {
-            command::migrate(&options, database, auth, migration_dir, namespace).await;
+            command::migrate(&options, database, auth, migration_dir, namespace).await?;
         }
         Commands::Migration { name, db, auth, migration_dir, namespace } => {
-            command::migration(&options, name, db, auth, migration_dir, namespace).await;
+            command::migration(&options, name, db, auth, migration_dir, namespace).await?;
         }
     }
     Ok(())

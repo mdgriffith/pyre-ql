@@ -1281,14 +1281,14 @@ fn check_table_query(
                             false,
                         );
                     }
-                    ast::Arg::Where(whereArgs) => {
+                    ast::Arg::Where(where_args) => {
                         match to_single_range(&arg.start, &arg.end) {
                             Some(range) => wheres.push(range),
                             None => (),
                         }
 
                         check_where_args(
-                            context, &arg.start, &arg.end, table, errors, params, &whereArgs,
+                            context, &arg.start, &arg.end, table, errors, params, &where_args,
                         );
                     }
                     _ => (),

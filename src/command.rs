@@ -23,7 +23,132 @@ pub struct Options<'a> {
 }
 
 
+
+
+
+fn id_column() -> ast::Column {
+    ast::Column {
+        name: "id".to_string(),
+        type_: "Int".to_string(),
+        serialization_type: ast::SerializationType::Integer,
+        nullable: false,
+        directives: vec![ast::ColumnDirective::PrimaryKey],
+        start: None,
+        end: None,
+        start_name: None,
+        end_name: None,
+        start_typename: None,
+        end_typename: None,
+    }
+}
+
+
+
 // Top level commands
+pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
+    let mut database = ast::Database {
+        schemas: Vec::new(),
+    };
+    let cwd = std::env::current_dir().expect("Failed to get current directory");
+    let pyre_dir = cwd.join("pyre");
+    if !pyre_dir.exists() {
+        fs::create_dir(&pyre_dir).expect("Failed to create pyre directory");
+    } else {
+        error::format_custom_error("Directory exists", "The pyre directory already exists in the current directory");
+        std::process::exit(1);
+    }
+
+    if multidb {        
+        let schema_dir = pyre_dir.join("schema");
+        
+        // Create Base Schema
+        let base_dir = schema_dir.join("base"); 
+        fs::create_dir(&base_dir).expect("Failed to create namespace directory");
+        database.schemas.push(ast::Schema {
+            namespace: "base".to_string(),
+            session: None,
+            files: vec![ast::SchemaFile {
+                path: base_dir.to_string_lossy().to_string(),
+                definitions: vec![ast::Definition::Record {
+                    name: "User".to_string(),
+                    fields: vec![ast::Field::Column(id_column())],
+                    start: None,
+                    end: None,
+                    start_name: None,
+                    end_name: None,
+                }]
+            }],
+        });
+
+        // Create User Schema
+        let user_dir = schema_dir.join("user"); 
+        fs::create_dir(&user_dir).expect("Failed to create namespace directory");
+        database.schemas.push(ast::Schema {
+            namespace: "user".to_string(),
+            session: None,
+            files: vec![ast::SchemaFile {
+                path: base_dir.to_string_lossy().to_string(),
+                definitions: vec![ast::Definition::Record {
+                    name: "Example".to_string(),
+                    fields: vec![
+                            ast::Field::FieldDirective(ast::FieldDirective::Link(ast::LinkDetails {
+                                link_name: "user".to_string(),
+                                local_ids: vec!["userId".to_string()],
+                                foreign: ast::Qualified {
+                                    schema: "base".to_string(),
+                                    table: "User".to_string(),
+                                    fields: vec!["id".to_string()],
+                                },
+                                start_name: None,
+                                end_name: None,
+                            })),
+                            ast::Field::Column(id_column()), 
+                            ast::Field::Column(ast::Column {
+                                name: "userId".to_string(),
+                                type_: "Int".to_string(),
+                                serialization_type: ast::SerializationType::Integer,
+                                nullable: false,
+                                directives: vec![ast::ColumnDirective::PrimaryKey],
+                                start: None,
+                                end: None,
+                                start_name: None,
+                                end_name: None,
+                                start_typename: None,
+                                end_typename: None,
+                            })],
+                    start: None,
+                    end: None,
+                    start_name: None,
+                    end_name: None,
+                }]
+            }],
+        });
+      
+    } else {
+        let records = vec![ast::Definition::Record {
+            name: "User".to_string(),
+            fields: vec![ast::Field::Column(id_column())],
+            start: None,
+            end: None,
+            start_name: None,
+            end_name: None,
+        }];
+        database.schemas.push(ast::Schema {
+            namespace: db::DEFAULT_SCHEMANAME.to_string(),
+            session: None,
+            files: vec![ast::SchemaFile {
+                path: pyre_dir.join("schema.pyre").to_str().unwrap().to_string(),
+                definitions: records
+            }],
+        });
+    }
+
+    format::database(&mut database);
+    write_db_schema(options, &database)?;
+
+    Ok(())
+}
+
 
 pub fn generate(options: &Options, out: &str) -> io::Result<()> {
     execute(options, filesystem::collect_filepaths(&options.in_dir)?, Path::new(out))
@@ -161,7 +286,7 @@ pub async fn introspect<'a>(options: &'a Options<'a>, database: &str, auth: &Opt
                         if (ast::is_empty_db(&introspection.schema)) {
                             println!("I was able to successfully connect to the database, but I couldn't find any tables or views!");
                         } else {
-                            write_db_schema(&options,  &introspection.schema);
+                            write_db_schema(&options,  &introspection.schema)?;
                         }
                     }
                 }
@@ -269,16 +394,9 @@ pub async fn migration<'a>(options: &'a Options<'a>, name: &str, db: &str, auth:
 
 
 
-
-
-
-
-
 // 
 //   Helpers
 // 
-
-
 
 fn check_namespace_requirements(namespace: &Option<String>, options: &Options) {
     let namespaces_result = filesystem::read_namespaces(Path::new(&options.in_dir));
@@ -384,9 +502,9 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
                                     &query_list,
                                 );
                             }
-                            Err(errorList) => {
+                            Err(error_list) => {
                                 let mut errors = "".to_string();
-                                for err in errorList {
+                                for err in error_list {
                                     let formatted_error =
                                         error::format_error(&query_source_str, &err);
                                     errors.push_str(&formatted_error);
@@ -594,7 +712,7 @@ fn write_migration(
 
     match output {
         Ok(mut file) => {
-            file.write_all(sql.as_bytes());
+            file.write_all(sql.as_bytes())?;
         }
         Err(e) => {
             eprintln!("Failed to create file: {:?}", e);
@@ -609,7 +727,7 @@ fn write_migration(
     match output {
         Ok(mut file) => {
             let json_diff = serde_json::to_string(diff).unwrap();
-            file.write_all(json_diff.as_bytes());
+            file.write_all(json_diff.as_bytes())?;
         }
         Err(e) => {
             eprintln!("Failed to create file: {:?}", e);

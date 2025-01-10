@@ -1,18 +1,16 @@
 use crate::ast;
-use crate::error;
-use crate::hash;
 use nom::bytes::complete::take_while1;
 use nom::character::streaming::{space0, space1};
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until, take_while, take_while_m_n},
+    bytes::complete::{tag, take_until, take_while},
     character::complete::{
-        alpha1, alphanumeric1, char, digit1, line_ending, multispace0, multispace1, newline, one_of,
+        alphanumeric1, char, digit1, line_ending, multispace0, multispace1, newline, one_of,
     },
-    combinator::{all_consuming, cut, eof, map_res, opt, recognize, value},
+    combinator::{all_consuming, cut, eof, opt, recognize, value},
     error::{Error, VerboseError, VerboseErrorKind},
     multi::{many0, many1, separated_list0, separated_list1},
-    sequence::{delimited, terminated, tuple},
+    sequence::{delimited, tuple},
     IResult,
 };
 use nom_locate::{position, LocatedSpan};
