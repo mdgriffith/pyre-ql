@@ -1,14 +1,7 @@
 #![allow(warnings)]
-use chrono;
 use clap::{Parser, Subcommand};
-use colored::*;
-use generate::migration;
-use serde_json;
-use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use tokio;
-use walkdir::WalkDir;
 
 mod ast;
 mod db;

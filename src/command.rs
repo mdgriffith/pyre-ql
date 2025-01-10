@@ -17,7 +17,6 @@ use crate::format;
 use crate::parser;
 use crate::typecheck;
 use crate::error;
-use crate::migration;
 
 
 
@@ -572,7 +571,7 @@ fn write_migration(
     base_migration_folder: &Path,
     namespace: &String,
 ) -> io::Result<()> {
-    let sql = migration::to_sql(schema, diff);
+    let sql = generate::migration::to_sql(schema, diff);
 
     // Format like {year}{month}{day}{hour}{minute}
     let current_date = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
