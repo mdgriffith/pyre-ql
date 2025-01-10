@@ -1,20 +1,9 @@
-#![allow(warnings)]
 use clap::{Parser, Subcommand};
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self};
+use std::path::Path;
+use pyre::command;
 
-mod ast;
-mod db;
-mod diff;
-mod error;
-mod ext;
-mod filesystem;
-mod format;
-mod generate;
-mod hash;
-mod parser;
-mod typecheck;
-mod command;
+
 
 #[derive(Parser)]
 #[command(name = "pyre")]

@@ -1,12 +1,10 @@
 use chrono;
-use clap::{Parser, Subcommand};
 use colored::*;
 use serde_json;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use tokio;
-use walkdir::WalkDir;
+
 
 use crate::generate;
 use crate::filesystem;
@@ -36,7 +34,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
         0 => match get_stdin()? {
             Some(stdin) => {
                 let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                let mut schema = parse_database_schemas(&options, &paths)?;
+                let schema = parse_database_schemas(&options, &paths)?;
 
                 // We're assuming this file is a query because we don't have a filepath
                 format_query_to_std_out(&options, &schema, &stdin);
@@ -137,14 +135,14 @@ pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()
 }
 
 pub async fn introspect<'a>(options: &'a Options<'a>, database: &str, auth: &Option<String>, namespace: &Option<String>) -> io::Result<()> {
-    let maybeConn = db::connect(&database.to_string(), auth).await;
-    match maybeConn {
+    let conn_result = db::connect(&database.to_string(), auth).await;
+    match conn_result {
         Ok(conn) => {
             
             let full_namespace = namespace.clone().unwrap_or(db::DEFAULT_SCHEMANAME.to_string());
             let introspection_result = db::introspect(&conn, &full_namespace).await;
             match introspection_result {
-                Ok(mut introspection) => {
+                Ok(introspection) => {
                     let path: PathBuf = if full_namespace != db::DEFAULT_SCHEMANAME {
                         Path::new(&options.in_dir).join("schema").join(&full_namespace).join("schema.pyre")
                     } else {
@@ -289,7 +287,7 @@ fn check_namespace_requirements(namespace: &Option<String>, options: &Options) {
             match namespaces_found {
                 filesystem::NamespacesFound::Default => {
                     if let Some(namespace) = namespace {
-                        println!("{}", crate::error::format_custom_error("Namespace is not needed", "It looks like you only have one schema, which means you don't need to provide a namespace."));
+                        println!("{}", error::format_custom_error("Namespace is not needed", "It looks like you only have one schema, which means you don't need to provide a namespace."));
                         std::process::exit(1);
                     }
                 }
@@ -297,25 +295,25 @@ fn check_namespace_requirements(namespace: &Option<String>, options: &Options) {
                     if let Some(namespace) = namespace {
                         if !namespaces.contains(namespace.as_str()) {
                             let error_body = format!("{} is not one of the allowed namespaces:\n{}", 
-                                crate::error::yellow_if(true, namespace),
-                                crate::error::format_yellow_list(true, namespaces.into_iter().collect::<Vec<_>>())
+                                error::yellow_if(true, namespace),
+                                error::format_yellow_list(true, namespaces.into_iter().collect::<Vec<_>>())
                             );                                    
-                            let error_message = crate::error::format_custom_error("Unknown Schema", &error_body);
+                            let error_message = error::format_custom_error("Unknown Schema", &error_body);
                             println!("{}", error_message);
                             std::process::exit(1);
                         }
                     } else {
                         let error_body = format!("It looks like you have multiple schemas:\n{}\n Let me know which one you want to migrate by passing {}",
-                            crate::error::format_yellow_list(true, namespaces.into_iter().collect::<Vec<_>>()),
-                            crate::error::cyan_if(true, "--namespace SCHEMA_TO_MIGRATE")
+                            error::format_yellow_list(true, namespaces.into_iter().collect::<Vec<_>>()),
+                            error::cyan_if(true, "--namespace SCHEMA_TO_MIGRATE")
                         );                                    
-                        let error_message = crate::error::format_custom_error("Unknown Schema", &error_body);
+                        let error_message = error::format_custom_error("Unknown Schema", &error_body);
                         println!("{}", error_message);
                         std::process::exit(1);
                     }
                 }
                 filesystem::NamespacesFound::EmptySchemaDir | filesystem::NamespacesFound::NothingFound => {
-                    println!("{}", crate::error::format_custom_error("Schema Not Found", "I was trying to find the schema, but it's not available."));
+                    println!("{}", error::format_custom_error("Schema Not Found", "I was trying to find the schema, but it's not available."));
                     std::process::exit(1);
                 }
             }
@@ -336,10 +334,10 @@ fn check_namespace_requirements(namespace: &Option<String>, options: &Options) {
 fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::Result<()> {
     let schema = parse_database_schemas(&options, &paths)?;
 
-    match crate::typecheck::check_schema(&schema) {
-        Err(errorList) => {
+    match typecheck::check_schema(&schema) {
+        Err(error_list) => {
             // TODO
-            for err in errorList {
+            for err in error_list {
                 let schema_source =
                     filesystem::get_schema_source(&err.filepath, &paths).unwrap_or("");
 
@@ -351,7 +349,7 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
         }
         Ok(mut context) => {
             // Generate schema files
-            crate::generate::elm::write(out_dir, &schema);
+            generate::elm::write(out_dir, &schema);
             generate_typescript_schema(&options, &schema, out_dir);
 
             for query_file_path in paths.query_files {
@@ -359,12 +357,12 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
                 let mut query_source_str = String::new();
                 query_file.read_to_string(&mut query_source_str)?;
 
-                match crate::parser::parse_query(&query_file_path, &query_source_str) {
+                match parser::parse_query(&query_file_path, &query_source_str) {
                     Ok(query_list) => {
                         // Typecheck and generate
                         context.current_filepath = query_file_path.clone();
                         let typecheck_result =
-                            crate::typecheck::check_queries(&schema, &query_list, &mut context);
+                            typecheck::check_queries(&schema, &query_list, &mut context);
 
                         match typecheck_result {
                             Ok(query_params) => {
@@ -412,7 +410,7 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
 }
 
 
-pub fn generate_typescript_schema(options: &Options, database: &crate::ast::Database, out_dir: &Path) -> io::Result<()> {
+pub fn generate_typescript_schema(options: &Options, database: &ast::Database, out_dir: &Path) -> io::Result<()> {
     filesystem::create_dir_if_not_exists(&out_dir.join("typescript"));
     filesystem::create_dir_if_not_exists(&out_dir.join("typescript").join("db"));
 
@@ -422,14 +420,14 @@ pub fn generate_typescript_schema(options: &Options, database: &crate::ast::Data
     let ts_file = Path::new(&ts_db_path);
     let mut output = fs::File::create(ts_file).expect("Failed to create file");
     output
-        .write_all(crate::generate::typescript::DB_ENGINE.as_bytes())
+        .write_all(generate::typescript::DB_ENGINE.as_bytes())
         .expect("Failed to write to file");
 
     // Session types as db/session.ts
     let ts_session_path_str = &out_dir.join(Path::new("typescript/db/session.ts"));
     let ts_session_path = Path::new(&ts_session_path_str);
     let mut output = fs::File::create(ts_session_path).expect("Failed to create file");
-    if let Some(session_ts) = crate::generate::typescript::session(&database) {
+    if let Some(session_ts) = generate::typescript::session(&database) {
         output
             .write_all(session_ts.as_bytes())
             .expect("Failed to write to file");
@@ -439,14 +437,14 @@ pub fn generate_typescript_schema(options: &Options, database: &crate::ast::Data
     let ts_db_data_path = &out_dir.join(Path::new("typescript/db/data.ts"));
     let ts_data_path = Path::new(&ts_db_data_path);
     let mut output_data = fs::File::create(ts_data_path).expect("Failed to create file");
-    let formatted_ts = crate::generate::typescript::schema(&database);
+    let formatted_ts = generate::typescript::schema(&database);
     output_data
         .write_all(formatted_ts.as_bytes())
         .expect("Failed to write to file");
 
     // TS Decoders
     let ts_db_decoder_path = &out_dir.join(Path::new("typescript/db/decode.ts"));
-    let ts_decoders = crate::generate::typescript::to_schema_decoders(&database);
+    let ts_decoders = generate::typescript::to_schema_decoders(&database);
     let ts_decoder_file = Path::new(&ts_db_decoder_path);
     let mut output = fs::File::create(ts_decoder_file).expect("Failed to create file");
     output

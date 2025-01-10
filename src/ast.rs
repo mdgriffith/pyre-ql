@@ -1,5 +1,4 @@
 use crate::ext::string;
-use nom_locate;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
@@ -42,7 +41,6 @@ pub fn is_empty_schema(schema: &Schema) -> bool {
     for file in schema.files.iter() {
         if file.definitions.len() > 0 {
             return true;
-            break;
         }
     }
     return false;

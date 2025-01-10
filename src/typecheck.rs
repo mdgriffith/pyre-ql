@@ -1,6 +1,5 @@
 use crate::ast;
 use crate::error::{DefInfo, Error, ErrorType, Location, Range, VariantDef};
-use crate::ext::string;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -283,7 +282,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                             .types
                             .insert(name.clone(), DefInfo::Def(to_single_range(start, end)));
 
-                        for mut variant in variants {
+                        for variant in variants {
                             let variant_def = VariantDef {
                                 typename: name.clone(),
                                 variant_name: variant.name.clone(),
