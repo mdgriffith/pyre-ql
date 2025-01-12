@@ -1,12 +1,64 @@
 pub mod watched;
 use crate::ast;
-use crate::ext::string;
-use crate::generate::sql;
+use crate::generate;
 use crate::typecheck;
+use crate::filesystem;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::Path;
+
+
+
+/// Write all typescript files
+pub fn write(database: &ast::Database, out_dir: &Path) -> io::Result<()> {
+    filesystem::create_dir_if_not_exists(&out_dir.join("typescript"))?;
+    filesystem::create_dir_if_not_exists(&out_dir.join("typescript").join("db"))?;
+
+    // Top level TS files
+    // DB engine as db.ts
+    let ts_db_path = &out_dir.join(Path::new("typescript/db.ts"));
+    let ts_file = Path::new(&ts_db_path);
+    let mut output = fs::File::create(ts_file).expect("Failed to create file");
+    output
+        .write_all(DB_ENGINE.as_bytes())
+        .expect("Failed to write to file");
+
+    // Config types as db/env.ts
+    // Includes:
+    //   Session type
+    //   Database mapping
+    let ts_config_path_str = &out_dir.join(Path::new("typescript/db/env.ts"));
+    let ts_config_path = Path::new(&ts_config_path_str);
+    let mut output = fs::File::create(ts_config_path).expect("Failed to create file");
+    if let Some(config_ts) = to_env(&database) {
+        output
+            .write_all(config_ts.as_bytes())
+            .expect("Failed to write to file");
+    }
+
+    // Schema-level data types
+    let ts_db_data_path = &out_dir.join(Path::new("typescript/db/data.ts"));
+    let ts_data_path = Path::new(&ts_db_data_path);
+    let mut output_data = fs::File::create(ts_data_path).expect("Failed to create file");
+    let formatted_ts = schema(&database);
+    output_data
+        .write_all(formatted_ts.as_bytes())
+        .expect("Failed to write to file");
+
+    // TS Decoders for custom types.
+    let ts_db_decoder_path = &out_dir.join(Path::new("typescript/db/decode.ts"));
+    let ts_decoders = to_schema_decoders(&database);
+    let ts_decoder_file = Path::new(&ts_db_decoder_path);
+    let mut output = fs::File::create(ts_decoder_file).expect("Failed to create file");
+    output
+        .write_all(ts_decoders.as_bytes())
+        .expect("Failed to write to file");
+
+    Ok(())
+}
+
+
 
 pub fn schema(database: &ast::Database) -> String {
     let mut result = String::new();
@@ -301,7 +353,7 @@ fn write_runner(dir: &Path, context: &typecheck::Context, query_list: &ast::Quer
     let target_path = dir.join("query.ts");
     let mut content = String::new();
 
-    content.push_str("import { Config } from \"@libsql/client\";\n");
+    content.push_str("import * as Env from \"./db/env\";\n");
     content.push_str("import * as Db from \"./db\";\n");
     for operation in &query_list.queries {
         match operation {
@@ -316,9 +368,9 @@ fn write_runner(dir: &Path, context: &typecheck::Context, query_list: &ast::Quer
         }
     }
     content.push_str("\nexport const run = async (\n");
-    content.push_str("  env: Config,\n");
+    content.push_str("  env: Env.Config,\n");
     content.push_str("  id: string,\n");
-    content.push_str("  session: any,\n");
+    content.push_str("  session: Env.Session,\n");
     content.push_str("  args: any,\n");
     content.push_str("): Promise<Db.ExecuteResult> => {\n");
     content.push_str("    switch (id) {\n");
@@ -370,6 +422,23 @@ fn format_ts_list(items: Vec<String>) -> String {
     result
 }
 
+fn format_string_list(items: &Vec<String>) -> String {
+    let mut result = "[ ".to_string();
+    let mut first = true;
+    for item in items {
+        if first {
+            result.push_str(&format!("'{}'", item));
+        } else {
+            result.push_str(&format!(", '{}'", item));
+        }
+
+        first = false;
+    }
+    result.push_str("]");
+    result
+}
+
+
 fn to_query_file(
     context: &typecheck::Context,
     params: &HashMap<String, typecheck::ParamInfo>,
@@ -380,7 +449,7 @@ fn to_query_file(
     result.push_str("import * as Db from '../db';\n");
     result.push_str("import * as Watched from '../watched';\n");
     result.push_str("import * as Decode from '../db/decode';\n\n");
-    result.push_str("import * as Session from '../db/session';\n\n");
+    result.push_str("import * as Env from '../db/env';\n\n");
 
     // Input args decoder
     to_query_input_decoder(context, &query, &mut result);
@@ -407,7 +476,7 @@ fn to_query_file(
         if written_field {
             result.push_str(", ");
         }
-        let sql = sql::to_string(context, query, &table, field);
+        let sql = generate::sql::to_string(context, query, &table, field);
         result.push_str(&literal_quote(&sql));
         written_field = true;
     }
@@ -435,8 +504,10 @@ fn to_query_file(
         r#"
 export const query = Db.toRunner({{
     id: "{}",
+    primary_db: "{}",
+    attached_dbs: {},
     sql: sql,
-    session: {},
+    session: Env.Session,
     session_args: {},
     input: Input,
     output: ReturnRectangle,
@@ -446,7 +517,8 @@ export const query = Db.toRunner({{
 type Input = typeof Input.infer
 "#,
         query.interface_hash,
-        "Session.Session",
+        query.primary_db,
+        format_string_list(&query.attached_dbs),
         session_args,
         format_ts_list(watchers)
     );
@@ -486,7 +558,7 @@ type Input = typeof Input.infer
 fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
     let mut result = "[ ".to_string();
     let mut first = true;
-    for (name, info) in params {
+    for (_name, info) in params {
         match info {
             typecheck::ParamInfo::Defined {
                 from_session,
@@ -521,7 +593,7 @@ fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
     result
 }
 
-fn to_query_input_decoder(context: &typecheck::Context, query: &ast::Query, result: &mut String) {
+fn to_query_input_decoder(_context: &typecheck::Context, query: &ast::Query, result: &mut String) {
     result.push_str("export const Input = Ark.type({");
     for arg in &query.args {
         result.push_str(&format!(
@@ -574,8 +646,6 @@ fn to_table_field_flat_decoder(
             ));
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let spaces = " ".repeat(indent);
-
             let table = typecheck::get_linked_table(context, &link).unwrap();
 
             to_flat_query_decoder(
@@ -659,7 +729,7 @@ fn operator_to_string(operator: &ast::Operator) -> &str {
 }
 
 
-pub fn session(database: &ast::Database) -> Option<String> {
+pub fn to_env(database: &ast::Database) -> Option<String> {
     let mut result = String::new();
 
     result.push_str("import * as Ark from 'arktype';\n");
@@ -667,8 +737,14 @@ pub fn session(database: &ast::Database) -> Option<String> {
         schema.session.clone()
     }).unwrap_or_else(|| ast::default_session_details());
 
+    if database.schemas.len() == 1 {
+        result.push_str("export type Config from '@libsql/client';\n");
+    } else {
+        result.push_str("import type { Config as LibSqlConfig } from '@libsql/client';\n");
+    }
+
     
-    // Generate session file
+    // Generate session types
     result.push_str("\n\nexport const Session = Ark.type({\n");
     for field in &session.fields {
         match field {
@@ -683,7 +759,7 @@ pub fn session(database: &ast::Database) -> Option<String> {
         }
     }
     result.push_str("});\n\n");
-    result.push_str("\n\nexport type Session = {\n");
+    result.push_str("export type Session = {\n");
     for field in &session.fields {
         match field {
             ast::Field::Column(column) => {
@@ -697,13 +773,62 @@ pub fn session(database: &ast::Database) -> Option<String> {
         }
     }
     result.push_str("};\n\n");
+
+    // Database namespaces
+    if database.schemas.len() > 1 {
+        result.push_str("export interface DatabaseConfig extends LibSqlConfig {\n");
+        result.push_str("  /** Unique identifier for the database */\n");
+        result.push_str("  id: string;\n");
+        result.push_str("}\n");
+
+        result.push_str("export interface Config {\n");
+        for schema in &database.schemas {
+            result.push_str(&format!("  {}: DatabaseConfig?;\n", schema.namespace));
+        }
+        result.push_str("}\n\n");
+    }
+
+    result.push_str("export type Session = {\n");
+    for field in &session.fields {
+        match field {
+            ast::Field::Column(column) => {
+                result.push_str(&format!(
+                    "  {}: {};\n",
+                    column.name,
+                    to_ts_typename(true, &column.type_)
+                ));
+            }
+            _ => (),
+        }
+    }
+    result.push_str("};\n\n");
+
+    if database.schemas.len() == 1 {
+        result.push_str("export type DatabaseKey = string;\n");
+    } else {
+        result.push_str("export enum DatabaseKey {\n");
+        for schema in &database.schemas {
+            result.push_str(&format!("  {} = '{}',\n", schema.namespace, schema.namespace));
+        }
+        result.push_str("}\n");
+    }
+
+    result.push_str("export const to_libSql_config = (env: Config, primary: DatabaseKey): LibSqlConfig -> {\n");
+    if database.schemas.len() == 1 {
+        result.push_str("return env")
+    } else {
+        result.push_str("return env[primary]")
+    }
+    result.push_str("};\n\n");
+
     Some(result)
-       
+
     
 }
 
 //
-pub const DB_ENGINE: &str = r#"import { createClient, ResultSet, InStatement, InArgs, Config } from '@libsql/client';
+pub const DB_ENGINE: &str = r#"import * as LibSql from '@libsql/client';
+import * as Env from './db/cofig'
 import * as Ark from 'arktype';
 import * as Watched from './watched';
 
@@ -715,12 +840,12 @@ export interface SuccessResult {
 		outOfDate: boolean;
 		watched: Watched.Watched[];
 	};
-	data: ResultSet[];
+	data: LibSql.ResultSet[];
 }
 
 export type ValidArgs = {
 	kind: 'valid';
-	valid: InArgs;
+	valid: LibSql.InArgs;
 };
 
 export interface ErrorResult {
@@ -740,6 +865,8 @@ export enum ErrorType {
 
 export interface Runner<session, input, output> {
 	id: string;
+    primary_db: Env.DatabaseKey;
+    attached_dbs: Env.DatabaseKey[];
 	session: Ark.Type<session>;
 	session_args: string[];
 	input: Ark.Type<input>;
@@ -749,6 +876,8 @@ export interface Runner<session, input, output> {
 
 export type ToRunnerArgs<session, input, output> = {
 	id: string;
+    primary_db: Env.DatabaseKey;
+    attached_dbs: Env.DatabaseKey[];
 	session: Ark.Type<session>;
 	session_args: string[];
 	input: Ark.Type<input>;
@@ -760,16 +889,20 @@ export type ToRunnerArgs<session, input, output> = {
 export const toRunner = <Session, Input, Output>(options: ToRunnerArgs<Session, Input, Output>): Runner<Session, Input, Output> => {
 	return {
 		id: options.id,
+        primary_db: options.primary_db,
+        attached_dbs: options.attached_dbs,
 		session: options.session,
 		session_args: options.session_args,
 		input: options.input,
 		output: options.output,
-		execute: async (env: Config, args: ValidArgs): Promise<ExecuteResult> => {
-			const sql_arg_list: InStatement[] = options.sql.map((sql) => {
+		execute: async (env: Env.Config, args: ValidArgs): Promise<ExecuteResult> => {
+			const sql_arg_list: LibSql.InStatement[] = options.sql.map((sql) => {
 				return { sql: sql, args: args.valid };
 			});
 
-			return exec(env, sql_arg_list, options.watch_triggers);
+            const lib_sql_config = Env.to_libSql_config(env, options.primary_db);
+
+			return exec(lib_sql_config, sql_arg_list, options.watch_triggers);
 		},
 	};
 };
@@ -786,7 +919,7 @@ const to_session_args = (allowed_keys: string[], session: any): any => {
 	return session_args;
 };
 
-export const run = async (env: Config, runner: Runner<any, any, any>, session: any, args: any): Promise<ExecuteResult> => {
+export const run = async (env: Env.Config, runner: Runner<any, any, any>, session: any, args: any): Promise<ExecuteResult> => {
 	const validArgs = validate(runner, session, args);
 	if (validArgs.kind === 'error') {
 		return validArgs;
@@ -811,7 +944,7 @@ const stringifyNestedObjects = (obj: Record<string, any>): Record<string, any> =
 	return result;
 };
 
-const validate = <Session, Input extends InArgs, Output>(
+const validate = <Session, Input extends LibSql.InArgs, Output>(
 	runner: Runner<Session, Input, Output>,
 	session: any,
 	args: any
@@ -842,8 +975,8 @@ const validate = <Session, Input extends InArgs, Output>(
 
 // Queries
 
-const exec = async (env: Config, sql: Array<InStatement>, watch_triggers: Watched.Watched[]): Promise<ExecuteResult> => {
-	const client = createClient(env);
+const exec = async (env: LibSql.Config, sql: Array<LibSql.InStatement>, watch_triggers: Watched.Watched[]): Promise<ExecuteResult> => {
+	const client = LibSql.createClient(env);
 	try {
 		const res = await client.batch(sql);
 		return {

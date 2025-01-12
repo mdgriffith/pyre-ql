@@ -467,8 +467,8 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
         }
         Ok(mut context) => {
             // Generate schema files
-            generate::elm::write(out_dir, &schema);
-            generate_typescript_schema(&options, &schema, out_dir);
+            generate::elm::write(out_dir, &schema)?;
+            generate::typescript::write( &schema, out_dir)?;
 
             for query_file_path in paths.query_files {
                 let mut query_file = fs::File::open(query_file_path.clone())?;
@@ -486,21 +486,21 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
                             Ok(query_params) => {
                                 filesystem::create_dir_if_not_exists(
                                     &out_dir.join( "elm").join("Query"),
-                                );
+                                )?;
                                 filesystem::create_dir_if_not_exists(
                                     &out_dir.join( "typescript").join("query"),
-                                );
+                                )?;
                                 generate::elm::write_queries(
                                     &out_dir.join("elm"),
                                     &context,
                                     &query_list,
-                                );
+                                )?;
                                 generate::typescript::write_queries(
                                     &out_dir.join("typescript"),
                                     &context,
                                     &query_params,
                                     &query_list,
-                                );
+                                )?;
                             }
                             Err(error_list) => {
                                 let mut errors = "".to_string();
@@ -528,51 +528,6 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
 }
 
 
-pub fn generate_typescript_schema(options: &Options, database: &ast::Database, out_dir: &Path) -> io::Result<()> {
-    filesystem::create_dir_if_not_exists(&out_dir.join("typescript"));
-    filesystem::create_dir_if_not_exists(&out_dir.join("typescript").join("db"));
-
-    // Top level TS files
-    // DB engine as db.ts
-    let ts_db_path = &out_dir.join(Path::new("typescript/db.ts"));
-    let ts_file = Path::new(&ts_db_path);
-    let mut output = fs::File::create(ts_file).expect("Failed to create file");
-    output
-        .write_all(generate::typescript::DB_ENGINE.as_bytes())
-        .expect("Failed to write to file");
-
-    // Session types as db/session.ts
-    let ts_session_path_str = &out_dir.join(Path::new("typescript/db/session.ts"));
-    let ts_session_path = Path::new(&ts_session_path_str);
-    let mut output = fs::File::create(ts_session_path).expect("Failed to create file");
-    if let Some(session_ts) = generate::typescript::session(&database) {
-        output
-            .write_all(session_ts.as_bytes())
-            .expect("Failed to write to file");
-    }
-
-    // Schema-level data types
-    let ts_db_data_path = &out_dir.join(Path::new("typescript/db/data.ts"));
-    let ts_data_path = Path::new(&ts_db_data_path);
-    let mut output_data = fs::File::create(ts_data_path).expect("Failed to create file");
-    let formatted_ts = generate::typescript::schema(&database);
-    output_data
-        .write_all(formatted_ts.as_bytes())
-        .expect("Failed to write to file");
-
-    // TS Decoders
-    let ts_db_decoder_path = &out_dir.join(Path::new("typescript/db/decode.ts"));
-    let ts_decoders = generate::typescript::to_schema_decoders(&database);
-    let ts_decoder_file = Path::new(&ts_db_decoder_path);
-    let mut output = fs::File::create(ts_decoder_file).expect("Failed to create file");
-    output
-        .write_all(ts_decoders.as_bytes())
-        .expect("Failed to write to file");
-
-    Ok(())
-}
-
-
 // Formatting
 
 
@@ -580,11 +535,11 @@ fn format_all(options: &Options, paths: filesystem::Found) -> io::Result<()> {
     let mut database = parse_database_schemas(&options, &paths)?;
 
     format::database(&mut database);
-    write_db_schema(options, &database);
+    write_db_schema(options, &database)?;
 
     // Format queries
     for query_file_path in paths.query_files {
-        format_query(&options, &database, &false, &query_file_path);
+        format_query(&options, &database, &false, &query_file_path)?;
     }
 
     Ok(())
@@ -692,7 +647,7 @@ fn write_migration(
     // Format like {year}{month}{day}{hour}{minute}
     let current_date = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
 
-    filesystem::create_dir_if_not_exists(base_migration_folder);
+    filesystem::create_dir_if_not_exists(base_migration_folder)?;
 
     // Only use a namespace folder if it's not the default one.
     let namespace_folder = if namespace != &db::DEFAULT_SCHEMANAME {
@@ -700,7 +655,7 @@ fn write_migration(
     } else {
         base_migration_folder.to_path_buf()
     };
-    filesystem::create_dir_if_not_exists(&namespace_folder);
+    filesystem::create_dir_if_not_exists(&namespace_folder)?;
 
 
     // Write the migration files
@@ -722,7 +677,7 @@ fn write_migration(
 
     // Write diff
     let diff_file = Path::new(&diff_file_path);
-    let mut output = fs::File::create(diff_file);
+    let output = fs::File::create(diff_file);
 
     match output {
         Ok(mut file) => {
