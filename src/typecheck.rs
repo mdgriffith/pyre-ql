@@ -1,4 +1,4 @@
-use crate::ast;
+use crate::{ast, db};
 use crate::error::{DefInfo, Error, ErrorType, Location, Range, VariantDef};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,8 +12,15 @@ pub struct Context {
     pub funcs: HashMap<String, FuncDefinition>,
 
     pub types: HashMap<String, DefInfo>,
-    pub tables: HashMap<String, ast::RecordDetails>,
+    pub tables: HashMap<String, Table>,
     pub variants: HashMap<String, (Option<Range>, Vec<VariantDef>)>,
+}
+
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Table {
+    pub schema: String,
+    pub record: ast::RecordDetails
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -33,7 +40,7 @@ fn convert_range(range: &ast::Range) -> Range {
 pub fn get_linked_table<'a>(
     context: &'a Context,
     link: &'a ast::LinkDetails,
-) -> Option<&'a ast::RecordDetails> {
+) -> Option<&'a Table> {
     context
         .tables
         .get(&crate::ext::string::decapitalize(&link.foreign.table))
@@ -231,13 +238,16 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                         );
                         context.tables.insert(
                             crate::ext::string::decapitalize(&name),
-                            ast::RecordDetails {
-                                name: name.clone(),
-                                fields: fields.clone(),
-                                start: start.clone(),
-                                end: end.clone(),
-                                start_name: start_name.clone(),
-                                end_name: end_name.clone(),
+                            Table {
+                                schema: schema.namespace.clone(), 
+                                record: ast::RecordDetails {
+                                    name: name.clone(),
+                                    fields: fields.clone(),
+                                    start: start.clone(),
+                                    end: end.clone(),
+                                    start_name: start_name.clone(),
+                                    end_name: end_name.clone(),
+                                }
                             },
                         );
                     }
@@ -408,6 +418,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                         Some(foreign_table) => {
                                             for foreign_id in &link.foreign.fields {
                                                 if !foreign_table
+                                                    .record
                                                     .fields
                                                     .iter()
                                                     .any(|f| ast::has_fieldname(f, foreign_id))
@@ -695,16 +706,16 @@ pub fn check_queries<'a>(
     database: &ast::Database,
     query_list: &ast::QueryList,
     context: &Context,
-) -> Result<HashMap<String, HashMap<String, ParamInfo>>, Vec<Error>> {
+) -> Result<HashMap<String, QueryInfo>, Vec<Error>> {
     let mut errors: Vec<Error> = Vec::new();
-    let mut all_params: HashMap<String, HashMap<String, ParamInfo>> = HashMap::new();
+    let mut all_params: HashMap<String, QueryInfo> = HashMap::new();
     check_schema_definitions(&context, database, &mut errors);
 
-    for mut query in &query_list.queries {
+    for query in &query_list.queries {
         match query {
             ast::QueryDef::Query(q) => {
-                let query_params = check_query(&context, &mut errors, &q);
-                all_params.insert(q.name.clone(), query_params);
+                let query_info = check_query(&context, &mut errors, &q);
+                all_params.insert(q.name.clone(), query_info);
                 continue;
             }
             _ => continue,
@@ -733,11 +744,25 @@ pub enum ParamInfo {
     },
 }
 
+
+pub struct QueryInfo {
+    pub variables: HashMap<String, ParamInfo>,
+    pub primary_db: String,
+    pub attached_dbs: HashSet<String>,
+}
+
+
+struct UsedNamespaces {
+    primary: HashSet<String>,
+    secondary: HashSet<String>,
+}
+
+
 pub fn check_query(
     context: &Context,
-    mut errors: &mut Vec<Error>,
+    errors: &mut Vec<Error>,
     query: &ast::Query,
-) -> HashMap<String, ParamInfo> {
+) -> QueryInfo {
     // We need to check
     // 1. The field exists on the record in the schema
     //    What type is the field (add to `QueryField`)
@@ -747,6 +772,7 @@ pub fn check_query(
     //     2.b Every used param is defined
     //
     let mut param_names: HashMap<String, ParamInfo> = HashMap::new();
+    let mut used_namespaces: UsedNamespaces = UsedNamespaces { primary: HashSet::new(), secondary: HashSet::new() };
 
     // Check that all param types are known
     // Gather them in param_names so we can calculate usage.
@@ -840,15 +866,18 @@ pub fn check_query(
                     primary: to_range(&field.start_fieldname, &field.end_fieldname),
                 }],
             }),
-            Some(table) => check_table_query(
-                context,
-                errors,
-                &query.operation,
-                None,
-                table,
-                field,
-                &mut param_names,
-            ),
+            Some(table) => {
+                check_table_query(
+                    context,
+                    errors,
+                    &query.operation,
+                    None,
+                    table,
+                    field,
+                    &mut param_names,
+                    &mut used_namespaces
+                )
+            },
         }
     }
 
@@ -900,7 +929,33 @@ pub fn check_query(
         }
     }
 
-    param_names
+    let primary_db = get_primary_db(&used_namespaces).to_string();
+    let secondary_dbs = get_secondary_dbs(&used_namespaces, &primary_db);
+
+    QueryInfo {
+        variables: param_names,
+        primary_db,
+        attached_dbs: secondary_dbs,
+    }
+}
+
+
+fn get_primary_db(namespaces: &UsedNamespaces) -> &str {
+    if namespaces.primary.is_empty() && namespaces.secondary.is_empty() {
+        db::DEFAULT_SCHEMANAME
+    } else if !namespaces.primary.is_empty() {
+        // This gets an arbitrary value from primary if it has any elements
+        namespaces.primary.iter().min().unwrap()
+    } else {
+        // If primary is empty but secondary isn't, get an arbitrary value from secondary
+        namespaces.secondary.iter().min().unwrap()
+    }
+}
+
+fn get_secondary_dbs(namespaces: &UsedNamespaces, primary_db: &str) -> HashSet<String> {
+    let mut secondary = namespaces.secondary.clone();
+    secondary.remove(primary_db);
+    secondary
 }
 
 fn check_where_args(
@@ -1210,14 +1265,58 @@ fn check_value(
     }
 }
 
+/// Primary schemas/namespaces are the only ones that can accept writes.
+/// So, if any field is set, it needs to be on a primary schema.
+/// If the operation is a delete, the namespace is always primary
+/// Otherwise, it's secondary
+fn add_schema(context: &Context, table: &Table, operation: &ast::QueryOperation, query: &ast::QueryField, field: &ast::QueryField, errors: &mut Vec<Error>, used_schemas: &mut UsedNamespaces) {
+    match operation {
+        ast::QueryOperation::Delete => {
+            insert_primary_schema(context, table, operation, query, field, errors, used_schemas);
+        }
+        ast::QueryOperation::Update | ast::QueryOperation::Insert => {
+            if field.set == None {
+                used_schemas.secondary.insert(table.schema.to_string());
+            } else {
+                insert_primary_schema(context, table, operation, query, field, errors, used_schemas);
+            }
+        }
+        ast::QueryOperation::Select => {
+            used_schemas.secondary.insert(table.schema.to_string());
+        }
+    }
+}
+
+fn insert_primary_schema(context: &Context, table: &Table, operation: &ast::QueryOperation, query: &ast::QueryField, field: &ast::QueryField, errors: &mut Vec<Error>, used_schemas: &mut UsedNamespaces) {
+    let schema_name = table.schema.to_string();
+    if used_schemas.primary.contains(&schema_name) {
+        errors.push(Error {
+            filepath: context.current_filepath.clone(),
+            error_type: ErrorType::MultipleSchemaWrites {
+                field_table: table.record.name.clone(),
+                field_schema: table.schema.to_string(),
+                operation: operation.clone(),
+                other_schemas: used_schemas.primary.clone().into_iter().collect()
+            },
+            locations: vec![Location {
+                contexts: to_range(&query.start, &query.end),
+                primary: to_range(&field.start_fieldname, &field.end_fieldname),
+            }],
+        });
+    } 
+    used_schemas.primary.insert(table.schema.to_string());
+}
+
+
 fn check_table_query(
     context: &Context,
-    mut errors: &mut Vec<Error>,
+    errors: &mut Vec<Error>,
     operation: &ast::QueryOperation,
     through_link: Option<&ast::LinkDetails>,
-    table: &ast::RecordDetails,
+    table: &Table,
     query: &ast::QueryField,
     params: &mut HashMap<String, ParamInfo>,
+    used_namespaces: &mut UsedNamespaces
 ) {
     if query.fields.is_empty() {
         errors.push(Error {
@@ -1258,7 +1357,7 @@ fn check_table_query(
                             &arg.end,
                             errors,
                             params,
-                            &table.name,
+                            &table.record.name,
                             "Int",
                             false,
                         );
@@ -1276,7 +1375,7 @@ fn check_table_query(
                             &arg.end,
                             errors,
                             params,
-                            &table.name,
+                            &table.record.name,
                             "Int",
                             false,
                         );
@@ -1288,20 +1387,22 @@ fn check_table_query(
                         }
 
                         check_where_args(
-                            context, &arg.start, &arg.end, table, errors, params, &where_args,
+                            context, &arg.start, &arg.end, &table.record, errors, params, &where_args,
                         );
                     }
                     _ => (),
                 }
             }
             ast::ArgField::Field(field) => {
+
+                add_schema(context, &table, operation, query, field, errors, used_namespaces);
+
                 let aliased_name = ast::get_aliased_name(field);
 
                 if queried_fields.get(&aliased_name).is_some() {
                     errors.push(Error {
                         filepath: context.current_filepath.clone(),
                         error_type: ErrorType::DuplicateQueryField {
-                            query: table.name.clone(),
                             field: aliased_name.clone(),
                         },
                         locations: vec![Location {
@@ -1314,7 +1415,7 @@ fn check_table_query(
                 }
 
                 let mut is_known_field = false;
-                for col in &table.fields {
+                for col in &table.record.fields {
                     if is_known_field {
                         continue;
                     }
@@ -1329,20 +1430,20 @@ fn check_table_query(
                             if link.link_name == field.name {
                                 is_known_field = true;
                                 has_nested_selected = true;
-                                check_link(context, operation, errors, table, link, field, params)
+                                check_link(context, operation, errors, &table.record, link, field, params, used_namespaces)
                             }
                             ()
                         }
                         _ => (),
                     }
                 }
-                if (!is_known_field) {
-                    let known_fields = get_column_reference(&table.fields);
+                if !is_known_field {
+                    let known_fields = get_column_reference(&table.record.fields);
                     errors.push(Error {
                         filepath: context.current_filepath.clone(),
                         error_type: ErrorType::UnknownField {
                             found: field.name.clone(),
-                            record_name: table.name.clone(),
+                            record_name: table.record.name.clone(),
                             known_fields,
                         },
                         locations: vec![Location {
@@ -1435,7 +1536,7 @@ fn check_table_query(
                 }
             }
 
-            for col in ast::collect_columns(&table.fields) {
+            for col in ast::collect_columns(&table.record.fields) {
                 if ast::is_primary_key(&col) 
                     || ast::has_default_value(&col) 
                     || through_link.map_or(false, |link| link.foreign.fields.contains(&col.name)) {
@@ -1582,14 +1683,16 @@ fn get_column_reference(fields: &Vec<ast::Field>) -> Vec<(String, String)> {
     known_fields
 }
 
+
 fn check_link(
     context: &Context,
-    operation: &ast::QueryOperation,
-    mut errors: &mut Vec<Error>,
+    operation: &ast::QueryOperation,    
+    errors: &mut Vec<Error>,
     local_table: &ast::RecordDetails,
     link: &ast::LinkDetails,
     field: &ast::QueryField,
     params: &mut HashMap<String, ParamInfo>,
+    used_namespaces: &mut UsedNamespaces
 ) {
     match operation {
         ast::QueryOperation::Insert => {
@@ -1680,7 +1783,7 @@ fn check_link(
                     primary: to_range(&field.start, &field.end),
                 }],
             }),
-            Some(table) => check_table_query(context, errors, operation, Some(link),table, field, params),
+            Some(table) => check_table_query(context, errors, operation, Some(link),table, field, params, used_namespaces),
         }
     }
 }
