@@ -35,13 +35,14 @@ With 'where' it's the same conceptual problem.
 pub fn select_to_string(
     context: &typecheck::Context,
     query: &ast::Query,
-    table: &ast::RecordDetails,
-    query_table_field: &ast::QueryField,
+    query_info: &typecheck::QueryInfo,
+    table: &typecheck::Table,
+    query_field: &ast::QueryField,
 ) -> String {
     if cte::should_use_cte(query) {
         let mut result = "".to_string();
 
-        cte::select_to_string(context, query, query_table_field, &mut result);
+        cte::select_to_string(context, query, query_field, &mut result);
 
         return result;
     }
@@ -51,9 +52,10 @@ pub fn select_to_string(
 
     let selected = &to_selection(
         context,
-        &ast::get_aliased_name(&query_table_field),
+        &ast::get_aliased_name(&query_field),
         table,
-        &ast::collect_query_fields(&query_table_field.fields),
+        query_info,
+        &ast::collect_query_fields(&query_field.fields),
         &TableAliasKind::Normal,
     );
     result.push_str("  ");
@@ -64,22 +66,22 @@ pub fn select_to_string(
     render_from(
         context,
         table,
-        query_table_field,
+        query_field,
         &TableAliasKind::Normal,
         &mut result,
     );
 
     // WHERE
-    render_where(context, table, query_table_field, &mut result);
+    render_where(context, table, query_info, query_field, &mut result);
 
     // Order by
-    render_order_by(context, table, query_table_field, &mut result);
+    render_order_by(context, table, query_field, &mut result);
 
     // LIMIT
-    render_limit(context, table, query_table_field, &mut result);
+    render_limit(context, table, query_field, &mut result);
 
     // OFFSET
-    render_offset(context, table, query_table_field, &mut result);
+    render_offset(context, table, query_field, &mut result);
 
     result.push_str(";");
 
@@ -106,7 +108,8 @@ pub fn get_temp_table_alias(kind: &TableAliasKind, query_field: &ast::QueryField
 pub fn to_selection(
     context: &typecheck::Context,
     table_alias: &str,
-    table: &ast::RecordDetails,
+    table: &typecheck::Table,
+    query_info: &typecheck::QueryInfo,
     fields: &Vec<&ast::QueryField>,
     table_alias_kind: &TableAliasKind,
 ) -> Vec<String> {
@@ -114,19 +117,20 @@ pub fn to_selection(
 
     for field in fields {
         let table_field = &table
+            .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
             .unwrap();
 
-        let table_name = get_tablename(table_alias_kind, table);
 
         result.append(&mut to_subselection(
             2,
             context,
-            &table_name,
+            table,
             table_alias,
             &table_field,
+            query_info,
             &field,
             table_alias_kind,
         ));
@@ -138,19 +142,18 @@ pub fn to_selection(
 fn to_subselection(
     indent: usize,
     context: &typecheck::Context,
-    table_name: &str,
+    table: &typecheck::Table,
     table_alias: &str,
     table_field: &ast::Field,
+    query_info: &typecheck::QueryInfo,
     query_field: &ast::QueryField,
     table_alias_kind: &TableAliasKind,
 ) -> Vec<String> {
     match table_field {
         ast::Field::Column(column) => {
-            let spaces = " ".repeat(indent);
             let str = format!(
-                "{}.{} as {}",
-                to_sql::format_tablename(table_name),
-                string::quote(&query_field.name),
+                "{} as {}",
+                to_sql::render_real_field(table, query_info, query_field),
                 string::quote(&ast::get_select_alias(
                     table_alias,
                     table_field,
@@ -160,7 +163,7 @@ fn to_subselection(
             return vec![str];
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let spaces = " ".repeat(indent);
+           
 
             let foreign_table_alias = match query_field.alias {
                 Some(ref alias) => &alias,
@@ -170,7 +173,8 @@ fn to_subselection(
             return to_selection(
                 context,
                 &ast::get_aliased_name(&query_field),
-                &link_table.record,
+                link_table,
+                query_info,
                 &ast::collect_query_fields(&query_field.fields),
                 table_alias_kind,
             );
@@ -184,16 +188,16 @@ fn to_subselection(
 //
 pub fn render_from(
     context: &typecheck::Context,
-    table: &ast::RecordDetails,
+    table: &typecheck::Table,
     query_table_field: &ast::QueryField,
     table_alias_kind: &TableAliasKind,
     result: &mut String,
 ) {
     result.push_str("from\n");
 
-    let table_name = get_tablename(table_alias_kind, &table);
+    let table_name = get_tablename(table_alias_kind, table);
 
-    let mut from_vals = &mut to_from(
+    let from_vals = &mut to_from(
         context,
         &get_temp_table_alias(table_alias_kind, &query_table_field),
         table_alias_kind,
@@ -220,16 +224,17 @@ fn to_from(
     context: &typecheck::Context,
     table_alias: &str,
     table_alias_kind: &TableAliasKind,
-    table: &ast::RecordDetails,
+    table: &typecheck::Table,
     fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
     let mut result: Vec<String> = vec![];
 
-    for field in fields {
+    for query_field in fields {
         let table_field = &table
+            .record
             .fields
             .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
+            .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
             .unwrap();
 
         result.append(&mut to_subfrom(
@@ -238,20 +243,20 @@ fn to_from(
             table,
             table_alias,
             table_alias_kind,
-            &table_field,
-            &field,
+            table_field,
+            query_field,
         ));
     }
 
     result
 }
 
-fn get_tablename(table_alias_kind: &TableAliasKind, table: &ast::RecordDetails) -> String {
+fn get_tablename(table_alias_kind: &TableAliasKind, table: &typecheck::Table) -> String {
     match table_alias_kind {
-        TableAliasKind::Normal => ast::get_tablename(&table.name, &table.fields),
+        TableAliasKind::Normal => ast::get_tablename(&table.record.name, &table.record.fields),
         TableAliasKind::Insert => {
             // If this is an insert, we are selecting from a temp table
-            format!("inserted_{}", string::decapitalize(&table.name))
+            format!("inserted_{}", string::decapitalize(&table.record.name))
         }
     }
 }
@@ -259,7 +264,7 @@ fn get_tablename(table_alias_kind: &TableAliasKind, table: &ast::RecordDetails) 
 fn to_subfrom(
     indent: usize,
     context: &typecheck::Context,
-    table: &ast::RecordDetails,
+    table: &typecheck::Table,
     table_alias: &str,
     table_alias_kind: &TableAliasKind,
     table_field: &ast::Field,
@@ -267,22 +272,21 @@ fn to_subfrom(
 ) -> Vec<String> {
     match table_field {
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let spaces = " ".repeat(indent);
 
-            let table_name = get_tablename(table_alias_kind, &table);
+            let table_name = get_tablename(table_alias_kind, table);
 
             let foreign_table_alias = match query_field.alias {
                 Some(ref alias) => &alias,
                 None => &link.foreign.table,
             };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
-            let foreign_table_name = get_tablename(table_alias_kind, &link_table.record);
+            let foreign_table_name = get_tablename(table_alias_kind, link_table);
 
             let mut inner_list = to_from(
                 context,
                 &ast::get_aliased_name(&query_field),
                 table_alias_kind,
-                &link_table.record,
+                link_table,
                 &ast::collect_query_fields(&query_field.fields),
             );
             let join = format!(
@@ -303,24 +307,24 @@ fn to_subfrom(
 
 fn render_order_by(
     context: &typecheck::Context,
-    table: &ast::RecordDetails,
-    query_table_field: &ast::QueryField,
+    table: &typecheck::Table,
+    query_field: &ast::QueryField,
     result: &mut String,
 ) {
     let mut order_vals = vec![];
 
-    let table_alias = &ast::get_aliased_name(&query_table_field);
+    let table_alias = &ast::get_aliased_name(&query_field);
 
-    for field in &query_table_field.fields {
+    for field in &query_field.fields {
         match field {
             ast::ArgField::Arg(located_arg) => {
                 if let ast::Arg::OrderBy(dir, col) = &located_arg.arg {
-                    let dir_str = ast::direction_to_string(dir);
+                    let order_direction = ast::direction_to_string(dir);
                     order_vals.push(format!(
                         "{}.{} {}",
                         string::quote(table_alias),
                         string::quote(col),
-                        dir_str
+                        order_direction
                     ));
                 }
             }
@@ -346,11 +350,11 @@ fn render_order_by(
 
 fn render_limit(
     context: &typecheck::Context,
-    table: &ast::RecordDetails,
-    query_table_field: &ast::QueryField,
+    table: &typecheck::Table,
+    query_field: &ast::QueryField,
     result: &mut String,
 ) {
-    for field in &query_table_field.fields {
+    for field in &query_field.fields {
         match field {
             ast::ArgField::Arg(located_arg) => {
                 if let ast::Arg::Limit(val) = &located_arg.arg {
@@ -365,11 +369,11 @@ fn render_limit(
 
 fn render_offset(
     context: &typecheck::Context,
-    table: &ast::RecordDetails,
-    query_table_field: &ast::QueryField,
+    table: &typecheck::Table,
+    query_field: &ast::QueryField,
     result: &mut String,
 ) {
-    for field in &query_table_field.fields {
+    for field in &query_field.fields {
         match field {
             ast::ArgField::Arg(located_arg) => {
                 if let ast::Arg::Offset(val) = &located_arg.arg {
@@ -384,33 +388,32 @@ fn render_offset(
 
 pub fn render_where(
     context: &typecheck::Context,
-    table: &ast::RecordDetails,
-    query_table_field: &ast::QueryField,
+    table: &typecheck::Table,
+    query_info: &typecheck::QueryInfo,
+    query_field: &ast::QueryField,
     result: &mut String,
 ) {
-    let mut where_vals = vec![];
-
-    let table_alias = &ast::get_aliased_name(&query_table_field);
-    let table_name = ast::get_tablename(&table.name, &table.fields);
+    let mut where_vals = vec![]; 
 
     let new_params = render_where_params(
-        &ast::collect_query_args(&query_table_field.fields),
-        &table_name,
+        &ast::collect_query_args(&query_field.fields),
+        table,
+        query_info,
+        query_field
     );
 
     where_vals.extend(new_params);
 
     let new_where_vals = to_where(
         context,
-        &table_name,
-        table_alias,
         table,
-        &ast::collect_query_fields(&query_table_field.fields),
+        query_info,
+        &ast::collect_query_fields(&query_field.fields),
     );
 
     where_vals.extend(new_where_vals);
 
-    if (!&where_vals.is_empty()) {
+    if !&where_vals.is_empty() {
         result.push_str("where\n  ");
         let mut first = true;
         for wher in &where_vals {
@@ -428,26 +431,27 @@ pub fn render_where(
 //
 fn to_where(
     context: &typecheck::Context,
-    table_name: &str,
-    table_alias: &str,
-    table: &ast::RecordDetails,
-    fields: &Vec<&ast::QueryField>,
+    table: &typecheck::Table,
+    query_info: &typecheck::QueryInfo,
+    query_fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
     let mut result: Vec<String> = vec![];
 
-    for field in fields {
+    for query_field in query_fields {
         let table_field = &table
+            .record
             .fields
             .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
+            .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
             .unwrap();
 
         result.append(&mut to_subwhere(
             2,
             context,
-            table_alias,
-            &table_field,
-            &field,
+            table,
+            table_field,
+            query_info,
+            query_field,
         ));
     }
 
@@ -457,29 +461,29 @@ fn to_where(
 fn to_subwhere(
     indent: usize,
     context: &typecheck::Context,
-    table_alias: &str,
+    table: &typecheck::Table,
     table_field: &ast::Field,
+    query_info: &typecheck::QueryInfo,
     query_field: &ast::QueryField,
 ) -> Vec<String> {
     match table_field {
         ast::Field::Column(column) => {
-            return render_where_params(&ast::collect_query_args(&query_field.fields), table_alias);
+            return render_where_params(&ast::collect_query_args(&query_field.fields), table, query_info, query_field);
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let spaces = " ".repeat(indent);
 
-            let foreign_table_alias = match query_field.alias {
-                Some(ref alias) => &alias,
-                None => &link.foreign.table,
-            };
+            // let foreign_table_alias = match query_field.alias {
+            //     Some(ref alias) => &alias,
+            //     None => &link.foreign.table,
+            // };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
-            let foreign_table_name =
-                ast::get_tablename(&link.foreign.table, &link_table.record.fields);
-            let mut inner_list = to_where(
+            // let foreign_table_name =
+            //     ast::get_tablename(&link.foreign.table, &link_table.record.fields);
+            let inner_list = to_where(
                 context,
-                &foreign_table_name,
-                &ast::get_aliased_name(&query_field),
-                &link_table.record,
+                // &ast::get_aliased_name(&query_field),
+                link_table,
+                query_info,
                 &ast::collect_query_fields(&query_field.fields),
             );
 
@@ -490,48 +494,45 @@ fn to_subwhere(
     }
 }
 
-fn render_where_params(args: &Vec<ast::Arg>, table_alias: &str) -> Vec<String> {
+fn render_where_params(
+    args: &Vec<ast::Arg>,
+    table: &typecheck::Table,
+    query_info: &typecheck::QueryInfo,
+    query_field: &ast::QueryField,
+) -> Vec<String> {
     let mut result = vec![];
     for where_arg in ast::collect_where_args(args) {
-        result.push(render_where_arg(&where_arg, table_alias));
+        result.push(render_where_arg(&where_arg, table, query_info, query_field));
     }
     result
 }
 
-fn render_where_arg(arg: &ast::WhereArg, table_alias: &str) -> String {
+fn render_where_arg(
+    arg: &ast::WhereArg,
+    table: &typecheck::Table,
+    query_info: &typecheck::QueryInfo,
+    query_field: &ast::QueryField,
+) -> String {
     match arg {
-        ast::WhereArg::Column(name, operator, value) => {
-            let qualified_column_name = format!(
-                "{}.{}",
-                to_sql::format_tablename(table_alias),
-                string::quote(name)
-            );
-            let operator = match operator {
-                ast::Operator::Equal => "=",
-                ast::Operator::NotEqual => "!=",
-                ast::Operator::GreaterThan => ">",
-                ast::Operator::LessThan => "<",
-                ast::Operator::GreaterThanOrEqual => ">=",
-                ast::Operator::LessThanOrEqual => "<=",
-                ast::Operator::In => "in",
-                ast::Operator::NotIn => "not in",
-                ast::Operator::Like => "like",
-                ast::Operator::NotLike => "not like",
-            };
+        ast::WhereArg::Column(fieldname, operator, value) => {
+            let qualified_column_name = to_sql::render_real_where_field(table, query_info, fieldname);
+
+            let operator = to_sql::operator(operator);
+            
             let value = to_sql::render_value(value);
             format!("{} {} {}", qualified_column_name, operator, value)
         }
         ast::WhereArg::And(args) => {
             let mut inner_list = vec![];
             for arg in args {
-                inner_list.push(render_where_arg(arg, table_alias));
+                inner_list.push(render_where_arg(arg, table, query_info, query_field));
             }
             format!("({})", inner_list.join(" and "))
         }
         ast::WhereArg::Or(args) => {
             let mut inner_list = vec![];
             for arg in args {
-                inner_list.push(render_where_arg(arg, table_alias));
+                inner_list.push(render_where_arg(arg, table, query_info, query_field));
             }
             format!("({})", inner_list.join(" or "))
         }

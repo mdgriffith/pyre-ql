@@ -1,20 +1,18 @@
 use crate::ast;
-use crate::ext::string;
 use crate::generate::sql::cte;
 use crate::generate::sql::select;
 use crate::generate::sql::to_sql;
 use crate::typecheck;
-use std::fs;
-use std::io::{self, Read, Write};
-use std::path::Path;
+
 
 pub fn update_to_string(
     context: &typecheck::Context,
     query: &ast::Query,
-    table: &ast::RecordDetails,
-    query_table_field: &ast::QueryField,
+    query_info: &typecheck::QueryInfo,
+    table: &typecheck::Table,
+    query_field: &ast::QueryField,
 ) -> String {
-    let table_name = ast::get_tablename(&table.name, &table.fields);
+    let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
 
     let mut result = format!("update {}\n", table_name);
 
@@ -24,18 +22,18 @@ pub fn update_to_string(
 
     let mut values: Vec<String> = Vec::new();
 
-    let mut new_values = &to_field_set_values(
+    let new_values = &to_field_set_values(
         context,
-        &ast::get_aliased_name(&query_table_field),
+        &ast::get_aliased_name(&query_field),
         table,
-        &ast::collect_query_fields(&query_table_field.fields),
+        &ast::collect_query_fields(&query_field.fields),
     );
     values.append(&mut new_values.clone());
 
     result.push_str(&format!("set {}", values.join(", ")));
 
     result.push_str("\n");
-    select::render_where(context, table, query_table_field, &mut result);
+    select::render_where(context, table, query_info, query_field, &mut result);
     result.push_str(";");
     result
 }
@@ -45,13 +43,14 @@ pub fn update_to_string(
 fn to_field_set_values(
     context: &typecheck::Context,
     table_alias: &str,
-    table: &ast::RecordDetails,
+    table: &typecheck::Table,
     fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
     let mut result = vec![];
 
     for field in fields {
         let table_field = &table
+            .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))

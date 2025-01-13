@@ -476,7 +476,7 @@ fn to_query_file(
         if written_field {
             result.push_str(", ");
         }
-        let sql = generate::sql::to_string(context, query, &table.record, field);
+        let sql = generate::sql::to_string(context, query, query_info, table, field);
         result.push_str(&literal_quote(&sql));
         written_field = true;
     }

@@ -618,7 +618,6 @@ fn to_subselection(
 ) -> Vec<String> {
     match table_field {
         ast::Field::Column(column) => {
-            let spaces = " ".repeat(indent);
             let str = format!(
                 "{}.{} as {}",
                 to_sql::format_tablename(table_name),

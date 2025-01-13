@@ -1,8 +1,55 @@
 use crate::ast;
-use crate::ext::string::{decapitalize, quote};
+use crate::typecheck;
+use crate::ext::string;
+
 
 pub fn format_tablename(name: &str) -> String {
     format!("\"{}\"", crate::ext::string::decapitalize(name))
+}
+
+
+/// Real meaning it's in the db and we might need to use a schema to target it.
+pub fn render_real_field(
+    table: &typecheck::Table,
+    query_info: &typecheck::QueryInfo,
+    query_field: &ast::QueryField,
+) -> String {
+    if table.schema == query_info.primary_db {
+        return format!(
+            "{}.{}",
+            format_tablename(&table.record.name),
+            string::quote(&query_field.name),
+        );
+    } else {
+        return format!(
+            "{}.{}.{}",
+            string::quote(&table.schema),
+            format_tablename(&table.record.name),
+            string::quote(&query_field.name),
+        );
+    };
+}
+
+/// Real meaning it's in the db and we might need to use a schema to target it.
+pub fn render_real_where_field(
+    table: &typecheck::Table,
+    query_info: &typecheck::QueryInfo,
+    fieldname: &String,
+) -> String {
+    if table.schema == query_info.primary_db {
+        return format!(
+            "{}.{}",
+            format_tablename(&table.record.name),
+            string::quote(fieldname),
+        );
+    } else {
+        return format!(
+            "{}.{}.{}",
+            string::quote(&table.schema),
+            format_tablename(&table.record.name),
+            string::quote(fieldname),
+        );
+    };
 }
 
 pub fn render_value(value: &ast::QueryValue) -> String {

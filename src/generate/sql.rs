@@ -5,11 +5,9 @@ pub mod select;
 pub mod to_sql;
 pub mod update;
 use crate::ast;
-use crate::ext::string;
 use crate::typecheck;
-use std::fs;
-use std::io::{self, Read, Write};
-use std::path::Path;
+
+
 
 /*
 Exmple query Generation:
@@ -115,13 +113,14 @@ a limit/offset. In that case, we need to use a CTE or a batched appraoch to get 
 pub fn to_string(
     context: &typecheck::Context,
     query: &ast::Query,
-    table: &ast::RecordDetails,
+    query_info: &typecheck::QueryInfo,
+    table: &typecheck::Table,
     table_field: &ast::QueryField,
 ) -> String {
     match query.operation {
-        ast::QueryOperation::Select => select::select_to_string(context, query, table, table_field),
-        ast::QueryOperation::Insert => insert::insert_to_string(context, query, table, table_field),
-        ast::QueryOperation::Update => update::update_to_string(context, query, table, table_field),
-        ast::QueryOperation::Delete => delete::delete_to_string(context, query, table, table_field),
+        ast::QueryOperation::Select => select::select_to_string(context, query, query_info, table, table_field),
+        ast::QueryOperation::Insert => insert::insert_to_string(context, query, query_info, table, table_field),
+        ast::QueryOperation::Update => update::update_to_string(context, query, query_info, table, table_field),
+        ast::QueryOperation::Delete => delete::delete_to_string(context, query, query_info, table, table_field),
     }
 }

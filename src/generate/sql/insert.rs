@@ -33,7 +33,8 @@ we need to do something like this:
 pub fn insert_to_string(
     context: &typecheck::Context,
     query: &ast::Query,
-    table: &ast::RecordDetails,
+    query_info: &typecheck::QueryInfo,
+    table: &typecheck::Table,
     query_table_field: &ast::QueryField,
 ) -> String {
     // INSERT INTO users (username, credit) VALUES ('john_doe', 100);
@@ -43,6 +44,7 @@ pub fn insert_to_string(
     let mut last_link_index = 0;
     for (i, query_field) in all_query_fields.iter().enumerate() {
         let table_field = &table
+            .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
@@ -68,6 +70,7 @@ pub fn insert_to_string(
 
     for (i, query_field) in all_query_fields.iter().enumerate() {
         let table_field = &table
+            .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
@@ -93,7 +96,7 @@ pub fn insert_to_string(
                     context,
                     query,
                     parent_table_alias,
-                    &linked_table.record,
+                    linked_table,
                     query_field,
                     link,
                 );
@@ -119,6 +122,7 @@ pub fn insert_to_string(
             context,
             &ast::get_aliased_name(&query_table_field),
             table,
+            query_info,
             &ast::collect_query_fields(&query_table_field.fields),
             &select::TableAliasKind::Insert,
         );
@@ -146,16 +150,15 @@ pub fn initial_select(
     indent: usize,
     context: &typecheck::Context,
     query: &ast::Query,
-    table: &ast::RecordDetails,
+    table: &typecheck::Table,
     query_table_field: &ast::QueryField,
 ) -> String {
     let indent_str = " ".repeat(indent);
     // INSERT INTO users (username, credit) VALUES ('john_doe', 100);
     let mut field_names: Vec<String> = Vec::new();
-    let mut table_name = query.name.clone();
 
-    let table_name = ast::get_tablename(&table.name, &table.fields);
-    let mut new_fieldnames = &to_fieldnames(
+    let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+    let new_fieldnames = &to_fieldnames(
         context,
         &ast::get_aliased_name(&query_table_field),
         table,
@@ -188,17 +191,16 @@ pub fn insert_linked(
     context: &typecheck::Context,
     query: &ast::Query,
     parent_table_name: &String,
-    table: &ast::RecordDetails,
+    table: &typecheck::Table,
     query_table_field: &ast::QueryField,
     link: &ast::LinkDetails,
 ) -> String {
     let indent_str = " ".repeat(indent);
     // INSERT INTO users (username, credit) VALUES ('john_doe', 100);
     let mut field_names: Vec<String> = Vec::new();
-    let mut table_name = query.name.clone();
 
-    let table_name = ast::get_tablename(&table.name, &table.fields);
-    let mut new_fieldnames = &to_fieldnames(
+    let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+    let new_fieldnames = &to_fieldnames(
         context,
         &ast::get_aliased_name(&query_table_field),
         table,
@@ -227,6 +229,7 @@ pub fn insert_linked(
 
     for query_field in &all_query_fields {
         let table_field = &table
+            .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
@@ -251,6 +254,7 @@ pub fn insert_linked(
 
     for query_field in all_query_fields {
         let table_field = &table
+            .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
@@ -266,9 +270,9 @@ pub fn insert_linked(
                     context,
                     query,
                     &get_temp_table_name(&query_table_field),
-                    &linked_table.record,
+                    linked_table,
                     query_field,
-                    link,
+                    &link,
                 ));
             }
             _ => (),
@@ -283,19 +287,20 @@ pub fn insert_linked(
 fn to_fieldnames(
     context: &typecheck::Context,
     table_alias: &str,
-    table: &ast::RecordDetails,
+    table: &typecheck::Table,
     query_fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
     let mut result = vec![];
 
     for field in query_fields {
         let table_field = &table
+            .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
             .unwrap();
 
-        let table_name = ast::get_tablename(&table.name, &table.fields);
+        let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
 
         result.append(&mut to_table_fieldname(
             2,
@@ -332,13 +337,14 @@ fn to_table_fieldname(
 fn to_field_insert_values(
     context: &typecheck::Context,
     table_alias: &str,
-    table: &ast::RecordDetails,
+    table: &typecheck::Table,
     fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
     let mut result = vec![];
 
     for field in fields {
         let table_field = &table
+            .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
