@@ -8,7 +8,7 @@ use nom::{
         alphanumeric1, char, digit1, line_ending, multispace0, multispace1, newline, one_of,
     },
     combinator::{all_consuming, cut, eof, opt, recognize, value},
-    error::{Error, VerboseError, VerboseErrorKind},
+    error::{VerboseError, VerboseErrorKind},
     multi::{many0, many1, separated_list0, separated_list1},
     sequence::{delimited, tuple},
     IResult,
@@ -757,7 +757,7 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
     let input = expecting(input, crate::error::Expecting::ParamDefinition);
     let (input, name) = cut(parse_typename)(input)?;
 
-    let (input, paramDefinitionsOrNone) = cut(opt(parse_query_param_definitions))(input)?;
+    let (input, param_defs_or_nothing) = cut(opt(parse_query_param_definitions))(input)?;
     let (input, _) = space0(input)?;
     let (input, fields) = with_braces(parse_query_field)(input)?;
     let (input, end_pos) = position(input)?;
@@ -767,7 +767,7 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
         full_hash: "".to_string(),
         operation: op,
         name: name.to_string(),
-        args: paramDefinitionsOrNone.unwrap_or(vec![]),
+        args: param_defs_or_nothing.unwrap_or(vec![]),
         fields,
         start: Some(to_location(&start_pos)),
         end: Some(to_location(&end_pos)),
@@ -911,7 +911,7 @@ fn parse_query_field(input: Text) -> ParseResult<ast::QueryField> {
     let (input, _) = multispace0(input)?;
     let (input, set) = opt(parse_set)(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, fieldsOrNone) = opt(with_braces(parse_arg_field))(input)?;
+    let (input, fields_or_none) = opt(with_braces(parse_arg_field))(input)?;
     let (input, end_pos) = position(input)?;
     let input = expecting(input, crate::error::Expecting::PyreFile);
     let (name, alias) = match alias_or_name {
@@ -926,7 +926,7 @@ fn parse_query_field(input: Text) -> ParseResult<ast::QueryField> {
             alias,
             set,
             directives: vec![],
-            fields: fieldsOrNone.unwrap_or_else(Vec::new),
+            fields: fields_or_none.unwrap_or_else(Vec::new),
             start: Some(to_location(&start_pos)),
             end: Some(to_location(&end_pos)),
 

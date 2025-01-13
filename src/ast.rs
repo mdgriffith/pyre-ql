@@ -478,7 +478,7 @@ pub struct Query {
     pub end: Option<Location>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum QueryOperation {
     Select,
     Insert,
