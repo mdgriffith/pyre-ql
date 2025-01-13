@@ -1,12 +1,8 @@
 use crate::ast;
 use colored::Colorize;
-use nom::error::{VerboseError, VerboseErrorKind};
-use nom::{Offset, ToUsize};
-use nom_locate::LocatedSpan;
+use nom::ToUsize;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fmt::Write;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Error {
@@ -101,7 +97,6 @@ pub enum ErrorType {
         existing: Vec<String>,
     },
     DuplicateQueryField {
-        query: String,
         field: String,
     },
     NoFieldsSelected,
@@ -165,6 +160,12 @@ pub enum ErrorType {
     },
     InsertNestedValueAutomaticallySet {
         field: String 
+    },
+    MultipleSchemaWrites {
+        field_table: String,
+        field_schema: String,
+        operation: ast::QueryOperation,
+        other_schemas: Vec<String>
     },
     LimitOffsetOnlyInFlatRecord,
 }
@@ -500,12 +501,34 @@ pub fn format_yellow_list(in_color: bool, items: Vec<String>) -> String {
 }
 
 
+fn format_yellow_or_list(items: &Vec<String>, in_color: bool) -> String {
+    match items.len() {
+        0 => String::new(),
+        1 => yellow_if(in_color, &items[0]),
+        2 => format!("{} or {}", 
+            yellow_if(in_color, &items[0]), 
+            yellow_if(in_color, &items[1])
+        ),
+        _ => {
+            let (last, rest) = items.split_last().unwrap();
+            format!("{}, or {}", 
+                rest.iter()
+                    .map(|item| yellow_if(in_color, item))
+                    .collect::<Vec<_>>()
+                    .join(", "), 
+                yellow_if(in_color, last)
+            )
+        }
+    }
+}
+
+
 
 fn to_error_description(error: &Error, in_color: bool) -> String {
     match &error.error_type {
-        ErrorType::ParsingError(parsingDetails) => {
+        ErrorType::ParsingError(parsing_details) => {
             let mut result = "".to_string();
-            result.push_str(&format!("{}", render_expecting(&parsingDetails.expecting, in_color)));
+            result.push_str(&format!("{}", render_expecting(&parsing_details.expecting, in_color)));
 
             result
         }
@@ -596,7 +619,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
-        ErrorType::DuplicateQueryField { query, field } => {
+        ErrorType::DuplicateQueryField { field } => {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "{} is listed multiple times.\n",
@@ -944,6 +967,28 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
+        ErrorType::MultipleSchemaWrites { field_table, field_schema, operation, other_schemas } => {
+            let mut result = "".to_string();
+
+            let operation_words = match operation {
+                ast::QueryOperation::Select => "selecting from",
+                ast::QueryOperation::Insert => "inserting a value to",
+                ast::QueryOperation::Update => "updating a value on",
+                ast::QueryOperation::Delete => "deleting from"
+            };
+
+            let schema_words: String = format_yellow_or_list(&other_schemas, in_color);
+
+            result.push_str(&format!(
+                "This value is on the {} table and is {} the {} schema, but you can only write to one schema in a query. Everything else is writing to {}",
+                yellow_if(in_color, field_table),
+                operation_words,
+                yellow_if(in_color, field_schema),
+                schema_words
+            ));
+
+            result
+        }
         ErrorType::NoFieldsSelected => {
             let mut result = "".to_string();
 
@@ -1076,6 +1121,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::InsertColumnIsNotSet { .. } => "Insert Column Not Set",
         ErrorType::InsertMissingColumn { .. } => "Insert Missing Column",
         ErrorType::InsertNestedValueAutomaticallySet { .. } => "Can't set automatic field",
+        ErrorType::MultipleSchemaWrites { .. } => "Multiple Schema Writes",
         ErrorType::LimitOffsetOnlyInFlatRecord => "Limit/Offset Only In Flat Record"
     }.to_string()
 }
