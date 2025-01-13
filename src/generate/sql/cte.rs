@@ -232,7 +232,7 @@ pub fn select_to_string(
         context,
         &vec![ast::get_aliased_name(&query_top_field)],
         &ast::get_aliased_name(&query_top_field),
-        table,
+        &table.record,
         query,
         &query_top_field.fields,
         result,
@@ -316,7 +316,7 @@ pub fn to_inner_arg_field_select(
                                 context,
                                 &new_alias_stack,
                                 &ast::get_aliased_name(&qf),
-                                linked_table,
+                                &linked_table.record,
                                 query,
                                 &qf.fields,
                                 result,
@@ -527,12 +527,12 @@ fn to_subwhere(
             };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
             let foreign_table_name =
-                ast::get_tablename(&link.foreign.table, &link_table.fields);
+                ast::get_tablename(&link.foreign.table, &link_table.record.fields);
             let mut inner_list = to_where(
                 context,
                 &foreign_table_name,
                 &ast::get_aliased_name(&query_field),
-                link_table,
+                &link_table.record,
                 &ast::collect_primary_fields(&query_field.fields),
             );
 
@@ -642,7 +642,7 @@ fn to_subselection(
             return to_selection(
                 context,
                 &ast::get_aliased_name(&query_field),
-                link_table,
+                &link_table.record,
                 &ast::collect_primary_fields(&query_field.fields),
             );
         }
@@ -701,11 +701,11 @@ fn to_subfrom(
             };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
             let foreign_table_name =
-                ast::get_tablename(&link.foreign.table, &link_table.fields);
+                ast::get_tablename(&link.foreign.table, &link_table.record.fields);
             let mut inner_list = to_from(
                 context,
                 &ast::get_aliased_name(&query_field),
-                link_table,
+                &link_table.record,
                 &ast::collect_primary_fields(&query_field.fields),
             );
             let join = format!(

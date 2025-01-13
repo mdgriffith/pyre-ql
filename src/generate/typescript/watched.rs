@@ -1,10 +1,8 @@
 use crate::ast;
 use crate::ext::string;
-use crate::generate::sql;
 use crate::typecheck;
-use std::collections::HashMap;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{Write};
 use std::path::Path;
 
 pub fn operation_name(operation: &ast::QueryOperation) -> String {
@@ -25,15 +23,15 @@ pub fn write(dir: &Path, context: &typecheck::Context) {
     content
         .push_str("\n\n// All tables that are currently being watched\nexport enum WatchedKind {");
     let mut at_least_one_watched = false;
-    for (name, record) in &context.tables {
-        for watched_operation in ast::to_watched_operations(record) {
+    for (name, table) in &context.tables {
+        for watched_operation in ast::to_watched_operations(&table.record) {
             content.push_str(&format!(
                 "\n  {}{} = {},",
-                record.name,
+                &table.record.name,
                 operation_name(&watched_operation),
                 string::quote(&format!(
                     "{}{}",
-                    record.name,
+                    &table.record.name,
                     operation_name(&watched_operation)
                 ))
             ));
@@ -41,9 +39,9 @@ pub fn write(dir: &Path, context: &typecheck::Context) {
     }
     content.push_str("\n}");
 
-    for (name, record) in &context.tables {
-        for watched_operation in ast::to_watched_operations(record) {
-            let name = format!("{}{}", record.name, operation_name(&watched_operation));
+    for (name, table) in &context.tables {
+        for watched_operation in ast::to_watched_operations(&table.record) {
+            let name = format!("{}{}", table.record.name, operation_name(&watched_operation));
             content.push_str(&format!(
                 "\n\nexport interface {} {{\n  kind: WatchedKind.{};\n  data: {};\n}}",
                 name, name, "{}"
@@ -53,9 +51,9 @@ pub fn write(dir: &Path, context: &typecheck::Context) {
 
     content.push_str("\n\nexport type Watched");
     let mut at_least_one_constructor = false;
-    for (name, record) in &context.tables {
-        for watched_operation in ast::to_watched_operations(record) {
-            let name = format!("{}{}", record.name, operation_name(&watched_operation));
+    for (name, table) in &context.tables {
+        for watched_operation in ast::to_watched_operations(&table.record) {
+            let name = format!("{}{}", table.record.name, operation_name(&watched_operation));
             if !at_least_one_constructor {
                 content.push_str(&format!("\n    = {}", name));
                 at_least_one_constructor = true;
@@ -80,11 +78,11 @@ pub fn write(dir: &Path, context: &typecheck::Context) {
 fn write_runner(context: &typecheck::Context, content: &mut String) {
     content.push_str("export interface Operations {\n");
 
-    for (name, record) in &context.tables {
-        for watched_operation in ast::to_watched_operations(record) {
+    for (name, table) in &context.tables {
+        for watched_operation in ast::to_watched_operations(&table.record) {
             content.push_str(&format!(
                 "  {}{}: (env: any) => void;\n",
-                string::decapitalize(&record.name),
+                string::decapitalize(&table.record.name),
                 operation_name(&watched_operation)
             ));
         }
@@ -101,15 +99,15 @@ fn write_runner(context: &typecheck::Context, content: &mut String) {
     content.push_str("  watched.forEach((event) => {\n");
     content.push_str("    switch (event.kind) {\n");
 
-    for (name, record) in &context.tables {
-        for watched_operation in ast::to_watched_operations(record) {
+    for (name, table) in &context.tables {
+        for watched_operation in ast::to_watched_operations(&table.record) {
             content.push_str(&format!(
                 "\n      case WatchedKind.{}{}:\n        {}",
-                record.name,
+                &table.record.name,
                 operation_name(&watched_operation),
                 &format!(
                     "operations.{}{}(env);\n",
-                    string::decapitalize(&record.name),
+                    string::decapitalize(&table.record.name),
                     operation_name(&watched_operation)
                 )
             ));

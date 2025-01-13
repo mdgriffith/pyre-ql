@@ -3,9 +3,8 @@ use crate::ext::string;
 use crate::generate::sql::select;
 use crate::generate::sql::to_sql;
 use crate::typecheck;
-use std::fs;
-use std::io::{self, Read, Write};
-use std::path::Path;
+
+
 
 /*
 In a simple case, we can do a normal insert, but if we want nested inserts
@@ -94,7 +93,7 @@ pub fn insert_to_string(
                     context,
                     query,
                     parent_table_alias,
-                    linked_table,
+                    &linked_table.record,
                     query_field,
                     link,
                 );
@@ -267,7 +266,7 @@ pub fn insert_linked(
                     context,
                     query,
                     &get_temp_table_name(&query_table_field),
-                    linked_table,
+                    &linked_table.record,
                     query_field,
                     link,
                 ));

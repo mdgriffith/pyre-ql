@@ -3,9 +3,6 @@ use crate::ext::string;
 use crate::generate::sql::cte;
 use crate::generate::sql::to_sql;
 use crate::typecheck;
-use std::fs;
-use std::io::{self, Read, Write};
-use std::path::Path;
 
 /*
 
@@ -173,7 +170,7 @@ fn to_subselection(
             return to_selection(
                 context,
                 &ast::get_aliased_name(&query_field),
-                link_table,
+                &link_table.record,
                 &ast::collect_query_fields(&query_field.fields),
                 table_alias_kind,
             );
@@ -279,13 +276,13 @@ fn to_subfrom(
                 None => &link.foreign.table,
             };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
-            let foreign_table_name = get_tablename(table_alias_kind, &link_table);
+            let foreign_table_name = get_tablename(table_alias_kind, &link_table.record);
 
             let mut inner_list = to_from(
                 context,
                 &ast::get_aliased_name(&query_field),
                 table_alias_kind,
-                link_table,
+                &link_table.record,
                 &ast::collect_query_fields(&query_field.fields),
             );
             let join = format!(
@@ -477,12 +474,12 @@ fn to_subwhere(
             };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
             let foreign_table_name =
-                ast::get_tablename(&link.foreign.table, &link_table.fields);
+                ast::get_tablename(&link.foreign.table, &link_table.record.fields);
             let mut inner_list = to_where(
                 context,
                 &foreign_table_name,
                 &ast::get_aliased_name(&query_field),
-                link_table,
+                &link_table.record,
                 &ast::collect_query_fields(&query_field.fields),
             );
 

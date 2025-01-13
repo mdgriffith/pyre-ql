@@ -143,7 +143,7 @@ fn format_definition(
             let mut links_to_remove: Vec<ast::LinkDetails> = vec![];
 
             // See if any calculated links are missing
-            for (is_calculated, link) in links_on_this_table {
+            for (_is_calculated, link) in links_on_this_table {
                 let mut found = false;
                 for field in fields.iter() {
                     match field {
@@ -165,7 +165,7 @@ fn format_definition(
                 match field {
                     ast::Field::FieldDirective(ast::FieldDirective::Link(existing_link)) => {
                         let mut found = false;
-                        for (is_calculated, link) in links_on_this_table {
+                        for (_is_calculated, link) in links_on_this_table {
                             if link.link_name == existing_link.link_name {
                                 found = true;
                             }
@@ -243,14 +243,14 @@ Which is why it needs the full schema
 pub fn query_list(db_schema: &ast::Database, queries: &mut ast::QueryList) {
     match typecheck::populate_context(db_schema) {
         Ok(context) => {
-            let mut query_param_map = HashMap::new();
+            let mut all_query_info = HashMap::new();
 
             for query in queries.queries.iter() {
                 match query {
                     ast::QueryDef::Query(q) => {
                         let mut errors: Vec<error::Error> = Vec::new();
-                        let params = typecheck::check_query(&context, &mut errors, q);
-                        query_param_map.insert(q.name.clone(), params);
+                        let query_info = typecheck::check_query(&context, &mut errors, q);
+                        all_query_info.insert(q.name.clone(), query_info);
                     }
                     _ => (),
                 }
@@ -258,14 +258,14 @@ pub fn query_list(db_schema: &ast::Database, queries: &mut ast::QueryList) {
 
             for query in queries.queries.iter_mut() {
                 match query {
-                    ast::QueryDef::Query(ref mut q) => match query_param_map.get_mut(&q.name) {
-                        Some(calculated_params) => {
+                    ast::QueryDef::Query(ref mut q) => match all_query_info.get_mut(&q.name) {
+                        Some(query_info) => {
                             for arg in q.args.iter_mut() {
                                 // Add $ to the front of the arg name
                                 let param_name = format!("${}", arg.name);
 
                                 //
-                                match calculated_params.get(&param_name) {
+                                match query_info.variables.get(&param_name) {
                                     Some(param) => {
                                         match param {
                                             typecheck::ParamInfo::Defined { type_, .. } => {
@@ -279,13 +279,13 @@ pub fn query_list(db_schema: &ast::Database, queries: &mut ast::QueryList) {
                                             }
                                         }
 
-                                        calculated_params.remove(&param_name);
+                                        query_info.variables.remove(&param_name);
                                     }
                                     None => (),
                                 }
                             }
 
-                            for (name, param) in calculated_params.iter() {
+                            for (name, param) in query_info.variables.iter() {
                                 match param {
                                     typecheck::ParamInfo::Defined { .. } => (),
                                     typecheck::ParamInfo::NotDefinedButUsed { used_at, type_ } => {

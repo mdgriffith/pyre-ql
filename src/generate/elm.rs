@@ -570,7 +570,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         let table = context.tables.get(&field.name).unwrap();
         result.push_str(&to_query_type_alias(
             context,
-            table,
+            &table.record,
             &field.name,
             &ast::collect_query_fields(&field.fields),
         ));
@@ -588,7 +588,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         result.push_str(&to_query_decoder(
             context,
             &ast::get_aliased_name(&field),
-            table,
+            &table.record,
             &ast::collect_query_fields(&field.fields),
         ));
         result.push_str("\n\n");
@@ -736,7 +736,7 @@ fn to_query_decoder(
                 result.push_str(&to_query_decoder(
                     context,
                     &ast::get_aliased_name(&field),
-                    link_table,
+                    &link_table.record,
                     &ast::collect_query_fields(&field.fields),
                 ));
             }
@@ -847,7 +847,7 @@ fn to_query_type_alias(
 
                 result.push_str(&to_query_type_alias(
                     context,
-                    link_table,
+                    &link_table.record,
                     &ast::get_aliased_name(field),
                     &ast::collect_query_fields(&field.fields),
                 ));

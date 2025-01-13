@@ -322,7 +322,7 @@ fn to_type_decoder(type_: &str) -> String {
 pub fn write_queries(
     dir: &Path,
     context: &typecheck::Context,
-    params: &HashMap<String, HashMap<String, typecheck::ParamInfo>>,
+    all_query_info: &HashMap<String, typecheck::QueryInfo>,
     query_list: &ast::QueryList,
 ) -> io::Result<()> {
     write_runner(dir, context, query_list);
@@ -331,7 +331,7 @@ pub fn write_queries(
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
-                let params = params.get(&q.name).unwrap();
+                let query_info = all_query_info.get(&q.name).unwrap();
 
                 let target_path = dir.join(&format!(
                     "query/{}.ts",
@@ -340,7 +340,7 @@ pub fn write_queries(
 
                 let mut output = fs::File::create(target_path).expect("Failed to create file");
                 output
-                    .write_all(to_query_file(&context, &params, &q).as_bytes())
+                    .write_all(to_query_file(&context, &query_info, &q).as_bytes())
                     .expect("Failed to write to file");
             }
             _ => continue,
@@ -441,7 +441,7 @@ fn format_string_list(items: &Vec<String>) -> String {
 
 fn to_query_file(
     context: &typecheck::Context,
-    params: &HashMap<String, typecheck::ParamInfo>,
+    query_info: &typecheck::QueryInfo,
     query: &ast::Query,
 ) -> String {
     let mut result = "".to_string();
@@ -461,10 +461,10 @@ fn to_query_file(
     for field in &query.fields {
         let table = context.tables.get(&field.name).unwrap();
 
-        for watched_operation in ast::to_watched_operations(table) {
+        for watched_operation in ast::to_watched_operations(&table.record) {
             let name = format!(
                 "{}{}",
-                table.name,
+                table.record.name,
                 watched::operation_name(&watched_operation)
             );
             watchers.push(format!(
@@ -476,7 +476,7 @@ fn to_query_file(
         if written_field {
             result.push_str(", ");
         }
-        let sql = generate::sql::to_string(context, query, &table, field);
+        let sql = generate::sql::to_string(context, query, &table.record, field);
         result.push_str(&literal_quote(&sql));
         written_field = true;
     }
@@ -491,14 +491,14 @@ fn to_query_file(
         to_flat_query_decoder(
             context,
             &ast::get_aliased_name(&field),
-            table,
+            &table.record,
             &ast::collect_query_fields(&field.fields),
             &mut result,
         );
     }
     result.push_str("});\n\n");
 
-    let session_args = get_session_args(params);
+    let session_args = get_session_args(&query_info.variables);
 
     let validate = format!(
         r#"
@@ -517,8 +517,8 @@ export const query = Db.toRunner({{
 type Input = typeof Input.infer
 "#,
         query.interface_hash,
-        query.primary_db,
-        format_string_list(&query.attached_dbs),
+        query_info.primary_db,
+        format_string_list(&query_info.attached_dbs.clone().into_iter().collect()),
         session_args,
         format_ts_list(watchers)
     );
@@ -651,7 +651,7 @@ fn to_table_field_flat_decoder(
             to_flat_query_decoder(
                 context,
                 &ast::get_aliased_name(&query_field),
-                table,
+                &table.record,
                 &ast::collect_query_fields(&query_field.fields),
                 result,
             )
