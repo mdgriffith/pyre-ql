@@ -1,0 +1,62 @@
+
+record User {
+    @tablename "users"
+    accounts      @link(Account.userId)
+    posts         @link(Post.authorUserId)
+    databaseUsers @link(DatabaseUser.userId)
+    // Fields
+    id        Int     @id
+    name      String?
+    status    Status
+    createdAt DateTime @default(now)
+
+
+}
+
+
+record DatabaseUser {
+    id         Int   @id
+    databaseId String
+
+    userId Int
+    users  @link(userId, User.id)
+}
+
+record Account {
+    @tablename "accounts"
+    users @link(userId, User.id)
+
+    id     Int   @id
+    userId Int
+    name   String
+    status String
+}
+
+
+record Post {
+    @tablename "posts"
+    users @link(authorUserId, User.id)
+
+    id           Int     @id
+    createdAt    DateTime @default(now)
+    authorUserId Int
+    title        String
+    content      String
+    status       Status
+
+}
+
+
+type Status
+   = Active
+   | Inactive
+   | Special {
+        reason String
+     }
+   | Special2 {
+        reason2 String
+        error   String
+     }
+
+
+

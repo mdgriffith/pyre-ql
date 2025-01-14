@@ -1,0 +1,33 @@
+
+record Game {
+    @tablename "games"
+    id   Int   @id
+    name String
+
+    players @link(Player.gameId)
+}
+
+
+record Player {
+    @tablename "players"
+    user @link(userId, Base.User.id)
+
+    id     Int   @id
+    userId Int
+    name   String
+    points Int
+
+    gameId Int
+    games  @link(gameId, Game.id)
+}
+
+
+record Job {
+    @tablename "jobs"
+    @watch
+    id   Int   @id
+    name String
+}
+
+
+
