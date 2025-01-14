@@ -14,6 +14,20 @@ query MyQuery($id: Int) {
 }
 
 
+query UserAccounts {
+    user {
+        id
+        createdAt
+        username: name
+        myAccounts: accounts {
+            id
+            name
+            status
+        }
+    }
+}
+
+
 query UsersAll {
     user {
         id
@@ -27,22 +41,30 @@ insert UserNew($name: String, $status: Status) {
     user {
         name = $name
         status = $status
+        accounts {
+            name = "My account"
+            status = "Untyped status"
+        }
+        posts {
+            title = "My first post"
+            content = "This is my first post"
+        }
     }
 }
 
 
-insert AddBlogPosts($userId: Int, $status: Status, $at: DateTime) {
-    post {
-        authorUserId = $userId
-        createdAt = $at
-        title = "My First Post"
-        content = "This is my first post"
-        status = $status
-    }
-    job {
-        name = "My First Job"
-    }
-}
+// insert AddBlogPosts($userId: Int, $status: Status, $at: DateTime) {
+//     post {
+//         authorUserId = $userId
+//         createdAt = $at
+//         title = "My First Post"
+//         content = "This is my first post"
+//         status = $status
+//     }
+//     job {
+//         name = "My First Job"
+//     }
+// }
 
 
 delete RemoveAccount($accountId: Int) {

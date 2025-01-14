@@ -11,11 +11,11 @@ fi
 declare -A SQL=(
     # List all usrs
     ["ca1ef76b8454099d6af490ed91b4ecfd2704dccc9a6d225aab00ce731b3a64ab"]='{}'
+
+    # List all users and their accounts
+    ["41ee1e1c8c03ae9b22e0716342d4b23e46805ef6f1782e4144824dd75bae3386"]='{}'
     
 )
-
-echo "Starting seeding process..."
-echo "-------------------------"
 
 # Counter for request number
 count=1
