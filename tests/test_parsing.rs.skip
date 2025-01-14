@@ -1,0 +1,33 @@
+
+use pyre::command;
+
+
+#[test]
+fn test_parse_schema_with_records() {
+    let schema_str = r#"
+        record User {
+            id: Int,
+            name: String,
+        }
+
+        record Post {
+            id: Int,
+            title: String,
+            author: User,
+        }
+    "#;
+
+    let result = parse_schema(Text::new_extra(schema_str, placeholder_context()), &mut Schema::default());
+    assert!(result.is_ok(), "Expected successful parsing of schema with records");
+}
+
+#[test]
+fn test_parse_schema_with_union_type() {
+    let schema_str = r#"
+        type Shape = Circle { radius: Float } | Square { side: Float }
+    "#;
+
+    let result = parse_schema(Text::new_extra(schema_str, placeholder_context()), &mut Schema::default());
+    assert!(result.is_ok(), "Expected successful parsing of schema with tagged union type");
+}
+
