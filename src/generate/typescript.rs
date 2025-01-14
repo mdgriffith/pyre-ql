@@ -11,9 +11,11 @@ use std::path::Path;
 
 
 /// Write all typescript files
-pub fn write(database: &ast::Database, out_dir: &Path) -> io::Result<()> {
+pub fn write(context: &typecheck::Context, database: &ast::Database, out_dir: &Path) -> io::Result<()> {
     filesystem::create_dir_if_not_exists(&out_dir.join("typescript"))?;
     filesystem::create_dir_if_not_exists(&out_dir.join("typescript").join("db"))?;
+
+    watched::write(out_dir, context);
 
     // Top level TS files
     // DB engine as db.ts
@@ -326,7 +328,6 @@ pub fn write_queries(
     query_list: &ast::QueryList,
 ) -> io::Result<()> {
     write_runner(dir, context, query_list);
-    watched::write(dir, context);
 
     for operation in &query_list.queries {
         match operation {
@@ -783,25 +784,10 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
 
         result.push_str("export interface Config {\n");
         for schema in &database.schemas {
-            result.push_str(&format!("  {}: DatabaseConfig?;\n", schema.namespace));
+            result.push_str(&format!("  {}?: DatabaseConfig;\n", schema.namespace));
         }
         result.push_str("}\n\n");
     }
-
-    result.push_str("export type Session = {\n");
-    for field in &session.fields {
-        match field {
-            ast::Field::Column(column) => {
-                result.push_str(&format!(
-                    "  {}: {};\n",
-                    column.name,
-                    to_ts_typename(true, &column.type_)
-                ));
-            }
-            _ => (),
-        }
-    }
-    result.push_str("};\n\n");
 
     if database.schemas.len() == 1 {
         result.push_str("export type DatabaseKey = string;\n");
@@ -813,13 +799,13 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
         result.push_str("}\n");
     }
 
-    result.push_str("export const to_libSql_config = (env: Config, primary: DatabaseKey): LibSqlConfig -> {\n");
+    result.push_str("export const to_libSql_config = (env: Config, primary: DatabaseKey): LibSqlConfig => {\n");
     if database.schemas.len() == 1 {
-        result.push_str("return env")
+        result.push_str("  return env")
     } else {
-        result.push_str("return env[primary]")
+        result.push_str("  return env[primary]")
     }
-    result.push_str("};\n\n");
+    result.push_str("\n};\n\n");
 
     Some(result)
 
@@ -828,7 +814,7 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
 
 //
 pub const DB_ENGINE: &str = r#"import * as LibSql from '@libsql/client';
-import * as Env from './db/cofig'
+import * as Env from './db/env'
 import * as Ark from 'arktype';
 import * as Watched from './watched';
 
@@ -871,7 +857,7 @@ export interface Runner<session, input, output> {
 	session_args: string[];
 	input: Ark.Type<input>;
 	output: Ark.Type<output>;
-	execute: (env: Config, args: ValidArgs) => Promise<ExecuteResult>;
+	execute: (env: Env.Config, args: ValidArgs) => Promise<ExecuteResult>;
 }
 
 export type ToRunnerArgs<session, input, output> = {

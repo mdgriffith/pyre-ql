@@ -5,11 +5,6 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use walkdir::WalkDir;
 
-#[derive(Debug)]
-pub struct Schema {
-    pub name: String,
-    pub paths: Vec<PathBuf>,
-}
 
 #[derive(Debug)]
 pub struct Found {
@@ -22,15 +17,6 @@ pub struct Found {
 pub struct SchemaFile {
     pub path: String,
     pub content: String,
-}
-
-fn read(schema: &Schema) -> String {
-    let mut content = String::new();
-    for path in &schema.paths {
-        let file_content = std::fs::read_to_string(path).unwrap();
-        content.push_str(&file_content);
-    }
-    content
 }
 
 pub fn is_schema_file(file_path: &str) -> bool {

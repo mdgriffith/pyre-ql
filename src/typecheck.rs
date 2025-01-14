@@ -1,4 +1,4 @@
-use crate::{ast, db};
+use crate::{ast, db, error};
 use crate::error::{DefInfo, Error, ErrorType, Location, Range, VariantDef};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -132,10 +132,36 @@ fn empty_context() -> Context {
     context
 }
 
+fn is_capitalized(s: &str) -> bool {
+    if let Some(first_char) = s.chars().next() {
+        first_char.is_uppercase()
+    } else {
+        false
+    }
+}
+
 pub fn check_schema(db: &ast::Database) -> Result<Context, Vec<Error>> {
     let context = populate_context(db)?;
 
     let mut errors: Vec<Error> = Vec::new();
+
+    // Namespaces must be capitalized
+    for schem in &db.schemas {
+        if schem.namespace == db::DEFAULT_SCHEMANAME {
+            continue;
+        } else if !is_capitalized(&schem.namespace) {
+            let body =  format!("This schema name must be capitalized: {}", &error::yellow_if(true, &schem.namespace));
+            let error = error::format_custom_error(
+                "Schema name formatting",
+                 &body
+            );
+            eprintln!("{}", error);
+            std::process::exit(1);
+        }
+    }
+
+
+   
     check_schema_definitions(&context, db, &mut errors);
 
     if (!errors.is_empty()) {

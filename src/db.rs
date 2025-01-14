@@ -474,7 +474,7 @@ impl MigrationError {
 
 pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(), MigrationError> {
     // Read migration directory
-    let mut migration_file_result = read_migrations(migration_folder);
+    let migration_file_result = read_migrations(migration_folder);
     match migration_file_result {
         Err(err) => {
             return Err(MigrationError::MigrationReadIoError(err, migration_folder.to_path_buf()));

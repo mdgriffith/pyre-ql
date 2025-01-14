@@ -2,7 +2,7 @@ use crate::ast;
 use crate::ext::string;
 use crate::typecheck;
 use std::fs;
-use std::io::{Write};
+use std::io::Write;
 use std::path::Path;
 
 pub fn operation_name(operation: &ast::QueryOperation) -> String {

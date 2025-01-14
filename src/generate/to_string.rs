@@ -8,7 +8,6 @@ pub fn schema_to_string(namespace: &str, schema_file: &ast::SchemaFile) -> Strin
     for definition in &schema_file.definitions {
         result.push_str(&to_string_definition(namespace, definition));
     }
-    result.push_str("\n");
     result
 }
 
@@ -23,7 +22,7 @@ fn to_string_definition(namespace: &str, definition: &ast::Definition) -> String
         }
         ast::Definition::Comment { text } => format!("//{}\n", text),
         ast::Definition::Session(session) => {
-            let mut indent_collection: Indentation = collect_indentation(&session.fields, 4);
+            let indent_collection: Indentation = collect_indentation(&session.fields, 4);
 
             let mut result = "session {\n".to_string();
             for field in &session.fields {
@@ -192,7 +191,7 @@ fn to_string_variant(namespace: &str, is_first: bool, variant: &ast::Variant) ->
     match &variant.data {
         Some(fields) => {
             let mut result = format!("  {}{} {{\n", prefix, variant.name);
-            let mut indent_collection: Indentation = collect_indentation(&fields, 8);
+            let indent_collection: Indentation = collect_indentation(&fields, 8);
             for field in fields {
                 result.push_str(&to_string_field(namespace, &indent_collection, &field));
             }

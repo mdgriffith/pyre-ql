@@ -17,13 +17,9 @@ use crate::typecheck;
 use crate::error;
 
 
-
 pub struct Options<'a> {
     pub in_dir: &'a Path,
 }
-
-
-
 
 
 fn id_column() -> ast::Column {
@@ -60,15 +56,17 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
 
     if multidb {        
         let schema_dir = pyre_dir.join("schema");
+        filesystem::create_dir_if_not_exists(&schema_dir)?;
         
         // Create Base Schema
         let base_dir = schema_dir.join("base"); 
-        fs::create_dir(&base_dir).expect("Failed to create namespace directory");
+        filesystem::create_dir_if_not_exists(&base_dir)?;
+
         database.schemas.push(ast::Schema {
-            namespace: "base".to_string(),
+            namespace: "Base".to_string(),
             session: None,
             files: vec![ast::SchemaFile {
-                path: base_dir.to_string_lossy().to_string(),
+                path: base_dir.join("schema.pyre").to_string_lossy().to_string(),
                 definitions: vec![ast::Definition::Record {
                     name: "User".to_string(),
                     fields: vec![ast::Field::Column(id_column())],
@@ -82,12 +80,13 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
 
         // Create User Schema
         let user_dir = schema_dir.join("user"); 
-        fs::create_dir(&user_dir).expect("Failed to create namespace directory");
+        filesystem::create_dir_if_not_exists(&user_dir)?;
+
         database.schemas.push(ast::Schema {
-            namespace: "user".to_string(),
+            namespace: "User".to_string(),
             session: None,
             files: vec![ast::SchemaFile {
-                path: base_dir.to_string_lossy().to_string(),
+                path: user_dir.join("schema.pyre").to_string_lossy().to_string(),
                 definitions: vec![ast::Definition::Record {
                     name: "Example".to_string(),
                     fields: vec![
@@ -162,11 +161,11 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                 let schema = parse_database_schemas(&options, &paths)?;
 
                 // We're assuming this file is a query because we don't have a filepath
-                format_query_to_std_out(&options, &schema, &stdin);
+                format_query_to_std_out(&options, &schema, &stdin)?;
             }
             None => {
                 println!("Formatting all files in {}", options.in_dir.display());
-                format_all(&options, filesystem::collect_filepaths(&options.in_dir)?);
+                format_all(&options, filesystem::collect_filepaths(&options.in_dir)?)?;
             }
         },
         1 => {
@@ -178,24 +177,24 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                         let mut schema = parse_single_schema_from_source(file_path, &stdin)?;
                         format::schema(&mut schema);
                         // Always write to stdout if stdin is provided
-                        write_schema(&options, &true, &schema);
+                        write_schema(&options, &true, &schema)?;
                     } else {
                         let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                        let mut schema = parse_database_schemas(&options, &paths)?;
+                        let schema = parse_database_schemas(&options, &paths)?;
 
-                        format_query_to_std_out(&options, &schema, &stdin);
+                        format_query_to_std_out(&options, &schema, &stdin)?;
                     }
                 }
                 None => {
                     if filesystem::is_schema_file(file_path) {
                         let mut schema = parse_single_schema(file_path)?;
                         format::schema(&mut schema);
-                        write_schema(&options, &to_stdout, &schema);
+                        write_schema(&options, &to_stdout, &schema)?;
                     } else {
                         let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                        let mut database = parse_database_schemas(&options, &paths)?;
+                        let database = parse_database_schemas(&options, &paths)?;
 
-                        format_query(&options, &database, &to_stdout, file_path);
+                        format_query(&options, &database, &to_stdout, file_path)?;
                     }
                 }
             }
@@ -210,12 +209,12 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                 if filesystem::is_schema_file(&file_path) {
                     let mut schema = parse_single_schema(&file_path)?;
                     format::schema(&mut schema);
-                    write_schema(&options, &to_stdout, &schema);
+                    write_schema(&options, &to_stdout, &schema)?;
                 } else {
                     let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                    let mut database = parse_database_schemas(&options, &paths)?;
+                    let database = parse_database_schemas(&options, &paths)?;
 
-                    format_query(&options, &database, &to_stdout, &file_path);
+                    format_query(&options, &database, &to_stdout, &file_path)?;
                 }
             }
             if !to_stdout {
@@ -467,8 +466,7 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
         }
         Ok(mut context) => {
             // Generate schema files
-            generate::elm::write(out_dir, &schema)?;
-            generate::typescript::write( &schema, out_dir)?;
+            generate::write_schema(&context,&schema, out_dir )?;
 
             for query_file_path in paths.query_files {
                 let mut query_file = fs::File::open(query_file_path.clone())?;
