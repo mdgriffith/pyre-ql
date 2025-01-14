@@ -334,20 +334,27 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = tag("@")(input)?;
 
     let (input, field_directive) = cut(alt((
-        parse_directive_named(
-            "watch",
-            ast::Field::FieldDirective(ast::FieldDirective::Watched(ast::WatchedDetails {
-                selects: false,
-                inserts: true,
-                updates: false,
-                deletes: false,
-            })),
-        ),
+        parse_watch(to_location(&start_pos)),
         parse_tablename(to_location(&start_pos)),
         parse_link,
     )))(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaColumn);
     Ok((input, field_directive))
+}
+
+fn parse_watch(start_location: ast::Location) -> impl Fn(Text) -> ParseResult<ast::Field> {
+    move |input: Text| {
+        let (input, _) = tag("watch")(input)?;
+        let (input, _) = multispace0(input)?;
+
+        let directive = ast::FieldDirective::Watched(ast::WatchedDetails {
+            selects: false,
+            inserts: true,
+            updates: false,
+            deletes: false,
+        });
+        return Ok((input, ast::Field::FieldDirective(directive)));
+    }
 }
 
 fn parse_tablename(start_location: ast::Location) -> impl Fn(Text) -> ParseResult<ast::Field> {
