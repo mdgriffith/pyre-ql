@@ -209,7 +209,9 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
     // Gather table names
     // Gather type names
     for schema in &database.schemas {
-        context.session = schema.session.clone();
+        if context.session.is_none() && schema.session.is_some() {
+            context.session = schema.session.clone();
+        }
 
         for file in &schema.files {
             for definition in &file.definitions {
