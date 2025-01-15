@@ -34,14 +34,7 @@ pub fn to_sql(schema: &Schema, diff: &SchemaDiff) -> String {
 
 fn add_definition_sql(schema: &Schema, definition: &Definition) -> String {
     match definition {
-        Definition::Record {
-            name,
-            fields,
-            start,
-            end,
-            start_name,
-            end_name,
-        } => {
+        Definition::Record { name, fields, .. } => {
             let name = get_tablename(&name, &fields);
             let fields_sql: Vec<String> = collect_columns(fields)
                 .iter()
@@ -124,13 +117,13 @@ fn column_directive_to_string(column: &Column, directive: &ColumnDirective) -> S
 
 fn value_to_string(value: &QueryValue) -> String {
     match value {
-        QueryValue::Fn(func) => "".to_string(), // not allowed
-        QueryValue::Variable((r, name)) => "".to_string(), // not allowed
-        QueryValue::String((r, value)) => format!("'{}'", value),
-        QueryValue::Int((r, value)) => value.to_string(),
-        QueryValue::Float((r, value)) => value.to_string(),
-        QueryValue::Bool((r, value)) => value.to_string(),
-        QueryValue::Null(r) => "null".to_string(),
+        QueryValue::Fn(_) => "".to_string(),       // not allowed
+        QueryValue::Variable(_) => "".to_string(), // not allowed
+        QueryValue::String((_, value)) => format!("'{}'", value),
+        QueryValue::Int((_, value)) => value.to_string(),
+        QueryValue::Float((_, value)) => value.to_string(),
+        QueryValue::Bool((_, value)) => value.to_string(),
+        QueryValue::Null(_) => "null".to_string(),
     }
 }
 
@@ -139,7 +132,7 @@ fn serialization_to_string(serialization_type: &SerializationType) -> String {
         SerializationType::Integer => "integer".to_string(),
         SerializationType::Real => "real".to_string(),
         SerializationType::Text => "text".to_string(),
-        SerializationType::BlobWithSchema(schema) => "text".to_string(),
+        SerializationType::BlobWithSchema(_) => "text".to_string(),
     }
 }
 

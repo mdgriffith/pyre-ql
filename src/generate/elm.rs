@@ -4,7 +4,7 @@ use crate::filesystem;
 
 use crate::typecheck;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::Path;
 
 const ELM_READ_MODULE: &str = include_str!("../static/elm/src/Db/Read.elm");

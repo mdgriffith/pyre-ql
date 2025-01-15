@@ -4,7 +4,7 @@
 Given a query, we have 3 choices for generating sql.
 1. Normal: A normal join
 2. Batch: Flatten and batch the queries
-3. CTE: Use a CTE
+3. CTE: Use a CTE (Common Table Expression, a temporary table)
 
 Batches are basically like a CTE, but where we have to do the join in the application layer.
 

@@ -14,7 +14,7 @@ pub fn schema_to_string(namespace: &str, schema_file: &ast::SchemaFile) -> Strin
 fn to_string_definition(namespace: &str, definition: &ast::Definition) -> String {
     match definition {
         ast::Definition::Lines { count } => {
-            if (*count > 2) {
+            if *count > 2 {
                 "\n\n".to_string()
             } else {
                 "\n".repeat(*count as usize)
@@ -31,12 +31,7 @@ fn to_string_definition(namespace: &str, definition: &ast::Definition) -> String
             result.push_str("}\n");
             result
         }
-        ast::Definition::Tagged {
-            name,
-            variants,
-            start,
-            end,
-        } => {
+        ast::Definition::Tagged { name, variants, .. } => {
             let mut result = format!("type {}\n", name);
             let mut is_first = true;
             for variant in variants {
@@ -45,15 +40,8 @@ fn to_string_definition(namespace: &str, definition: &ast::Definition) -> String
             }
             result
         }
-        ast::Definition::Record {
-            name,
-            fields,
-            start,
-            end,
-            start_name,
-            end_name,
-        } => {
-            let mut indent_collection: Indentation = collect_indentation(&fields, 4);
+        ast::Definition::Record { name, fields, .. } => {
+            let indent_collection: Indentation = collect_indentation(&fields, 4);
 
             let mut result = format!("record {} {{\n", name);
             for field in fields {
@@ -123,7 +111,7 @@ struct FieldIndent {
     directive_column: usize,
 }
 
-fn get_field_indent(indent_minimum: usize, field: &ast::Field) -> Option<(FieldIndent)> {
+fn get_field_indent(indent_minimum: usize, field: &ast::Field) -> Option<FieldIndent> {
     match field {
         ast::Field::Column(column) => {
             match (&column.start_name, &column.end_name, &column.end_typename) {
@@ -205,7 +193,7 @@ fn to_string_variant(namespace: &str, is_first: bool, variant: &ast::Variant) ->
 fn to_string_field(namespace: &str, indent: &Indentation, field: &ast::Field) -> String {
     match field {
         ast::Field::ColumnLines { count } => {
-            if (*count > 2) {
+            if *count > 2 {
                 "\n\n".to_string()
             } else {
                 "\n".repeat(*count as usize)
@@ -280,7 +268,7 @@ fn to_string_field_directive(
     let spaces = " ".repeat(indent.minimum);
     match directive {
         ast::FieldDirective::Watched(_) => format!("{}@watch\n", spaces),
-        ast::FieldDirective::TableName((range, name)) => {
+        ast::FieldDirective::TableName((_, name)) => {
             format!("{}@tablename \"{}\"\n", spaces, name)
         }
         ast::FieldDirective::Link(details) => {
@@ -356,40 +344,6 @@ fn to_string_link_details_shorthand(
     result
 }
 
-fn to_string_link_details(details: &ast::LinkDetails) -> String {
-    let mut result = format!("{} {{ from: ", details.link_name);
-
-    if (*&details.local_ids.len() > 1) {
-        for id in &details.local_ids {
-            result.push_str(id);
-            result.push_str(", ");
-        }
-    } else {
-        for id in &details.local_ids {
-            result.push_str(id);
-        }
-    }
-
-    result.push_str(", to: ");
-    if (*&details.foreign.fields.len() > 1) {
-        for id in &details.foreign.fields {
-            result.push_str(&details.foreign.table);
-            result.push_str(".");
-            result.push_str(id);
-            result.push_str(", ");
-        }
-    } else {
-        for id in &details.foreign.fields {
-            result.push_str(&details.foreign.table);
-            result.push_str(".");
-            result.push_str(id);
-        }
-    }
-    result.push_str(" }");
-
-    result
-}
-
 fn to_string_directives(directives: &Vec<ast::ColumnDirective>) -> String {
     let mut result = String::new();
     for directive in directives {
@@ -426,7 +380,7 @@ fn to_string_query_definition(definition: &ast::QueryDef) -> String {
         ast::QueryDef::Query(q) => to_string_query(q),
         ast::QueryDef::QueryComment { text } => format!("//{}\n", text),
         ast::QueryDef::QueryLines { count } => {
-            if (*count > 2) {
+            if *count > 2 {
                 "\n\n".to_string()
             } else {
                 "\n".repeat(*count as usize)
@@ -444,7 +398,7 @@ fn to_string_query(query: &ast::Query) -> String {
     };
     let mut result = format!("{} {}", operation_name, query.name);
 
-    if (query.args.len() > 0) {
+    if query.args.len() > 0 {
         result.push_str("(");
     }
     let mut first = true;
@@ -452,7 +406,7 @@ fn to_string_query(query: &ast::Query) -> String {
         result.push_str(&to_string_param_definition(first, &param));
         first = false;
     }
-    if (query.args.len() > 0) {
+    if query.args.len() > 0 {
         result.push_str(")");
     }
 
@@ -468,7 +422,7 @@ fn to_string_query(query: &ast::Query) -> String {
 
 // Example: ($arg: String)
 fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition) -> String {
-    if (is_first) {
+    if is_first {
         match &param.type_ {
             None => return format!("${}", param.name),
             Some(type_) => return format!("${}: {}", param.name, type_),
@@ -506,7 +460,7 @@ fn to_string_query_field(indent: usize, field: &ast::QueryField) -> String {
         None => {}
     }
 
-    if (field.fields.len() > 0) {
+    if field.fields.len() > 0 {
         result.push_str(" {\n");
     }
 
@@ -514,7 +468,7 @@ fn to_string_query_field(indent: usize, field: &ast::QueryField) -> String {
     for inner_field in &field.fields {
         result.push_str(&to_string_field_arg(indent + 4, &inner_field));
     }
-    if (field.fields.len() > 0) {
+    if field.fields.len() > 0 {
         result.push_str(&spaces);
         result.push_str("}");
     }
@@ -610,13 +564,13 @@ fn value_to_string(value: &ast::QueryValue) -> String {
                 .collect::<Vec<String>>()
                 .join(", ")
         ),
-        ast::QueryValue::Variable((r, var)) => ast::to_pyre_variable_name(var),
-        ast::QueryValue::String((r, value)) => format!("\"{}\"", value),
-        ast::QueryValue::Int((r, value)) => value.to_string(),
-        ast::QueryValue::Float((r, value)) => value.to_string(),
-        ast::QueryValue::Bool((r, true)) => "True".to_string(),
-        ast::QueryValue::Bool((r, false)) => "False".to_string(),
-        ast::QueryValue::Null(r) => "null".to_string(),
+        ast::QueryValue::Variable((_, var)) => ast::to_pyre_variable_name(var),
+        ast::QueryValue::String((_, value)) => format!("\"{}\"", value),
+        ast::QueryValue::Int((_, value)) => value.to_string(),
+        ast::QueryValue::Float((_, value)) => value.to_string(),
+        ast::QueryValue::Bool((_, true)) => "True".to_string(),
+        ast::QueryValue::Bool((_, false)) => "False".to_string(),
+        ast::QueryValue::Null(_) => "null".to_string(),
     }
 }
 

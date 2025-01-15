@@ -86,11 +86,11 @@ fn add_link(
             let mut op = LinkOp::Append;
             for (i, (existing_calculated, existing_link)) in existing_links.iter().enumerate() {
                 if ast::link_equivalent(link, existing_link) {
-                    if (is_calculated) {
+                    if is_calculated {
                         // The new link is calculated
                         // So we should skip this because it's already been added
                         op = LinkOp::Skip
-                    } else if (*existing_calculated) {
+                    } else if *existing_calculated {
                         op = LinkOp::Replace(i);
                     }
                 }

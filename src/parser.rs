@@ -108,7 +108,7 @@ pub fn convert_parsing_error(err: nom::Err<VerboseError<Text>>) -> Option<crate:
 }
 
 fn convert_error(input: &str, err: VerboseError<Text>) -> String {
-    if let Some((text, error_kind)) = err.errors.get(0) {
+    if let Some((text, _error_kind)) = err.errors.get(0) {
         let error = crate::error::Error {
             filepath: text.extra.file.to_string(),
             error_type: crate::error::ErrorType::ParsingError(crate::error::ParsingErrorDetails {
@@ -195,11 +195,6 @@ fn parse_typename(input: Text) -> ParseResult<&str> {
     )))(input)?;
 
     Ok((input, val.fragment()))
-}
-
-// A parser to check if a character is lowercase
-fn is_lowercase_char(c: char) -> bool {
-    c.is_ascii_lowercase()
 }
 
 fn parse_fieldname(input: Text) -> ParseResult<&str> {
@@ -338,7 +333,7 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = tag("@")(input)?;
 
     let (input, field_directive) = cut(alt((
-        parse_watch(to_location(&start_pos)),
+        parse_watch(),
         parse_tablename(to_location(&start_pos)),
         parse_link,
     )))(input)?;
@@ -346,7 +341,7 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
     Ok((input, field_directive))
 }
 
-fn parse_watch(start_location: ast::Location) -> impl Fn(Text) -> ParseResult<ast::Field> {
+fn parse_watch() -> impl Fn(Text) -> ParseResult<ast::Field> {
     move |input: Text| {
         let (input, _) = tag("watch")(input)?;
         let (input, _) = multispace0(input)?;
@@ -411,11 +406,6 @@ enum LinkField {
     To { table: String, id: Vec<String> },
 }
 
-struct ToDetails {
-    table: String,
-    id: Vec<String>,
-}
-
 fn link_field_to_details<'a, 'b>(
     input: Text<'a>,
     linkname: &'b str,
@@ -440,14 +430,14 @@ fn link_field_to_details<'a, 'b>(
     let mut has_to = false;
     for link in link_fields {
         match link {
-            LinkField::From(idList) => {
+            LinkField::From(id_list) => {
                 if has_from {
                     return Err(nom::Err::Error(VerboseError {
                         errors: vec![(input, VerboseErrorKind::Context("tag"))],
                     }));
                 } else {
                     has_from = true;
-                    details.local_ids = idList
+                    details.local_ids = id_list
                 }
             }
             LinkField::To { table, id } => {
@@ -463,7 +453,7 @@ fn link_field_to_details<'a, 'b>(
             }
         }
     }
-    if (has_to & has_from) {
+    if has_to & has_from {
         return Ok((input, details));
     }
 
@@ -595,8 +585,8 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
 }
 
 fn parse_nullable(input: Text) -> ParseResult<bool> {
-    let (input, maybeNullable) = opt(char('?'))(input)?;
-    Ok((input, maybeNullable != None))
+    let (input, maybe_nullable) = opt(char('?'))(input)?;
+    Ok((input, maybe_nullable != None))
 }
 
 fn parse_column_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
@@ -681,14 +671,14 @@ fn parse_variant(input: Text) -> ParseResult<ast::Variant> {
     let (input, name) = parse_typename(input)?;
     let (input, end_name_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, optionalFields) = opt(with_braces(parse_field))(input)?;
+    let (input, optional_fields) = opt(with_braces(parse_field))(input)?;
     let (input, end_pos) = position(input)?;
 
     Ok((
         input,
         ast::Variant {
             name: name.to_string(),
-            data: optionalFields,
+            data: optional_fields,
             start: Some(to_location(&start_pos)),
             end: Some(to_location(&end_pos)),
 
@@ -714,7 +704,7 @@ pub fn parse_query<'a>(
         },
     );
     match parse_query_list(input) {
-        Ok((remaining, query_list)) => {
+        Ok((_remaining, query_list)) => {
             return Ok(query_list);
         }
         Err(e) => Err(e),
@@ -863,17 +853,6 @@ where
     }
 }
 
-fn parens<'a, F, T>(parse_term: F) -> impl Fn(Text) -> ParseResult<T>
-where
-    F: Fn(Text) -> ParseResult<T>,
-{
-    move |input: Text| {
-        let (input, _) = tag("(")(input)?;
-        let (input, terms) = parse_term(input)?;
-        let (input, _) = tag(")")(input)?;
-        Ok((input, terms))
-    }
-}
 fn parse_set(input: Text) -> ParseResult<ast::QueryValue> {
     let (input, _) = tag("=")(input)?;
     let (input, _) = multispace0(input)?;
@@ -1179,11 +1158,6 @@ pub fn parse_number(input: Text) -> ParseResult<ast::QueryValue> {
             Ok((input, ast::QueryValue::Int((range, value.parse().unwrap()))))
         }
     }
-}
-
-fn parse_int(input: Text) -> ParseResult<usize> {
-    let (input, value) = digit1(input)?;
-    Ok((input, value.parse().unwrap()))
 }
 
 fn parse_string(input: Text) -> ParseResult<ast::QueryValue> {
