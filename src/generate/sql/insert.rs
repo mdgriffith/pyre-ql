@@ -130,6 +130,7 @@ pub fn insert_to_string(
         select::render_from(
             context,
             table,
+            query_info,
             query_table_field,
             &select::TableAliasKind::Insert,
             &mut result,

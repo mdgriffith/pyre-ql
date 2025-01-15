@@ -66,6 +66,7 @@ pub fn select_to_string(
     render_from(
         context,
         table,
+        query_info,
         query_field,
         &TableAliasKind::Normal,
         &mut result,
@@ -186,6 +187,7 @@ fn to_subselection(
 pub fn render_from(
     context: &typecheck::Context,
     table: &typecheck::Table,
+    query_info: &typecheck::QueryInfo,
     query_table_field: &ast::QueryField,
     table_alias_kind: &TableAliasKind,
     result: &mut String,
@@ -199,6 +201,7 @@ pub fn render_from(
         &get_temp_table_alias(table_alias_kind, &query_table_field),
         table_alias_kind,
         table,
+        query_info,
         &ast::collect_query_fields(&query_table_field.fields),
     );
 
@@ -222,6 +225,7 @@ fn to_from(
     table_alias: &str,
     table_alias_kind: &TableAliasKind,
     table: &typecheck::Table,
+    query_info: &typecheck::QueryInfo,
     fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
     let mut result: Vec<String> = vec![];
@@ -241,6 +245,7 @@ fn to_from(
             table_alias,
             table_alias_kind,
             table_field,
+            query_info,
             query_field,
         ));
     }
@@ -265,6 +270,7 @@ fn to_subfrom(
     table_alias: &str,
     table_alias_kind: &TableAliasKind,
     table_field: &ast::Field,
+    query_info: &typecheck::QueryInfo,
     query_field: &ast::QueryField,
 ) -> Vec<String> {
     match table_field {
@@ -283,15 +289,24 @@ fn to_subfrom(
                 &ast::get_aliased_name(&query_field),
                 table_alias_kind,
                 link_table,
+                query_info,
                 &ast::collect_query_fields(&query_field.fields),
             );
+
+            let local_table_identifier =
+                to_sql::render_real_where_field(table, query_info, &link.local_ids.join(" "));
+
+            let foreign_table_identifier = to_sql::render_real_where_field(
+                link_table,
+                query_info,
+                &link.foreign.fields.join(""),
+            );
+
             let join = format!(
-                "left join {} on {}.{} = {}.{}",
+                "left join {} on {} = {}",
                 string::quote(&foreign_table_name),
-                string::quote(&table_name),
-                string::quote(&link.local_ids.join("")),
-                string::quote(&foreign_table_name),
-                string::quote(&link.foreign.fields.join("")),
+                local_table_identifier,
+                foreign_table_identifier
             );
             inner_list.push(join);
             return inner_list;
@@ -328,7 +343,7 @@ fn render_order_by(
         }
     }
 
-    if (!&order_vals.is_empty()) {
+    if !&order_vals.is_empty() {
         result.push_str("order by ");
 
         let mut first = true;
