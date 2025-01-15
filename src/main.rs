@@ -154,7 +154,15 @@ async fn main() -> io::Result<()> {
             migration_dir,
             namespace,
         } => {
-            command::migration(&options, name, db, auth, migration_dir, namespace).await?;
+            command::generate_migration(
+                &options,
+                name,
+                db,
+                auth,
+                Path::new(migration_dir),
+                namespace,
+            )
+            .await?;
         }
     }
     Ok(())

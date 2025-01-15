@@ -61,7 +61,7 @@ pub fn diff(db1: &crate::ast::Database, db2: &crate::ast::Database) -> HashMap<S
 }
 
 // Function to diff two Schema values
-fn diff_schema(schema1: &crate::ast::Schema, schema2: &crate::ast::Schema) -> SchemaDiff {
+pub fn diff_schema(schema1: &crate::ast::Schema, schema2: &crate::ast::Schema) -> SchemaDiff {
     let mut added = Vec::new();
     let mut removed = Vec::new();
     let mut modified_records = Vec::new();
