@@ -424,7 +424,7 @@ fn to_query_file(
     result.push_str("import * as Ark from 'arktype';\n");
     result.push_str("import * as Db from '../db';\n");
     result.push_str("import * as Watched from '../watched';\n");
-    result.push_str("import * as Decode from '../db/decode';\n\n");
+    result.push_str("import * as Decode from '../db/decode';\n");
     result.push_str("import * as Env from '../db/env';\n\n");
 
     // Input args decoder
@@ -495,7 +495,7 @@ type Input = typeof Input.infer
         query.interface_hash,
         query_info.primary_db,
         format!(
-            "[ {} ]",
+            "[{}]",
             query_info
                 .attached_dbs
                 .iter()
@@ -771,7 +771,7 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
     }
 
     result.push_str(
-        "export const to_libSql_config = (env: Config, primary: DatabaseKey): LibSqlConfig => {\n",
+        "export const to_libSql_config = (env: Config, primary: DatabaseKey): LibSqlConfig | undefined => {\n",
     );
     if database.schemas.len() == 1 {
         result.push_str("  return env")
