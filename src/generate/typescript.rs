@@ -85,14 +85,9 @@ fn to_string_definition(definition: &ast::Definition) -> String {
                 "\n".repeat(*count as usize)
             }
         }
-        ast::Definition::Comment { text } => "".to_string(),
+        ast::Definition::Comment { .. } => "".to_string(),
         ast::Definition::Session(_) => "".to_string(),
-        ast::Definition::Tagged {
-            name,
-            variants,
-            start,
-            end,
-        } => {
+        ast::Definition::Tagged { name, variants, .. } => {
             let mut result = format!("type {} =", name);
             let mut is_first = true;
             for variant in variants {
@@ -104,14 +99,7 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             result.push_str(";\n\n");
             result
         }
-        ast::Definition::Record {
-            name,
-            fields,
-            start,
-            end,
-            start_name,
-            end_name,
-        } => to_type_alias(name, fields),
+        ast::Definition::Record { name, fields, .. } => to_type_alias(name, fields),
     }
 }
 
@@ -120,7 +108,7 @@ fn to_type_alias(name: &str, fields: &Vec<ast::Field>) -> String {
 
     let mut is_first = true;
     for field in fields {
-        if (ast::is_column_space(field)) {
+        if ast::is_column_space(field) {
             continue;
         }
 
@@ -168,15 +156,15 @@ fn to_string_variant(is_first: bool, indent_size: usize, variant: &ast::Variant)
 fn to_string_field(is_first: bool, indent: usize, field: &ast::Field) -> String {
     match field {
         ast::Field::ColumnLines { count } => {
-            if (*count > 2) {
+            if *count > 2 {
                 "\n\n".to_string()
             } else {
                 "\n".repeat(*count as usize)
             }
         }
         ast::Field::Column(column) => to_string_column(is_first, indent, column),
-        ast::Field::ColumnComment { text } => "".to_string(),
-        ast::Field::FieldDirective(directive) => "".to_string(),
+        ast::Field::ColumnComment { .. } => "".to_string(),
+        ast::Field::FieldDirective(_) => "".to_string(),
     }
 }
 
@@ -229,12 +217,7 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
         }
         ast::Definition::Comment { text } => "".to_string(),
         ast::Definition::Session(_) => "".to_string(),
-        ast::Definition::Tagged {
-            name,
-            variants,
-            start,
-            end,
-        } => {
+        ast::Definition::Tagged { name, variants, .. } => {
             let mut result = "".to_string();
 
             result.push_str(&format!("export const {} = ", name));
@@ -247,14 +230,7 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
             // result.push_str("        |> Db.Read.custom\n");
             result
         }
-        ast::Definition::Record {
-            name,
-            fields,
-            start,
-            end,
-            start_name,
-            end_name,
-        } => "".to_string(),
+        ast::Definition::Record { .. } => "".to_string(),
     }
 }
 
@@ -710,21 +686,6 @@ fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition)
             param.name,
             param.type_.clone().unwrap_or("unknown".to_string())
         )
-    }
-}
-
-fn operator_to_string(operator: &ast::Operator) -> &str {
-    match operator {
-        ast::Operator::Equal => "=",
-        ast::Operator::NotEqual => "!=",
-        ast::Operator::GreaterThan => ">",
-        ast::Operator::LessThan => "<",
-        ast::Operator::GreaterThanOrEqual => ">=",
-        ast::Operator::LessThanOrEqual => "<=",
-        ast::Operator::In => "in",
-        ast::Operator::NotIn => "not in",
-        ast::Operator::Like => "like",
-        ast::Operator::NotLike => "not like",
     }
 }
 
