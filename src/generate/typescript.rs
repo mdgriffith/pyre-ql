@@ -480,7 +480,7 @@ fn to_query_file(
         r#"
 export const query = Db.toRunner({{
     id: "{}",
-    primary_db: "{}",
+    primary_db: Env.DatabaseKey.{},
     attached_dbs: {},
     sql: sql,
     session: Env.Session,
@@ -494,7 +494,15 @@ type Input = typeof Input.infer
 "#,
         query.interface_hash,
         query_info.primary_db,
-        format_string_list(&query_info.attached_dbs.clone().into_iter().collect()),
+        format!(
+            "[ {} ]",
+            query_info
+                .attached_dbs
+                .iter()
+                .map(|db| format!("Env.DatabaseKey.{}", db))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         session_args,
         format_ts_list(watchers)
     );
