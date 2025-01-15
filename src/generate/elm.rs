@@ -79,13 +79,8 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             }
         }
         ast::Definition::Session(_) => "".to_string(),
-        ast::Definition::Comment { text } => "".to_string(),
-        ast::Definition::Tagged {
-            name,
-            variants,
-            start,
-            end,
-        } => {
+        ast::Definition::Comment { .. } => "".to_string(),
+        ast::Definition::Tagged { name, variants, .. } => {
             let mut result = format!("type {}\n", name);
             let mut is_first = true;
             for variant in variants {
@@ -94,14 +89,7 @@ fn to_string_definition(definition: &ast::Definition) -> String {
             }
             result
         }
-        ast::Definition::Record {
-            name,
-            fields,
-            start,
-            end,
-            start_name,
-            end_name,
-        } => to_type_alias(name, fields),
+        ast::Definition::Record { name, fields, .. } => to_type_alias(name, fields),
     }
 }
 
@@ -157,8 +145,8 @@ fn to_string_field(is_first: bool, indent: usize, field: &ast::Field) -> String 
             }
         }
         ast::Field::Column(column) => to_string_column(is_first, indent, column),
-        ast::Field::ColumnComment { text } => "".to_string(),
-        ast::Field::FieldDirective(directive) => "".to_string(),
+        ast::Field::ColumnComment { .. } => "".to_string(),
+        ast::Field::FieldDirective(_) => "".to_string(),
     }
 }
 
@@ -226,13 +214,8 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
             }
         }
         ast::Definition::Session(_) => "".to_string(),
-        ast::Definition::Comment { text } => "".to_string(),
-        ast::Definition::Tagged {
-            name,
-            variants,
-            start,
-            end,
-        } => {
+        ast::Definition::Comment { .. } => "".to_string(),
+        ast::Definition::Tagged { name, variants, .. } => {
             let mut result = "".to_string();
 
             for variant in variants {
@@ -267,14 +250,7 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
             result.push_str("        |> Db.Read.custom\n");
             result
         }
-        ast::Definition::Record {
-            name,
-            fields,
-            start,
-            end,
-            start_name,
-            end_name,
-        } => "".to_string(),
+        ast::Definition::Record { .. } => "".to_string(),
     }
 }
 
@@ -388,12 +364,7 @@ fn to_encoder_definition(definition: &ast::Definition) -> String {
         ast::Definition::Lines { count } => "".to_string(),
         ast::Definition::Comment { text } => "".to_string(),
         ast::Definition::Session(_) => "".to_string(),
-        ast::Definition::Tagged {
-            name,
-            variants,
-            start,
-            end,
-        } => {
+        ast::Definition::Tagged { name, variants, .. } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -410,14 +381,7 @@ fn to_encoder_definition(definition: &ast::Definition) -> String {
             }
             result
         }
-        ast::Definition::Record {
-            name,
-            fields,
-            start,
-            end,
-            start_name,
-            end_name,
-        } => "".to_string(),
+        ast::Definition::Record { .. } => "".to_string(),
     }
 }
 
@@ -920,30 +884,5 @@ fn to_elm_typename(type_: &str) -> String {
         "Bool" => type_.to_string(),
         "DateTime" => "Time.Posix".to_string(),
         _ => format!("Db.{}", type_).to_string(),
-    }
-}
-
-// Example: ($arg: String)
-fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition) -> String {
-    let type_string = param.type_.clone().unwrap_or("unknown".to_string());
-    if (is_first) {
-        format!("{}: {}", param.name, type_string)
-    } else {
-        format!(", {}: {}", param.name, type_string)
-    }
-}
-
-fn operator_to_string(operator: &ast::Operator) -> &str {
-    match operator {
-        ast::Operator::Equal => "=",
-        ast::Operator::NotEqual => "!=",
-        ast::Operator::GreaterThan => ">",
-        ast::Operator::LessThan => "<",
-        ast::Operator::GreaterThanOrEqual => ">=",
-        ast::Operator::LessThanOrEqual => "<=",
-        ast::Operator::In => "in",
-        ast::Operator::NotIn => "not in",
-        ast::Operator::Like => "like",
-        ast::Operator::NotLike => "not like",
     }
 }

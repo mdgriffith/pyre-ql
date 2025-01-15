@@ -404,7 +404,7 @@ pub async fn migration<'a>(
 
                     for (namespace, (schema_diff)) in diff.iter() {
                         if let Some(schema) = ast::get_schema_by_name(&current_db, &namespace) {
-                            write_migration(schema, schema_diff, migration_dir, namespace);
+                            write_migration(schema, schema_diff, migration_dir, namespace)?;
                         }
                     }
                 }
@@ -680,7 +680,7 @@ fn write_migration(
     let diff_file_path = namespace_folder.join(format!("{}_schema.diff", current_date));
 
     // Write migration file
-    let mut output = fs::File::create(migration_file);
+    let output = fs::File::create(migration_file);
 
     match output {
         Ok(mut file) => {
