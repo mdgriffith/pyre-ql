@@ -12,16 +12,16 @@ use std::path::Path;
 pub fn write(
     context: &typecheck::Context,
     database: &ast::Database,
-    out_dir: &Path,
+    typescript_dir: &Path,
 ) -> io::Result<()> {
-    filesystem::create_dir_if_not_exists(&out_dir.join("typescript"))?;
-    filesystem::create_dir_if_not_exists(&out_dir.join("typescript").join("db"))?;
+    filesystem::create_dir_if_not_exists(&typescript_dir)?;
+    filesystem::create_dir_if_not_exists(&typescript_dir.join("db"))?;
 
-    watched::write(out_dir, context);
+    watched::write(&typescript_dir, context);
 
     // Top level TS files
     // DB engine as db.ts
-    let ts_db_path = &out_dir.join(Path::new("typescript/db.ts"));
+    let ts_db_path = &typescript_dir.join(Path::new("db.ts"));
     let ts_file = Path::new(&ts_db_path);
     let mut output = fs::File::create(ts_file).expect("Failed to create file");
     output
@@ -32,7 +32,7 @@ pub fn write(
     // Includes:
     //   Session type
     //   Database mapping
-    let ts_config_path_str = &out_dir.join(Path::new("typescript/db/env.ts"));
+    let ts_config_path_str = &typescript_dir.join(Path::new("db/env.ts"));
     let ts_config_path = Path::new(&ts_config_path_str);
     let mut output = fs::File::create(ts_config_path).expect("Failed to create file");
     if let Some(config_ts) = to_env(&database) {
@@ -42,7 +42,7 @@ pub fn write(
     }
 
     // Schema-level data types
-    let ts_db_data_path = &out_dir.join(Path::new("typescript/db/data.ts"));
+    let ts_db_data_path = &typescript_dir.join(Path::new("db/data.ts"));
     let ts_data_path = Path::new(&ts_db_data_path);
     let mut output_data = fs::File::create(ts_data_path).expect("Failed to create file");
     let formatted_ts = schema(&database);
@@ -51,7 +51,7 @@ pub fn write(
         .expect("Failed to write to file");
 
     // TS Decoders for custom types.
-    let ts_db_decoder_path = &out_dir.join(Path::new("typescript/db/decode.ts"));
+    let ts_db_decoder_path = &typescript_dir.join(Path::new("db/decode.ts"));
     let ts_decoders = to_schema_decoders(&database);
     let ts_decoder_file = Path::new(&ts_db_decoder_path);
     let mut output = fs::File::create(ts_decoder_file).expect("Failed to create file");
