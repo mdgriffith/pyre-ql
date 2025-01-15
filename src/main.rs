@@ -1,9 +1,7 @@
 use clap::{Parser, Subcommand};
+use pyre::command;
 use std::io::{self};
 use std::path::Path;
-use pyre::command;
-
-
 
 #[derive(Parser)]
 #[command(name = "pyre")]
@@ -19,12 +17,10 @@ struct Cli {
 
     #[arg(long, global = true)]
     version: bool,
-
 }
 
 #[derive(Subcommand)]
 enum Commands {
-
     /// Get started using Pyre.  Generates a starter schema.
     Init {
         /// Generate a setup that has multiple database schemas.
@@ -34,7 +30,6 @@ enum Commands {
 
     /// Generate files for querying your pyre schema.
     Generate {
-
         /// Directory where output files will be written.
         #[arg(long, default_value = "pyre/generated")]
         out: String,
@@ -42,7 +37,6 @@ enum Commands {
 
     /// Format files
     Format {
-
         #[arg(required = false)]
         files: Vec<String>,
 
@@ -63,7 +57,6 @@ enum Commands {
 
     /// Introspect a database and generate a pyre schema.
     Introspect {
-
         /// A local filename, or a url, or an environment variable if prefixed with a $.
         database: String,
 
@@ -83,9 +76,9 @@ enum Commands {
         #[arg(long)]
         auth: Option<String>,
 
-         /// The Pyre schema to migrate
-         #[arg(long)]
-         namespace: Option<String>,
+        /// The Pyre schema to migrate
+        #[arg(long)]
+        namespace: Option<String>,
 
         /// Directory where migration files are stored.
         #[arg(long, default_value = "pyre/migrations")]
@@ -113,7 +106,6 @@ enum Commands {
     },
 }
 
-
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let cli = Cli::parse();
@@ -133,20 +125,35 @@ async fn main() -> io::Result<()> {
         }
         Commands::Generate { out } => {
             command::generate(&options, out)?;
-        },
+        }
         Commands::Format { files, to_stdout } => {
             command::format(&options, files, *to_stdout)?;
-        },
+        }
         Commands::Check { files, json } => {
             command::check(&options, files.clone(), *json)?;
         }
-        Commands::Introspect { database, auth, namespace } => {
+        Commands::Introspect {
+            database,
+            auth,
+            namespace,
+        } => {
             command::introspect(&options, database, auth, namespace).await?;
         }
-        Commands::Migrate { database, auth, migration_dir, namespace } => {
+        Commands::Migrate {
+            database,
+            auth,
+            migration_dir,
+            namespace,
+        } => {
             command::migrate(&options, database, auth, migration_dir, namespace).await?;
         }
-        Commands::Migration { name, db, auth, migration_dir, namespace } => {
+        Commands::Migration {
+            name,
+            db,
+            auth,
+            migration_dir,
+            namespace,
+        } => {
             command::migration(&options, name, db, auth, migration_dir, namespace).await?;
         }
     }

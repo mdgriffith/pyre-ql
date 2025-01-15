@@ -1,9 +1,7 @@
 use crate::ast;
-use crate::generate::sql::cte;
 use crate::generate::sql::select;
 use crate::generate::sql::to_sql;
 use crate::typecheck;
-
 
 pub fn update_to_string(
     context: &typecheck::Context,

@@ -1,8 +1,8 @@
 use crate::ast;
+use crate::error;
 use crate::ext::string;
 use crate::format;
 use crate::parser;
-use crate::error;
 use libsql;
 use serde;
 use std::collections::HashMap;
@@ -95,14 +95,20 @@ pub enum DbError {
 impl DbError {
     pub fn format_error(&self) -> String {
         match self {
-            DbError::AuthTokenRequired => error::format_custom_error("Authentication Error", "Authentication token is required"),
-            DbError::EnvVarNotFound(var) => error::format_custom_error("Unknown Environment Variable", &format!("Environment variable {} not found", var)),
-            DbError::DatabaseError(e) => error::format_custom_error("Database Error", &format!("Database error: {:?}", e)),
+            DbError::AuthTokenRequired => error::format_custom_error(
+                "Authentication Error",
+                "Authentication token is required",
+            ),
+            DbError::EnvVarNotFound(var) => error::format_custom_error(
+                "Unknown Environment Variable",
+                &format!("Environment variable {} not found", var),
+            ),
+            DbError::DatabaseError(e) => {
+                error::format_custom_error("Database Error", &format!("Database error: {:?}", e))
+            }
         }
     }
 }
-
-
 
 fn parse_arg_or_env(arg: &str) -> Result<String, DbError> {
     if arg.starts_with('$') {
@@ -211,7 +217,10 @@ fn to_formatted_tablename_lower(table_name: &str) -> String {
     string::snake_to_camel_and_singular(table_name)
 }
 
-pub async fn introspect(db: &libsql::Database, namespace: &str) -> Result<Introspection, libsql::Error> {
+pub async fn introspect(
+    db: &libsql::Database,
+    namespace: &str,
+) -> Result<Introspection, libsql::Error> {
     match db.connect() {
         Ok(conn) => {
             let args: Vec<String> = vec![];
@@ -399,7 +408,7 @@ pub async fn introspect(db: &libsql::Database, namespace: &str) -> Result<Intros
                     format::schema(&mut schema);
 
                     let new_database = ast::Database {
-                        schemas: vec![schema]
+                        schemas: vec![schema],
                     };
 
                     Ok(Introspection {
@@ -461,23 +470,27 @@ impl MigrationError {
     pub fn format_error(&self) -> String {
         match self {
             MigrationError::SqlError(sql_error) => error::format_libsql_error(sql_error),
-            MigrationError::MigrationReadIoError(io_error, path) => {
-                error::format_custom_error("Migration Read Error", 
-                    &format!("I was looking for migrations in {},\nbut ran into the following issue:\n\n{}", 
+            MigrationError::MigrationReadIoError(io_error, path) => error::format_custom_error(
+                "Migration Read Error",
+                &format!(
+                    "I was looking for migrations in {},\nbut ran into the following issue:\n\n{}",
                     error::yellow_if(true, &path.display().to_string()),
-                    io_error))
-            }
+                    io_error
+                ),
+            ),
         }
     }
 }
-
 
 pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(), MigrationError> {
     // Read migration directory
     let migration_file_result = read_migrations(migration_folder);
     match migration_file_result {
         Err(err) => {
-            return Err(MigrationError::MigrationReadIoError(err, migration_folder.to_path_buf()));
+            return Err(MigrationError::MigrationReadIoError(
+                err,
+                migration_folder.to_path_buf(),
+            ));
         }
         Ok(migration_files) => {
             let introspection_result = introspect(&db, DEFAULT_SCHEMANAME).await;

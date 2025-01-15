@@ -1,5 +1,5 @@
-use crate::{ast, db, error};
 use crate::error::{DefInfo, Error, ErrorType, Location, Range, VariantDef};
+use crate::{ast, db, error};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -16,11 +16,10 @@ pub struct Context {
     pub variants: HashMap<String, (Option<Range>, Vec<VariantDef>)>,
 }
 
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Table {
     pub schema: String,
-    pub record: ast::RecordDetails
+    pub record: ast::RecordDetails,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -37,10 +36,7 @@ fn convert_range(range: &ast::Range) -> Range {
     }
 }
 
-pub fn get_linked_table<'a>(
-    context: &'a Context,
-    link: &'a ast::LinkDetails,
-) -> Option<&'a Table> {
+pub fn get_linked_table<'a>(context: &'a Context, link: &'a ast::LinkDetails) -> Option<&'a Table> {
     context
         .tables
         .get(&crate::ext::string::decapitalize(&link.foreign.table))
@@ -150,18 +146,16 @@ pub fn check_schema(db: &ast::Database) -> Result<Context, Vec<Error>> {
         if schem.namespace == db::DEFAULT_SCHEMANAME {
             continue;
         } else if !is_capitalized(&schem.namespace) {
-            let body =  format!("This schema name must be capitalized: {}", &error::yellow_if(true, &schem.namespace));
-            let error = error::format_custom_error(
-                "Schema name formatting",
-                 &body
+            let body = format!(
+                "This schema name must be capitalized: {}",
+                &error::yellow_if(true, &schem.namespace)
             );
+            let error = error::format_custom_error("Schema name formatting", &body);
             eprintln!("{}", error);
             std::process::exit(1);
         }
     }
 
-
-   
     check_schema_definitions(&context, db, &mut errors);
 
     if (!errors.is_empty()) {
@@ -199,15 +193,16 @@ fn to_single_range(start: &Option<ast::Location>, end: &Option<ast::Location>) -
     }
 }
 
-
 /// Gathers information for a context.
 /// Also checks for a number of errors
 pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>> {
     let mut context = empty_context();
     let mut errors = Vec::new();
-    context.valid_namespaces = database.schemas.iter().map(|schema| schema.namespace.clone()).collect();
-
-    
+    context.valid_namespaces = database
+        .schemas
+        .iter()
+        .map(|schema| schema.namespace.clone())
+        .collect();
 
     // Check for duplicate records
     // Check for duplicate types
@@ -215,7 +210,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
     // Gather type names
     for schema in &database.schemas {
         context.session = schema.session.clone();
-        
+
         for file in &schema.files {
             for definition in &file.definitions {
                 match definition {
@@ -265,7 +260,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                         context.tables.insert(
                             crate::ext::string::decapitalize(&name),
                             Table {
-                                schema: schema.namespace.clone(), 
+                                schema: schema.namespace.clone(),
                                 record: ast::RecordDetails {
                                     name: name.clone(),
                                     fields: fields.clone(),
@@ -273,7 +268,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                     end: end.clone(),
                                     start_name: start_name.clone(),
                                     end_name: end_name.clone(),
-                                }
+                                },
                             },
                         );
                     }
@@ -343,7 +338,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
 
     // Check for duplicate fields
     // Check for duplicate tablenames
-    // 
+    //
     for schema in &database.schemas {
         for file in &schema.files {
             for definition in &file.definitions {
@@ -409,7 +404,6 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                 ))) => tablenames.push(convert_range(tablename_range)),
 
                                 ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-
                                     if !context.valid_namespaces.contains(&link.foreign.schema) {
                                         errors.push(Error {
                                             filepath: file.path.clone(),
@@ -481,7 +475,10 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                                 },
                                                 locations: vec![Location {
                                                     contexts: to_range(&start, &end),
-                                                    primary: to_range(&link.start_name, &link.end_name),
+                                                    primary: to_range(
+                                                        &link.start_name,
+                                                        &link.end_name,
+                                                    ),
                                                 }],
                                             });
                                         }
@@ -498,7 +495,10 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                                 },
                                                 locations: vec![Location {
                                                     contexts: to_range(&start, &end),
-                                                    primary: to_range(&link.start_name, &link.end_name),
+                                                    primary: to_range(
+                                                        &link.start_name,
+                                                        &link.end_name,
+                                                    ),
                                                 }],
                                             });
                                         }
@@ -548,8 +548,11 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
     }
 }
 
-
-fn check_schema_definitions(context: &Context, database: &ast::Database, mut errors: &mut Vec<Error>) {
+fn check_schema_definitions(
+    context: &Context,
+    database: &ast::Database,
+    mut errors: &mut Vec<Error>,
+) {
     let vars = context.variants.clone();
     for (variant_name, (maybe_type_range, mut instances)) in vars {
         if instances.len() > 1 {
@@ -704,7 +707,11 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, mut err
                                             filepath: file.path.clone(),
                                             error_type: ErrorType::UnknownType {
                                                 found: field.type_.clone(),
-                                                known_types: context.types.keys().cloned().collect(),
+                                                known_types: context
+                                                    .types
+                                                    .keys()
+                                                    .cloned()
+                                                    .collect(),
                                             },
                                             locations: vec![Location {
                                                 contexts,
@@ -770,25 +777,18 @@ pub enum ParamInfo {
     },
 }
 
-
 pub struct QueryInfo {
     pub variables: HashMap<String, ParamInfo>,
     pub primary_db: String,
     pub attached_dbs: HashSet<String>,
 }
 
-
 struct UsedNamespaces {
     primary: HashSet<String>,
     secondary: HashSet<String>,
 }
 
-
-pub fn check_query(
-    context: &Context,
-    errors: &mut Vec<Error>,
-    query: &ast::Query,
-) -> QueryInfo {
+pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Query) -> QueryInfo {
     // We need to check
     // 1. The field exists on the record in the schema
     //    What type is the field (add to `QueryField`)
@@ -798,7 +798,10 @@ pub fn check_query(
     //     2.b Every used param is defined
     //
     let mut param_names: HashMap<String, ParamInfo> = HashMap::new();
-    let mut used_namespaces: UsedNamespaces = UsedNamespaces { primary: HashSet::new(), secondary: HashSet::new() };
+    let mut used_namespaces: UsedNamespaces = UsedNamespaces {
+        primary: HashSet::new(),
+        secondary: HashSet::new(),
+    };
 
     // Check that all param types are known
     // Gather them in param_names so we can calculate usage.
@@ -851,7 +854,6 @@ pub fn check_query(
         }
     }
 
-
     // Add session fields to the param_names collection
     match &context.session {
         None => (),
@@ -877,7 +879,6 @@ pub fn check_query(
         }
     }
 
-    
     // Verify that all fields exist in the schema
     for field in &query.fields {
         match context.tables.get(&field.name) {
@@ -892,18 +893,16 @@ pub fn check_query(
                     primary: to_range(&field.start_fieldname, &field.end_fieldname),
                 }],
             }),
-            Some(table) => {
-                check_table_query(
-                    context,
-                    errors,
-                    &query.operation,
-                    None,
-                    table,
-                    field,
-                    &mut param_names,
-                    &mut used_namespaces
-                )
-            },
+            Some(table) => check_table_query(
+                context,
+                errors,
+                &query.operation,
+                None,
+                table,
+                field,
+                &mut param_names,
+                &mut used_namespaces,
+            ),
         }
     }
 
@@ -964,7 +963,6 @@ pub fn check_query(
         attached_dbs: secondary_dbs,
     }
 }
-
 
 fn get_primary_db(namespaces: &UsedNamespaces) -> &str {
     if namespaces.primary.is_empty() && namespaces.secondary.is_empty() {
@@ -1295,16 +1293,40 @@ fn check_value(
 /// So, if any field is set, it needs to be on a primary schema.
 /// If the operation is a delete, the namespace is always primary
 /// Otherwise, it's secondary
-fn add_schema(context: &Context, table: &Table, operation: &ast::QueryOperation, query: &ast::QueryField, field: &ast::QueryField, errors: &mut Vec<Error>, used_schemas: &mut UsedNamespaces) {
+fn add_schema(
+    context: &Context,
+    table: &Table,
+    operation: &ast::QueryOperation,
+    query: &ast::QueryField,
+    field: &ast::QueryField,
+    errors: &mut Vec<Error>,
+    used_schemas: &mut UsedNamespaces,
+) {
     match operation {
         ast::QueryOperation::Delete => {
-            insert_primary_schema(context, table, operation, query, field, errors, used_schemas);
+            insert_primary_schema(
+                context,
+                table,
+                operation,
+                query,
+                field,
+                errors,
+                used_schemas,
+            );
         }
         ast::QueryOperation::Update | ast::QueryOperation::Insert => {
             if field.set == None {
                 used_schemas.secondary.insert(table.schema.to_string());
             } else {
-                insert_primary_schema(context, table, operation, query, field, errors, used_schemas);
+                insert_primary_schema(
+                    context,
+                    table,
+                    operation,
+                    query,
+                    field,
+                    errors,
+                    used_schemas,
+                );
             }
         }
         ast::QueryOperation::Select => {
@@ -1313,7 +1335,15 @@ fn add_schema(context: &Context, table: &Table, operation: &ast::QueryOperation,
     }
 }
 
-fn insert_primary_schema(context: &Context, table: &Table, operation: &ast::QueryOperation, query: &ast::QueryField, field: &ast::QueryField, errors: &mut Vec<Error>, used_schemas: &mut UsedNamespaces) {
+fn insert_primary_schema(
+    context: &Context,
+    table: &Table,
+    operation: &ast::QueryOperation,
+    query: &ast::QueryField,
+    field: &ast::QueryField,
+    errors: &mut Vec<Error>,
+    used_schemas: &mut UsedNamespaces,
+) {
     let schema_name = table.schema.to_string();
     if used_schemas.primary.contains(&schema_name) {
         errors.push(Error {
@@ -1322,17 +1352,16 @@ fn insert_primary_schema(context: &Context, table: &Table, operation: &ast::Quer
                 field_table: table.record.name.clone(),
                 field_schema: table.schema.to_string(),
                 operation: operation.clone(),
-                other_schemas: used_schemas.primary.clone().into_iter().collect()
+                other_schemas: used_schemas.primary.clone().into_iter().collect(),
             },
             locations: vec![Location {
                 contexts: to_range(&query.start, &query.end),
                 primary: to_range(&field.start_fieldname, &field.end_fieldname),
             }],
         });
-    } 
+    }
     used_schemas.primary.insert(table.schema.to_string());
 }
-
 
 fn check_table_query(
     context: &Context,
@@ -1342,7 +1371,7 @@ fn check_table_query(
     table: &Table,
     query: &ast::QueryField,
     params: &mut HashMap<String, ParamInfo>,
-    used_namespaces: &mut UsedNamespaces
+    used_namespaces: &mut UsedNamespaces,
 ) {
     if query.fields.is_empty() {
         errors.push(Error {
@@ -1413,15 +1442,28 @@ fn check_table_query(
                         }
 
                         check_where_args(
-                            context, &arg.start, &arg.end, &table.record, errors, params, &where_args,
+                            context,
+                            &arg.start,
+                            &arg.end,
+                            &table.record,
+                            errors,
+                            params,
+                            &where_args,
                         );
                     }
                     _ => (),
                 }
             }
             ast::ArgField::Field(field) => {
-
-                add_schema(context, &table, operation, query, field, errors, used_namespaces);
+                add_schema(
+                    context,
+                    &table,
+                    operation,
+                    query,
+                    field,
+                    errors,
+                    used_namespaces,
+                );
 
                 let aliased_name = ast::get_aliased_name(field);
 
@@ -1456,7 +1498,16 @@ fn check_table_query(
                             if link.link_name == field.name {
                                 is_known_field = true;
                                 has_nested_selected = true;
-                                check_link(context, operation, errors, &table.record, link, field, params, used_namespaces)
+                                check_link(
+                                    context,
+                                    operation,
+                                    errors,
+                                    &table.record,
+                                    link,
+                                    field,
+                                    params,
+                                    used_namespaces,
+                                )
                             }
                             ()
                         }
@@ -1481,9 +1532,6 @@ fn check_table_query(
             }
         }
     }
-
-
-
 
     // Only one @limit allowed
     let limit_len = limits.len();
@@ -1515,7 +1563,6 @@ fn check_table_query(
         });
     }
 
-    
     if ((offset_len > 0 || limit_len > 0) && has_nested_selected) {
         errors.push(Error {
             filepath: context.current_filepath.clone(),
@@ -1563,16 +1610,16 @@ fn check_table_query(
             }
 
             for col in ast::collect_columns(&table.record.fields) {
-                if ast::is_primary_key(&col) 
-                    || ast::has_default_value(&col) 
-                    || through_link.map_or(false, |link| link.foreign.fields.contains(&col.name)) {
+                if ast::is_primary_key(&col)
+                    || ast::has_default_value(&col)
+                    || through_link.map_or(false, |link| link.foreign.fields.contains(&col.name))
+                {
                     // Primary keys, fields with defaults, and  aren't required
                     // (for the moment, we should differentiate between auto-incrementing
                     // and non-auto-incrementing primary keys)
                     continue;
                 }
 
-                
                 match queried_fields.get(&col.name) {
                     Some(is_set) => {
                         if (!is_set) {
@@ -1590,7 +1637,7 @@ fn check_table_query(
                     }
                     None => {
                         missing_fields.push(col.name.clone());
-                    },
+                    }
                 }
             }
 
@@ -1606,8 +1653,6 @@ fn check_table_query(
                     }],
                 });
             }
-
-
         }
         _ => {}
     }
@@ -1709,16 +1754,15 @@ fn get_column_reference(fields: &Vec<ast::Field>) -> Vec<(String, String)> {
     known_fields
 }
 
-
 fn check_link(
     context: &Context,
-    operation: &ast::QueryOperation,    
+    operation: &ast::QueryOperation,
     errors: &mut Vec<Error>,
     local_table: &ast::RecordDetails,
     link: &ast::LinkDetails,
     field: &ast::QueryField,
     params: &mut HashMap<String, ParamInfo>,
-    used_namespaces: &mut UsedNamespaces
+    used_namespaces: &mut UsedNamespaces,
 ) {
     match operation {
         ast::QueryOperation::Insert => {
@@ -1809,7 +1853,16 @@ fn check_link(
                     primary: to_range(&field.start, &field.end),
                 }],
             }),
-            Some(table) => check_table_query(context, errors, operation, Some(link),table, field, params, used_namespaces),
+            Some(table) => check_table_query(
+                context,
+                errors,
+                operation,
+                Some(link),
+                table,
+                field,
+                params,
+                used_namespaces,
+            ),
         }
     }
 }

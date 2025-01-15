@@ -48,7 +48,11 @@ pub enum RecordChange {
 pub fn diff(db1: &crate::ast::Database, db2: &crate::ast::Database) -> HashMap<String, SchemaDiff> {
     let mut schema_diffs = HashMap::new();
     for schema1 in &db1.schemas {
-        if let Some(schema2) = db2.schemas.iter().find(|s| s.namespace == schema1.namespace) {
+        if let Some(schema2) = db2
+            .schemas
+            .iter()
+            .find(|s| s.namespace == schema1.namespace)
+        {
             let namespace = schema1.namespace.clone();
             schema_diffs.insert(namespace, diff_schema(schema1, schema2));
         }

@@ -41,7 +41,11 @@ pub fn write(dir: &Path, context: &typecheck::Context) {
 
     for (name, table) in &context.tables {
         for watched_operation in ast::to_watched_operations(&table.record) {
-            let name = format!("{}{}", table.record.name, operation_name(&watched_operation));
+            let name = format!(
+                "{}{}",
+                table.record.name,
+                operation_name(&watched_operation)
+            );
             content.push_str(&format!(
                 "\n\nexport interface {} {{\n  kind: WatchedKind.{};\n  data: {};\n}}",
                 name, name, "{}"
@@ -53,7 +57,11 @@ pub fn write(dir: &Path, context: &typecheck::Context) {
     let mut at_least_one_constructor = false;
     for (name, table) in &context.tables {
         for watched_operation in ast::to_watched_operations(&table.record) {
-            let name = format!("{}{}", table.record.name, operation_name(&watched_operation));
+            let name = format!(
+                "{}{}",
+                table.record.name,
+                operation_name(&watched_operation)
+            );
             if !at_least_one_constructor {
                 content.push_str(&format!("\n    = {}", name));
                 at_least_one_constructor = true;

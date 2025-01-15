@@ -1,10 +1,9 @@
-use std::fs;
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fs;
+use std::io::{self, Read};
+use std::path::Path;
 use walkdir::WalkDir;
-
 
 #[derive(Debug)]
 pub struct Found {
@@ -44,7 +43,6 @@ pub enum NamespacesFound {
 }
 
 pub fn read_namespaces(dir: &Path) -> io::Result<NamespacesFound> {
-    
     // Single schema file
     let schema_pyre_path = dir.join("schema.pyre");
     if schema_pyre_path.exists() {
@@ -61,7 +59,8 @@ pub fn read_namespaces(dir: &Path) -> io::Result<NamespacesFound> {
             match entry {
                 Ok(entry) => {
                     if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                        namespaces.insert(entry.file_name().to_str().unwrap_or_default().to_string());
+                        namespaces
+                            .insert(entry.file_name().to_str().unwrap_or_default().to_string());
                     } else {
                         has_filepaths = true;
                     }
@@ -81,14 +80,12 @@ pub fn read_namespaces(dir: &Path) -> io::Result<NamespacesFound> {
     Ok(NamespacesFound::NothingFound)
 }
 
-
-
 // Helper function to get namespace from path
 // This function takes a path and a base directory as input and returns the namespace
 // of the path relative to the base directory. It assumes the path is in the format
 // "/base/schema/{namespace}/file.pyre". If the path is not a subdirectory of
 // the base directory, it returns "default" as the namespace.
-// 
+//
 // Examples:
 // - "/base/schema/namespace1/file.pyre" -> "namespace1"
 // - "/base/schema/namespace2/subdir/file.pyre" -> "namespace2"
@@ -191,4 +188,3 @@ pub fn create_dir_if_not_exists(path: &Path) -> io::Result<()> {
         fs::create_dir_all(path)
     }
 }
-

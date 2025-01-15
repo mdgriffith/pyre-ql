@@ -123,7 +123,6 @@ pub fn to_selection(
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
             .unwrap();
 
-
         result.append(&mut to_subselection(
             2,
             context,
@@ -163,8 +162,6 @@ fn to_subselection(
             return vec![str];
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-           
-
             let foreign_table_alias = match query_field.alias {
                 Some(ref alias) => &alias,
                 None => &link.foreign.table,
@@ -272,7 +269,6 @@ fn to_subfrom(
 ) -> Vec<String> {
     match table_field {
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-
             let table_name = get_tablename(table_alias_kind, table);
 
             let foreign_table_alias = match query_field.alias {
@@ -393,13 +389,13 @@ pub fn render_where(
     query_field: &ast::QueryField,
     result: &mut String,
 ) {
-    let mut where_vals = vec![]; 
+    let mut where_vals = vec![];
 
     let new_params = render_where_params(
         &ast::collect_query_args(&query_field.fields),
         table,
         query_info,
-        query_field
+        query_field,
     );
 
     where_vals.extend(new_params);
@@ -468,10 +464,14 @@ fn to_subwhere(
 ) -> Vec<String> {
     match table_field {
         ast::Field::Column(column) => {
-            return render_where_params(&ast::collect_query_args(&query_field.fields), table, query_info, query_field);
+            return render_where_params(
+                &ast::collect_query_args(&query_field.fields),
+                table,
+                query_info,
+                query_field,
+            );
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-
             // let foreign_table_alias = match query_field.alias {
             //     Some(ref alias) => &alias,
             //     None => &link.foreign.table,
@@ -515,10 +515,11 @@ fn render_where_arg(
 ) -> String {
     match arg {
         ast::WhereArg::Column(fieldname, operator, value) => {
-            let qualified_column_name = to_sql::render_real_where_field(table, query_info, fieldname);
+            let qualified_column_name =
+                to_sql::render_real_where_field(table, query_info, fieldname);
 
             let operator = to_sql::operator(operator);
-            
+
             let value = to_sql::render_value(value);
             format!("{} {} {}", qualified_column_name, operator, value)
         }

@@ -5,22 +5,19 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-
-use crate::generate;
-use crate::filesystem;
 use crate::ast;
 use crate::db;
 use crate::diff;
+use crate::error;
+use crate::filesystem;
 use crate::format;
+use crate::generate;
 use crate::parser;
 use crate::typecheck;
-use crate::error;
-
 
 pub struct Options<'a> {
     pub in_dir: &'a Path,
 }
-
 
 fn id_column() -> ast::Column {
     ast::Column {
@@ -38,8 +35,6 @@ fn id_column() -> ast::Column {
     }
 }
 
-
-
 // Top level commands
 pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
     let mut database = ast::Database {
@@ -50,16 +45,19 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
     if !pyre_dir.exists() {
         fs::create_dir(&pyre_dir).expect("Failed to create pyre directory");
     } else {
-        error::format_custom_error("Directory exists", "The pyre directory already exists in the current directory");
+        error::format_custom_error(
+            "Directory exists",
+            "The pyre directory already exists in the current directory",
+        );
         std::process::exit(1);
     }
 
-    if multidb {        
+    if multidb {
         let schema_dir = pyre_dir.join("schema");
         filesystem::create_dir_if_not_exists(&schema_dir)?;
-        
+
         // Create Base Schema
-        let base_dir = schema_dir.join("base"); 
+        let base_dir = schema_dir.join("base");
         filesystem::create_dir_if_not_exists(&base_dir)?;
 
         database.schemas.push(ast::Schema {
@@ -74,12 +72,12 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
                     end: None,
                     start_name: None,
                     end_name: None,
-                }]
+                }],
             }],
         });
 
         // Create User Schema
-        let user_dir = schema_dir.join("user"); 
+        let user_dir = schema_dir.join("user");
         filesystem::create_dir_if_not_exists(&user_dir)?;
 
         database.schemas.push(ast::Schema {
@@ -90,39 +88,39 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
                 definitions: vec![ast::Definition::Record {
                     name: "Example".to_string(),
                     fields: vec![
-                            ast::Field::FieldDirective(ast::FieldDirective::Link(ast::LinkDetails {
-                                link_name: "user".to_string(),
-                                local_ids: vec!["userId".to_string()],
-                                foreign: ast::Qualified {
-                                    schema: "base".to_string(),
-                                    table: "User".to_string(),
-                                    fields: vec!["id".to_string()],
-                                },
-                                start_name: None,
-                                end_name: None,
-                            })),
-                            ast::Field::Column(id_column()), 
-                            ast::Field::Column(ast::Column {
-                                name: "userId".to_string(),
-                                type_: "Int".to_string(),
-                                serialization_type: ast::SerializationType::Integer,
-                                nullable: false,
-                                directives: vec![ast::ColumnDirective::PrimaryKey],
-                                start: None,
-                                end: None,
-                                start_name: None,
-                                end_name: None,
-                                start_typename: None,
-                                end_typename: None,
-                            })],
+                        ast::Field::FieldDirective(ast::FieldDirective::Link(ast::LinkDetails {
+                            link_name: "user".to_string(),
+                            local_ids: vec!["userId".to_string()],
+                            foreign: ast::Qualified {
+                                schema: "base".to_string(),
+                                table: "User".to_string(),
+                                fields: vec!["id".to_string()],
+                            },
+                            start_name: None,
+                            end_name: None,
+                        })),
+                        ast::Field::Column(id_column()),
+                        ast::Field::Column(ast::Column {
+                            name: "userId".to_string(),
+                            type_: "Int".to_string(),
+                            serialization_type: ast::SerializationType::Integer,
+                            nullable: false,
+                            directives: vec![ast::ColumnDirective::PrimaryKey],
+                            start: None,
+                            end: None,
+                            start_name: None,
+                            end_name: None,
+                            start_typename: None,
+                            end_typename: None,
+                        }),
+                    ],
                     start: None,
                     end: None,
                     start_name: None,
                     end_name: None,
-                }]
+                }],
             }],
         });
-      
     } else {
         let records = vec![ast::Definition::Record {
             name: "User".to_string(),
@@ -137,7 +135,7 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
             session: None,
             files: vec![ast::SchemaFile {
                 path: pyre_dir.join("schema.pyre").to_str().unwrap().to_string(),
-                definitions: records
+                definitions: records,
             }],
         });
     }
@@ -148,9 +146,12 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
     Ok(())
 }
 
-
 pub fn generate(options: &Options, out: &str) -> io::Result<()> {
-    execute(options, filesystem::collect_filepaths(&options.in_dir)?, Path::new(out))
+    execute(
+        options,
+        filesystem::collect_filepaths(&options.in_dir)?,
+        Path::new(out),
+    )
 }
 
 pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Result<()> {
@@ -236,7 +237,10 @@ pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()
                         formatted_errors.push(error::format_json(error));
                     }
                 }
-                println!("{}", serde_json::to_string_pretty(&formatted_errors).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&formatted_errors).unwrap()
+                );
                 // eprintln!("{}", &formatted_error);
             } else {
                 for file_error in errors {
@@ -258,26 +262,35 @@ pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()
     Ok(())
 }
 
-pub async fn introspect<'a>(options: &'a Options<'a>, database: &str, auth: &Option<String>, namespace: &Option<String>) -> io::Result<()> {
+pub async fn introspect<'a>(
+    options: &'a Options<'a>,
+    database: &str,
+    auth: &Option<String>,
+    namespace: &Option<String>,
+) -> io::Result<()> {
     let conn_result = db::connect(&database.to_string(), auth).await;
     match conn_result {
         Ok(conn) => {
-            
-            let full_namespace = namespace.clone().unwrap_or(db::DEFAULT_SCHEMANAME.to_string());
+            let full_namespace = namespace
+                .clone()
+                .unwrap_or(db::DEFAULT_SCHEMANAME.to_string());
             let introspection_result = db::introspect(&conn, &full_namespace).await;
             match introspection_result {
                 Ok(introspection) => {
                     let path: PathBuf = if full_namespace != db::DEFAULT_SCHEMANAME {
-                        Path::new(&options.in_dir).join("schema").join(&full_namespace).join("schema.pyre")
+                        Path::new(&options.in_dir)
+                            .join("schema")
+                            .join(&full_namespace)
+                            .join("schema.pyre")
                     } else {
                         Path::new(&options.in_dir).join("schema.pyre")
                     };
 
                     if path.exists() {
                         println!(
-                                                    "\nSchema already exists\n\n   {}",
-                                                    path.display().to_string().yellow()
-                                                );
+                            "\nSchema already exists\n\n   {}",
+                            path.display().to_string().yellow()
+                        );
                         println!("\nRemove it if you want to generate a new one!");
                     } else {
                         println!("Schema written to {:?}", path.to_str());
@@ -285,7 +298,7 @@ pub async fn introspect<'a>(options: &'a Options<'a>, database: &str, auth: &Opt
                         if (ast::is_empty_db(&introspection.schema)) {
                             println!("I was able to successfully connect to the database, but I couldn't find any tables or views!");
                         } else {
-                            write_db_schema(&options,  &introspection.schema)?;
+                            write_db_schema(&options, &introspection.schema)?;
                         }
                     }
                 }
@@ -301,7 +314,13 @@ pub async fn introspect<'a>(options: &'a Options<'a>, database: &str, auth: &Opt
     Ok(())
 }
 
-pub async fn migrate<'a>(options: &'a Options<'a>, database: &str, auth: &Option<String>, migration_dir: &str, namespace: &Option<String>) -> io::Result<()> {
+pub async fn migrate<'a>(
+    options: &'a Options<'a>,
+    database: &str,
+    auth: &Option<String>,
+    migration_dir: &str,
+    namespace: &Option<String>,
+) -> io::Result<()> {
     // Namespace is required if there are multiple dbs
     // Otherwise, is disallowed
     check_namespace_requirements(&namespace, &options);
@@ -326,12 +345,21 @@ pub async fn migrate<'a>(options: &'a Options<'a>, database: &str, auth: &Option
     Ok(())
 }
 
-pub async fn migration<'a>(options: &'a Options<'a>, name: &str, db: &str, auth: &Option<String>, migration_dir: &str, namespace: &Option<String>) -> io::Result<()> {
+pub async fn migration<'a>(
+    options: &'a Options<'a>,
+    name: &str,
+    db: &str,
+    auth: &Option<String>,
+    migration_dir: &str,
+    namespace: &Option<String>,
+) -> io::Result<()> {
     // Namespace is required if there are multiple dbs
     // Otherwise, is disallowed
     check_namespace_requirements(&namespace, &options);
 
-    let target_namespace = namespace.clone().unwrap_or_else(|| db::DEFAULT_SCHEMANAME.to_string());
+    let target_namespace = namespace
+        .clone()
+        .unwrap_or_else(|| db::DEFAULT_SCHEMANAME.to_string());
 
     let connection_result = db::connect(&db.to_string(), auth).await;
     match connection_result {
@@ -344,7 +372,7 @@ pub async fn migration<'a>(options: &'a Options<'a>, name: &str, db: &str, auth:
                 Ok(introspection) => {
                     let migration_dir = Path::new(migration_dir);
                     let existing_migrations =
-                    db::read_migration_items(migration_dir).unwrap_or(vec![]);
+                        db::read_migration_items(migration_dir).unwrap_or(vec![]);
 
                     let mut not_applied: Vec<String> = vec![];
                     for migration_from_file in existing_migrations {
@@ -361,9 +389,9 @@ pub async fn migration<'a>(options: &'a Options<'a>, name: &str, db: &str, auth:
                     }
                     if not_applied.len() > 0 {
                         println!(
-                                                    "\nIt looks like some migrations have not been applied:\n\n    {}",
-                                                    not_applied.join("\n   ")
-                                                );
+                            "\nIt looks like some migrations have not been applied:\n\n    {}",
+                            not_applied.join("\n   ")
+                        );
                         println!("\nRun `pyre migrate` to apply these migrations before generating a new one.",);
                         return Ok(());
                     }
@@ -372,7 +400,6 @@ pub async fn migration<'a>(options: &'a Options<'a>, name: &str, db: &str, auth:
                     let paths = filesystem::collect_filepaths(&options.in_dir)?;
                     let current_db = parse_database_schemas(&options, &paths)?;
 
-
                     let diff = diff::diff(&introspection.schema, &current_db);
 
                     for (namespace, (schema_diff)) in diff.iter() {
@@ -380,7 +407,6 @@ pub async fn migration<'a>(options: &'a Options<'a>, name: &str, db: &str, auth:
                             write_migration(schema, schema_diff, migration_dir, namespace);
                         }
                     }
-
                 }
                 Err(err) => {
                     println!("Failed to connect to database: {:?}", err);
@@ -391,50 +417,58 @@ pub async fn migration<'a>(options: &'a Options<'a>, name: &str, db: &str, auth:
     Ok(())
 }
 
-
-
-// 
+//
 //   Helpers
-// 
+//
 
 fn check_namespace_requirements(namespace: &Option<String>, options: &Options) {
     let namespaces_result = filesystem::read_namespaces(Path::new(&options.in_dir));
     match namespaces_result {
-        Ok(namespaces_found) => {
-            match namespaces_found {
-                filesystem::NamespacesFound::Default => {
-                    if let Some(namespace) = namespace {
-                        println!("{}", error::format_custom_error("Namespace is not needed", "It looks like you only have one schema, which means you don't need to provide a namespace."));
-                        std::process::exit(1);
-                    }
-                }
-                filesystem::NamespacesFound::MultipleNamespaces(namespaces) => {
-                    if let Some(namespace) = namespace {
-                        if !namespaces.contains(namespace.as_str()) {
-                            let error_body = format!("{} is not one of the allowed namespaces:\n{}", 
-                                error::yellow_if(true, namespace),
-                                error::format_yellow_list(true, namespaces.into_iter().collect::<Vec<_>>())
-                            );                                    
-                            let error_message = error::format_custom_error("Unknown Schema", &error_body);
-                            println!("{}", error_message);
-                            std::process::exit(1);
-                        }
-                    } else {
-                        let error_body = format!("It looks like you have multiple schemas:\n{}\n Let me know which one you want to migrate by passing {}",
-                            error::format_yellow_list(true, namespaces.into_iter().collect::<Vec<_>>()),
-                            error::cyan_if(true, "--namespace SCHEMA_TO_MIGRATE")
-                        );                                    
-                        let error_message = error::format_custom_error("Unknown Schema", &error_body);
-                        println!("{}", error_message);
-                        std::process::exit(1);
-                    }
-                }
-                filesystem::NamespacesFound::EmptySchemaDir | filesystem::NamespacesFound::NothingFound => {
-                    println!("{}", error::format_custom_error("Schema Not Found", "I was trying to find the schema, but it's not available."));
+        Ok(namespaces_found) => match namespaces_found {
+            filesystem::NamespacesFound::Default => {
+                if let Some(namespace) = namespace {
+                    println!("{}", error::format_custom_error("Namespace is not needed", "It looks like you only have one schema, which means you don't need to provide a namespace."));
                     std::process::exit(1);
                 }
             }
-        }
+            filesystem::NamespacesFound::MultipleNamespaces(namespaces) => {
+                if let Some(namespace) = namespace {
+                    if !namespaces.contains(namespace.as_str()) {
+                        let error_body = format!(
+                            "{} is not one of the allowed namespaces:\n{}",
+                            error::yellow_if(true, namespace),
+                            error::format_yellow_list(
+                                true,
+                                namespaces.into_iter().collect::<Vec<_>>()
+                            )
+                        );
+                        let error_message =
+                            error::format_custom_error("Unknown Schema", &error_body);
+                        println!("{}", error_message);
+                        std::process::exit(1);
+                    }
+                } else {
+                    let error_body = format!("It looks like you have multiple schemas:\n{}\n Let me know which one you want to migrate by passing {}",
+                            error::format_yellow_list(true, namespaces.into_iter().collect::<Vec<_>>()),
+                            error::cyan_if(true, "--namespace SCHEMA_TO_MIGRATE")
+                        );
+                    let error_message = error::format_custom_error("Unknown Schema", &error_body);
+                    println!("{}", error_message);
+                    std::process::exit(1);
+                }
+            }
+            filesystem::NamespacesFound::EmptySchemaDir
+            | filesystem::NamespacesFound::NothingFound => {
+                println!(
+                    "{}",
+                    error::format_custom_error(
+                        "Schema Not Found",
+                        "I was trying to find the schema, but it's not available."
+                    )
+                );
+                std::process::exit(1);
+            }
+        },
         Err(err) => {
             println!("Error reading namespaces: {:?}", err);
             std::process::exit(1);
@@ -442,11 +476,7 @@ fn check_namespace_requirements(namespace: &Option<String>, options: &Options) {
     }
 }
 
-
-
-
 // Generation
-
 
 fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::Result<()> {
     let schema = parse_database_schemas(&options, &paths)?;
@@ -466,7 +496,7 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
         }
         Ok(mut context) => {
             // Generate schema files
-            generate::write_schema(&context,&schema, out_dir )?;
+            generate::write_schema(&context, &schema, out_dir)?;
 
             for query_file_path in paths.query_files {
                 let mut query_file = fs::File::open(query_file_path.clone())?;
@@ -483,10 +513,10 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
                         match typecheck_result {
                             Ok(all_query_info) => {
                                 filesystem::create_dir_if_not_exists(
-                                    &out_dir.join( "elm").join("Query"),
+                                    &out_dir.join("elm").join("Query"),
                                 )?;
                                 filesystem::create_dir_if_not_exists(
-                                    &out_dir.join( "typescript").join("query"),
+                                    &out_dir.join("typescript").join("query"),
                                 )?;
                                 generate::elm::write_queries(
                                     &out_dir.join("elm"),
@@ -525,9 +555,7 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
     Ok(())
 }
 
-
 // Formatting
-
 
 fn format_all(options: &Options, paths: filesystem::Found) -> io::Result<()> {
     let mut database = parse_database_schemas(&options, &paths)?;
@@ -542,7 +570,6 @@ fn format_all(options: &Options, paths: filesystem::Found) -> io::Result<()> {
 
     Ok(())
 }
-
 
 fn format_query_to_std_out(
     options: &Options,
@@ -566,9 +593,6 @@ fn format_query_to_std_out(
         }
     }
 }
-
-
-
 
 fn format_query(
     options: &Options,
@@ -603,11 +627,7 @@ fn format_query(
     Ok(())
 }
 
-
-
 // Write schema
-
-
 
 fn write_db_schema(options: &Options, database: &ast::Database) -> io::Result<()> {
     for schema in database.schemas.iter() {
@@ -616,12 +636,14 @@ fn write_db_schema(options: &Options, database: &ast::Database) -> io::Result<()
     Ok(())
 }
 
-
 fn write_schema(options: &Options, to_stdout: &bool, schema: &ast::Schema) -> io::Result<()> {
     // Format schema
     for schema_file in &schema.files {
         if *to_stdout {
-            println!("{}", generate::to_string::schema_to_string(&schema.namespace, schema_file));
+            println!(
+                "{}",
+                generate::to_string::schema_to_string(&schema.namespace, schema_file)
+            );
             continue;
         }
         let target_filepath = schema_file.path.to_string();
@@ -631,8 +653,6 @@ fn write_schema(options: &Options, to_stdout: &bool, schema: &ast::Schema) -> io
     }
     Ok(())
 }
-
-
 
 fn write_migration(
     schema: &ast::Schema,
@@ -654,7 +674,6 @@ fn write_migration(
         base_migration_folder.to_path_buf()
     };
     filesystem::create_dir_if_not_exists(&namespace_folder)?;
-
 
     // Write the migration files
     let migration_file = namespace_folder.join(format!("{}_migration.sql", current_date));
@@ -691,10 +710,6 @@ fn write_migration(
     Ok(())
 }
 
-
-
-
-
 // Parsing Schemas
 
 fn parse_single_schema(schema_file_path: &String) -> io::Result<ast::Schema> {
@@ -722,7 +737,6 @@ fn parse_single_schema_from_source(
     schema_file_path: &str,
     schema_source: &str,
 ) -> io::Result<ast::Schema> {
-
     let mut schema = ast::Schema {
         namespace: db::DEFAULT_SCHEMANAME.to_string(),
         session: None,
@@ -739,7 +753,10 @@ fn parse_single_schema_from_source(
     Ok(schema)
 }
 
-fn parse_database_schemas(options: &Options, paths: &filesystem::Found) -> io::Result<ast::Database> {
+fn parse_database_schemas(
+    options: &Options,
+    paths: &filesystem::Found,
+) -> io::Result<ast::Database> {
     let mut database = ast::Database {
         schemas: Vec::new(),
     };
@@ -767,13 +784,11 @@ fn parse_database_schemas(options: &Options, paths: &filesystem::Found) -> io::R
     Ok(database)
 }
 
-
 #[derive(Debug)]
 struct FileError {
     source: String,
-    errors: Vec<error::Error>
+    errors: Vec<error::Error>,
 }
-
 
 fn run_check(options: &Options, paths: filesystem::Found) -> io::Result<Vec<FileError>> {
     let schema = parse_database_schemas(&options, &paths)?;
@@ -826,8 +841,6 @@ fn run_check(options: &Options, paths: filesystem::Found) -> io::Result<Vec<File
 
     Ok(all_file_errors)
 }
-
-
 
 fn get_stdin() -> io::Result<Option<String>> {
     if atty::is(atty::Stream::Stdin) {

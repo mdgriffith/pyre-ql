@@ -88,7 +88,7 @@ pub enum ErrorType {
     },
     LinkToUnknownSchema {
         unknown_schema_name: String,
-        known_schemas: HashSet<String>
+        known_schemas: HashSet<String>,
     },
 
     // Query Validation Errors
@@ -159,13 +159,13 @@ pub enum ErrorType {
         fields: Vec<String>,
     },
     InsertNestedValueAutomaticallySet {
-        field: String 
+        field: String,
     },
     MultipleSchemaWrites {
         field_table: String,
         field_schema: String,
         operation: ast::QueryOperation,
-        other_schemas: Vec<String>
+        other_schemas: Vec<String>,
     },
     LimitOffsetOnlyInFlatRecord,
 }
@@ -208,11 +208,14 @@ pub struct Range {
     pub end: ast::Location,
 }
 
-
 pub fn format_custom_error(title: &str, body: &str) -> String {
-    format!("{}-------------{}\n\n{}", title, "-".repeat(title.len()), body)
+    format!(
+        "{}-------------{}\n\n{}",
+        title,
+        "-".repeat(title.len()),
+        body
+    )
 }
-
 
 /* Error formats!
 
@@ -408,9 +411,7 @@ fn get_lines(file_contents: &str, show_line_number: bool, start: u32, end: u32) 
     result
 }
 
-
 fn render_expecting(expecting: &Expecting, in_color: bool) -> String {
-    
     match expecting {
         Expecting::PyreFile => "I ran into an issue parsing this that I didn't quite expect! I would love if you would file an issue on the repo showing the pyre file you're using.. ".to_string(),
         Expecting::ParamDefinition => return format!(
@@ -474,8 +475,6 @@ fn render_expecting(expecting: &Expecting, in_color: bool) -> String {
     }
 }
 
-
-
 pub fn cyan_if(in_color: bool, text: &str) -> String {
     if in_color {
         text.cyan().to_string()
@@ -488,7 +487,7 @@ pub fn yellow_if(in_color: bool, text: &str) -> String {
     if in_color {
         text.yellow().to_string()
     } else {
-        text.to_string() 
+        text.to_string()
     }
 }
 
@@ -500,35 +499,37 @@ pub fn format_yellow_list(in_color: bool, items: Vec<String>) -> String {
     result
 }
 
-
 fn format_yellow_or_list(items: &Vec<String>, in_color: bool) -> String {
     match items.len() {
         0 => String::new(),
         1 => yellow_if(in_color, &items[0]),
-        2 => format!("{} or {}", 
-            yellow_if(in_color, &items[0]), 
+        2 => format!(
+            "{} or {}",
+            yellow_if(in_color, &items[0]),
             yellow_if(in_color, &items[1])
         ),
         _ => {
             let (last, rest) = items.split_last().unwrap();
-            format!("{}, or {}", 
+            format!(
+                "{}, or {}",
                 rest.iter()
                     .map(|item| yellow_if(in_color, item))
                     .collect::<Vec<_>>()
-                    .join(", "), 
+                    .join(", "),
                 yellow_if(in_color, last)
             )
         }
     }
 }
 
-
-
 fn to_error_description(error: &Error, in_color: bool) -> String {
     match &error.error_type {
         ErrorType::ParsingError(parsing_details) => {
             let mut result = "".to_string();
-            result.push_str(&format!("{}", render_expecting(&parsing_details.expecting, in_color)));
+            result.push_str(&format!(
+                "{}",
+                render_expecting(&parsing_details.expecting, in_color)
+            ));
 
             result
         }
@@ -556,10 +557,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             if known_functions.len() > 0 {
                 result.push_str("\nHere are the functions I know:\n");
                 for func in known_functions {
-                    result.push_str(&format!(
-                        "    {}\n",
-                        cyan_if(in_color, func)
-                    ));
+                    result.push_str(&format!("    {}\n", cyan_if(in_color, func)));
                 }
             }
 
@@ -638,10 +636,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             if existing.len() > 0 {
                 result.push_str("\nThese tables might be similar\n");
                 for table in existing {
-                    result.push_str(&format!(
-                        "    {}\n",
-                        cyan_if(in_color, table)
-                    ));
+                    result.push_str(&format!("    {}\n", cyan_if(in_color, table)));
                 }
             }
 
@@ -824,7 +819,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
         ErrorType::LinkToUnknownSchema {
             unknown_schema_name,
-            known_schemas
+            known_schemas,
         } => {
             if known_schemas.len() == 1 {
                 let mut result = "".to_string();
@@ -846,12 +841,12 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
                 ));
 
                 result
-            }            
+            }
         }
 
         ErrorType::UnusedParam { param } => {
             let mut result = "".to_string();
-            let colored_param = yellow_if(in_color,  param);
+            let colored_param = yellow_if(in_color, param);
 
             result.push_str(&format!(
                 "{} isn't being used. Let's either use it or remove it.",
@@ -956,7 +951,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
-        ErrorType::InsertNestedValueAutomaticallySet {field} => {
+        ErrorType::InsertNestedValueAutomaticallySet { field } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -967,14 +962,19 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
-        ErrorType::MultipleSchemaWrites { field_table, field_schema, operation, other_schemas } => {
+        ErrorType::MultipleSchemaWrites {
+            field_table,
+            field_schema,
+            operation,
+            other_schemas,
+        } => {
             let mut result = "".to_string();
 
             let operation_words = match operation {
                 ast::QueryOperation::Select => "selecting from",
                 ast::QueryOperation::Insert => "inserting a value to",
                 ast::QueryOperation::Update => "updating a value on",
-                ast::QueryOperation::Delete => "deleting from"
+                ast::QueryOperation::Delete => "deleting from",
             };
 
             let schema_words: String = format_yellow_or_list(&other_schemas, in_color);
@@ -1022,10 +1022,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             let mut sorted_types: Vec<String> = known_types.clone();
             sorted_types.sort();
             for typename in sorted_types {
-                result.push_str(&format!(
-                    "        {}\n",
-                    cyan_if(in_color, &typename)
-                ));
+                result.push_str(&format!("        {}\n", cyan_if(in_color, &typename)));
             }
 
             result
@@ -1079,8 +1076,6 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
     }
 }
 
-
-
 // JSON error format
 fn to_error_title(error_type: &ErrorType) -> String {
     match error_type {
@@ -1100,7 +1095,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::LinkToUnknownField { .. } => "Link to unknown field",
         ErrorType::LinkToUnknownForeignField { .. } => "Link to Unknown Foreign Field",
         ErrorType::LinkSelectionIsEmpty { .. } => "Link Selection Is Empty",
-        ErrorType::LinkToUnknownSchema {..} => "Link to Unknown Schema",
+        ErrorType::LinkToUnknownSchema { .. } => "Link to Unknown Schema",
         ErrorType::UnknownTable { .. } => "Unknown Table",
         ErrorType::DuplicateQueryField { .. } => "Duplicate Query Field",
         ErrorType::NoFieldsSelected => "No Fields Selected",
@@ -1122,77 +1117,112 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::InsertMissingColumn { .. } => "Insert Missing Column",
         ErrorType::InsertNestedValueAutomaticallySet { .. } => "Can't set automatic field",
         ErrorType::MultipleSchemaWrites { .. } => "Multiple Schema Writes",
-        ErrorType::LimitOffsetOnlyInFlatRecord => "Limit/Offset Only In Flat Record"
-    }.to_string()
+        ErrorType::LimitOffsetOnlyInFlatRecord => "Limit/Offset Only In Flat Record",
+    }
+    .to_string()
 }
 
 pub fn format_json(error: &Error) -> serde_json::Value {
-
     let mut error_json = serde_json::Map::new();
-    
+
     let title = to_error_title(&error.error_type);
     let description = to_error_description(&error, false);
-    
+
     // Add filepath
-    error_json.insert("filepath".to_string(), serde_json::Value::String(error.filepath.clone()));
-    
+    error_json.insert(
+        "filepath".to_string(),
+        serde_json::Value::String(error.filepath.clone()),
+    );
+
     // Add locations
     let mut locations = Vec::new();
     for location in &error.locations {
         let mut location_json = serde_json::Map::new();
-        
+
         // Add primary ranges
         let mut primary_ranges = Vec::new();
         for range in &location.primary {
             let mut range_json = serde_json::Map::new();
-            
+
             // Create start object
             let mut start = serde_json::Map::new();
-            start.insert("line".to_string(), serde_json::Value::Number(range.start.line.into()));
-            start.insert("column".to_string(), serde_json::Value::Number(range.start.column.into()));
+            start.insert(
+                "line".to_string(),
+                serde_json::Value::Number(range.start.line.into()),
+            );
+            start.insert(
+                "column".to_string(),
+                serde_json::Value::Number(range.start.column.into()),
+            );
             range_json.insert("start".to_string(), serde_json::Value::Object(start));
-            
+
             // Create end object
             let mut end = serde_json::Map::new();
-            end.insert("line".to_string(), serde_json::Value::Number(range.end.line.into()));
-            end.insert("column".to_string(), serde_json::Value::Number(range.end.column.into()));
+            end.insert(
+                "line".to_string(),
+                serde_json::Value::Number(range.end.line.into()),
+            );
+            end.insert(
+                "column".to_string(),
+                serde_json::Value::Number(range.end.column.into()),
+            );
             range_json.insert("end".to_string(), serde_json::Value::Object(end));
-            
+
             primary_ranges.push(serde_json::Value::Object(range_json));
         }
-        location_json.insert("primary".to_string(), serde_json::Value::Array(primary_ranges));
-        
+        location_json.insert(
+            "primary".to_string(),
+            serde_json::Value::Array(primary_ranges),
+        );
+
         // Add context ranges
         let mut context_ranges = Vec::new();
         for range in &location.contexts {
             let mut range_json = serde_json::Map::new();
-            
+
             // Create start object
             let mut start = serde_json::Map::new();
-            start.insert("line".to_string(), serde_json::Value::Number(range.start.line.into()));
-            start.insert("column".to_string(), serde_json::Value::Number(range.start.column.into()));
+            start.insert(
+                "line".to_string(),
+                serde_json::Value::Number(range.start.line.into()),
+            );
+            start.insert(
+                "column".to_string(),
+                serde_json::Value::Number(range.start.column.into()),
+            );
             range_json.insert("start".to_string(), serde_json::Value::Object(start));
-            
+
             // Create end object
             let mut end = serde_json::Map::new();
-            end.insert("line".to_string(), serde_json::Value::Number(range.end.line.into()));
-            end.insert("column".to_string(), serde_json::Value::Number(range.end.column.into()));
+            end.insert(
+                "line".to_string(),
+                serde_json::Value::Number(range.end.line.into()),
+            );
+            end.insert(
+                "column".to_string(),
+                serde_json::Value::Number(range.end.column.into()),
+            );
             range_json.insert("end".to_string(), serde_json::Value::Object(end));
-            
+
             context_ranges.push(serde_json::Value::Object(range_json));
         }
-        location_json.insert("contexts".to_string(), serde_json::Value::Array(context_ranges));
-        
+        location_json.insert(
+            "contexts".to_string(),
+            serde_json::Value::Array(context_ranges),
+        );
+
         locations.push(serde_json::Value::Object(location_json));
     }
     error_json.insert("locations".to_string(), serde_json::Value::Array(locations));
 
     error_json.insert("title".to_string(), serde_json::Value::String(title));
-    error_json.insert("description".to_string(), serde_json::Value::String(description));
+    error_json.insert(
+        "description".to_string(),
+        serde_json::Value::String(description),
+    );
 
     serde_json::Value::Object(error_json)
 }
-
 
 pub fn format_libsql_error(e: &libsql::Error) -> String {
     match e {
@@ -1200,26 +1230,51 @@ pub fn format_libsql_error(e: &libsql::Error) -> String {
         libsql::Error::SqliteFailure(_, s) => format_custom_error("SQLite Failure", s),
         libsql::Error::NullValue => format_custom_error("Null Value", "Null value encountered"),
         libsql::Error::Misuse(s) => format_custom_error("API Misuse", s),
-        libsql::Error::ExecuteReturnedRows => format_custom_error("Execute Returned Rows", "Execute returned rows"),
-        libsql::Error::QueryReturnedNoRows => format_custom_error("Query Returned No Rows", "Query returned no rows"),
+        libsql::Error::ExecuteReturnedRows => {
+            format_custom_error("Execute Returned Rows", "Execute returned rows")
+        }
+        libsql::Error::QueryReturnedNoRows => {
+            format_custom_error("Query Returned No Rows", "Query returned no rows")
+        }
         libsql::Error::InvalidColumnName(s) => format_custom_error("Invalid Column Name", s),
-        libsql::Error::ToSqlConversionFailure(e) => format_custom_error("SQL Conversion Failure", &format!("{}", e)),
+        libsql::Error::ToSqlConversionFailure(e) => {
+            format_custom_error("SQL Conversion Failure", &format!("{}", e))
+        }
         libsql::Error::SyncNotSupported(s) => format_custom_error("Sync Not Supported", s),
-        libsql::Error::ColumnNotFound(_) => format_custom_error("Column Not Found", "Column not found"),
+        libsql::Error::ColumnNotFound(_) => {
+            format_custom_error("Column Not Found", "Column not found")
+        }
         libsql::Error::Hrana(e) => format_custom_error("Hrana", &format!("{}", e)),
-        libsql::Error::WriteDelegation(e) => format_custom_error("Write Delegation", &format!("{}", e)),
+        libsql::Error::WriteDelegation(e) => {
+            format_custom_error("Write Delegation", &format!("{}", e))
+        }
         libsql::Error::Bincode(e) => format_custom_error("Bincode", &format!("{}", e)),
-        libsql::Error::InvalidColumnIndex => format_custom_error("Invalid Column Index", "Invalid column index"),
-        libsql::Error::InvalidColumnType => format_custom_error("Invalid Column Type", "Invalid column type"),
-        libsql::Error::Sqlite3SyntaxError(_, _, s) => format_custom_error("SQLite3 Syntax Error", s),
-        libsql::Error::Sqlite3UnsupportedStatement => format_custom_error("SQLite3 Unsupported Statement", "Unsupported statement"),
-        libsql::Error::Sqlite3ParserError(e) => format_custom_error("SQLite3 Parser Error", &format!("{}", e)),
-        libsql::Error::RemoteSqliteFailure(_, _, s) => format_custom_error("Remote SQLite Failure", s),
+        libsql::Error::InvalidColumnIndex => {
+            format_custom_error("Invalid Column Index", "Invalid column index")
+        }
+        libsql::Error::InvalidColumnType => {
+            format_custom_error("Invalid Column Type", "Invalid column type")
+        }
+        libsql::Error::Sqlite3SyntaxError(_, _, s) => {
+            format_custom_error("SQLite3 Syntax Error", s)
+        }
+        libsql::Error::Sqlite3UnsupportedStatement => {
+            format_custom_error("SQLite3 Unsupported Statement", "Unsupported statement")
+        }
+        libsql::Error::Sqlite3ParserError(e) => {
+            format_custom_error("SQLite3 Parser Error", &format!("{}", e))
+        }
+        libsql::Error::RemoteSqliteFailure(_, _, s) => {
+            format_custom_error("Remote SQLite Failure", s)
+        }
         libsql::Error::Replication(e) => format_custom_error("Replication", &format!("{}", e)),
-        libsql::Error::InvalidUTF8Path => format_custom_error("Invalid UTF-8 Path", "Path has invalid UTF-8"),
+        libsql::Error::InvalidUTF8Path => {
+            format_custom_error("Invalid UTF-8 Path", "Path has invalid UTF-8")
+        }
         libsql::Error::FreezeNotSupported(s) => format_custom_error("Freeze Not Supported", s),
         libsql::Error::InvalidParserState(s) => format_custom_error("Invalid Parser State", s),
-        libsql::Error::InvalidTlsConfiguration(e) => format_custom_error("Invalid TLS Configuration", &format!("{}", e)),
+        libsql::Error::InvalidTlsConfiguration(e) => {
+            format_custom_error("Invalid TLS Configuration", &format!("{}", e))
+        }
     }
 }
-

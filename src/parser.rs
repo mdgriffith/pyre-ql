@@ -57,7 +57,7 @@ pub fn run<'a>(
 
     match parse_schema(input, schema) {
         Ok((_, ())) => Ok(()),
-        Err(e) => Err(e)
+        Err(e) => Err(e),
     }
 }
 
@@ -214,12 +214,10 @@ fn parse_fieldname(input: Text) -> ParseResult<&str> {
     Ok((input, val.fragment()))
 }
 
-
-
 fn parse_qualified(input: Text) -> ParseResult<ast::Qualified> {
     let (input, first) = parse_typename(input)?;
     let (input, _) = tag(".")(input)?;
-    
+
     // Try to parse just a fieldname first
     let (input, result) = alt((
         // Try fieldname only
@@ -233,26 +231,32 @@ fn parse_qualified(input: Text) -> ParseResult<ast::Qualified> {
             let (input, _) = tag(".")(input)?;
             let (input, field) = parse_fieldname(input)?;
             Ok((input, (Some(table), field)))
-        }
+        },
     ))(input)?;
 
     match result {
         (Some(table), field) => {
             // Got schema.table.field
-            Ok((input, ast::Qualified {
-                schema: first.to_string(),
-                table: table.to_string(), 
-                fields: vec![field.to_string()]
-            }))
+            Ok((
+                input,
+                ast::Qualified {
+                    schema: first.to_string(),
+                    table: table.to_string(),
+                    fields: vec![field.to_string()],
+                },
+            ))
         }
         (None, field) => {
             let namespace = input.extra.namespace.to_string();
             // Got table.field
-            Ok((input, ast::Qualified {
-                schema: namespace,
-                table: first.to_string(),
-                fields: vec![field.to_string()]
-            }))
+            Ok((
+                input,
+                ast::Qualified {
+                    schema: namespace,
+                    table: first.to_string(),
+                    fields: vec![field.to_string()],
+                },
+            ))
         }
     }
 }
@@ -375,7 +379,6 @@ fn parse_tablename(start_location: ast::Location) -> impl Fn(Text) -> ParseResul
     }
 }
 
-
 // This is deprecated and will be moved pretty quick
 fn parse_link(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = tag("link")(input)?;
@@ -423,7 +426,7 @@ fn link_field_to_details<'a, 'b>(
     let mut details = ast::LinkDetails {
         link_name: linkname.to_string(),
         local_ids: vec![],
-        
+
         foreign: ast::Qualified {
             schema: "".to_string(),
             table: "".to_string(),
@@ -540,7 +543,7 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
         let link_details = ast::LinkDetails {
             link_name: name.to_string(),
             local_ids: vec![first_arg.unwrap_or("id".to_string())],
-            
+
             foreign: foreign,
             start_name: Some(to_location(&start_pos)),
             end_name: Some(to_location(&end_name_pos)),

@@ -30,9 +30,7 @@ pub fn write_schema(
 
 fn write_client(client: &Client, database: &ast::Database, out_dir: &Path) -> io::Result<()> {
     match client {
-        Client::Elm => {
-            generate::elm::write(out_dir, database)
-        }
+        Client::Elm => generate::elm::write(out_dir, database),
     }
 }
 
@@ -43,8 +41,6 @@ fn write_server(
     out_dir: &Path,
 ) -> io::Result<()> {
     match lang {
-        Server::Typescript => {
-            generate::typescript::write(&context, database, out_dir)
-        }
+        Server::Typescript => generate::typescript::write(&context, database, out_dir),
     }
 }

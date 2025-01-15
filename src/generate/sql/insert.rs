@@ -4,8 +4,6 @@ use crate::generate::sql::select;
 use crate::generate::sql::to_sql;
 use crate::typecheck;
 
-
-
 /*
 In a simple case, we can do a normal insert, but if we want nested inserts
 we need to do something like this:

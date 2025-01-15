@@ -1,5 +1,4 @@
 use crate::ast::*;
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub fn hash_query_interface(query: &Query) -> String {

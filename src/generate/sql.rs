@@ -7,8 +7,6 @@ pub mod update;
 use crate::ast;
 use crate::typecheck;
 
-
-
 /*
 Exmple query Generation:
 
@@ -118,9 +116,17 @@ pub fn to_string(
     table_field: &ast::QueryField,
 ) -> String {
     match query.operation {
-        ast::QueryOperation::Select => select::select_to_string(context, query, query_info, table, table_field),
-        ast::QueryOperation::Insert => insert::insert_to_string(context, query, query_info, table, table_field),
-        ast::QueryOperation::Update => update::update_to_string(context, query, query_info, table, table_field),
-        ast::QueryOperation::Delete => delete::delete_to_string(context, query, query_info, table, table_field),
+        ast::QueryOperation::Select => {
+            select::select_to_string(context, query, query_info, table, table_field)
+        }
+        ast::QueryOperation::Insert => {
+            insert::insert_to_string(context, query, query_info, table, table_field)
+        }
+        ast::QueryOperation::Update => {
+            update::update_to_string(context, query, query_info, table, table_field)
+        }
+        ast::QueryOperation::Delete => {
+            delete::delete_to_string(context, query, query_info, table, table_field)
+        }
     }
 }

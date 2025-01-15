@@ -10,7 +10,6 @@ pub fn database(database: &mut ast::Database) {
     }
 }
 
-
 pub fn schema(schem: &mut ast::Schema) {
     // Insert some lines before each definition if needed
     let mut i = 0;

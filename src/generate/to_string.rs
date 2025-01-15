@@ -215,7 +215,9 @@ fn to_string_field(namespace: &str, indent: &Indentation, field: &ast::Field) ->
         ast::Field::ColumnComment { text } => {
             format!("{}//{}\n", " ".repeat(indent.minimum), text)
         }
-        ast::Field::FieldDirective(directive) => to_string_field_directive(namespace, indent, directive),
+        ast::Field::FieldDirective(directive) => {
+            to_string_field_directive(namespace, indent, directive)
+        }
     }
 }
 
@@ -270,7 +272,11 @@ fn to_string_column(indentation: &Indentation, column: &ast::Column) -> String {
     )
 }
 
-fn to_string_field_directive(namespace: &str, indent: &Indentation, directive: &ast::FieldDirective) -> String {
+fn to_string_field_directive(
+    namespace: &str,
+    indent: &Indentation,
+    directive: &ast::FieldDirective,
+) -> String {
     let spaces = " ".repeat(indent.minimum);
     match directive {
         ast::FieldDirective::Watched(_) => format!("{}@watch\n", spaces),

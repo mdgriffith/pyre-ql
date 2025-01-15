@@ -1,17 +1,19 @@
 pub mod watched;
 use crate::ast;
+use crate::filesystem;
 use crate::generate;
 use crate::typecheck;
-use crate::filesystem;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-
-
 /// Write all typescript files
-pub fn write(context: &typecheck::Context, database: &ast::Database, out_dir: &Path) -> io::Result<()> {
+pub fn write(
+    context: &typecheck::Context,
+    database: &ast::Database,
+    out_dir: &Path,
+) -> io::Result<()> {
     filesystem::create_dir_if_not_exists(&out_dir.join("typescript"))?;
     filesystem::create_dir_if_not_exists(&out_dir.join("typescript").join("db"))?;
 
@@ -59,8 +61,6 @@ pub fn write(context: &typecheck::Context, database: &ast::Database, out_dir: &P
 
     Ok(())
 }
-
-
 
 pub fn schema(database: &ast::Database) -> String {
     let mut result = String::new();
@@ -439,7 +439,6 @@ fn format_string_list(items: &Vec<String>) -> String {
     result
 }
 
-
 fn to_query_file(
     context: &typecheck::Context,
     query_info: &typecheck::QueryInfo,
@@ -729,14 +728,15 @@ fn operator_to_string(operator: &ast::Operator) -> &str {
     }
 }
 
-
 pub fn to_env(database: &ast::Database) -> Option<String> {
     let mut result = String::new();
 
     result.push_str("import * as Ark from 'arktype';\n");
-    let session = database.schemas.iter().find_map(|schema| {
-        schema.session.clone()
-    }).unwrap_or_else(|| ast::default_session_details());
+    let session = database
+        .schemas
+        .iter()
+        .find_map(|schema| schema.session.clone())
+        .unwrap_or_else(|| ast::default_session_details());
 
     if database.schemas.len() == 1 {
         result.push_str("export type Config from '@libsql/client';\n");
@@ -744,7 +744,6 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
         result.push_str("import type { Config as LibSqlConfig } from '@libsql/client';\n");
     }
 
-    
     // Generate session types
     result.push_str("\n\nexport const Session = Ark.type({\n");
     for field in &session.fields {
@@ -794,12 +793,17 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
     } else {
         result.push_str("export enum DatabaseKey {\n");
         for schema in &database.schemas {
-            result.push_str(&format!("  {} = '{}',\n", schema.namespace, schema.namespace));
+            result.push_str(&format!(
+                "  {} = '{}',\n",
+                schema.namespace, schema.namespace
+            ));
         }
         result.push_str("}\n");
     }
 
-    result.push_str("export const to_libSql_config = (env: Config, primary: DatabaseKey): LibSqlConfig => {\n");
+    result.push_str(
+        "export const to_libSql_config = (env: Config, primary: DatabaseKey): LibSqlConfig => {\n",
+    );
     if database.schemas.len() == 1 {
         result.push_str("  return env")
     } else {
@@ -808,8 +812,6 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
     result.push_str("\n};\n\n");
 
     Some(result)
-
-    
 }
 
 //

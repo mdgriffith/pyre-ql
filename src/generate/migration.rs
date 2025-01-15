@@ -1,7 +1,7 @@
 use crate::ast::{
     collect_columns, collect_links, get_foreign_tablename, get_tablename, is_field_primary_key,
-    link_identity, Column, ColumnDirective, DefaultValue, Definition, Field, FieldDirective,
-    QueryValue, Schema, SerializationType, Variant,
+    link_identity, Column, ColumnDirective, DefaultValue, Definition, QueryValue, Schema,
+    SerializationType,
 };
 use crate::diff::{DetailedRecordDiff, DetailedTaggedDiff, RecordChange, SchemaDiff, TaggedChange};
 use crate::ext::string;

@@ -1,12 +1,10 @@
 use crate::ast;
-use crate::typecheck;
 use crate::ext::string;
-
+use crate::typecheck;
 
 pub fn format_tablename(name: &str) -> String {
     format!("\"{}\"", crate::ext::string::decapitalize(name))
 }
-
 
 /// Real meaning it's in the db and we might need to use a schema to target it.
 pub fn render_real_field(

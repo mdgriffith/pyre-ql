@@ -1,10 +1,6 @@
 use crate::ast;
-use crate::ext::string;
-use crate::generate::sql::cte;
 use crate::generate::sql::select;
-use crate::generate::sql::to_sql;
 use crate::typecheck;
-
 
 pub fn delete_to_string(
     context: &typecheck::Context,
@@ -19,13 +15,7 @@ pub fn delete_to_string(
     // DELETE FROM users
     // WHERE username = 'john_doe';
 
-    select::render_where(
-        context, 
-        table, 
-        query_info,
-        query_field,
-        &mut result
-    );
+    select::render_where(context, table, query_info, query_field, &mut result);
     result.push_str(";");
 
     result
