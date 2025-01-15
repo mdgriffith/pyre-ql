@@ -75,7 +75,7 @@ fn table_indices(table_name: &str) -> String {
 
 #[derive(Debug)]
 pub struct Introspection {
-    pub schema: ast::Database,
+    pub schema: ast::Schema,
     pub migrations_recorded: Vec<String>,
     pub warnings: Vec<Warning>,
 }
@@ -407,12 +407,8 @@ pub async fn introspect(
                     };
                     format::schema(&mut schema);
 
-                    let new_database = ast::Database {
-                        schemas: vec![schema],
-                    };
-
                     Ok(Introspection {
-                        schema: new_database,
+                        schema,
                         migrations_recorded,
                         warnings: vec![],
                     })
@@ -520,7 +516,7 @@ pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(
                                 }
 
                                 // Run migration
-                                let mut tx = conn
+                                let tx = conn
                                     .transaction_with_behavior(
                                         libsql::TransactionBehavior::Immediate,
                                     )

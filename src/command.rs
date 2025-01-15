@@ -295,10 +295,10 @@ pub async fn introspect<'a>(
                     } else {
                         println!("Schema written to {:?}", path.to_str());
 
-                        if (ast::is_empty_db(&introspection.schema)) {
+                        if ast::is_empty_schema(&introspection.schema) {
                             println!("I was able to successfully connect to the database, but I couldn't find any tables or views!");
                         } else {
-                            write_db_schema(&options, &introspection.schema)?;
+                            write_schema(options, &false, &introspection.schema)?;
                         }
                     }
                 }
@@ -324,11 +324,15 @@ pub async fn migrate<'a>(
     // Namespace is required if there are multiple dbs
     // Otherwise, is disallowed
     check_namespace_requirements(&namespace, &options);
+    let namespace_migration_dir = match namespace {
+        Some(ns) => Path::new(migration_dir).join(ns),
+        None => Path::new(migration_dir).to_path_buf(),
+    };
 
     let connection_result = db::connect(&database.to_string(), auth).await;
     match connection_result {
         Ok(conn) => {
-            let migration_result = db::migrate(&conn, Path::new(&migration_dir)).await;
+            let migration_result = db::migrate(&conn, &namespace_migration_dir).await;
             match migration_result {
                 Ok(()) => {
                     println!("Migration finished!");
@@ -345,12 +349,12 @@ pub async fn migrate<'a>(
     Ok(())
 }
 
-pub async fn migration<'a>(
+pub async fn generate_migration<'a>(
     options: &'a Options<'a>,
     name: &str,
     db: &str,
     auth: &Option<String>,
-    migration_dir: &str,
+    migration_dir: &Path,
     namespace: &Option<String>,
 ) -> io::Result<()> {
     // Namespace is required if there are multiple dbs
@@ -361,6 +365,11 @@ pub async fn migration<'a>(
         .clone()
         .unwrap_or_else(|| db::DEFAULT_SCHEMANAME.to_string());
 
+    let target_namespace_dir = match namespace {
+        None => migration_dir,
+        Some(name) => &migration_dir.join(&name),
+    };
+
     let connection_result = db::connect(&db.to_string(), auth).await;
     match connection_result {
         Err(e) => {
@@ -370,9 +379,8 @@ pub async fn migration<'a>(
             let introspection_result = db::introspect(&conn, &target_namespace).await;
             match introspection_result {
                 Ok(introspection) => {
-                    let migration_dir = Path::new(migration_dir);
                     let existing_migrations =
-                        db::read_migration_items(migration_dir).unwrap_or(vec![]);
+                        db::read_migration_items(target_namespace_dir).unwrap_or(vec![]);
 
                     let mut not_applied: Vec<String> = vec![];
                     for migration_from_file in existing_migrations {
@@ -399,14 +407,17 @@ pub async fn migration<'a>(
                     // filepaths to .pyre files
                     let paths = filesystem::collect_filepaths(&options.in_dir)?;
                     let current_db = parse_database_schemas(&options, &paths)?;
+                    let current_schema = current_db
+                        .schemas
+                        .iter()
+                        .find(|s| s.namespace == target_namespace)
+                        .expect("Schema not found");
 
-                    let diff = diff::diff(&introspection.schema, &current_db);
+                    let schema_diff = diff::diff_schema(&introspection.schema, current_schema);
 
-                    for (namespace, (schema_diff)) in diff.iter() {
-                        if let Some(schema) = ast::get_schema_by_name(&current_db, &namespace) {
-                            write_migration(schema, schema_diff, migration_dir, namespace)?;
-                        }
-                    }
+                    filesystem::create_dir_if_not_exists(migration_dir)?;
+
+                    write_migration(current_schema, &schema_diff, name, target_namespace_dir)?;
                 }
                 Err(err) => {
                     println!("Failed to connect to database: {:?}", err);
@@ -657,27 +668,22 @@ fn write_schema(options: &Options, to_stdout: &bool, schema: &ast::Schema) -> io
 fn write_migration(
     schema: &ast::Schema,
     diff: &diff::SchemaDiff,
-    base_migration_folder: &Path,
-    namespace: &String,
+    migration_name: &str,
+    namespace_folder: &Path,
 ) -> io::Result<()> {
     let sql = generate::migration::to_sql(schema, diff);
 
     // Format like {year}{month}{day}{hour}{minute}
     let current_date = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
 
-    filesystem::create_dir_if_not_exists(base_migration_folder)?;
-
-    // Only use a namespace folder if it's not the default one.
-    let namespace_folder = if namespace != &db::DEFAULT_SCHEMANAME {
-        base_migration_folder.join(namespace.clone())
-    } else {
-        base_migration_folder.to_path_buf()
-    };
     filesystem::create_dir_if_not_exists(&namespace_folder)?;
 
+    let migration_folder = namespace_folder.join(format!("{}_{}", current_date, migration_name));
+    filesystem::create_dir_if_not_exists(&migration_folder)?;
+
     // Write the migration files
-    let migration_file = namespace_folder.join(format!("{}_migration.sql", current_date));
-    let diff_file_path = namespace_folder.join(format!("{}_schema.diff", current_date));
+    let migration_file = migration_folder.join("migration.sql");
+    let diff_file_path = migration_folder.join("schema.diff");
 
     // Write migration file
     let output = fs::File::create(migration_file);
