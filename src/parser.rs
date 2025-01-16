@@ -761,6 +761,7 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
     let (input, _) = space0(input)?;
     let (input, fields) = with_braces(parse_toplevel_query_field)(input)?;
     let (input, end_pos) = position(input)?;
+    let (input, _) = opt(newline)(input)?;
 
     let mut query = ast::Query {
         interface_hash: "".to_string(),
