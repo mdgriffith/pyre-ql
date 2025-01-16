@@ -678,7 +678,7 @@ fn parse_variant(input: Text) -> ParseResult<ast::Variant> {
         input,
         ast::Variant {
             name: name.to_string(),
-            data: optional_fields,
+            fields: optional_fields,
             start: Some(to_location(&start_pos)),
             end: Some(to_location(&end_pos)),
 
@@ -793,6 +793,7 @@ fn parse_toplevel_query_field(input: Text) -> ParseResult<ast::TopLevelQueryFiel
 
 fn parse_toplevel_querydetails_field(input: Text) -> ParseResult<ast::TopLevelQueryField> {
     let (input, q) = parse_query_field(input)?;
+    let (input, _) = opt(newline)(input)?;
     Ok((input, ast::TopLevelQueryField::Field(q)))
 }
 
@@ -954,6 +955,7 @@ fn parse_arg(input: Text) -> ParseResult<ast::ArgField> {
 
 fn parse_query_arg_field(input: Text) -> ParseResult<ast::ArgField> {
     let (input, q) = parse_query_field(input)?;
+    let (input, _) = opt(newline)(input)?;
     Ok((input, ast::ArgField::Field(q)))
 }
 
@@ -1182,10 +1184,30 @@ fn parse_value(input: Text) -> ParseResult<ast::QueryValue> {
         parse_located_token("false", |range| ast::QueryValue::Bool((range, false))),
         parse_variable,
         parse_session_variable,
+        parse_typed_value,
         parse_string,
         parse_number,
         parse_fn,
     ))(input)
+}
+
+fn parse_typed_value(input: Text) -> ParseResult<ast::QueryValue> {
+    let (input, start_pos) = position(input)?;
+    let (input, variant_name) = parse_typename(input)?;
+    let (input, end_pos) = position(input)?;
+    let range = ast::Range {
+        start: to_location(&start_pos),
+        end: to_location(&end_pos),
+    };
+    Ok((
+        input,
+        ast::QueryValue::LiteralTypeValue((
+            range,
+            ast::LiteralTypeValueDetails {
+                name: variant_name.to_string(),
+            },
+        )),
+    ))
 }
 
 //

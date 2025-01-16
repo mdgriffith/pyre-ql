@@ -96,12 +96,23 @@ pub struct RecordDetails {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Variant {
     pub name: String,
-    pub data: Option<Vec<Field>>,
+    pub fields: Option<Vec<Field>>,
     pub start: Option<Location>,
     pub end: Option<Location>,
 
     pub start_name: Option<Location>,
     pub end_name: Option<Location>,
+}
+
+pub fn to_variant(name: &str) -> Variant {
+    Variant {
+        name: name.to_string(),
+        fields: None,
+        start: None,
+        end: None,
+        start_name: None,
+        end_name: None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -652,12 +663,19 @@ pub enum WhereArg {
 pub enum QueryValue {
     Fn(FnDetails),
 
+    LiteralTypeValue((Range, LiteralTypeValueDetails)),
     Variable((Range, VariableDetails)),
     String((Range, String)),
     Int((Range, i32)),
     Float((Range, f32)),
     Bool((Range, bool)),
     Null(Range),
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct LiteralTypeValueDetails {
+    pub name: String,
+    // Eventually we want the full recursive structure here
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
