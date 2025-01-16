@@ -145,5 +145,9 @@ fn hash_query_value(hasher: &mut Sha256, value: &QueryValue) {
         QueryValue::Null(_) => {
             hasher.update("null");
         }
+        QueryValue::LiteralTypeValue((_, LiteralTypeValueDetails { name })) => {
+            hasher.update("literal_type");
+            hasher.update(&name.to_string());
+        }
     }
 }

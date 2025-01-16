@@ -125,7 +125,7 @@ fn to_type_alias(name: &str, fields: &Vec<ast::Field>) -> String {
 fn to_string_variant(is_first: bool, indent_size: usize, variant: &ast::Variant) -> String {
     let prefix = " | ";
 
-    match &variant.data {
+    match &variant.fields {
         Some(fields) => {
             let indent = " ".repeat(indent_size + 4);
 
@@ -247,7 +247,7 @@ fn to_decoder_variant(
     let or = &format!("{}{}", outer_indent, ".or");
     let starter = if is_first { "Ark.type" } else { or };
 
-    match &variant.data {
+    match &variant.fields {
         Some(fields) => {
             let mut result = format!(
                 "{}({{\n    \"type_\": {},\n",

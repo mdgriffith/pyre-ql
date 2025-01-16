@@ -5,14 +5,27 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 #[derive(Debug, Deserialize, Serialize)]
+pub enum Type {
+    Integer,
+    Float,
+    String,
+    OneOf { variants: Vec<ast::Variant> },
+    Record(ast::RecordDetails),
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Context {
     pub current_filepath: String,
     pub valid_namespaces: HashSet<String>,
     pub session: Option<ast::SessionDetails>,
     pub funcs: HashMap<String, FuncDefinition>,
 
-    pub types: HashMap<String, DefInfo>,
+    pub types: HashMap<String, (DefInfo, Type)>,
     pub tables: HashMap<String, Table>,
+
+    // All variants by their variant name
+    // Used to check if there are multiple types with the same name.
+    // Tracks the location of type definitions so they can be reported in the error.
     pub variants: HashMap<String, (Option<Range>, Vec<VariantDef>)>,
 }
 
@@ -117,13 +130,27 @@ fn empty_context() -> Context {
         tables: HashMap::new(),
         variants: HashMap::new(),
     };
-    context.types.insert("String".to_string(), DefInfo::Builtin);
-    context.types.insert("Int".to_string(), DefInfo::Builtin);
-    context.types.insert("Float".to_string(), DefInfo::Builtin);
-    context.types.insert("Bool".to_string(), DefInfo::Builtin);
     context
         .types
-        .insert("DateTime".to_string(), DefInfo::Builtin);
+        .insert("String".to_string(), (DefInfo::Builtin, Type::String));
+    context
+        .types
+        .insert("Int".to_string(), (DefInfo::Builtin, Type::Integer));
+    context
+        .types
+        .insert("Float".to_string(), (DefInfo::Builtin, Type::Float));
+    context.types.insert(
+        "Bool".to_string(),
+        (
+            DefInfo::Builtin,
+            Type::OneOf {
+                variants: vec![ast::to_variant("True"), ast::to_variant("False")],
+            },
+        ),
+    );
+    context
+        .types
+        .insert("DateTime".to_string(), (DefInfo::Builtin, Type::String));
 
     context
 }
@@ -226,7 +253,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                     } => {
                         match context.types.get(name) {
                             None => (),
-                            Some(DefInfo::Def(loc)) => {
+                            Some((DefInfo::Def(loc), _)) => {
                                 let mut locations: Vec<Location> = vec![];
                                 locations.push(Location {
                                     contexts: vec![],
@@ -242,7 +269,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                     locations,
                                 });
                             }
-                            Some(DefInfo::Builtin) => {
+                            Some((DefInfo::Builtin, _)) => {
                                 let mut locations: Vec<Location> = vec![];
                                 locations.push(Location {
                                     contexts: vec![],
@@ -257,7 +284,17 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                         }
                         context.types.insert(
                             name.clone(),
-                            DefInfo::Def(to_single_range(start_name, end_name)),
+                            (
+                                DefInfo::Def(to_single_range(start_name, end_name)),
+                                Type::Record(ast::RecordDetails {
+                                    name: name.clone(),
+                                    fields: fields.clone(),
+                                    start: start.clone(),
+                                    end: end.clone(),
+                                    start_name: start_name.clone(),
+                                    end_name: end_name.clone(),
+                                }),
+                            ),
                         );
                         context.tables.insert(
                             crate::ext::string::decapitalize(&name),
@@ -282,7 +319,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                     } => {
                         match context.types.get(name) {
                             None => (),
-                            Some(DefInfo::Def(loc)) => {
+                            Some((DefInfo::Def(loc), _)) => {
                                 let mut locations: Vec<Location> = vec![];
                                 locations.push(Location {
                                     contexts: vec![],
@@ -298,7 +335,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                     locations,
                                 });
                             }
-                            Some(DefInfo::Builtin) => {
+                            Some((DefInfo::Builtin, _)) => {
                                 let mut locations: Vec<Location> = vec![];
                                 locations.push(Location {
                                     contexts: vec![],
@@ -311,9 +348,15 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                 });
                             }
                         }
-                        context
-                            .types
-                            .insert(name.clone(), DefInfo::Def(to_single_range(start, end)));
+                        context.types.insert(
+                            name.clone(),
+                            (
+                                DefInfo::Def(to_single_range(start, end)),
+                                Type::OneOf {
+                                    variants: variants.clone(),
+                                },
+                            ),
+                        );
 
                         for variant in variants {
                             let variant_def = VariantDef {
@@ -324,6 +367,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
 
                             let type_range = to_single_range(&start, &end);
 
+                            // Add variant to the map, creating a new entry with type range if it doesn't exist
                             context
                                 .variants
                                 .entry(variant.name.clone())
@@ -550,11 +594,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
     }
 }
 
-fn check_schema_definitions(
-    context: &Context,
-    database: &ast::Database,
-    mut errors: &mut Vec<Error>,
-) {
+fn check_schema_definitions(context: &Context, database: &ast::Database, errors: &mut Vec<Error>) {
     let vars = context.variants.clone();
     for (variant_name, (maybe_type_range, mut instances)) in vars {
         if instances.len() > 1 {
@@ -686,7 +726,7 @@ fn check_schema_definitions(
                         end,
                     } => {
                         for variant in variants {
-                            if let Some(fields) = &variant.data {
+                            if let Some(fields) = &variant.fields {
                                 for field in ast::collect_columns(&fields) {
                                     if !context.types.contains_key(&field.type_) {
                                         let mut contexts: Vec<Range> = vec![];
@@ -1189,7 +1229,7 @@ fn check_value(
                 })
             }
         }
-        ast::QueryValue::Null(..) => {}
+        ast::QueryValue::Null(_) => {}
         ast::QueryValue::Fn(func) => {
             let found = context.funcs.get(&func.name);
             match found {
@@ -1291,12 +1331,68 @@ fn check_value(
                                 }
                             }
                         }
-                        ParamInfo::NotDefinedButUsed { used_at, type_ } => (),
+                        ParamInfo::NotDefinedButUsed { .. } => (),
                     };
                 }
             }
         }
-        _ => {}
+        ast::QueryValue::LiteralTypeValue((range, details)) => {
+            match context.types.get(table_type_string) {
+                Some((type_info, type_)) => {
+                    match type_ {
+                        Type::OneOf { variants } => {
+                            let mut found_variant = false;
+                            for variant in variants {
+                                if variant.name == details.name {
+                                    found_variant = true;
+                                    break;
+                                }
+                            }
+                            if !found_variant {
+                                errors.push(Error {
+                                    filepath: context.current_filepath.clone(),
+                                    error_type: ErrorType::LiteralTypeMismatchVariant {
+                                        expecting_type: table_type_string.to_string(),
+                                        found: details.name.to_string(),
+                                        variants: variants.iter().map(|v| v.name.clone()).collect(),
+                                    },
+                                    locations: vec![Location {
+                                        contexts: vec![], // to_range(&start, &end),
+                                        primary: vec![convert_range(range)],
+                                    }],
+                                })
+                            }
+                        }
+                        _ => {
+                            errors.push(Error {
+                                filepath: context.current_filepath.clone(),
+                                error_type: ErrorType::LiteralTypeMismatch {
+                                    expecting_type: table_type_string.to_string(),
+                                    found: details.name.to_string(),
+                                },
+                                locations: vec![Location {
+                                    contexts: vec![], // to_range(&start, &end),
+                                    primary: vec![convert_range(range)],
+                                }],
+                            })
+                        }
+                    }
+                }
+                None => {
+                    errors.push(Error {
+                        filepath: context.current_filepath.clone(),
+                        error_type: ErrorType::LiteralTypeMismatch {
+                            expecting_type: table_type_string.to_string(),
+                            found: details.name.to_string(),
+                        },
+                        locations: vec![Location {
+                            contexts: vec![], // to_range(&start, &end),
+                            primary: vec![convert_range(range)],
+                        }],
+                    })
+                }
+            }
+        }
     }
 }
 
@@ -1577,7 +1673,7 @@ fn check_table_query(
         });
     }
 
-    if ((offset_len > 0 || limit_len > 0) && has_nested_selected) {
+    if (offset_len > 0 || limit_len > 0) && has_nested_selected {
         errors.push(Error {
             filepath: context.current_filepath.clone(),
             error_type: ErrorType::LimitOffsetOnlyInFlatRecord,
@@ -1636,7 +1732,7 @@ fn check_table_query(
 
                 match queried_fields.get(&col.name) {
                     Some(is_set) => {
-                        if (!is_set) {
+                        if !is_set {
                             errors.push(Error {
                                 filepath: context.current_filepath.clone(),
                                 error_type: ErrorType::InsertColumnIsNotSet {
@@ -1715,7 +1811,7 @@ fn check_field(
 
     match operation {
         ast::QueryOperation::Select => {
-            if (field.set.is_some()) {
+            if field.set.is_some() {
                 errors.push(Error {
                     filepath: context.current_filepath.clone(),
                     error_type: ErrorType::NoSetsInSelect {
@@ -1736,7 +1832,7 @@ fn check_field(
         }
         ast::QueryOperation::Delete => {
             // Setting is disallowed
-            if (field.set.is_some()) {
+            if field.set.is_some() {
                 errors.push(Error {
                     filepath: context.current_filepath.clone(),
                     error_type: ErrorType::NoSetsInDelete {
@@ -1790,7 +1886,7 @@ fn check_link(
                         .local_ids
                         .iter()
                         .all(|s: &String| s == &primary_key_name);
-                    if (!are_primary) {
+                    if !are_primary {
                         errors.push(Error {
                             filepath: context.current_filepath.clone(),
                             error_type: ErrorType::LinksDisallowedInInserts {
@@ -1835,8 +1931,8 @@ fn check_link(
         _ => (),
     }
 
-    if (field.fields.is_empty()) {
-        let mut known_fields: Vec<(String, String)> = vec![];
+    if field.fields.is_empty() {
+        let known_fields: Vec<(String, String)> = vec![];
 
         errors.push(Error {
             filepath: context.current_filepath.clone(),

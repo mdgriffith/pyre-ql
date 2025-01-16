@@ -13,13 +13,7 @@ pub fn schema_to_string(namespace: &str, schema_file: &ast::SchemaFile) -> Strin
 
 fn to_string_definition(namespace: &str, definition: &ast::Definition) -> String {
     match definition {
-        ast::Definition::Lines { count } => {
-            if *count > 2 {
-                "\n\n".to_string()
-            } else {
-                "\n".repeat(*count as usize)
-            }
-        }
+        ast::Definition::Lines { count } => "\n".repeat((*count).min(2) as usize),
         ast::Definition::Comment { text } => format!("//{}\n", text),
         ast::Definition::Session(session) => {
             let indent_collection: Indentation = collect_indentation(&session.fields, 4);
@@ -176,7 +170,7 @@ fn get_field_indent(indent_minimum: usize, field: &ast::Field) -> Option<FieldIn
 fn to_string_variant(namespace: &str, is_first: bool, variant: &ast::Variant) -> String {
     let prefix = if is_first { " = " } else { " | " };
 
-    match &variant.data {
+    match &variant.fields {
         Some(fields) => {
             let mut result = format!("  {}{} {{\n", prefix, variant.name);
             let indent_collection: Indentation = collect_indentation(&fields, 8);
@@ -192,13 +186,7 @@ fn to_string_variant(namespace: &str, is_first: bool, variant: &ast::Variant) ->
 
 fn to_string_field(namespace: &str, indent: &Indentation, field: &ast::Field) -> String {
     match field {
-        ast::Field::ColumnLines { count } => {
-            if *count > 2 {
-                "\n\n".to_string()
-            } else {
-                "\n".repeat(*count as usize)
-            }
-        }
+        ast::Field::ColumnLines { count } => "\n".repeat((*count).min(2) as usize),
         ast::Field::Column(column) => to_string_column(indent, column),
         ast::Field::ColumnComment { text } => {
             format!("{}//{}\n", " ".repeat(indent.minimum), text)
@@ -379,13 +367,7 @@ fn to_string_query_definition(definition: &ast::QueryDef) -> String {
     match definition {
         ast::QueryDef::Query(q) => to_string_query(q),
         ast::QueryDef::QueryComment { text } => format!("//{}\n", text),
-        ast::QueryDef::QueryLines { count } => {
-            if *count > 2 {
-                "\n\n".to_string()
-            } else {
-                "\n".repeat(*count as usize)
-            }
-        }
+        ast::QueryDef::QueryLines { count } => "\n".repeat((*count).min(2) as usize),
     }
 }
 
@@ -423,7 +405,7 @@ fn to_string_query(query: &ast::Query) -> String {
 fn to_string_toplevel_query_field(indent: usize, field: &ast::TopLevelQueryField) -> String {
     match field {
         ast::TopLevelQueryField::Field(query_field) => to_string_query_field(indent, query_field),
-        ast::TopLevelQueryField::Lines { count } => "\n".repeat(*count),
+        ast::TopLevelQueryField::Lines { count } => "\n".repeat((*count).min(2) as usize),
         ast::TopLevelQueryField::Comment { text } => format!("//{}\n", text),
     }
 }
@@ -447,7 +429,7 @@ fn to_string_field_arg(indent: usize, field_arg: &ast::ArgField) -> String {
     match field_arg {
         ast::ArgField::Arg(arg) => to_string_param(indent, &arg.arg),
         ast::ArgField::Field(field) => to_string_query_field(indent, field),
-        ast::ArgField::Lines { count } => "\n".repeat(count.clone()),
+        ast::ArgField::Lines { count } => "\n".repeat((*count).min(2) as usize),
         ast::ArgField::QueryComment { text } => {
             format!("{}//{}\n", " ".repeat(indent), text)
         }
@@ -582,6 +564,7 @@ fn value_to_string(value: &ast::QueryValue) -> String {
         ast::QueryValue::Bool((_, true)) => "True".to_string(),
         ast::QueryValue::Bool((_, false)) => "False".to_string(),
         ast::QueryValue::Null(_) => "null".to_string(),
+        ast::QueryValue::LiteralTypeValue((_, details)) => details.name.clone(),
     }
 }
 

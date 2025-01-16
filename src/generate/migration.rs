@@ -124,6 +124,7 @@ fn value_to_string(value: &QueryValue) -> String {
         QueryValue::Float((_, value)) => value.to_string(),
         QueryValue::Bool((_, value)) => value.to_string(),
         QueryValue::Null(_) => "null".to_string(),
+        QueryValue::LiteralTypeValue((_, details)) => details.name.clone(),
     }
 }
 

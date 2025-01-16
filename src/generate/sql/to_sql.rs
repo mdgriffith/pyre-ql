@@ -61,14 +61,15 @@ pub fn render_value(value: &ast::QueryValue) -> String {
                 .collect::<Vec<String>>()
                 .join(", ")
         ),
-        ast::QueryValue::Variable((r, var)) => {
+        ast::QueryValue::Variable((_, var)) => {
             format!("${}", var.name)
         }
-        ast::QueryValue::String((r, s)) => format!("'{}'", s),
-        ast::QueryValue::Int((r, i)) => i.to_string(),
-        ast::QueryValue::Float((r, f)) => f.to_string(),
-        ast::QueryValue::Bool((r, b)) => b.to_string(),
-        ast::QueryValue::Null(r) => "null".to_string(),
+        ast::QueryValue::String((_, s)) => format!("'{}'", s),
+        ast::QueryValue::Int((_, i)) => i.to_string(),
+        ast::QueryValue::Float((_, f)) => f.to_string(),
+        ast::QueryValue::Bool((_, b)) => b.to_string(),
+        ast::QueryValue::Null(_) => "null".to_string(),
+        ast::QueryValue::LiteralTypeValue((_, details)) => format!("'{}'", details.name),
     }
 }
 

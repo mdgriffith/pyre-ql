@@ -118,7 +118,7 @@ fn to_type_alias(name: &str, fields: &Vec<ast::Field>) -> String {
 fn to_string_variant(is_first: bool, indent_size: usize, variant: &ast::Variant) -> String {
     let prefix = if is_first { " = " } else { " | " };
 
-    match &variant.data {
+    match &variant.fields {
         Some(fields) => {
             let indent = " ".repeat(indent_size + 2);
             let mut result = format!("   {}{}\n{}{{ ", prefix, variant.name, indent);
@@ -219,7 +219,7 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
             let mut result = "".to_string();
 
             for variant in variants {
-                match &variant.data {
+                match &variant.fields {
                     Some(fields) => {
                         result.push_str(&to_type_alias(
                             &format!("{}_{}", name, variant.name),
@@ -263,7 +263,7 @@ fn to_decoder_variant(
     let outer_indent = " ".repeat(indent_size);
     let indent = " ".repeat(indent_size + 4);
     let inner_indent = " ".repeat(indent_size + 8);
-    match &variant.data {
+    match &variant.fields {
         Some(fields) => {
             let mut result = format!(
                 "{}\"{}\" ->\n{}Decode.map Db.{}\n{}(Decode.succeed {}_{}\n",
@@ -394,7 +394,7 @@ fn to_encoder_variant(
     let outer_indent = " ".repeat(indent_size);
     let indent = " ".repeat(indent_size + 4);
     let inner_indent = " ".repeat(indent_size + 8);
-    match &variant.data {
+    match &variant.fields {
         Some(fields) => {
             let mut result = format!(
                 "{}Db.{} inner_details__ ->\n{}Encode.object\n{}[ ( \"type\", Encode.string \"{}\" )\n",
