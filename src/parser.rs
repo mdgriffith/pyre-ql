@@ -5,7 +5,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while},
     character::complete::{
-        alphanumeric1, char, digit1, line_ending, multispace0, multispace1, newline, one_of,
+        alphanumeric1, char, line_ending, multispace0, multispace1, newline, one_of,
     },
     combinator::{all_consuming, cut, eof, opt, recognize, value},
     error::{VerboseError, VerboseErrorKind},
