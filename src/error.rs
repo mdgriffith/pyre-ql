@@ -128,6 +128,11 @@ pub enum ErrorType {
         expecting_type: String,
         found: String,
     },
+    LiteralTypeMismatchVariant {
+        found: String,
+        expecting_type: String,
+        variants: Vec<String>,
+    },
     UnusedParam {
         param: String,
     },
@@ -656,6 +661,25 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
+        ErrorType::LiteralTypeMismatchVariant {
+            found,
+            expecting_type,
+            variants,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "I was expecting a {}, but found {}.\n",
+                yellow_if(in_color, expecting_type),
+                cyan_if(in_color, found)
+            ));
+
+            result.push_str("    Here are the values I know would work:\n\n");
+            for variant in variants {
+                result.push_str(&format!("        {}\n", yellow_if(in_color, variant)));
+            }
+
+            result
+        }
 
         ErrorType::TypeMismatch {
             table,
@@ -1105,7 +1129,8 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::MultipleWheres { .. } => "Multiple Wheres",
         ErrorType::WhereOnLinkIsntAllowed { .. } => "Where On Link Not Allowed",
         ErrorType::TypeMismatch { .. } => "Type Mismatch",
-        ErrorType::LiteralTypeMismatch { .. } => "Literal Type Mismatch",
+        ErrorType::LiteralTypeMismatch { .. } => "Incorrect type",
+        ErrorType::LiteralTypeMismatchVariant { .. } => "Incorrect type",
         ErrorType::UnusedParam { .. } => "Unused Parameter",
         ErrorType::UndefinedParam { .. } => "Undefined Parameter",
         ErrorType::NoSetsInSelect { .. } => "No Sets In Select",
