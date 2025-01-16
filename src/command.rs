@@ -131,7 +131,7 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
             end_name: None,
         }];
         database.schemas.push(ast::Schema {
-            namespace: db::DEFAULT_SCHEMANAME.to_string(),
+            namespace: ast::DEFAULT_SCHEMANAME.to_string(),
             session: None,
             files: vec![ast::SchemaFile {
                 path: pyre_dir.join("schema.pyre").to_str().unwrap().to_string(),
@@ -273,11 +273,11 @@ pub async fn introspect<'a>(
         Ok(conn) => {
             let full_namespace = namespace
                 .clone()
-                .unwrap_or(db::DEFAULT_SCHEMANAME.to_string());
+                .unwrap_or(ast::DEFAULT_SCHEMANAME.to_string());
             let introspection_result = db::introspect(&conn, &full_namespace).await;
             match introspection_result {
                 Ok(introspection) => {
-                    let path: PathBuf = if full_namespace != db::DEFAULT_SCHEMANAME {
+                    let path: PathBuf = if full_namespace != ast::DEFAULT_SCHEMANAME {
                         Path::new(&options.in_dir)
                             .join("schema")
                             .join(&full_namespace)
@@ -363,7 +363,7 @@ pub async fn generate_migration<'a>(
 
     let target_namespace = namespace
         .clone()
-        .unwrap_or_else(|| db::DEFAULT_SCHEMANAME.to_string());
+        .unwrap_or_else(|| ast::DEFAULT_SCHEMANAME.to_string());
 
     let target_namespace_dir = match namespace {
         None => migration_dir,
@@ -407,6 +407,7 @@ pub async fn generate_migration<'a>(
                     // filepaths to .pyre files
                     let paths = filesystem::collect_filepaths(&options.in_dir)?;
                     let current_db = parse_database_schemas(&options, &paths)?;
+
                     let current_schema = current_db
                         .schemas
                         .iter()
@@ -720,7 +721,7 @@ fn write_migration(
 
 fn parse_single_schema(schema_file_path: &String) -> io::Result<ast::Schema> {
     let mut schema = ast::Schema {
-        namespace: db::DEFAULT_SCHEMANAME.to_string(),
+        namespace: ast::DEFAULT_SCHEMANAME.to_string(),
         files: vec![],
         session: None,
     };
@@ -744,7 +745,7 @@ fn parse_single_schema_from_source(
     schema_source: &str,
 ) -> io::Result<ast::Schema> {
     let mut schema = ast::Schema {
-        namespace: db::DEFAULT_SCHEMANAME.to_string(),
+        namespace: ast::DEFAULT_SCHEMANAME.to_string(),
         session: None,
         files: vec![],
     };

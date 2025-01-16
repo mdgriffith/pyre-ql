@@ -11,8 +11,6 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-pub const DEFAULT_SCHEMANAME: &str = "_default";
-
 const MIGRATION_TABLE: &str = "_pyre_migrations";
 
 // List all tables
@@ -489,7 +487,7 @@ pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(
             ));
         }
         Ok(migration_files) => {
-            let introspection_result = introspect(&db, DEFAULT_SCHEMANAME).await;
+            let introspection_result = introspect(&db, ast::DEFAULT_SCHEMANAME).await;
             match introspection_result {
                 Err(err) => {
                     return Err(MigrationError::SqlError(err));

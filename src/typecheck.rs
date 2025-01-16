@@ -143,7 +143,7 @@ pub fn check_schema(db: &ast::Database) -> Result<Context, Vec<Error>> {
 
     // Namespaces must be capitalized
     for schem in &db.schemas {
-        if schem.namespace == db::DEFAULT_SCHEMANAME {
+        if schem.namespace == ast::DEFAULT_SCHEMANAME {
             continue;
         } else if !is_capitalized(&schem.namespace) {
             let body = format!(
@@ -968,7 +968,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
 
 fn get_primary_db(namespaces: &UsedNamespaces) -> &str {
     if namespaces.primary.is_empty() && namespaces.secondary.is_empty() {
-        db::DEFAULT_SCHEMANAME
+        ast::DEFAULT_SCHEMANAME
     } else if !namespaces.primary.is_empty() {
         // This gets an arbitrary value from primary if it has any elements
         namespaces.primary.iter().min().unwrap()

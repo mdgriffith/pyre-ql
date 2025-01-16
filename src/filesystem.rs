@@ -1,3 +1,4 @@
+use crate::ast;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
@@ -84,19 +85,19 @@ pub fn read_namespaces(dir: &Path) -> io::Result<NamespacesFound> {
 // This function takes a path and a base directory as input and returns the namespace
 // of the path relative to the base directory. It assumes the path is in the format
 // "/base/schema/{namespace}/file.pyre". If the path is not a subdirectory of
-// the base directory, it returns "default" as the namespace.
+// the base directory, it returns ast::DEFAULT_SCHEMANAME as the namespace.
 //
 // Examples:
 // - "/base/schema/namespace1/file.pyre" -> "namespace1"
 // - "/base/schema/namespace2/subdir/file.pyre" -> "namespace2"
-// - "/not/base/schema/namespace/file.pyre" -> "default"
+// - "/not/base/schema/namespace/file.pyre" -> ast::DEFAULT_SCHEMANAME
 pub fn get_namespace(path: &Path, base_dir: &Path) -> String {
     path.strip_prefix(base_dir)
         .ok()
         .and_then(|p| p.components().nth(1))
         .and_then(|c| c.as_os_str().to_str())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| "default".to_string())
+        .unwrap_or_else(|| ast::DEFAULT_SCHEMANAME.to_string())
 }
 
 pub fn collect_filepaths(dir: &Path) -> io::Result<Found> {

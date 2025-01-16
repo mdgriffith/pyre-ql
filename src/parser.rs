@@ -27,7 +27,7 @@ pub struct ParseContext<'a> {
 pub fn placeholder_context<'a>() -> ParseContext<'a> {
     ParseContext {
         file: "placeholder.txt",
-        namespace: String::from("default"),
+        namespace: ast::DEFAULT_SCHEMANAME.to_string(),
         expecting: crate::error::Expecting::PyreFile,
     }
 }

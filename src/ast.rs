@@ -17,6 +17,8 @@ pub struct Schema {
     pub files: Vec<SchemaFile>,
 }
 
+pub const DEFAULT_SCHEMANAME: &str = "_default";
+
 pub fn default_session_details() -> SessionDetails {
     SessionDetails {
         fields: Vec::new(),
