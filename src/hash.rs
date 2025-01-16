@@ -44,25 +44,33 @@ pub fn hash_query_full(query: &Query) -> String {
 
     format!("{:x}", hasher.finalize())
 }
-
-fn hash_fields(hasher: &mut Sha256, fields: &[QueryField]) {
+fn hash_fields(hasher: &mut Sha256, fields: &[TopLevelQueryField]) {
     for field in fields {
-        hasher.update(&field.name);
-        if let Some(alias) = &field.alias {
-            hasher.update(alias);
-        }
-        if let Some(set) = &field.set {
-            hash_query_value(hasher, set);
-        }
-        for directive in &field.directives {
-            hasher.update(directive);
-        }
-        for arg_field in &field.fields {
-            match arg_field {
-                ArgField::Field(query_field) => hash_fields(hasher, &[query_field.clone()]),
-                ArgField::Arg(located_arg) => hash_arg(hasher, &located_arg.arg),
-                ArgField::Line { count } => hasher.update(count.to_string()),
+        match field {
+            TopLevelQueryField::Field(query_field) => {
+                hasher.update(&query_field.name);
+                if let Some(alias) = &query_field.alias {
+                    hasher.update(alias);
+                }
+                if let Some(set) = &query_field.set {
+                    hash_query_value(hasher, set);
+                }
+                for directive in &query_field.directives {
+                    hasher.update(directive);
+                }
+                for arg_field in &query_field.fields {
+                    match arg_field {
+                        ArgField::Field(query_field) => {
+                            hash_fields(hasher, &[TopLevelQueryField::Field(query_field.clone())])
+                        }
+                        ArgField::Arg(located_arg) => hash_arg(hasher, &located_arg.arg),
+                        ArgField::Lines { count } => hasher.update(count.to_string()),
+                        ArgField::QueryComment { .. } => {}
+                    }
+                }
             }
+            TopLevelQueryField::Lines { .. } => {}
+            TopLevelQueryField::Comment { .. } => {}
         }
     }
 }

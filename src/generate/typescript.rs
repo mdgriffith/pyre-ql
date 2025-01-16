@@ -435,26 +435,32 @@ fn to_query_file(
 
     let mut written_field = false;
     for field in &query.fields {
-        let table = context.tables.get(&field.name).unwrap();
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                let table = context.tables.get(&query_field.name).unwrap();
 
-        for watched_operation in ast::to_watched_operations(&table.record) {
-            let name = format!(
-                "{}{}",
-                table.record.name,
-                watched::operation_name(&watched_operation)
-            );
-            watchers.push(format!(
-                "{{ kind: Watched.WatchedKind.{}, data: {{}} }}",
-                name
-            ));
-        }
+                for watched_operation in ast::to_watched_operations(&table.record) {
+                    let name = format!(
+                        "{}{}",
+                        table.record.name,
+                        watched::operation_name(&watched_operation)
+                    );
+                    watchers.push(format!(
+                        "{{ kind: Watched.WatchedKind.{}, data: {{}} }}",
+                        name
+                    ));
+                }
 
-        if written_field {
-            result.push_str(", ");
+                if written_field {
+                    result.push_str(", ");
+                }
+                let sql = generate::sql::to_string(context, query, query_info, table, query_field);
+                result.push_str(&literal_quote(&sql));
+                written_field = true;
+            }
+            ast::TopLevelQueryField::Lines { .. } => {}
+            ast::TopLevelQueryField::Comment { .. } => {}
         }
-        let sql = generate::sql::to_string(context, query, query_info, table, field);
-        result.push_str(&literal_quote(&sql));
-        written_field = true;
     }
 
     result.push_str("];\n\n\n");
@@ -462,15 +468,21 @@ fn to_query_file(
     // Rectangle data decoder
     result.push_str("export const ReturnRectangle = Ark.type({\n");
     for field in &query.fields {
-        let table = context.tables.get(&field.name).unwrap();
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                let table = context.tables.get(&query_field.name).unwrap();
 
-        to_flat_query_decoder(
-            context,
-            &ast::get_aliased_name(&field),
-            &table.record,
-            &ast::collect_query_fields(&field.fields),
-            &mut result,
-        );
+                to_flat_query_decoder(
+                    context,
+                    &ast::get_aliased_name(&query_field),
+                    &table.record,
+                    &ast::collect_query_fields(&query_field.fields),
+                    &mut result,
+                );
+            }
+            ast::TopLevelQueryField::Lines { .. } => {}
+            ast::TopLevelQueryField::Comment { .. } => {}
+        }
     }
     result.push_str("});\n\n");
 

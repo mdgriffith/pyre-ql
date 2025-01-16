@@ -500,29 +500,34 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     let mut is_first = true;
     for field in &query.fields {
-        if is_first {
-            result.push_str(&format!("    {{ ",))
-        }
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                if is_first {
+                    result.push_str(&format!("    {{ ",))
+                }
 
-        let field_name = ast::get_aliased_name(field);
-        if is_first {
-            result.push_str(&format!(
-                "{} : List {}\n",
-                crate::ext::string::decapitalize(&field_name),
-                string::capitalize(&field.name)
-            ));
-        } else {
-            let spaces = " ".repeat(4);
-            result.push_str(&format!(
-                "{}, {} : List {}\n",
-                spaces,
-                crate::ext::string::decapitalize(&field_name),
-                string::capitalize(&field.name)
-            ));
-        }
+                let field_name = ast::get_aliased_name(query_field);
+                if is_first {
+                    result.push_str(&format!(
+                        "{} : List {}\n",
+                        crate::ext::string::decapitalize(&field_name),
+                        string::capitalize(&query_field.name)
+                    ));
+                } else {
+                    let spaces = " ".repeat(4);
+                    result.push_str(&format!(
+                        "{}, {} : List {}\n",
+                        spaces,
+                        crate::ext::string::decapitalize(&field_name),
+                        string::capitalize(&query_field.name)
+                    ));
+                }
 
-        if is_first {
-            is_first = false;
+                if is_first {
+                    is_first = false;
+                }
+            }
+            _ => {}
         }
     }
     result.push_str("    }\n\n\n");
@@ -531,13 +536,19 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     // Type Alisaes
     for field in &query.fields {
-        let table = context.tables.get(&field.name).unwrap();
-        result.push_str(&to_query_type_alias(
-            context,
-            &table.record,
-            &field.name,
-            &ast::collect_query_fields(&field.fields),
-        ));
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                let table = context.tables.get(&query_field.name).unwrap();
+                result.push_str(&to_query_type_alias(
+                    context,
+                    &table.record,
+                    &query_field.name,
+                    &ast::collect_query_fields(&query_field.fields),
+                ));
+            }
+            ast::TopLevelQueryField::Lines { .. } => {}
+            ast::TopLevelQueryField::Comment { .. } => {}
+        }
     }
 
     result.push_str(&to_param_type_encoder(&query.args));
@@ -548,14 +559,20 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     // Helper Decoders
     for field in &query.fields {
-        let table = context.tables.get(&field.name).unwrap();
-        result.push_str(&to_query_decoder(
-            context,
-            &ast::get_aliased_name(&field),
-            &table.record,
-            &ast::collect_query_fields(&field.fields),
-        ));
-        result.push_str("\n\n");
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                let table = context.tables.get(&query_field.name).unwrap();
+                result.push_str(&to_query_decoder(
+                    context,
+                    &ast::get_aliased_name(&query_field),
+                    &table.record,
+                    &ast::collect_query_fields(&query_field.fields),
+                ));
+                result.push_str("\n\n");
+            }
+            ast::TopLevelQueryField::Lines { .. } => {}
+            ast::TopLevelQueryField::Comment { .. } => {}
+        }
     }
 
     result
@@ -629,12 +646,18 @@ fn to_query_toplevel_decoder(context: &typecheck::Context, query: &ast::Query) -
         crate::ext::string::capitalize(&query.name)
     ));
     for (index, field) in query.fields.iter().enumerate() {
-        let aliased_field_name = ast::get_aliased_name(field);
-        result.push_str(&format!(
-            "        |> Db.Read.andDecodeIndex {} decode{}\n",
-            index,
-            crate::ext::string::capitalize(&aliased_field_name)
-        ));
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                let aliased_field_name = ast::get_aliased_name(query_field);
+                result.push_str(&format!(
+                    "        |> Db.Read.andDecodeIndex {} decode{}\n",
+                    index,
+                    crate::ext::string::capitalize(&aliased_field_name)
+                ));
+            }
+            ast::TopLevelQueryField::Lines { .. } => {}
+            ast::TopLevelQueryField::Comment { .. } => {}
+        }
     }
 
     result

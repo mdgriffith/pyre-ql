@@ -414,10 +414,18 @@ fn to_string_query(query: &ast::Query) -> String {
     result.push_str(" {\n");
 
     for field in &query.fields {
-        result.push_str(&to_string_query_field(4, &field));
+        result.push_str(&to_string_toplevel_query_field(4, &field));
     }
     result.push_str("}\n");
     result
+}
+
+fn to_string_toplevel_query_field(indent: usize, field: &ast::TopLevelQueryField) -> String {
+    match field {
+        ast::TopLevelQueryField::Field(query_field) => to_string_query_field(indent, query_field),
+        ast::TopLevelQueryField::Lines { count } => "\n".repeat(*count),
+        ast::TopLevelQueryField::Comment { text } => format!("//{}\n", text),
+    }
 }
 
 // Example: ($arg: String)
@@ -439,7 +447,10 @@ fn to_string_field_arg(indent: usize, field_arg: &ast::ArgField) -> String {
     match field_arg {
         ast::ArgField::Arg(arg) => to_string_param(indent, &arg.arg),
         ast::ArgField::Field(field) => to_string_query_field(indent, field),
-        ast::ArgField::Line { count } => "\n".repeat(count.clone()),
+        ast::ArgField::Lines { count } => "\n".repeat(count.clone()),
+        ast::ArgField::QueryComment { text } => {
+            format!("{}//{}\n", " ".repeat(indent), text)
+        }
     }
 }
 

@@ -759,7 +759,7 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
 
     let (input, param_defs_or_nothing) = cut(opt(parse_query_param_definitions))(input)?;
     let (input, _) = space0(input)?;
-    let (input, fields) = with_braces(parse_query_field)(input)?;
+    let (input, fields) = with_braces(parse_toplevel_query_field)(input)?;
     let (input, end_pos) = position(input)?;
 
     let mut query = ast::Query {
@@ -780,6 +780,45 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
 
     Ok((input, ast::QueryDef::Query(query)))
 }
+
+// TOP LEVEL QUERY FIELD PARSING
+
+fn parse_toplevel_query_field(input: Text) -> ParseResult<ast::TopLevelQueryField> {
+    alt((
+        parse_toplevel_query_comment,
+        parse_toplevel_querydetails_field,
+        parse_toplevel_query_lines,
+    ))(input)
+}
+
+fn parse_toplevel_querydetails_field(input: Text) -> ParseResult<ast::TopLevelQueryField> {
+    let (input, q) = parse_query_field(input)?;
+    Ok((input, ast::TopLevelQueryField::Field(q)))
+}
+
+fn parse_toplevel_query_lines(input: Text) -> ParseResult<ast::TopLevelQueryField> {
+    // Parse any whitespace (spaces, tabs, or newlines)
+    let (input, whitespaces) = many1(one_of(" \t\n"))(input)?;
+
+    // Count the newlines
+    let count = whitespaces.iter().filter(|&&c| c == '\n').count();
+
+    Ok((input, ast::TopLevelQueryField::Lines { count }))
+}
+
+fn parse_toplevel_query_comment(input: Text) -> ParseResult<ast::TopLevelQueryField> {
+    let (input, _) = tag("//")(input)?;
+    let (input, text) = take_until("\n")(input)?;
+    let (input, _) = newline(input)?;
+    Ok((
+        input,
+        ast::TopLevelQueryField::Comment {
+            text: text.to_string(),
+        },
+    ))
+}
+
+// QUERY PARAMETER PARSING
 
 fn parse_query_param_definitions(input: Text) -> ParseResult<Vec<ast::QueryParamDefinition>> {
     let (input, _) = tag("(")(input)?;
@@ -868,7 +907,34 @@ fn parse_alias(input: Text) -> ParseResult<String> {
 }
 
 fn parse_arg_field(input: Text) -> ParseResult<ast::ArgField> {
-    alt((parse_query_arg_field, parse_arg))(input)
+    alt((
+        parse_inline_query_comment,
+        parse_query_arg_field,
+        parse_arg,
+        parse_inline_query_lines,
+    ))(input)
+}
+
+fn parse_inline_query_lines(input: Text) -> ParseResult<ast::ArgField> {
+    // Parse any whitespace (spaces, tabs, or newlines)
+    let (input, whitespaces) = many1(one_of(" \t\n"))(input)?;
+
+    // Count the newlines
+    let count = whitespaces.iter().filter(|&&c| c == '\n').count();
+
+    Ok((input, ast::ArgField::Lines { count }))
+}
+
+fn parse_inline_query_comment(input: Text) -> ParseResult<ast::ArgField> {
+    let (input, _) = tag("//")(input)?;
+    let (input, text) = take_until("\n")(input)?;
+    let (input, _) = newline(input)?;
+    Ok((
+        input,
+        ast::ArgField::QueryComment {
+            text: text.to_string(),
+        },
+    ))
 }
 
 fn parse_arg(input: Text) -> ParseResult<ast::ArgField> {

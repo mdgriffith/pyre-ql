@@ -474,10 +474,19 @@ pub struct Query {
     pub operation: QueryOperation,
     pub name: String,
     pub args: Vec<QueryParamDefinition>,
-    pub fields: Vec<QueryField>,
+    pub fields: Vec<TopLevelQueryField>,
 
     pub start: Option<Location>,
     pub end: Option<Location>,
+}
+
+// This is the first layer of fields in a query
+//
+#[derive(Debug, Clone)]
+pub enum TopLevelQueryField {
+    Field(QueryField),
+    Lines { count: usize },
+    Comment { text: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -537,7 +546,8 @@ pub struct QueryField {
 pub enum ArgField {
     Field(QueryField),
     Arg(LocatedArg),
-    Line { count: usize },
+    Lines { count: usize },
+    QueryComment { text: String },
 }
 
 #[derive(Debug, Clone)]

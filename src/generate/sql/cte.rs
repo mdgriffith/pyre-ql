@@ -165,8 +165,14 @@ pub fn should_use_cte(query: &ast::Query) -> bool {
     return false;
 
     for field in &query.fields {
-        if should_field_use_cte(field, true) {
-            return true;
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                if should_field_use_cte(query_field, true) {
+                    return true;
+                }
+            }
+            ast::TopLevelQueryField::Lines { .. } => {}
+            ast::TopLevelQueryField::Comment { .. } => {}
         }
     }
     false
@@ -201,7 +207,10 @@ fn should_arg_field_use_cte(field: &ast::ArgField, first_level: bool) -> bool {
                 }
             }
         }
-        ast::ArgField::Line { .. } => {
+        ast::ArgField::Lines { .. } => {
+            return false;
+        }
+        ast::ArgField::QueryComment { .. } => {
             return false;
         }
     }
@@ -252,7 +261,10 @@ fn has_subselection(field: ast::ArgField) -> bool {
     match field {
         ast::ArgField::Field(qf) => return !&qf.fields.is_empty(),
         ast::ArgField::Arg(_) => return false,
-        ast::ArgField::Line { .. } => {
+        ast::ArgField::Lines { .. } => {
+            return false;
+        }
+        ast::ArgField::QueryComment { .. } => {
             return false;
         }
     }
@@ -329,7 +341,8 @@ pub fn to_inner_arg_field_select(
                 }
             }
             ast::ArgField::Arg(_) => {}
-            ast::ArgField::Line { .. } => {}
+            ast::ArgField::Lines { .. } => {}
+            ast::ArgField::QueryComment { .. } => {}
         }
     }
 }
@@ -344,7 +357,7 @@ fn render_from(
     result.push_str("  from\n");
 
     let table_name = ast::get_tablename(&table.name, &table.fields);
-    let mut from_vals = &mut to_from(context, table_alias, table, &primary_query_fields);
+    let from_vals = &mut to_from(context, table_alias, table, &primary_query_fields);
 
     // the from statements are naturally in reverse order
     // Because we're walking outwards from the root, and `.push` ing the join statements
