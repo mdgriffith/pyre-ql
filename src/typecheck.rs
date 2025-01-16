@@ -1,5 +1,5 @@
 use crate::error::{DefInfo, Error, ErrorType, Location, Range, VariantDef};
-use crate::{ast, db, error};
+use crate::{ast, error};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -883,28 +883,37 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
 
     // Verify that all fields exist in the schema
     for field in &query.fields {
-        match context.tables.get(&field.name) {
-            None => errors.push(Error {
-                filepath: context.current_filepath.clone(),
-                error_type: ErrorType::UnknownTable {
-                    found: field.name.clone(),
-                    existing: vec![],
-                },
-                locations: vec![Location {
-                    contexts: to_range(&query.start, &query.end),
-                    primary: to_range(&field.start_fieldname, &field.end_fieldname),
-                }],
-            }),
-            Some(table) => check_table_query(
-                context,
-                errors,
-                &query.operation,
-                None,
-                table,
-                field,
-                &mut param_names,
-                &mut used_namespaces,
-            ),
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                match context.tables.get(&query_field.name) {
+                    None => errors.push(Error {
+                        filepath: context.current_filepath.clone(),
+                        error_type: ErrorType::UnknownTable {
+                            found: query_field.name.clone(),
+                            existing: vec![],
+                        },
+                        locations: vec![Location {
+                            contexts: to_range(&query.start, &query.end),
+                            primary: to_range(
+                                &query_field.start_fieldname,
+                                &query_field.end_fieldname,
+                            ),
+                        }],
+                    }),
+                    Some(table) => check_table_query(
+                        context,
+                        errors,
+                        &query.operation,
+                        None,
+                        table,
+                        query_field,
+                        &mut param_names,
+                        &mut used_namespaces,
+                    ),
+                }
+            }
+            ast::TopLevelQueryField::Lines { .. } => {}
+            ast::TopLevelQueryField::Comment { .. } => {}
         }
     }
 
@@ -1347,7 +1356,9 @@ fn insert_primary_schema(
     used_schemas: &mut UsedNamespaces,
 ) {
     let schema_name = table.schema.to_string();
-    if used_schemas.primary.contains(&schema_name) {
+    // If there's already a primary schema and it's not the current schema
+    // Then it's a problem
+    if !used_schemas.primary.is_empty() && !used_schemas.primary.contains(&schema_name) {
         errors.push(Error {
             filepath: context.current_filepath.clone(),
             error_type: ErrorType::MultipleSchemaWrites {
@@ -1397,7 +1408,8 @@ fn check_table_query(
     // we want to make sure that every field queried exists in `table` as a column
     for arg_field in &query.fields {
         match arg_field {
-            ast::ArgField::Line { .. } => (),
+            ast::ArgField::Lines { .. } => (),
+            ast::ArgField::QueryComment { .. } => (),
             ast::ArgField::Arg(arg) => {
                 let arg_data = &arg.arg;
                 match arg_data {
