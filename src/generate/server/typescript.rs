@@ -303,6 +303,8 @@ pub fn write_queries(
     all_query_info: &HashMap<String, typecheck::QueryInfo>,
     query_list: &ast::QueryList,
 ) -> io::Result<()> {
+    let query_dir = dir.join("query");
+    filesystem::create_dir_if_not_exists(&query_dir)?;
     write_runner(dir, context, query_list);
 
     for operation in &query_list.queries {
@@ -310,10 +312,8 @@ pub fn write_queries(
             ast::QueryDef::Query(q) => {
                 let query_info = all_query_info.get(&q.name).unwrap();
 
-                let target_path = dir.join(&format!(
-                    "query/{}.ts",
-                    crate::ext::string::decapitalize(&q.name)
-                ));
+                let target_path =
+                    query_dir.join(&format!("{}.ts", crate::ext::string::decapitalize(&q.name)));
 
                 let mut output = fs::File::create(target_path).expect("Failed to create file");
                 output

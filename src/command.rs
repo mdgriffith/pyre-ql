@@ -507,6 +507,12 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
             std::process::exit(1);
         }
         Ok(mut context) => {
+            // Clear the generated folder
+            generate::clear(&out_dir)?;
+
+            // Ensure dir is present
+            filesystem::create_dir_if_not_exists(&out_dir)?;
+
             // Generate schema files
             generate::write_schema(&context, &schema, out_dir)?;
 
@@ -524,22 +530,12 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
 
                         match typecheck_result {
                             Ok(all_query_info) => {
-                                filesystem::create_dir_if_not_exists(
-                                    &out_dir.join("elm").join("Query"),
-                                )?;
-                                filesystem::create_dir_if_not_exists(
-                                    &out_dir.join("typescript").join("query"),
-                                )?;
-                                generate::elm::write_queries(
-                                    &out_dir.join("elm"),
+                                generate::write_queries(
                                     &context,
                                     &query_list,
-                                )?;
-                                generate::typescript::write_queries(
-                                    &out_dir.join("typescript"),
-                                    &context,
                                     &all_query_info,
-                                    &query_list,
+                                    &schema,
+                                    out_dir,
                                 )?;
                             }
                             Err(error_list) => {

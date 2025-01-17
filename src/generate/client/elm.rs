@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-const ELM_READ_MODULE: &str = include_str!("../static/elm/src/Db/Read.elm");
+const ELM_READ_MODULE: &str = include_str!("../../static/elm/src/Db/Read.elm");
 pub fn write(elm_path: &Path, database: &ast::Database) -> io::Result<()> {
     filesystem::create_dir_if_not_exists(&elm_path)?;
     filesystem::create_dir_if_not_exists(&elm_path.join("Db"))?;
@@ -451,10 +451,12 @@ pub fn write_queries(
     context: &typecheck::Context,
     query_list: &ast::QueryList,
 ) -> io::Result<()> {
+    let query_dir = dir.join("Query");
+    filesystem::create_dir_if_not_exists(&query_dir)?;
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
-                let target_path = dir.join(&format!("Query/{}.elm", q.name.to_string()));
+                let target_path = query_dir.join(&format!("{}.elm", q.name.to_string()));
 
                 let mut output = fs::File::create(target_path).expect("Failed to create file");
                 output
