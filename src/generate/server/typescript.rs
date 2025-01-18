@@ -804,163 +804,171 @@ import * as Watched from './watched';
 export type ExecuteResult = SuccessResult | ErrorResult;
 
 export interface SuccessResult {
-	kind: 'success';
-	metadata: {
-		outOfDate: boolean;
-		watched: Watched.Watched[];
-	};
-	data: LibSql.ResultSet[];
+    kind: 'success';
+    metadata: {
+        outOfDate: boolean;
+        watched: Watched.Watched[];
+    };
+    data: LibSql.ResultSet[];
 }
 
 export type ValidArgs = {
-	kind: 'valid';
-	valid: LibSql.InArgs;
+    kind: 'valid';
+    valid: LibSql.InArgs;
 };
 
 export interface ErrorResult {
-	kind: 'error';
-	errorType: ErrorType;
-	message: string;
+    kind: 'error';
+    errorType: ErrorType;
+    message: string;
 }
 
 export enum ErrorType {
-	NotFound,
-	Unauthorized,
-	InvalidInput,
-	InvalidSession,
-	UnknownError,
-	UnknownQuery,
+    NotFound,
+    Unauthorized,
+    InvalidInput,
+    InvalidSession,
+    UnknownError,
+    UnknownQuery,
+    NoDatabase
 }
 
 export interface Runner<session, input, output> {
-	id: string;
+    id: string;
     primary_db: Env.DatabaseKey;
     attached_dbs: Env.DatabaseKey[];
-	session: Ark.Type<session>;
-	session_args: string[];
-	input: Ark.Type<input>;
-	output: Ark.Type<output>;
-	execute: (env: Env.Config, args: ValidArgs) => Promise<ExecuteResult>;
+    session: Ark.Type<session>;
+    session_args: string[];
+    input: Ark.Type<input>;
+    output: Ark.Type<output>;
+    execute: (env: Env.Config, args: ValidArgs) => Promise<ExecuteResult>;
 }
 
 export type ToRunnerArgs<session, input, output> = {
-	id: string;
+    id: string;
     primary_db: Env.DatabaseKey;
     attached_dbs: Env.DatabaseKey[];
-	session: Ark.Type<session>;
-	session_args: string[];
-	input: Ark.Type<input>;
-	output: Ark.Type<output>;
-	sql: Array<string>;
-	watch_triggers: Watched.Watched[];
+    session: Ark.Type<session>;
+    session_args: string[];
+    input: Ark.Type<input>;
+    output: Ark.Type<output>;
+    sql: Array<string>;
+    watch_triggers: Watched.Watched[];
 };
 
 export const toRunner = <Session, Input, Output>(options: ToRunnerArgs<Session, Input, Output>): Runner<Session, Input, Output> => {
-	return {
-		id: options.id,
+    return {
+        id: options.id,
         primary_db: options.primary_db,
         attached_dbs: options.attached_dbs,
-		session: options.session,
-		session_args: options.session_args,
-		input: options.input,
-		output: options.output,
-		execute: async (env: Env.Config, args: ValidArgs): Promise<ExecuteResult> => {
-			const sql_arg_list: LibSql.InStatement[] = options.sql.map((sql) => {
-				return { sql: sql, args: args.valid };
-			});
+        session: options.session,
+        session_args: options.session_args,
+        input: options.input,
+        output: options.output,
+        execute: async (env: Env.Config, args: ValidArgs): Promise<ExecuteResult> => {
+            const sql_arg_list: LibSql.InStatement[] = options.sql.map((sql) => {
+                return { sql: sql, args: args.valid };
+            });
 
             const lib_sql_config = Env.to_libSql_config(env, options.primary_db);
+            if (lib_sql_config == undefined) {
+                return {
+                    kind: "error",
+                    errorType: ErrorType.NoDatabase,
+                    message: `${options.primary_db} database was not provided!`
+                }
+            }
 
-			return exec(lib_sql_config, sql_arg_list, options.watch_triggers);
-		},
-	};
+            return exec(lib_sql_config, sql_arg_list, options.watch_triggers);
+        },
+    };
 };
 
 const to_session_args = (allowed_keys: string[], session: any): any => {
-	if (session == null) {
-		return {};
-	}
+    if (session == null) {
+        return {};
+    }
 
-	const session_args: any = {};
-	for (const key in allowed_keys) {
-		session_args['session_' + key] = session[key];
-	}
-	return session_args;
+    const session_args: any = {};
+    for (const key in allowed_keys) {
+        session_args['session_' + key] = session[key];
+    }
+    return session_args;
 };
 
 export const run = async (env: Env.Config, runner: Runner<any, any, any>, session: any, args: any): Promise<ExecuteResult> => {
-	const validArgs = validate(runner, session, args);
-	if (validArgs.kind === 'error') {
-		return validArgs;
-	}
-	return runner.execute(env, validArgs);
+    const validArgs = validate(runner, session, args);
+    if (validArgs.kind === 'error') {
+        return validArgs;
+    }
+    return runner.execute(env, validArgs);
 };
 
 const stringifyNestedObjects = (obj: Record<string, any>): Record<string, any> => {
-	const result: Record<string, any> = {};
+    const result: Record<string, any> = {};
 
-	for (const key in obj) {
-		if (obj.hasOwnProperty(key)) {
-			const value = obj[key];
-			if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-				result[key] = JSON.stringify(value);
-			} else {
-				result[key] = value;
-			}
-		}
-	}
+    for (const key in obj) {
+        if (obj.hasOwnProperty(key)) {
+            const value = obj[key];
+            if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                result[key] = JSON.stringify(value);
+            } else {
+                result[key] = value;
+            }
+        }
+    }
 
-	return result;
+    return result;
 };
 
 const validate = <Session, Input extends LibSql.InArgs, Output>(
-	runner: Runner<Session, Input, Output>,
-	session: any,
-	args: any
+    runner: Runner<Session, Input, Output>,
+    session: any,
+    args: any
 ): ErrorResult | ValidArgs => {
-	const validationResult: any | Ark.ArkErrors = runner.input(args);
+    const validationResult: any | Ark.ArkErrors = runner.input(args);
 
-	if (validationResult instanceof Ark.type.errors) {
-		return {
-			kind: 'error',
-			errorType: ErrorType.InvalidInput,
-			message: 'Expected object',
-		};
-	}
+    if (validationResult instanceof Ark.type.errors) {
+        return {
+            kind: 'error',
+            errorType: ErrorType.InvalidInput,
+            message: 'Expected object',
+        };
+    }
 
-	const validatedSession: any | Ark.ArkErrors = runner.session(session);
-	if (validatedSession instanceof Ark.type.errors) {
-		return {
-			kind: 'error',
-			errorType: ErrorType.InvalidSession,
-			message: 'Expected object',
-		};
-	}
+    const validatedSession: any | Ark.ArkErrors = runner.session(session);
+    if (validatedSession instanceof Ark.type.errors) {
+        return {
+            kind: 'error',
+            errorType: ErrorType.InvalidSession,
+            message: 'Expected object',
+        };
+    }
 
-	const session_args = to_session_args(runner.session_args, validatedSession);
+    const session_args = to_session_args(runner.session_args, validatedSession);
 
-	return { kind: 'valid', valid: stringifyNestedObjects({ ...validationResult, ...session_args }) };
+    return { kind: 'valid', valid: stringifyNestedObjects({ ...validationResult, ...session_args }) };
 };
 
 // Queries
 
 const exec = async (env: LibSql.Config, sql: Array<LibSql.InStatement>, watch_triggers: Watched.Watched[]): Promise<ExecuteResult> => {
-	const client = LibSql.createClient(env);
-	try {
-		const res = await client.batch(sql);
-		return {
-			kind: 'success',
-			metadata: { outOfDate: false, watched: watch_triggers },
-			data: res,
-		};
-	} catch (error) {
-	    console.log(error);
-		return {
-			kind: 'error',
-			errorType: ErrorType.InvalidInput,
-			message: 'Database error',
-		};
-	}
+    const client = LibSql.createClient(env);
+    try {
+        const res = await client.batch(sql);
+        return {
+            kind: 'success',
+            metadata: { outOfDate: false, watched: watch_triggers },
+            data: res,
+        };
+    } catch (error) {
+        console.log(error);
+        return {
+            kind: 'error',
+            errorType: ErrorType.InvalidInput,
+            message: 'Database error',
+        };
+    }
 };
 
 "#;
