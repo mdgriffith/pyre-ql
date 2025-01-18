@@ -963,6 +963,7 @@ const validate = <Session, Input extends LibSql.InArgs, Output>(
     return { kind: 'valid', valid: stringifyNestedObjects({ ...validationResult, ...session_args, ...attached_database_args }) };
 };
 
+type DatabaseArgs = { [key: string]: string };
 
 const to_database_args = (attached_databases: Env.DatabaseKey[], env: Env.Config): DatabaseArgs => {
     const db_args: DatabaseArgs = {};
