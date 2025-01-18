@@ -46,7 +46,8 @@ pub fn select_to_string(
 
         return result;
     }
-    let mut result = "select\n".to_string();
+    let mut result = to_sql::format_attach(query_info);
+    result.push_str("select\n");
 
     // Selection
 
