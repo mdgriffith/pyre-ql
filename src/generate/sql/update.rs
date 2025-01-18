@@ -12,7 +12,8 @@ pub fn update_to_string(
 ) -> String {
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
 
-    let mut result = format!("update {}\n", table_name);
+    let mut result = to_sql::format_attach(query_info);
+    result.push_str(&format!("update {}\n", table_name));
 
     // UPDATE users
     // SET credit = 150

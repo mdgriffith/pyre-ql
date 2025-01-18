@@ -56,7 +56,7 @@ pub fn insert_to_string(
         }
     }
     let initial_indent = if (last_link_index == 0) { 0 } else { 4 };
-    let mut result = String::new();
+    let mut result = to_sql::format_attach(query_info);
     let mut initial_selection =
         initial_select(initial_indent, context, query, table, query_table_field);
     let parent_table_alias = &get_temp_table_name(&query_table_field);

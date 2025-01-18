@@ -40,7 +40,7 @@ pub fn select_to_string(
     query_field: &ast::QueryField,
 ) -> String {
     if cte::should_use_cte(query) {
-        let mut result = "".to_string();
+        let mut result = to_sql::format_attach(query_info);
 
         cte::select_to_string(context, query, query_field, &mut result);
 
