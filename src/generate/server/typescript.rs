@@ -897,7 +897,7 @@ const to_session_args = (allowed_keys: string[], session: any): any => {
 };
 
 export const run = async (env: Env.Config, runner: Runner<any, any, any>, session: any, args: any): Promise<ExecuteResult> => {
-    const validArgs = validate(runner, session, args);
+    const validArgs = validate(env, runner, session, args);
     if (validArgs.kind === 'error') {
         return validArgs;
     }
@@ -922,6 +922,7 @@ const stringifyNestedObjects = (obj: Record<string, any>): Record<string, any> =
 };
 
 const validate = <Session, Input extends LibSql.InArgs, Output>(
+    env: Env.Config,
     runner: Runner<Session, Input, Output>,
     session: any,
     args: any
@@ -945,10 +946,34 @@ const validate = <Session, Input extends LibSql.InArgs, Output>(
         };
     }
 
-    const session_args = to_session_args(runner.session_args, validatedSession);
+    for (const db of runner.attached_dbs) {
+        if (db in env) {
+            continue
+        }
+        return {
+            kind: 'error',
+            errorType: ErrorType.NoDatabase,
+            message: 'User does not have an instance of ${db}',
+        };
+    }
 
-    return { kind: 'valid', valid: stringifyNestedObjects({ ...validationResult, ...session_args }) };
+    const session_args = to_session_args(runner.session_args, validatedSession);
+    const attached_database_args = to_database_args(runner.attached_dbs, env);
+
+    return { kind: 'valid', valid: stringifyNestedObjects({ ...validationResult, ...session_args, ...attached_database_args }) };
 };
+
+
+const to_database_args = (attached_databases: Env.DatabaseKey[], env: Env.Config): DatabaseArgs => {
+    const db_args: DatabaseArgs = {};
+    for (const db_key of attached_databases) {
+        if (db_key in env && env[db_key] != undefined) {
+            db_args['db_' + db_key] = env[db_key].id;
+        }
+    }
+    return db_args;
+};
+
 
 // Queries
 
