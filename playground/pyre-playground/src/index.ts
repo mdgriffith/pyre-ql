@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import * as Query from "../pyre/generated/typescript/query";
+import * as Query from "../pyre/generated/server/typescript/query";
 
 const app = new Hono();
 

@@ -1,6 +1,6 @@
 create table "users" (
     "id" integer not null primary key autoincrement,
-    "name" text not null,
+    "name" text,
     "status" text not null, -- Status,
     "createdAt" integer not null default (unixepoch())
 

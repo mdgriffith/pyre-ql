@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import * as Query from "../pyre/generated/typescript/query";
+import * as Query from "../pyre/generated/server/typescript/query";
 
 const app = new Hono();
 
@@ -19,11 +19,17 @@ app.post("/db/:req", async (c) => {
   console.log("RECEIVED ARGS", req, args);
 
   const env = {
-    url: `file:${process.cwd()}/db/playground.db`,
-    authToken: undefined,
+    Base: {
+      id: `${process.cwd()}/db/base.db`,
+      url: `file:${process.cwd()}/db/base.db`,
+    },
+    User: {
+      id: `${process.cwd()}/db/user.db`,
+      url: `file:${process.cwd()}/db/user.db`,
+    },
   };
 
-  const session = {}
+  const session = { userId: 1 }
 
   const result = await Query.run(env, req, session, args);
 

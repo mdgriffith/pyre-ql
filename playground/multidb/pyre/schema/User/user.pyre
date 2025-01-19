@@ -10,7 +10,8 @@ record Game {
 
 record Player {
     @tablename "players"
-    user @link(userId, Base.User.id)
+    user  @link(userId, Base.User.id)
+    games @link(gameId, Game.id)
 
     id     Int   @id
     userId Int
@@ -18,7 +19,7 @@ record Player {
     points Int
 
     gameId Int
-    games  @link(gameId, Game.id)
+
 }
 
 

@@ -4,13 +4,13 @@ record User {
     accounts      @link(Account.userId)
     posts         @link(Post.authorUserId)
     databaseUsers @link(DatabaseUser.userId)
+
+
     // Fields
     id        Int     @id
     name      String?
     status    Status
     createdAt DateTime @default(now)
-
-
 }
 
 
