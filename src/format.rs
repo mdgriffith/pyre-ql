@@ -241,14 +241,14 @@ Which is why it needs the full schema
 */
 pub fn query_list(db_schema: &ast::Database, queries: &mut ast::QueryList) {
     match typecheck::populate_context(db_schema) {
-        Ok(context) => {
+        Ok(mut context) => {
             let mut all_query_info = HashMap::new();
 
             for query in queries.queries.iter() {
                 match query {
                     ast::QueryDef::Query(q) => {
                         let mut errors: Vec<error::Error> = Vec::new();
-                        let query_info = typecheck::check_query(&context, &mut errors, q);
+                        let query_info = typecheck::check_query(&mut context, &mut errors, q);
                         all_query_info.insert(q.name.clone(), query_info);
                     }
                     _ => (),

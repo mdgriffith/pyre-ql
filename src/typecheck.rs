@@ -16,6 +16,11 @@ pub enum Type {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Context {
     pub current_filepath: String,
+
+    // Used to track which params are used in which
+    // toplevel query field.
+    pub top_level_field_alias: String,
+
     pub valid_namespaces: HashSet<String>,
     pub session: Option<ast::SessionDetails>,
     pub funcs: HashMap<String, FuncDefinition>,
@@ -123,6 +128,7 @@ fn get_default_fns() -> HashMap<String, FuncDefinition> {
 fn empty_context() -> Context {
     let mut context = Context {
         current_filepath: "".to_string(),
+        top_level_field_alias: "".to_string(),
         valid_namespaces: HashSet::new(),
         session: None,
         funcs: get_default_fns(),
@@ -780,7 +786,7 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
 pub fn check_queries<'a>(
     database: &ast::Database,
     query_list: &ast::QueryList,
-    context: &Context,
+    context: &mut Context,
 ) -> Result<HashMap<String, QueryInfo>, Vec<Error>> {
     let mut errors: Vec<Error> = Vec::new();
     let mut all_params: HashMap<String, QueryInfo> = HashMap::new();
@@ -789,7 +795,7 @@ pub fn check_queries<'a>(
     for query in &query_list.queries {
         match query {
             ast::QueryDef::Query(q) => {
-                let query_info = check_query(&context, &mut errors, &q);
+                let query_info = check_query(context, &mut errors, &q);
                 all_params.insert(q.name.clone(), query_info);
                 continue;
             }
@@ -808,6 +814,7 @@ pub enum ParamInfo {
     Defined {
         defined_at: Option<Range>,
         type_: Option<String>,
+        used_by_top_level_field_alias: HashSet<String>,
         used: bool,
         type_inferred: bool,
         from_session: bool,
@@ -830,7 +837,11 @@ struct UsedNamespaces {
     secondary: HashSet<String>,
 }
 
-pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Query) -> QueryInfo {
+pub fn check_query(
+    context: &mut Context,
+    errors: &mut Vec<Error>,
+    query: &ast::Query,
+) -> QueryInfo {
     // We need to check
     // 1. The field exists on the record in the schema
     //    What type is the field (add to `QueryField`)
@@ -858,6 +869,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                         defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
                         type_: None,
                         used: false,
+                        used_by_top_level_field_alias: HashSet::new(),
                         type_inferred: false,
                         from_session: false,
                         session_name: None,
@@ -887,6 +899,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                         defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
                         type_: Some(type_.clone()),
                         used: false,
+                        used_by_top_level_field_alias: HashSet::new(),
                         type_inferred: false,
                         from_session: false,
                         session_name: None,
@@ -909,6 +922,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                                 defined_at: None,
                                 type_: Some(col.type_.clone()),
                                 used: false,
+                                used_by_top_level_field_alias: HashSet::new(),
                                 type_inferred: false,
                                 from_session: true,
                                 session_name: Some(col.name.clone()),
@@ -925,6 +939,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
     for field in &query.fields {
         match field {
             ast::TopLevelQueryField::Field(query_field) => {
+                context.top_level_field_alias = ast::get_aliased_name(query_field);
                 match context.tables.get(&query_field.name) {
                     None => errors.push(Error {
                         filepath: context.current_filepath.clone(),
@@ -1087,7 +1102,7 @@ fn check_where_args(
                     _ => (),
                 }
             }
-            if (!is_known_field) {
+            if !is_known_field {
                 let known_fields = get_column_reference(&table.fields);
                 errors.push(Error {
                     filepath: context.current_filepath.clone(),
@@ -1102,7 +1117,7 @@ fn check_where_args(
             }
 
             match column_type {
-                None => mark_as_used(query_val, errors, params),
+                None => mark_as_used(context, query_val, params),
                 Some(column_type_string) => {
                     check_value(
                         context,
@@ -1125,8 +1140,8 @@ fn check_where_args(
 }
 
 fn mark_as_used(
+    context: &Context,
     value: &ast::QueryValue,
-    errors: &mut Vec<Error>,
     params: &mut HashMap<String, ParamInfo>,
 ) {
     match value {
@@ -1144,9 +1159,15 @@ fn mark_as_used(
                 }
                 Some(param_info) => {
                     match param_info {
-                        ParamInfo::Defined { ref mut used, .. } => {
+                        ParamInfo::Defined {
+                            ref mut used,
+                            ref mut used_by_top_level_field_alias,
+                            ..
+                        } => {
                             // mark as used
                             *used = true;
+                            used_by_top_level_field_alias
+                                .insert(context.top_level_field_alias.clone());
                         }
                         ParamInfo::NotDefinedButUsed { used_at, type_ } => (),
                     };

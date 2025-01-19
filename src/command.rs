@@ -526,7 +526,7 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
                         // Typecheck and generate
                         context.current_filepath = query_file_path.clone();
                         let typecheck_result =
-                            typecheck::check_queries(&schema, &query_list, &context);
+                            typecheck::check_queries(&schema, &query_list, &mut context);
 
                         match typecheck_result {
                             Ok(all_query_info) => {

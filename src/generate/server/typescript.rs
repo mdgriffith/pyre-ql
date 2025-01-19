@@ -8,6 +8,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
+const DB_ENGINE: &str = include_str!("../../static/typescript/db.ts");
+
 /// Write all typescript files
 pub fn write(
     context: &typecheck::Context,
@@ -358,7 +360,7 @@ fn write_runner(dir: &Path, context: &typecheck::Context, query_list: &ast::Quer
                 content.push_str(&format!("        case \"{}\":\n", q.interface_hash));
 
                 content.push_str(&format!(
-                    "            return Db.run(env, {}.query, session, args);\n",
+                    "            return {}.query.run(env, session, args);\n",
                     &q.name
                 ));
             }
@@ -415,6 +417,32 @@ fn format_string_list(items: &Vec<String>) -> String {
     result
 }
 
+// A specialized
+fn get_formatted_used_params(
+    top_level_field_alias: &str,
+    query_params: &HashMap<String, typecheck::ParamInfo>,
+) -> String {
+    let mut formatted = String::new();
+    formatted.push_str("[ ");
+    println!("Queryfield: {:?}", top_level_field_alias);
+    println!("{:#?}", query_params);
+    for (param_name, param_info) in query_params {
+        match param_info {
+            typecheck::ParamInfo::NotDefinedButUsed { .. } => continue,
+            typecheck::ParamInfo::Defined {
+                used_by_top_level_field_alias,
+                ..
+            } => {
+                if used_by_top_level_field_alias.contains(top_level_field_alias) {
+                    formatted.push_str(param_name);
+                }
+            }
+        }
+    }
+    formatted.push_str(" ]");
+    return formatted;
+}
+
 fn to_query_file(
     context: &typecheck::Context,
     query_info: &typecheck::QueryInfo,
@@ -454,8 +482,17 @@ fn to_query_file(
                 if written_field {
                     result.push_str(", ");
                 }
+                let param_info = get_formatted_used_params(
+                    &ast::get_aliased_name(query_field),
+                    &query_info.variables,
+                );
                 let sql = generate::sql::to_string(context, query, query_info, table, query_field);
-                result.push_str(&literal_quote(&sql));
+                let sql_info = format!(
+                    "{{ params: {},\n    sql: {}}}",
+                    &param_info,
+                    &literal_quote(&sql)
+                );
+                result.push_str(&sql_info);
                 written_field = true;
             }
             ast::TopLevelQueryField::Lines { .. } => {}
@@ -490,7 +527,7 @@ fn to_query_file(
 
     let validate = format!(
         r#"
-export const query = Db.toRunner({{
+export const query = Db.to_runner({{
     id: "{}",
     primary_db: Env.DatabaseKey.{},
     attached_dbs: {},
@@ -794,207 +831,3 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
 
     Some(result)
 }
-
-//
-pub const DB_ENGINE: &str = r#"import * as LibSql from '@libsql/client';
-import * as Env from './db/env'
-import * as Ark from 'arktype';
-import * as Watched from './watched';
-
-export type ExecuteResult = SuccessResult | ErrorResult;
-
-export interface SuccessResult {
-    kind: 'success';
-    metadata: {
-        outOfDate: boolean;
-        watched: Watched.Watched[];
-    };
-    data: LibSql.ResultSet[];
-}
-
-export type ValidArgs = {
-    kind: 'valid';
-    valid: LibSql.InArgs;
-};
-
-export interface ErrorResult {
-    kind: 'error';
-    errorType: ErrorType;
-    message: string;
-}
-
-export enum ErrorType {
-    NotFound,
-    Unauthorized,
-    InvalidInput,
-    InvalidSession,
-    UnknownError,
-    UnknownQuery,
-    NoDatabase
-}
-
-export interface Runner<session, input, output> {
-    id: string;
-    primary_db: Env.DatabaseKey;
-    attached_dbs: Env.DatabaseKey[];
-    session: Ark.Type<session>;
-    session_args: string[];
-    input: Ark.Type<input>;
-    output: Ark.Type<output>;
-    execute: (env: Env.Config, args: ValidArgs) => Promise<ExecuteResult>;
-}
-
-export type ToRunnerArgs<session, input, output> = {
-    id: string;
-    primary_db: Env.DatabaseKey;
-    attached_dbs: Env.DatabaseKey[];
-    session: Ark.Type<session>;
-    session_args: string[];
-    input: Ark.Type<input>;
-    output: Ark.Type<output>;
-    sql: Array<string>;
-    watch_triggers: Watched.Watched[];
-};
-
-export const toRunner = <Session, Input, Output>(options: ToRunnerArgs<Session, Input, Output>): Runner<Session, Input, Output> => {
-    return {
-        id: options.id,
-        primary_db: options.primary_db,
-        attached_dbs: options.attached_dbs,
-        session: options.session,
-        session_args: options.session_args,
-        input: options.input,
-        output: options.output,
-        execute: async (env: Env.Config, args: ValidArgs): Promise<ExecuteResult> => {
-            const sql_arg_list: LibSql.InStatement[] = options.sql.map((sql) => {
-                return { sql: sql, args: args.valid };
-            });
-
-            const lib_sql_config = Env.to_libSql_config(env, options.primary_db);
-            if (lib_sql_config == undefined) {
-                return {
-                    kind: "error",
-                    errorType: ErrorType.NoDatabase,
-                    message: `${options.primary_db} database was not provided!`
-                }
-            }
-
-            return exec(lib_sql_config, sql_arg_list, options.watch_triggers);
-        },
-    };
-};
-
-const to_session_args = (allowed_keys: string[], session: any): any => {
-    if (session == null) {
-        return {};
-    }
-
-    const session_args: any = {};
-    for (const key in allowed_keys) {
-        session_args['session_' + key] = session[key];
-    }
-    return session_args;
-};
-
-export const run = async (env: Env.Config, runner: Runner<any, any, any>, session: any, args: any): Promise<ExecuteResult> => {
-    const validArgs = validate(env, runner, session, args);
-    if (validArgs.kind === 'error') {
-        return validArgs;
-    }
-    return runner.execute(env, validArgs);
-};
-
-const stringifyNestedObjects = (obj: Record<string, any>): Record<string, any> => {
-    const result: Record<string, any> = {};
-
-    for (const key in obj) {
-        if (obj.hasOwnProperty(key)) {
-            const value = obj[key];
-            if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                result[key] = JSON.stringify(value);
-            } else {
-                result[key] = value;
-            }
-        }
-    }
-
-    return result;
-};
-
-const validate = <Session, Input extends LibSql.InArgs, Output>(
-    env: Env.Config,
-    runner: Runner<Session, Input, Output>,
-    session: any,
-    args: any
-): ErrorResult | ValidArgs => {
-    const validationResult: any | Ark.ArkErrors = runner.input(args);
-
-    if (validationResult instanceof Ark.type.errors) {
-        return {
-            kind: 'error',
-            errorType: ErrorType.InvalidInput,
-            message: 'Expected object',
-        };
-    }
-
-    const validatedSession: any | Ark.ArkErrors = runner.session(session);
-    if (validatedSession instanceof Ark.type.errors) {
-        return {
-            kind: 'error',
-            errorType: ErrorType.InvalidSession,
-            message: 'Expected object',
-        };
-    }
-
-    for (const db of runner.attached_dbs) {
-        if (db in env) {
-            continue
-        }
-        return {
-            kind: 'error',
-            errorType: ErrorType.NoDatabase,
-            message: 'User does not have an instance of ${db}',
-        };
-    }
-
-    const session_args = to_session_args(runner.session_args, validatedSession);
-    const attached_database_args = to_database_args(runner.attached_dbs, env);
-
-    return { kind: 'valid', valid: stringifyNestedObjects({ ...validationResult, ...session_args, ...attached_database_args }) };
-};
-
-type DatabaseArgs = { [key: string]: string };
-
-const to_database_args = (attached_databases: Env.DatabaseKey[], env: Env.Config): DatabaseArgs => {
-    const db_args: DatabaseArgs = {};
-    for (const db_key of attached_databases) {
-        if (db_key in env && env[db_key] != undefined) {
-            db_args['db_' + db_key] = env[db_key].id;
-        }
-    }
-    return db_args;
-};
-
-
-// Queries
-
-const exec = async (env: LibSql.Config, sql: Array<LibSql.InStatement>, watch_triggers: Watched.Watched[]): Promise<ExecuteResult> => {
-    const client = LibSql.createClient(env);
-    try {
-        const res = await client.batch(sql);
-        return {
-            kind: 'success',
-            metadata: { outOfDate: false, watched: watch_triggers },
-            data: res,
-        };
-    } catch (error) {
-        console.log(error);
-        return {
-            kind: 'error',
-            errorType: ErrorType.InvalidInput,
-            message: 'Database error',
-        };
-    }
-};
-
-"#;
