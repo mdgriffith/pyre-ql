@@ -812,6 +812,8 @@ pub fn check_queries<'a>(
 #[derive(Debug)]
 pub enum ParamInfo {
     Defined {
+        // This is the variable name without the $ prefix
+        raw_variable_name: String,
         defined_at: Option<Range>,
         type_: Option<String>,
         used_by_top_level_field_alias: HashSet<String>,
@@ -866,6 +868,7 @@ pub fn check_query(
                 param_names.insert(
                     param_name,
                     ParamInfo::Defined {
+                        raw_variable_name: param_def.name.clone(),
                         defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
                         type_: None,
                         used: false,
@@ -896,6 +899,7 @@ pub fn check_query(
                 param_names.insert(
                     param_name,
                     ParamInfo::Defined {
+                        raw_variable_name: param_def.name.clone(),
                         defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
                         type_: Some(type_.clone()),
                         used: false,
@@ -919,6 +923,7 @@ pub fn check_query(
                         param_names.insert(
                             ast::session_field_name(col),
                             ParamInfo::Defined {
+                                raw_variable_name: format!("session_{}", col.name),
                                 defined_at: None,
                                 type_: Some(col.type_.clone()),
                                 used: false,
@@ -1146,6 +1151,7 @@ fn mark_as_used(
 ) {
     match value {
         ast::QueryValue::Variable((var_range, var)) => {
+            println!("MARK AS USED: {:#?}", var);
             let var_name = ast::to_pyre_variable_name(var);
             match params.get_mut(&var_name) {
                 None => {
@@ -1311,10 +1317,13 @@ fn check_value(
                             ref mut type_,
                             ref mut used,
                             ref mut type_inferred,
+                            ref mut used_by_top_level_field_alias,
                             ..
                         } => {
                             // mark as used
                             *used = true;
+                            used_by_top_level_field_alias
+                                .insert(context.top_level_field_alias.clone());
 
                             match &type_ {
                                 None => {

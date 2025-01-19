@@ -1,5 +1,6 @@
 pub mod watched;
 use crate::ast;
+use crate::ext::string;
 use crate::filesystem;
 use crate::generate;
 use crate::typecheck;
@@ -426,15 +427,23 @@ fn get_formatted_used_params(
     formatted.push_str("[ ");
     println!("Queryfield: {:?}", top_level_field_alias);
     println!("{:#?}", query_params);
+    let mut first_added = false;
     for (param_name, param_info) in query_params {
         match param_info {
             typecheck::ParamInfo::NotDefinedButUsed { .. } => continue,
             typecheck::ParamInfo::Defined {
                 used_by_top_level_field_alias,
+                session_name,
+                raw_variable_name,
                 ..
             } => {
                 if used_by_top_level_field_alias.contains(top_level_field_alias) {
-                    formatted.push_str(param_name);
+                    if first_added {
+                        formatted.push_str(", ")
+                    }
+                    formatted.push_str(&string::quote(raw_variable_name));
+
+                    first_added = true;
                 }
             }
         }
