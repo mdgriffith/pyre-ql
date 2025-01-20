@@ -1,6 +1,5 @@
 
 record User {
-    @tablename "users"
     accounts      @link(Account.userId)
     posts         @link(Post.authorUserId)
     databaseUsers @link(DatabaseUser.userId)
@@ -34,7 +33,6 @@ record Account {
 
 
 record Post {
-    @tablename "posts"
     users @link(authorUserId, User.id)
 
     id           Int     @id

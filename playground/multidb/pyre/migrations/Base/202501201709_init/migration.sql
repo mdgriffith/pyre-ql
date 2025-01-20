@@ -5,11 +5,11 @@ create table "users" (
     "createdAt" integer not null default (unixepoch())
 
 );
-create table "DatabaseUser" (
+create table "databaseUsers" (
     "id" integer not null primary key autoincrement,
     "databaseId" text not null,
     "userId" integer not null,
-    constraint "DatabaseUser_userId_User_id_fk" foreign key ("userId") references "users" ("id")
+    constraint "databaseUsers_userId_User_id_fk" foreign key ("userId") references "users" ("id")
 );
 create table "accounts" (
     "id" integer not null primary key autoincrement,

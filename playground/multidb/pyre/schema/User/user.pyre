@@ -1,6 +1,5 @@
 
 record Game {
-    @tablename "games"
     id   Int   @id
     name String
 
@@ -9,7 +8,6 @@ record Game {
 
 
 record Player {
-    @tablename "players"
     user  @link(userId, Base.User.id)
     games @link(gameId, Game.id)
 
@@ -24,7 +22,6 @@ record Player {
 
 
 record Job {
-    @tablename "jobs"
     @watch
     id   Int   @id
     name String
