@@ -95,17 +95,6 @@ pub enum TableAliasKind {
     Insert,
 }
 
-pub fn get_temp_table_alias(kind: &TableAliasKind, query_field: &ast::QueryField) -> String {
-    match kind {
-        TableAliasKind::Normal => {
-            return ast::get_aliased_name(&query_field);
-        }
-        TableAliasKind::Insert => {
-            return format!("inserted_{}", &ast::get_aliased_name(&query_field))
-        }
-    }
-}
-
 // SELECT
 pub fn to_selection(
     context: &typecheck::Context,
@@ -152,9 +141,21 @@ fn to_subselection(
 ) -> Vec<String> {
     match table_field {
         ast::Field::Column(column) => {
+            let source_field = match table_alias_kind {
+                TableAliasKind::Normal => to_sql::render_real_field(table, query_info, query_field),
+                TableAliasKind::Insert => {
+                    let table_name = get_tablename(table_alias_kind, table, table_alias);
+                    format!(
+                        "{}.{}",
+                        string::quote(&table_name),
+                        string::quote(&query_field.name),
+                    )
+                }
+            };
+
             let str = format!(
                 "{} as {}",
-                to_sql::render_real_field(table, query_info, query_field),
+                source_field,
                 string::quote(&ast::get_select_alias(
                     table_alias,
                     table_field,
@@ -195,11 +196,16 @@ pub fn render_from(
 ) {
     result.push_str("from\n");
 
-    let table_name = get_tablename(table_alias_kind, table);
+    let table_name = get_tablename(
+        table_alias_kind,
+        table,
+        &ast::get_aliased_name(&query_table_field),
+    );
 
     let from_vals = &mut to_from(
         context,
-        &get_temp_table_alias(table_alias_kind, &query_table_field),
+        // &get_temp_table_alias(table_alias_kind, &query_table_field),
+        &table_name,
         table_alias_kind,
         table,
         query_info,
@@ -254,12 +260,17 @@ fn to_from(
     result
 }
 
-fn get_tablename(table_alias_kind: &TableAliasKind, table: &typecheck::Table) -> String {
+fn get_tablename(
+    table_alias_kind: &TableAliasKind,
+    table: &typecheck::Table,
+    table_alias: &str,
+) -> String {
     match table_alias_kind {
         TableAliasKind::Normal => ast::get_tablename(&table.record.name, &table.record.fields),
         TableAliasKind::Insert => {
             // If this is an insert, we are selecting from a temp table
-            format!("inserted_{}", string::decapitalize(&table.record.name))
+            // format!("inserted_{}", &ast::get_aliased_name(&query_field))
+            format!("inserted_{}", table_alias)
         }
     }
 }
@@ -276,32 +287,66 @@ fn to_subfrom(
 ) -> Vec<String> {
     match table_field {
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let table_name = get_tablename(table_alias_kind, table);
+            let table_name = get_tablename(
+                table_alias_kind,
+                table,
+                &ast::get_aliased_name(&query_field),
+            );
 
             let foreign_table_alias = match query_field.alias {
                 Some(ref alias) => &alias,
                 None => &link.foreign.table,
             };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
-            let foreign_table_name = get_tablename(table_alias_kind, link_table);
+            // let foreign_table_name = format!(
+            //     "inserted_{}",
+            //     &ast::get_tablename(&link_table.record.name, &link_table.record.fields)
+            // );
+            let foreign_table_name = get_tablename(
+                table_alias_kind,
+                link_table,
+                &ast::get_aliased_name(&query_field),
+            );
+
+            // get_tablename(table_alias_kind, link_table);
 
             let mut inner_list = to_from(
                 context,
-                &ast::get_aliased_name(&query_field),
+                // &ast::get_aliased_name(&query_field),
+                &table_name,
                 table_alias_kind,
                 link_table,
                 query_info,
                 &ast::collect_query_fields(&query_field.fields),
             );
 
-            let local_table_identifier =
-                to_sql::render_real_where_field(table, query_info, &link.local_ids.join(" "));
+            let local_table_identifier = match table_alias_kind {
+                TableAliasKind::Normal => {
+                    to_sql::render_real_where_field(table, query_info, &link.local_ids.join(" "))
+                }
+                TableAliasKind::Insert => {
+                    format!(
+                        "{}.{}",
+                        string::quote(&table_alias),
+                        string::quote(&link.local_ids.join(" "))
+                    )
+                }
+            };
 
-            let foreign_table_identifier = to_sql::render_real_where_field(
-                link_table,
-                query_info,
-                &link.foreign.fields.join(""),
-            );
+            let foreign_table_identifier = match table_alias_kind {
+                TableAliasKind::Normal => to_sql::render_real_where_field(
+                    link_table,
+                    query_info,
+                    &link.foreign.fields.join(""),
+                ),
+                TableAliasKind::Insert => {
+                    format!(
+                        "{}.{}",
+                        string::quote(&foreign_table_name),
+                        string::quote(&link.foreign.fields.join(""))
+                    )
+                }
+            };
 
             let join = format!(
                 "left join {} on {} = {}",
