@@ -82,7 +82,7 @@ pub fn schema(database: &ast::Database) -> String {
 fn to_string_definition(definition: &ast::Definition) -> String {
     match definition {
         ast::Definition::Lines { count } => {
-            if (*count > 2) {
+            if *count > 2 {
                 "\n\n".to_string()
             } else {
                 "\n".repeat(*count as usize)
@@ -218,7 +218,7 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
                 "\n".repeat(*count as usize)
             }
         }
-        ast::Definition::Comment { text } => "".to_string(),
+        ast::Definition::Comment { .. } => "".to_string(),
         ast::Definition::Session(_) => "".to_string(),
         ast::Definition::Tagged { name, variants, .. } => {
             let mut result = "".to_string();

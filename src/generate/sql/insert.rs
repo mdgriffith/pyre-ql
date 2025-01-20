@@ -84,7 +84,7 @@ pub fn insert_to_string(
                     result.push_str(parent_table_alias);
                     result.push_str(" as (\n");
                     result.push_str(&initial_selection);
-                    result.push_str("\n),");
+                    result.push_str("\n)");
                     rendered_initial = true;
                 }
 
@@ -100,11 +100,13 @@ pub fn insert_to_string(
 
                 let temp_table_alias = &get_temp_table_name(&query_field);
 
+                result.push_str(",");
+
                 result.push_str(" ");
                 result.push_str(temp_table_alias);
                 result.push_str(" as (");
                 result.push_str(inner_selection);
-                result.push_str("\n    returning *\n),");
+                result.push_str("\n    returning *\n)");
             }
             _ => (),
         }
