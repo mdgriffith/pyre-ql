@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-const ELM_READ_MODULE: &str = include_str!("../../static/elm/src/Db/Read.elm");
+const ELM_READ_MODULE: &str = include_str!("./static/elm/src/Db/Read.elm");
 pub fn write(elm_path: &Path, database: &ast::Database) -> io::Result<()> {
     filesystem::create_dir_if_not_exists(&elm_path)?;
     filesystem::create_dir_if_not_exists(&elm_path.join("Db"))?;

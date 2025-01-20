@@ -9,7 +9,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-const DB_ENGINE: &str = include_str!("../../static/typescript/db.ts");
+const DB_ENGINE: &str = include_str!("./static/typescript/db.ts");
 
 /// Write all typescript files
 pub fn write(
@@ -425,8 +425,6 @@ fn get_formatted_used_params(
 ) -> String {
     let mut formatted = String::new();
     formatted.push_str("[ ");
-    println!("Queryfield: {:?}", top_level_field_alias);
-    println!("{:#?}", query_params);
     let mut first_added = false;
     for (param_name, param_info) in query_params {
         match param_info {
