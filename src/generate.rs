@@ -16,6 +16,7 @@ pub mod to_string;
 
 pub enum Client {
     Elm,
+    Node,
 }
 
 pub enum Server {
@@ -28,6 +29,7 @@ pub fn write_schema(
     base_out_dir: &Path,
 ) -> io::Result<()> {
     write_client_schema(&Client::Elm, context, database, base_out_dir)?;
+    write_client_schema(&Client::Node, context, database, base_out_dir)?;
     write_server_schema(&Server::Typescript, context, database, base_out_dir)
 }
 
@@ -51,6 +53,7 @@ fn write_client_schema(
     let out_dir = to_client_dir_path(client, &client_dir);
     match client {
         Client::Elm => generate::client::elm::write(&out_dir, database),
+        Client::Node => generate::client::node::write(&out_dir, database),
     }
 }
 
@@ -80,6 +83,7 @@ fn write_server_schema(
 fn to_client_dir_path(client: &Client, out_dir: &Path) -> PathBuf {
     match client {
         Client::Elm => out_dir.join("elm"),
+        Client::Node => out_dir.join("node"),
     }
 }
 
@@ -100,6 +104,14 @@ pub fn write_queries(
 ) -> io::Result<()> {
     write_client_queries(
         &Client::Elm,
+        context,
+        query_list,
+        all_query_info,
+        database,
+        base_out_dir,
+    )?;
+    write_client_queries(
+        &Client::Node,
         context,
         query_list,
         all_query_info,
@@ -132,6 +144,7 @@ fn write_client_queries(
 
     match client {
         Client::Elm => generate::client::elm::write_queries(&out_dir, &context, &query_list),
+        Client::Node => generate::client::node::write_queries(&out_dir, &context, &query_list),
     }
 }
 
