@@ -20,11 +20,11 @@ app.post("/db/:req", async (c) => {
 
   const env = {
     Base: {
-      id: `${process.cwd()}/db/base.db`,
+      id: `file:${process.cwd()}/db/base.db`,
       url: `file:${process.cwd()}/db/base.db`,
     },
     User: {
-      id: `${process.cwd()}/db/user.db`,
+      id: `file:${process.cwd()}/db/user.db`,
       url: `file:${process.cwd()}/db/user.db`,
     },
   };

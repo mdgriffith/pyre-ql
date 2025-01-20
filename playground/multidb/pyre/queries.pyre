@@ -1,9 +1,8 @@
 // Seed data
-insert UserNew($name: String, $status: Status) {
+insert UserNew($name: String) {
     user {
         name = $name
-        // Comment!
-        status = $status
+        status = Active
         accounts {
             name = "My account"
             status = "Untyped status"

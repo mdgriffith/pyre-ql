@@ -2,10 +2,9 @@
   "name": "pyre-playground",
   "scripts": {
     "init": "touch db/playground.db; pyre migrate db/playground.db",
-    "dev": "bun run --hot src/index.ts",
+    "dev": "bun run --hot src/server.ts",
     "introspect": "pyre introspect test.db",
-    "seed": "bash scripts/seed.sh",
-    "list-users": "bash scripts/list_users.sh"
+    "request": "bun run ./scripts/play.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.7.0",
@@ -13,6 +12,6 @@
     "hono": "^4.4.10"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
   }
 }
