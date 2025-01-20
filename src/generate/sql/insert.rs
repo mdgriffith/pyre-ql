@@ -111,6 +111,7 @@ pub fn insert_to_string(
         }
     }
 
+    // The final selection
     if !rendered_initial {
         result.push_str(&initial_selection);
     } else {
@@ -245,7 +246,7 @@ pub fn insert_linked(
     }
 
     result.push_str(&format!(
-        "{}select ({})\n",
+        "{}select {}\n",
         indent_str,
         insert_values.join(", ")
     ));
