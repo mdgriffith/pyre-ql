@@ -220,16 +220,15 @@ pub fn to_watched_operations(record: &RecordDetails) -> Vec<QueryOperation> {
     ops
 }
 
-pub fn get_tablename(name: &str, fields: &Vec<Field>) -> String {
+pub fn get_tablename(record_name: &str, fields: &Vec<Field>) -> String {
     for field in fields.iter() {
         match field {
-            Field::FieldDirective(FieldDirective::TableName((range, name))) => {
-                return name.to_string()
-            }
+            Field::FieldDirective(FieldDirective::TableName((_, name))) => return name.to_string(),
             _ => {}
         }
     }
-    name.to_string()
+
+    string::pluralize(&string::decapitalize(record_name))
 }
 
 pub fn has_fieldname(field: &Field, desired_name: &str) -> bool {
