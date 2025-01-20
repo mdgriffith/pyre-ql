@@ -519,6 +519,16 @@ pub struct QueryParamDefinition {
     pub end_type: Option<Location>,
 }
 
+pub fn to_typescript_type(type_: &str) -> String {
+    match type_ {
+        "String" => "\"string\"".to_string(),
+        "Int" => "\"number\"".to_string(),
+        "Bool" => "\"bool\"".to_string(),
+        "DateTime" => "\"date\"".to_string(),
+        _ => type_.to_string(),
+    }
+}
+
 // The "Select Alias" is the value that is in the JSON payload
 pub fn get_select_alias(
     table_alias: &str,
