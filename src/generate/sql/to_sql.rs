@@ -39,17 +39,18 @@ pub fn render_real_field(
     query_info: &typecheck::QueryInfo,
     query_field: &ast::QueryField,
 ) -> String {
+    let table_name = string::quote(&ast::get_tablename(
+        &table.record.name,
+        &table.record.fields,
+    ));
+
     if table.schema == query_info.primary_db {
-        return format!(
-            "{}.{}",
-            format_tablename(&table.record.name),
-            string::quote(&query_field.name),
-        );
+        return format!("{}.{}", table_name, string::quote(&query_field.name),);
     } else {
         return format!(
             "{}.{}.{}",
             string::quote(&table.schema),
-            format_tablename(&table.record.name),
+            table_name,
             string::quote(&query_field.name),
         );
     };
@@ -61,17 +62,17 @@ pub fn render_real_where_field(
     query_info: &typecheck::QueryInfo,
     fieldname: &String,
 ) -> String {
+    let table_name = string::quote(&ast::get_tablename(
+        &table.record.name,
+        &table.record.fields,
+    ));
     if table.schema == query_info.primary_db {
-        return format!(
-            "{}.{}",
-            format_tablename(&table.record.name),
-            string::quote(fieldname),
-        );
+        return format!("{}.{}", table_name, string::quote(fieldname),);
     } else {
         return format!(
             "{}.{}.{}",
             string::quote(&table.schema),
-            format_tablename(&table.record.name),
+            table_name,
             string::quote(fieldname),
         );
     };
