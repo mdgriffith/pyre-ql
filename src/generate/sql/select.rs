@@ -77,13 +77,13 @@ pub fn select_to_string(
     render_where(context, table, query_info, query_field, &mut result);
 
     // Order by
-    render_order_by(context, table, query_field, &mut result);
+    render_order_by(query_field, &mut result);
 
     // LIMIT
-    render_limit(context, table, query_field, &mut result);
+    render_limit(query_field, &mut result);
 
     // OFFSET
-    render_offset(context, table, query_field, &mut result);
+    render_offset(query_field, &mut result);
 
     result.push_str(";");
 
@@ -115,7 +115,6 @@ pub fn to_selection(
             .unwrap();
 
         result.append(&mut to_subselection(
-            2,
             context,
             table,
             table_alias,
@@ -130,7 +129,6 @@ pub fn to_selection(
 }
 
 fn to_subselection(
-    indent: usize,
     context: &typecheck::Context,
     table: &typecheck::Table,
     table_alias: &str,
@@ -140,7 +138,7 @@ fn to_subselection(
     table_alias_kind: &TableAliasKind,
 ) -> Vec<String> {
     match table_field {
-        ast::Field::Column(column) => {
+        ast::Field::Column(_) => {
             let source_field = match table_alias_kind {
                 TableAliasKind::Normal => to_sql::render_real_field(table, query_info, query_field),
                 TableAliasKind::Insert => {
@@ -165,10 +163,6 @@ fn to_subselection(
             return vec![str];
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let foreign_table_alias = match query_field.alias {
-                Some(ref alias) => &alias,
-                None => &link.foreign.table,
-            };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
             return to_selection(
                 context,
@@ -218,7 +212,7 @@ pub fn render_from(
     from_vals.reverse();
 
     result.push_str(&format!("  {}", string::quote(&table_name)));
-    if (from_vals.is_empty()) {
+    if from_vals.is_empty() {
         result.push_str("\n");
     } else {
         result.push_str("\n  ");
@@ -246,7 +240,6 @@ fn to_from(
             .unwrap();
 
         result.append(&mut to_subfrom(
-            2,
             context,
             table,
             table_alias,
@@ -276,7 +269,6 @@ fn get_tablename(
 }
 
 fn to_subfrom(
-    indent: usize,
     context: &typecheck::Context,
     table: &typecheck::Table,
     table_alias: &str,
@@ -293,26 +285,16 @@ fn to_subfrom(
                 &ast::get_aliased_name(&query_field),
             );
 
-            let foreign_table_alias = match query_field.alias {
-                Some(ref alias) => &alias,
-                None => &link.foreign.table,
-            };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
-            // let foreign_table_name = format!(
-            //     "inserted_{}",
-            //     &ast::get_tablename(&link_table.record.name, &link_table.record.fields)
-            // );
+
             let foreign_table_name = get_tablename(
                 table_alias_kind,
                 link_table,
                 &ast::get_aliased_name(&query_field),
             );
 
-            // get_tablename(table_alias_kind, link_table);
-
             let mut inner_list = to_from(
                 context,
-                // &ast::get_aliased_name(&query_field),
                 &table_name,
                 table_alias_kind,
                 link_table,
@@ -362,12 +344,7 @@ fn to_subfrom(
     }
 }
 
-fn render_order_by(
-    context: &typecheck::Context,
-    table: &typecheck::Table,
-    query_field: &ast::QueryField,
-    result: &mut String,
-) {
+fn render_order_by(query_field: &ast::QueryField, result: &mut String) {
     let mut order_vals = vec![];
 
     let table_alias = &ast::get_aliased_name(&query_field);
@@ -394,8 +371,8 @@ fn render_order_by(
 
         let mut first = true;
 
-        for (i, order) in order_vals.iter().enumerate() {
-            if (first) {
+        for order in order_vals.iter() {
+            if first {
                 result.push_str(order);
                 first = false;
             } else {
@@ -405,12 +382,7 @@ fn render_order_by(
     }
 }
 
-fn render_limit(
-    context: &typecheck::Context,
-    table: &typecheck::Table,
-    query_field: &ast::QueryField,
-    result: &mut String,
-) {
+fn render_limit(query_field: &ast::QueryField, result: &mut String) {
     for field in &query_field.fields {
         match field {
             ast::ArgField::Arg(located_arg) => {
@@ -424,12 +396,7 @@ fn render_limit(
     }
 }
 
-fn render_offset(
-    context: &typecheck::Context,
-    table: &typecheck::Table,
-    query_field: &ast::QueryField,
-    result: &mut String,
-) {
+fn render_offset(query_field: &ast::QueryField, result: &mut String) {
     for field in &query_field.fields {
         match field {
             ast::ArgField::Arg(located_arg) => {
@@ -474,7 +441,7 @@ pub fn render_where(
         result.push_str("where\n  ");
         let mut first = true;
         for wher in &where_vals {
-            if (first) {
+            if first {
                 result.push_str(&format!("{}\n", wher));
                 first = false;
             } else {
@@ -503,7 +470,6 @@ fn to_where(
             .unwrap();
 
         result.append(&mut to_subwhere(
-            2,
             context,
             table,
             table_field,
@@ -516,7 +482,6 @@ fn to_where(
 }
 
 fn to_subwhere(
-    indent: usize,
     context: &typecheck::Context,
     table: &typecheck::Table,
     table_field: &ast::Field,
@@ -524,7 +489,7 @@ fn to_subwhere(
     query_field: &ast::QueryField,
 ) -> Vec<String> {
     match table_field {
-        ast::Field::Column(column) => {
+        ast::Field::Column(_) => {
             return render_where_params(
                 &ast::collect_query_args(&query_field.fields),
                 table,

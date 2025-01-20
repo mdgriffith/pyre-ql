@@ -49,18 +49,18 @@ pub fn insert_to_string(
             .unwrap();
 
         match table_field {
-            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+            ast::Field::FieldDirective(ast::FieldDirective::Link(_)) => {
                 last_link_index = i;
             }
             _ => (),
         }
     }
-    let initial_indent = if (last_link_index == 0) { 0 } else { 4 };
+    let initial_indent = if last_link_index == 0 { 0 } else { 4 };
     let mut result = to_sql::format_attach(query_info);
     let mut initial_selection =
         initial_select(initial_indent, context, query, table, query_table_field);
     let parent_table_alias = &get_temp_table_name(&query_table_field);
-    if (last_link_index != 0) {
+    if last_link_index != 0 {
         initial_selection.push_str(&format!("\n{}returning *", " ".repeat(initial_indent)));
     }
 
@@ -87,7 +87,6 @@ pub fn insert_to_string(
                     result.push_str("\n),");
                     rendered_initial = true;
                 }
-                let is_last = i == last_link_index;
 
                 let inner_selection = &insert_linked(
                     4,
@@ -228,17 +227,9 @@ pub fn insert_linked(
     }
 
     for query_field in &all_query_fields {
-        let table_field = &table
-            .record
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-            .unwrap();
-
         match &query_field.set {
             None => (),
             Some(val) => {
-                let spaces = " ".repeat(2);
                 let str = to_sql::render_value(&val);
                 insert_values.push(str);
             }
@@ -324,8 +315,7 @@ fn to_table_fieldname(
     query_field: &ast::QueryField,
 ) -> Vec<String> {
     match table_field {
-        ast::Field::Column(column) => {
-            let spaces = " ".repeat(indent);
+        ast::Field::Column(_) => {
             let str = query_field.name.to_string();
             return vec![str];
         }
@@ -343,17 +333,9 @@ fn to_field_insert_values(
     let mut result = vec![];
 
     for field in fields {
-        let table_field = &table
-            .record
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
-            .unwrap();
-
         match &field.set {
             None => (),
             Some(val) => {
-                let spaces = " ".repeat(2);
                 let str = to_sql::render_value(&val);
                 result.push(str);
             }
