@@ -1,5 +1,5 @@
-pub mod command;
 mod ast;
+pub mod command;
 mod db;
 mod diff;
 mod error;
@@ -9,4 +9,5 @@ mod format;
 mod generate;
 mod hash;
 mod parser;
+mod platform;
 mod typecheck;

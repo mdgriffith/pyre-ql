@@ -1,17 +1,18 @@
 use crate::ast::{
-    collect_columns, collect_links, get_foreign_tablename, get_tablename, is_field_primary_key,
-    link_identity, Column, ColumnDirective, DefaultValue, Definition, QueryValue, Schema,
-    SerializationType,
+    collect_links, get_foreign_tablename, get_tablename, is_field_primary_key, link_identity,
+    Column, ColumnDirective, ConcreteSerializationType, DefaultValue, Definition, QueryValue,
+    Schema, VectorType,
 };
 use crate::diff::{DetailedRecordDiff, DetailedTaggedDiff, RecordChange, SchemaDiff, TaggedChange};
 use crate::ext::string;
+use crate::typecheck;
 
-pub fn to_sql(schema: &Schema, diff: &SchemaDiff) -> String {
+pub fn to_sql(context: &typecheck::Context, schema: &Schema, diff: &SchemaDiff) -> String {
     let mut sql_statements = Vec::new();
 
     // Handle added definitions
     for definition in &diff.added {
-        sql_statements.push(add_definition_sql(schema, definition));
+        sql_statements.push(add_definition_sql(context, schema, definition));
     }
 
     // Handle removed definitions
@@ -32,20 +33,23 @@ pub fn to_sql(schema: &Schema, diff: &SchemaDiff) -> String {
     sql_statements.join("\n")
 }
 
-fn add_definition_sql(schema: &Schema, definition: &Definition) -> String {
+fn add_definition_sql(
+    context: &typecheck::Context,
+    schema: &Schema,
+    definition: &Definition,
+) -> String {
     match definition {
         Definition::Record { name, fields, .. } => {
             let name = get_tablename(&name, &fields);
-            let fields_sql: Vec<String> = collect_columns(fields)
+            let fields_sql: Vec<String> = typecheck::to_sql_column_info(context, fields)
                 .iter()
                 .map(|f| {
                     format!(
-                        "{} {}{}{}{}",
+                        "{} {}{}{}",
                         string::quote(&f.name),
-                        serialization_to_string(&f.serialization_type),
+                        serialization_to_string(&f.type_),
                         if f.nullable { "" } else { " not null" },
                         column_directive_list_to_string(&f, &f.directives),
-                        serialization_comment_to_string(&f.serialization_type)
                     )
                 })
                 .collect();
@@ -84,7 +88,10 @@ fn add_definition_sql(schema: &Schema, definition: &Definition) -> String {
     }
 }
 
-fn column_directive_list_to_string(column: &Column, directives: &Vec<ColumnDirective>) -> String {
+fn column_directive_list_to_string(
+    column: &typecheck::SqlColumnInfo,
+    directives: &Vec<ColumnDirective>,
+) -> String {
     if directives.is_empty() {
         return "".to_string();
     }
@@ -97,14 +104,17 @@ fn column_directive_list_to_string(column: &Column, directives: &Vec<ColumnDirec
     format!(" {}", directive_strings.join(" "))
 }
 
-fn column_directive_to_string(column: &Column, directive: &ColumnDirective) -> String {
+fn column_directive_to_string(
+    column: &typecheck::SqlColumnInfo,
+    directive: &ColumnDirective,
+) -> String {
     match directive {
         ColumnDirective::PrimaryKey => "primary key autoincrement".to_string(),
         ColumnDirective::Unique => "unique".to_string(),
         ColumnDirective::Default(def) => match def {
-            DefaultValue::Now => match column.type_.as_str() {
-                "Date" => "default current_date".to_string(),
-                "DateTime" => "default (unixepoch())".to_string(),
+            DefaultValue::Now => match column.type_ {
+                ConcreteSerializationType::Date => "default current_date".to_string(),
+                ConcreteSerializationType::DateTime => "default (unixepoch())".to_string(),
                 _ => "".to_string(),
             },
 
@@ -128,19 +138,26 @@ fn value_to_string(value: &QueryValue) -> String {
     }
 }
 
-fn serialization_to_string(serialization_type: &SerializationType) -> String {
+fn serialization_to_string(serialization_type: &ConcreteSerializationType) -> String {
     match serialization_type {
-        SerializationType::Integer => "integer".to_string(),
-        SerializationType::Real => "real".to_string(),
-        SerializationType::Text => "text".to_string(),
-        SerializationType::BlobWithSchema(_) => "text".to_string(),
-    }
-}
-
-fn serialization_comment_to_string(serialization_type: &SerializationType) -> String {
-    match serialization_type {
-        SerializationType::BlobWithSchema(schema) => format!(", -- {}", schema).to_string(),
-        _ => "".to_string(),
+        ConcreteSerializationType::Integer => "INTEGER".to_string(),
+        ConcreteSerializationType::Real => "REAL".to_string(),
+        ConcreteSerializationType::Text => "TEXT".to_string(),
+        ConcreteSerializationType::Blob => "BLOB".to_string(),
+        ConcreteSerializationType::JsonB => "JSON_BLOB".to_string(),
+        ConcreteSerializationType::Date => "TEXT".to_string(),
+        ConcreteSerializationType::DateTime => "INTEGER".to_string(),
+        ConcreteSerializationType::VectorBlob {
+            vector_type,
+            dimensionality,
+        } => match vector_type {
+            VectorType::Float64 => format!("F64_BLOB({})", dimensionality),
+            VectorType::Float32 => format!("F32_BLOB({})", dimensionality),
+            VectorType::Float16 => format!("F16_BLOB({})", dimensionality),
+            VectorType::BFloat16 => format!("FB16_BLOB({})", dimensionality),
+            VectorType::Float8 => format!("F8_BLOB({})", dimensionality),
+            VectorType::Float1 => format!("F1BIT_BLOB({})", dimensionality),
+        },
     }
 }
 

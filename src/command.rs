@@ -23,7 +23,9 @@ fn id_column() -> ast::Column {
     ast::Column {
         name: "id".to_string(),
         type_: "Int".to_string(),
-        serialization_type: ast::SerializationType::Integer,
+        serialization_type: ast::SerializationType::Concrete(
+            ast::ConcreteSerializationType::Integer,
+        ),
         nullable: false,
         directives: vec![ast::ColumnDirective::PrimaryKey],
         start: None,
@@ -103,7 +105,9 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
                         ast::Field::Column(ast::Column {
                             name: "userId".to_string(),
                             type_: "Int".to_string(),
-                            serialization_type: ast::SerializationType::Integer,
+                            serialization_type: ast::SerializationType::Concrete(
+                                ast::ConcreteSerializationType::Integer,
+                            ),
                             nullable: false,
                             directives: vec![ast::ColumnDirective::PrimaryKey],
                             start: None,
@@ -408,17 +412,40 @@ pub async fn generate_migration<'a>(
                     let paths = filesystem::collect_filepaths(&options.in_dir)?;
                     let current_db = parse_database_schemas(&options, &paths)?;
 
-                    let current_schema = current_db
-                        .schemas
-                        .iter()
-                        .find(|s| s.namespace == target_namespace)
-                        .expect("Schema not found");
+                    match typecheck::check_schema(&current_db) {
+                        Ok(context) => {
+                            let current_schema = current_db
+                                .schemas
+                                .iter()
+                                .find(|s| s.namespace == target_namespace)
+                                .expect("Schema not found");
 
-                    let schema_diff = diff::diff_schema(&introspection.schema, current_schema);
+                            let schema_diff =
+                                diff::diff_schema(&introspection.schema, current_schema);
 
-                    filesystem::create_dir_if_not_exists(migration_dir)?;
+                            filesystem::create_dir_if_not_exists(migration_dir)?;
 
-                    write_migration(current_schema, &schema_diff, name, target_namespace_dir)?;
+                            write_migration(
+                                &context,
+                                current_schema,
+                                &schema_diff,
+                                name,
+                                target_namespace_dir,
+                            )?;
+                        }
+                        Err(error_list) => {
+                            for err in error_list {
+                                let schema_source =
+                                    filesystem::get_schema_source(&err.filepath, &paths)
+                                        .unwrap_or("");
+
+                                let formatted_error = error::format_error(&schema_source, &err);
+
+                                eprintln!("{}", &formatted_error);
+                            }
+                            std::process::exit(1);
+                        }
+                    }
                 }
                 Err(err) => {
                     println!("Failed to connect to database: {:?}", err);
@@ -663,12 +690,14 @@ fn write_schema(options: &Options, to_stdout: &bool, schema: &ast::Schema) -> io
 }
 
 fn write_migration(
+    context: &typecheck::Context,
     schema: &ast::Schema,
+
     diff: &diff::SchemaDiff,
     migration_name: &str,
     namespace_folder: &Path,
 ) -> io::Result<()> {
-    let sql = generate::migration::to_sql(schema, diff);
+    let sql = generate::migration::to_sql(context, schema, diff);
 
     // Format like {year}{month}{day}{hour}{minute}
     let current_date = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
