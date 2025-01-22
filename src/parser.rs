@@ -1,4 +1,5 @@
 use crate::ast;
+use crate::platform;
 use nom::bytes::complete::take_while1;
 use nom::character::streaming::{space0, space1};
 use nom::{
@@ -570,7 +571,7 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
             name: name.to_string(),
             type_: type_.to_string(),
             nullable: is_nullable,
-            serialization_type: to_serialization_type(type_),
+            serialization_type: platform::to_serialization_type(type_),
             directives,
             start: Some(to_location(&start_pos)),
             end: Some(to_location(&end_pos)),
@@ -624,18 +625,6 @@ where
     move |input: Text| {
         let (input, _) = tag(tag_str)(input)?;
         Ok((input, value.clone()))
-    }
-}
-
-fn to_serialization_type(type_: &str) -> ast::SerializationType {
-    match type_ {
-        "String" => ast::SerializationType::Text,
-        "Int" => ast::SerializationType::Integer,
-        "Float" => ast::SerializationType::Real,
-        "Bool" => ast::SerializationType::Integer,
-        "DateTime" => ast::SerializationType::Integer,
-        "Date" => ast::SerializationType::Text,
-        _ => ast::SerializationType::BlobWithSchema(type_.to_string()),
     }
 }
 
