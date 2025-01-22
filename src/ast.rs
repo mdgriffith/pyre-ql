@@ -6,10 +6,6 @@ pub struct Database {
     pub schemas: Vec<Schema>,
 }
 
-pub fn get_schema_by_name<'a>(db: &'a Database, name: &str) -> Option<&'a Schema> {
-    db.schemas.iter().find(|schema| &schema.namespace == name)
-}
-
 #[derive(Debug)]
 pub struct Schema {
     pub namespace: String,
@@ -33,10 +29,6 @@ pub struct SessionDetails {
 
     pub start: Option<Location>,
     pub end: Option<Location>,
-}
-
-pub fn is_empty_db(db: &Database) -> bool {
-    db.schemas.iter().all(|schema| is_empty_schema(schema))
 }
 
 pub fn is_empty_schema(schema: &Schema) -> bool {
@@ -123,19 +115,6 @@ pub enum Field {
     FieldDirective(FieldDirective),
 }
 
-pub fn is_serialized_as_json(field: &Field) -> bool {
-    match field {
-        Field::Column(Column {
-            serialization_type, ..
-        }) => match serialization_type {
-            SerializationType::BlobWithSchema(_) => true,
-            _ => false,
-        },
-
-        _ => false,
-    }
-}
-
 pub fn field_to_column_type(field: &Field) -> Option<SerializationType> {
     match field {
         Field::Column(Column {
@@ -184,16 +163,6 @@ pub fn is_primary_key(col: &Column) -> bool {
     col.directives
         .iter()
         .any(|d| *d == ColumnDirective::PrimaryKey)
-}
-
-pub fn to_watch_details(record: &RecordDetails) -> Option<&WatchedDetails> {
-    for field in record.fields.iter() {
-        match field {
-            Field::FieldDirective(FieldDirective::Watched(details)) => return Some(details),
-            _ => {}
-        }
-    }
-    None
 }
 
 pub fn to_watched_operations(record: &RecordDetails) -> Vec<QueryOperation> {
@@ -456,10 +425,35 @@ pub enum DefaultValue {
 // BLOB. The value is a blob of data, stored exactly as it was input.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum SerializationType {
+    Concrete(ConcreteSerializationType),
+    FromType(String), // defined as another named type.
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub enum ConcreteSerializationType {
     Integer,
     Real,
     Text,
-    BlobWithSchema(String),
+    Blob,
+    Date,     // stored as a string
+    DateTime, // stored as unix epoch integer
+    VectorBlob {
+        vector_type: VectorType,
+        dimensionality: u8,
+    },
+    JsonB, // This is a blob, but we know it's valid json
+}
+
+// Taken from:
+// https://docs.turso.tech/features/ai-and-embeddings#types
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub enum VectorType {
+    Float64,
+    Float32,
+    Float16,
+    BFloat16,
+    Float8,
+    Float1,
 }
 
 // Queries
