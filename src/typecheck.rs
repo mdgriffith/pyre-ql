@@ -1,5 +1,5 @@
 use crate::error::{DefInfo, Error, ErrorType, Location, Range, VariantDef};
-use crate::{ast, error};
+use crate::{ast, error, platform};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -13,6 +13,87 @@ pub enum Type {
     Record(ast::RecordDetails),
 }
 
+pub struct SqlColumnInfo {
+    pub name: String,
+    pub nullable: bool,
+    pub type_: ast::ConcreteSerializationType,
+    pub directives: Vec<ast::ColumnDirective>,
+}
+
+pub fn to_sql_column_info(context: &Context, fields: &Vec<ast::Field>) -> Vec<SqlColumnInfo> {
+    let mut infos = vec![];
+
+    for col in fields {
+        field_to_sql_column(context, col, None, &mut infos);
+    }
+    infos
+}
+
+fn field_to_sql_column(
+    context: &Context,
+    field: &ast::Field,
+    parent_name: Option<String>,
+    gathered: &mut Vec<SqlColumnInfo>,
+) {
+    match field {
+        ast::Field::Column(column) => match &column.serialization_type {
+            ast::SerializationType::Concrete(concrete) => gathered.push(SqlColumnInfo {
+                name: column.name.clone(),
+                nullable: column.nullable,
+                type_: concrete.clone(),
+                directives: column.directives.clone(),
+            }),
+            ast::SerializationType::FromType(typename) => {
+                match context.types.get(typename) {
+                    Some((_, type_)) => match type_ {
+                        Type::OneOf { variants } => {
+                            // We need a column for the discriminator
+                            gathered.push(SqlColumnInfo {
+                                name: column.name.clone(),
+                                nullable: column.nullable,
+                                type_: ast::ConcreteSerializationType::Text,
+                                directives: column.directives.clone(),
+                            });
+
+                            let base_name = match parent_name {
+                                None => &column.name,
+                                Some(parent) => &format!("{}__{}", parent, column.name),
+                            };
+                            //
+                            for var in variants {
+                                // For each variant, we need to capture any additional fields
+                                // Prefixed by the type name and variant name
+                                // So, Status.Active { activatedAt: DateTime }
+                                // Turns into a colum  of status__active__activatedAt
+                                match &var.fields {
+                                    Some(var_fields) => {
+                                        for var_f in var_fields {
+                                            field_to_sql_column(
+                                                context,
+                                                &var_f,
+                                                Some(format!("{}{}", base_name, var.name)),
+                                                gathered,
+                                            );
+                                        }
+                                    }
+                                    None => continue,
+                                }
+                            }
+                        }
+                        _ => (),
+                    },
+                    None => {
+                        // Should have been caught in typechecking
+                    }
+                }
+            }
+        },
+        ast::Field::ColumnLines { .. } => (),
+        ast::Field::ColumnComment { .. } => (),
+        ast::Field::FieldDirective(_) => (),
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Context {
     pub current_filepath: String,
@@ -23,7 +104,7 @@ pub struct Context {
 
     pub valid_namespaces: HashSet<String>,
     pub session: Option<ast::SessionDetails>,
-    pub funcs: HashMap<String, FuncDefinition>,
+    pub funcs: HashMap<String, platform::FuncDefinition>,
 
     pub types: HashMap<String, (DefInfo, Type)>,
     pub tables: HashMap<String, Table>,
@@ -60,78 +141,16 @@ pub fn get_linked_table<'a>(context: &'a Context, link: &'a ast::LinkDetails) ->
         .get(&crate::ext::string::decapitalize(&link.foreign.table))
 }
 
-fn insert_fn(map: &mut HashMap<String, FuncDefinition>, def: FuncDefinition) {
-    map.insert(def.name.clone(), def);
-}
-
-#[rustfmt::skip]
-fn get_default_fns() -> HashMap<String, FuncDefinition> {
-    let mut default_funcs = HashMap::new();
-
-    // Mathematical Functions
-    insert_fn(&mut default_funcs, FuncDefinition { name: "max".to_string(), arg_types: vec!["number".to_string(),"number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "min".to_string(), arg_types: vec!["number".to_string(),"number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "abs".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "acos".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "asin".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "atan".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "atan2".to_string(), arg_types: vec!["number".to_string(), "number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "ceil".to_string(), arg_types: vec!["number".to_string()], return_type: "Int".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "cos".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "exp".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "floor".to_string(), arg_types: vec!["number".to_string()], return_type: "Int".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "ln".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "log".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "mod".to_string(), arg_types: vec!["number".to_string(), "number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "pi".to_string(), arg_types: vec![], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "pow".to_string(), arg_types: vec!["number".to_string(), "number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "random".to_string(), arg_types: vec![], return_type: "Int".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "randomblob".to_string(), arg_types: vec!["Int".to_string()], return_type: "Blob".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "round".to_string(), arg_types: vec!["number".to_string()], return_type: "Int".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "sign".to_string(), arg_types: vec!["number".to_string()], return_type: "Int".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "sin".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "sqrt".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "tan".to_string(), arg_types: vec!["number".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "trunc".to_string(), arg_types: vec!["number".to_string()], return_type: "Int".to_string() });
-
-    // String Functions
-    insert_fn(&mut default_funcs, FuncDefinition { name: "length".to_string(), arg_types: vec!["String".to_string()], return_type: "Int".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "lower".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "upper".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "substr".to_string(), arg_types: vec!["String".to_string(), "Int".to_string(), "Int".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "trim".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "ltrim".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "rtrim".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "replace".to_string(), arg_types: vec!["String".to_string(), "String".to_string(), "String".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "like".to_string(), arg_types: vec!["String".to_string(), "String".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "hex".to_string(), arg_types: vec!["Blob".to_string()], return_type: "String".to_string() });
-
-    // Date and Time Functions
-    insert_fn(&mut default_funcs, FuncDefinition { name: "date".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "time".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "datetime".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "julianday".to_string(), arg_types: vec!["String".to_string()], return_type: "Float".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "strftime".to_string(), arg_types: vec!["String".to_string()], return_type: "String".to_string() });
-
-    // Control Flow Functions
-    insert_fn(&mut default_funcs, FuncDefinition { name: "ifnull".to_string(), arg_types: vec!["String".to_string(), "String".to_string()], return_type: "String".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "nullif".to_string(), arg_types: vec!["String".to_string(), "String".to_string()], return_type: "String".to_string() });
-
-    // Other Functions
-    insert_fn(&mut default_funcs, FuncDefinition { name: "total_changes".to_string(), arg_types: vec![], return_type: "Int".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "changes".to_string(), arg_types: vec![], return_type: "Int".to_string() });
-    insert_fn(&mut default_funcs, FuncDefinition { name: "last_insert_rowid".to_string(), arg_types: vec![], return_type: "Int".to_string() });
-
-    default_funcs
-}
-
 fn empty_context() -> Context {
+    let mut fns = HashMap::new();
+    platform::add_builtin(&mut fns);
+
     let mut context = Context {
         current_filepath: "".to_string(),
         top_level_field_alias: "".to_string(),
         valid_namespaces: HashSet::new(),
         session: None,
-        funcs: get_default_fns(),
+        funcs: fns,
         types: HashMap::new(),
         tables: HashMap::new(),
         variants: HashMap::new(),
