@@ -1,9 +1,9 @@
 pub mod cte;
 pub mod delete;
-pub mod insert;
 pub mod select;
+pub mod temp_table;
 pub mod to_sql;
-pub mod update;
+
 use crate::ast;
 use crate::typecheck;
 
@@ -114,17 +114,36 @@ pub fn to_string(
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     table_field: &ast::QueryField,
-) -> String {
+) -> Vec<to_sql::Prepared> {
     match query.operation {
         ast::QueryOperation::Select => {
             select::select_to_string(context, query, query_info, table, table_field)
         }
-        ast::QueryOperation::Insert => {
-            insert::insert_to_string(context, query, query_info, table, table_field)
+        ast::QueryOperation::Insert =>
+        // crate::generate::sql::cte::insert::insert_to_string(
+        //     context,
+        //     query,
+        //     query_info,
+        //     table,
+        //     table_field,
+        // ),
+        {
+            crate::generate::sql::temp_table::insert::insert_to_string(
+                context,
+                query,
+                query_info,
+                table,
+                table_field,
+            )
         }
-        ast::QueryOperation::Update => {
-            update::update_to_string(context, query, query_info, table, table_field)
-        }
+        ast::QueryOperation::Update => crate::generate::sql::cte::update::update_to_string(
+            context,
+            query,
+            query_info,
+            table,
+            table_field,
+        ),
+
         ast::QueryOperation::Delete => {
             delete::delete_to_string(context, query, query_info, table, table_field)
         }

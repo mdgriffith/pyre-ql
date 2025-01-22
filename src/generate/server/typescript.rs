@@ -383,7 +383,7 @@ fn write_runner(dir: &Path, context: &typecheck::Context, query_list: &ast::Quer
 }
 
 pub fn literal_quote(s: &str) -> String {
-    format!("`\n{}`", s)
+    format!("`{}`", s)
 }
 
 fn format_ts_list(items: Vec<String>) -> String {
@@ -450,6 +450,13 @@ fn get_formatted_used_params(
     return formatted;
 }
 
+fn bool_to_ts_bool(bool: bool) -> String {
+    if bool {
+        return "true".to_string();
+    }
+    return "false".to_string();
+}
+
 fn to_query_file(
     context: &typecheck::Context,
     query_info: &typecheck::QueryInfo,
@@ -486,21 +493,25 @@ fn to_query_file(
                     ));
                 }
 
-                if written_field {
-                    result.push_str(", ");
-                }
                 let param_info = get_formatted_used_params(
                     &ast::get_aliased_name(query_field),
                     &query_info.variables,
                 );
-                let sql = generate::sql::to_string(context, query, query_info, table, query_field);
-                let sql_info = format!(
-                    "{{ params: {},\n    sql: {}}}",
-                    &param_info,
-                    &literal_quote(&sql)
-                );
-                result.push_str(&sql_info);
-                written_field = true;
+                let prepared =
+                    generate::sql::to_string(context, query, query_info, table, query_field);
+
+                for prepped in prepared {
+                    if written_field {
+                        result.push_str(",\n");
+                    }
+                    result.push_str(&format!(
+                        "{{\n  include: {},\n  params: {},\n  sql: {}}}",
+                        bool_to_ts_bool(prepped.include),
+                        &param_info,
+                        &literal_quote(&prepped.sql)
+                    ));
+                    written_field = true;
+                }
             }
             ast::TopLevelQueryField::Lines { .. } => {}
             ast::TopLevelQueryField::Comment { .. } => {}

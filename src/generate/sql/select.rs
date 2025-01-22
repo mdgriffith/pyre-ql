@@ -38,16 +38,11 @@ pub fn select_to_string(
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     query_field: &ast::QueryField,
-) -> String {
-    if cte::should_use_cte(query) {
-        let mut result = to_sql::format_attach(query_info);
+) -> Vec<to_sql::Prepared> {
+    let mut statements = to_sql::format_attach(query_info);
 
-        cte::select_to_string(context, query, query_field, &mut result);
-
-        return result;
-    }
-    let mut result = to_sql::format_attach(query_info);
-    result.push_str("select\n");
+    let mut selection = String::new();
+    selection.push_str("select\n");
 
     // Selection
 
@@ -59,9 +54,9 @@ pub fn select_to_string(
         &ast::collect_query_fields(&query_field.fields),
         &TableAliasKind::Normal,
     );
-    result.push_str("  ");
-    result.push_str(&selected.join(",\n  "));
-    result.push_str("\n");
+    selection.push_str("  ");
+    selection.push_str(&selected.join(",\n  "));
+    selection.push_str("\n");
 
     // FROM
     render_from(
@@ -70,24 +65,24 @@ pub fn select_to_string(
         query_info,
         query_field,
         &TableAliasKind::Normal,
-        &mut result,
+        &mut selection,
     );
 
     // WHERE
-    render_where(context, table, query_info, query_field, &mut result);
+    render_where(context, table, query_info, query_field, &mut selection);
 
     // Order by
-    render_order_by(query_field, &mut result);
+    render_order_by(query_field, &mut selection);
 
     // LIMIT
-    render_limit(query_field, &mut result);
+    render_limit(query_field, &mut selection);
 
     // OFFSET
-    render_offset(query_field, &mut result);
+    render_offset(query_field, &mut selection);
 
-    result.push_str(";");
+    statements.push(to_sql::include(selection));
 
-    result
+    statements
 }
 
 pub enum TableAliasKind {
@@ -253,7 +248,7 @@ fn to_from(
     result
 }
 
-fn get_tablename(
+pub fn get_tablename(
     table_alias_kind: &TableAliasKind,
     table: &typecheck::Table,
     table_alias: &str,

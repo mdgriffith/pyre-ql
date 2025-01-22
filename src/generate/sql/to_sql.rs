@@ -2,35 +2,40 @@ use crate::ast;
 use crate::ext::string;
 use crate::typecheck;
 
+pub struct Prepared {
+    pub include: bool,
+    pub sql: String,
+}
+
+pub fn include(sql: String) -> Prepared {
+    Prepared { sql, include: true }
+}
+
+pub fn ignore(sql: String) -> Prepared {
+    Prepared {
+        sql,
+        include: false,
+    }
+}
+
 pub fn format_tablename(name: &str) -> String {
     format!("\"{}\"", crate::ext::string::decapitalize(name))
 }
 
-pub fn format_attach(info: &typecheck::QueryInfo) -> String {
+pub fn format_attach(info: &typecheck::QueryInfo) -> Vec<Prepared> {
+    let mut attached = vec![];
     if info.attached_dbs.is_empty() {
-        return String::new();
+        return attached;
     }
 
-    // Pre-calculate capacity to avoid reallocations
-    let total_capacity = info
-        .attached_dbs
-        .iter()
-        .map(|name| name.len() * 2 + 14) // "attach $db_ as " = 14 chars
-        .sum::<usize>()
-        + info.attached_dbs.len() * 2
-        - 2; // for "; " between items, -2 because last one doesn't need separator
-
-    let mut result = String::with_capacity(total_capacity);
-
-    for (i, name) in info.attached_dbs.iter().enumerate() {
-        result.push_str("attach $db_");
-        result.push_str(name);
-        result.push_str(" as ");
-        result.push_str(name);
-        result.push_str(";\n");
+    for name in info.attached_dbs.iter() {
+        attached.push(Prepared {
+            include: false,
+            sql: format!("attach $db_{} as {}", name, name),
+        })
     }
 
-    result
+    attached
 }
 
 /// Real meaning it's in the db and we might need to use a schema to target it.
