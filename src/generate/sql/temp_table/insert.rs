@@ -129,16 +129,18 @@ pub fn insert_to_string(
 
 fn drop_temp_tables(query_field: &ast::QueryField, statements: &mut Vec<to_sql::Prepared>) {
     statements.push(to_sql::ignore(drop_table(query_field)));
-    for arg_field in query_field.fields.iter() {
-        match arg_field {
-            ast::ArgField::Field(field) => {
-                if !field.fields.is_empty() {
-                    drop_temp_tables(field, statements);
-                }
-            }
-            _ => continue,
-        }
-    }
+
+    // Only the primary field has a temp table created for it now
+    // for arg_field in query_field.fields.iter() {
+    //     match arg_field {
+    //         ast::ArgField::Field(field) => {
+    //             if !field.fields.is_empty() {
+    //                 drop_temp_tables(field, statements);
+    //             }
+    //         }
+    //         _ => continue,
+    //     }
+    // }
 }
 
 fn drop_table(query_field: &ast::QueryField) -> String {
@@ -242,10 +244,11 @@ pub fn insert_linked(
 
     let temp_table_name = &get_temp_table_name(&query_table_field);
 
-    statements.push(to_sql::ignore(format!(
-        "create temp table {} as\n  select last_insert_rowid() as id",
-        temp_table_name
-    )));
+    // We could save the inserted id here, but I don't think we need to?
+    // statements.push(to_sql::ignore(format!(
+    //     "create temp table {} as\n  select last_insert_rowid() as id",
+    //     temp_table_name
+    // )));
 
     for query_field in all_query_fields {
         let table_field = &table
