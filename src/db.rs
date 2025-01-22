@@ -193,18 +193,21 @@ struct MigrationRun {
 }
 
 fn read_serialization_type(serialization_type: &str) -> ast::SerializationType {
+    let type_;
     if serialization_type.contains("INT") {
-        ast::SerializationType::Integer
+        type_ = ast::ConcreteSerializationType::Integer;
     } else {
         match serialization_type {
-            "INTEGER" => ast::SerializationType::Integer,
-            "TEXT" => ast::SerializationType::Text,
-            "REAL" => ast::SerializationType::Real,
-            "BLOB" => ast::SerializationType::BlobWithSchema("Schema".to_string()),
-            "DATETIME" => ast::SerializationType::Text,
-            _ => ast::SerializationType::Text,
+            "INTEGER" => type_ = ast::ConcreteSerializationType::Integer,
+            "TEXT" => type_ = ast::ConcreteSerializationType::Text,
+            "REAL" => type_ = ast::ConcreteSerializationType::Real,
+            "BLOB" => type_ = ast::ConcreteSerializationType::Blob,
+            "DATETIME" => type_ = ast::ConcreteSerializationType::Text,
+            _ => type_ = ast::ConcreteSerializationType::Text,
         }
-    }
+    };
+
+    ast::SerializationType::Concrete(type_)
 }
 
 fn to_formatted_tablename(table_name: &str) -> String {
@@ -319,7 +322,7 @@ pub async fn introspect(
                                             ))),
                                         ));
                                     } else if str.starts_with("'") {
-                                        let mut my_string = str.trim_matches('\'');
+                                        let my_string = str.trim_matches('\'');
 
                                         directives.push(ast::ColumnDirective::Default(
                                             ast::DefaultValue::Value(ast::QueryValue::String((
