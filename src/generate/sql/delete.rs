@@ -9,15 +9,17 @@ pub fn delete_to_string(
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     query_field: &ast::QueryField,
-) -> String {
+) -> Vec<to_sql::Prepared> {
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
-    let mut result = to_sql::format_attach(query_info);
-    result.push_str(&format!("delete from {}\n", table_name));
+    let mut statements = to_sql::format_attach(query_info);
+
     // DELETE FROM users
     // WHERE username = 'john_doe';
 
-    select::render_where(context, table, query_info, query_field, &mut result);
-    result.push_str(";");
+    let mut sql = format!("delete from {}\n", table_name);
 
-    result
+    select::render_where(context, table, query_info, query_field, &mut sql);
+    statements.push(to_sql::ignore(sql));
+
+    statements
 }
