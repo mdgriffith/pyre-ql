@@ -42,6 +42,7 @@ export interface Runner<session, input, output> {
 }
 
 export type SqlInfo = {
+  include: boolean;
   params: Array<string>;
   sql: string;
 }
@@ -135,7 +136,7 @@ export const to_runner = <Session, Input, Output>(options: ToRunnerArgs<Session,
         return {
           kind: 'success',
           metadata: { outOfDate: false, watched: options.watch_triggers },
-          data: res,
+          data: only_included(options.sql, res),
         };
       } catch (error) {
         console.log(error);
@@ -190,3 +191,8 @@ const stringify_nested_objects = (obj: Record<string, any>): Record<string, any>
 
   return result;
 };
+
+
+function only_included(sqlItems: SqlInfo[], values: any[]): any[] {
+  return values.filter((_, index) => sqlItems[index]?.include);
+}
