@@ -34,7 +34,7 @@ pub fn insert_to_string(
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     query_table_field: &ast::QueryField,
-) -> String {
+) -> Vec<to_sql::Prepared> {
     // INSERT INTO users (username, credit) VALUES ('john_doe', 100);
 
     let all_query_fields = ast::collect_query_fields(&query_table_field.fields);
@@ -55,8 +55,12 @@ pub fn insert_to_string(
             _ => (),
         }
     }
+
     let initial_indent = if last_link_index == 0 { 0 } else { 4 };
-    let mut result = to_sql::format_attach(query_info);
+    let mut statements = to_sql::format_attach(query_info);
+
+    let mut result = String::new();
+
     let mut initial_selection =
         initial_select(initial_indent, context, query, table, query_table_field);
     let parent_table_alias = &get_temp_table_name(&query_table_field);
@@ -138,9 +142,9 @@ pub fn insert_to_string(
             &mut result,
         );
     }
-    result.push_str(";");
 
-    result
+    statements.push(to_sql::include(result));
+    statements
 }
 
 pub fn get_temp_table_name(query_field: &ast::QueryField) -> String {

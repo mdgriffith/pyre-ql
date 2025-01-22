@@ -9,10 +9,12 @@ pub fn update_to_string(
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     query_field: &ast::QueryField,
-) -> String {
+) -> Vec<to_sql::Prepared> {
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
 
-    let mut result = to_sql::format_attach(query_info);
+    let mut statements = to_sql::format_attach(query_info);
+
+    let mut result = String::new();
     result.push_str(&format!("update {}\n", table_name));
 
     // UPDATE users
@@ -33,8 +35,9 @@ pub fn update_to_string(
 
     result.push_str("\n");
     select::render_where(context, table, query_info, query_field, &mut result);
-    result.push_str(";");
-    result
+
+    statements.push(to_sql::include(result));
+    statements
 }
 
 // SET values
