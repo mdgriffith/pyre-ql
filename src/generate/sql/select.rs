@@ -133,7 +133,7 @@ fn to_subselection(
     table_alias_kind: &TableAliasKind,
 ) -> Vec<String> {
     match table_field {
-        ast::Field::Column(_) => {
+        ast::Field::Column(table_column) => {
             let source_field = match table_alias_kind {
                 TableAliasKind::Normal => to_sql::render_real_field(table, query_info, query_field),
                 TableAliasKind::Insert => {
@@ -145,17 +145,23 @@ fn to_subselection(
                     )
                 }
             };
-
-            let str = format!(
-                "{} as {}",
-                source_field,
-                string::quote(&ast::get_select_alias(
-                    table_alias,
-                    table_field,
-                    query_field
-                ))
-            );
-            return vec![str];
+            match &table_column.serialization_type {
+                ast::SerializationType::Concrete(_) => {
+                    // A single concrete type
+                    let str = format!(
+                        "{} as {}",
+                        source_field,
+                        string::quote(&ast::get_select_alias(table_alias, query_field))
+                    );
+                    return vec![str];
+                }
+                ast::SerializationType::FromType(typename) => {
+                    // We don't know what this type is
+                    let mut selected = vec![];
+                    select_type_columns(context, typename, &mut selected);
+                    return selected;
+                }
+            }
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
@@ -170,6 +176,44 @@ fn to_subselection(
         }
 
         _ => vec![],
+    }
+}
+
+fn select_type_columns(context: &typecheck::Context, typename: &str, selection: &mut Vec<String>) {
+    match context.types.get(typename) {
+        None => return,
+        Some((definfo, type_)) => {
+            // TODOOOOO
+            //  LEAVING THIS TO START ON THE JSON VERSION
+            // Trying to recreate this form:
+            // CASE
+            //     WHEN status = 'Active' THEN
+            //         json_object(
+            //             '$', 'Active',
+            //             'activatedAt', status_active_activatedAt
+            //         )
+            //     ELSE
+            //         json_object(
+            //             '$', 'Inactive'
+            //         )
+            // END
+
+            match type_ {
+                typecheck::Type::OneOf { variants } => for var in variants {},
+
+                _ => return,
+            }
+            // let str = format!(
+            //     "{} as {}",
+            //     source_field,
+            //     string::quote(&ast::get_select_alias(
+            //         table_alias,
+            //         table_field,
+            //         query_field
+            //     ))
+            // );
+            // return vec![str];
+        }
     }
 }
 
