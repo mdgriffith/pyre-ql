@@ -523,11 +523,7 @@ pub fn to_typescript_type(type_: &str) -> String {
 }
 
 // The "Select Alias" is the value that is in the JSON payload
-pub fn get_select_alias(
-    table_alias: &str,
-    table_field: &Field,
-    query_field: &QueryField,
-) -> String {
+pub fn get_select_alias(table_alias: &str, query_field: &QueryField) -> String {
     let field_alias = get_aliased_name(query_field);
 
     format!("{}__{}", table_alias, field_alias)
