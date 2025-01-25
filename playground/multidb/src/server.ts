@@ -34,30 +34,35 @@ app.post("/db/:req", async (c) => {
   const result = await Query.run(env, req, session, args);
 
   if (result.kind === "success") {
-    console.log("RESULT  ", result);
-    console.log(JSON.stringify(result.data));
+    // console.log(JSON.stringify(result.data));
     // return c.json(result.data.map((d) => d.rows));
     // return c.json(result.data.map((d) => JSON.parse(d.rows)));
 
-    return c.json(result.data.map((d) =>
-      // This is an awkward conversion because the sql is returning stringified json
-      // key: {stringified-json}  
-      d.rows.map((r) => {
-        let cleaned_row: any = {};
-        for (const column in d.columns) {
-          if (column in r) {
-            let col = r[column];
-            if (typeof col == "string") {
-              cleaned_row[column] = JSON.parse(col)
-            }
-          }
+    const formatted: any = {}
+
+    for (const result_set of result.data) {
+      if (result_set.columns.length < 1) { continue }
+      const col_name = result_set.columns[0];
+      const gathered_rows = [];
+
+      for (const row of result_set.rows) {
+        if (col_name in row && typeof row[col_name] == 'string') {
+          gathered_rows.push(JSON.parse(row[col_name]));
         }
-        return cleaned_row
-      })
-    ));
+      }
+
+      formatted[col_name] = gathered_rows;
+
+    }
+    return c.json(formatted)
+  } else {
+    console.log(result);
+    c.status(500);
+    return c.json({ error: result.message });
   }
-  console.log(result);
-  c.status(500);
-  return c.json({ error: result.message });
 });
+
+
+
 export default app;
+
