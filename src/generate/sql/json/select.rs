@@ -580,6 +580,8 @@ fn select_formatted_as_json(
                     .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
                     .unwrap();
 
+                let aliased_field_name = ast::get_aliased_name(query_field);
+
                 match table_field {
                     ast::Field::Column(_) => {
                         if !first_field {
@@ -587,7 +589,7 @@ fn select_formatted_as_json(
                         }
                         sql.push_str(&format!(
                             "{}    '{}', {}.{}",
-                            indent_str, query_field.name, base_table_name, query_field.name
+                            indent_str, aliased_field_name, base_table_name, query_field.name
                         ));
                         first_field = false;
                     }
@@ -600,13 +602,19 @@ fn select_formatted_as_json(
 
                             sql.push_str(&format!(
                                 "{}    '{}', temp__{}.{}",
-                                indent_str, link.link_name, query_field.name, link.link_name,
+                                indent_str,
+                                aliased_field_name,
+                                query_field.name,
+                                aliased_field_name,
                             ));
                         } else {
                             // Coalesce as an empty array
                             sql.push_str(&format!(
                                 "{}    '{}', coalesce(temp__{}.{}, jsonb('[]'))",
-                                indent_str, link.link_name, query_field.name, link.link_name,
+                                indent_str,
+                                aliased_field_name,
+                                query_field.name,
+                                aliased_field_name,
                             ));
                         }
                         first_field = false;
