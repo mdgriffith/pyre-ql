@@ -444,20 +444,20 @@ fn select_single_json(
 ) {
     let indent_str = " ".repeat(indent);
 
+    let aggregate_to_array = !ast::linked_to_unique_field(link);
+
     // This is the link.foreign_id, which is the id on this table
     let mut full_foreign_id = String::new();
     for foreign_id in &link.foreign.fields {
         full_foreign_id.push_str(foreign_id);
     }
 
+    let query_aliased_as = &ast::get_aliased_name(&query_table_field);
+
     // Compose main json payload
     let mut json_object = String::new();
-    let new_fieldnames = &to_fieldnames(
-        context,
-        &ast::get_aliased_name(&query_table_field),
-        table,
-        &query_table_field.fields,
-    );
+    let new_fieldnames =
+        &to_fieldnames(context, query_aliased_as, table, &query_table_field.fields);
     let mut first_field = true;
     for field in new_fieldnames {
         if !first_field {
@@ -468,15 +468,22 @@ fn select_single_json(
     }
 
     // initial selection
+    #[rustfmt::skip]
+    let array_agg_start = if aggregate_to_array  { "jsonb_group_array(" } else { "" };
+    #[rustfmt::skip]
+    let array_agg_end = if aggregate_to_array { ")" } else { "" };
+
     sql.push_str(&format!(
-        "\n{}select\n  {}{},\n{}  json_object(\n{}\n{}  ) as {}\n{}from {}\n",
+        "\n{}select\n  {}{},\n{}  {}jsonb_object(\n{}\n{}  ){} as {}\n{}from {}\n",
         indent_str,
         indent_str,
         full_foreign_id,
         indent_str,
+        array_agg_start,
         json_object,
         indent_str,
-        link.link_name,
+        array_agg_end,
+        query_aliased_as,
         indent_str,
         ast::get_tablename(&table.record.name, &table.record.fields),
     ));
@@ -488,12 +495,12 @@ fn select_single_json(
 
     sql.push_str(&format!(
         "{}where {} in (select {} from {})\n",
-        indent_str,
-        full_foreign_id,
-        full_local_id,
-        // insert_values.join(", ")
-        parent_table_name
+        indent_str, full_foreign_id, full_local_id, parent_table_name
     ));
+
+    if aggregate_to_array {
+        sql.push_str(&format!("{}group by {}\n", indent_str, full_foreign_id));
+    }
 }
 
 /*
@@ -557,7 +564,7 @@ fn select_formatted_as_json(
 
     // initial selection
     sql.push_str(&format!(
-        "\n{}select\n  {}{}.{},\n{}  json_group_array(json_object(\n",
+        "\n{}select\n  {}{}.{},\n{}  jsonb_group_array(jsonb_object(\n",
         indent_str, indent_str, base_table_name, full_foreign_id, indent_str
     ));
 
