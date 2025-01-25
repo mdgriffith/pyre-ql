@@ -1,5 +1,6 @@
 pub mod cte;
 pub mod delete;
+pub mod json;
 pub mod select;
 pub mod temp_table;
 pub mod to_sql;
@@ -117,7 +118,7 @@ pub fn to_string(
 ) -> Vec<to_sql::Prepared> {
     match query.operation {
         ast::QueryOperation::Select => {
-            select::select_to_string(context, query, query_info, table, table_field)
+            json::select::select_to_string(context, query, query_info, table, table_field)
         }
         ast::QueryOperation::Insert =>
         // crate::generate::sql::cte::insert::insert_to_string(
