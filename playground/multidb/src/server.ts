@@ -29,13 +29,32 @@ app.post("/db/:req", async (c) => {
     },
   };
 
-  const session = { userId: 1 }
+  const session = { userId: 6 }
 
   const result = await Query.run(env, req, session, args);
 
   if (result.kind === "success") {
     console.log("RESULT  ", result);
-    return c.json(result.data.map((d) => d.rows));
+    console.log(JSON.stringify(result.data));
+    // return c.json(result.data.map((d) => d.rows));
+    // return c.json(result.data.map((d) => JSON.parse(d.rows)));
+
+    return c.json(result.data.map((d) =>
+      // This is an awkward conversion because the sql is returning stringified json
+      // key: {stringified-json}  
+      d.rows.map((r) => {
+        let cleaned_row: any = {};
+        for (const column in d.columns) {
+          if (column in r) {
+            let col = r[column];
+            if (typeof col == "string") {
+              cleaned_row[column] = JSON.parse(col)
+            }
+          }
+        }
+        return cleaned_row
+      })
+    ));
   }
   console.log(result);
   c.status(500);
