@@ -1170,7 +1170,6 @@ fn mark_as_used(
 ) {
     match value {
         ast::QueryValue::Variable((var_range, var)) => {
-            println!("MARK AS USED: {:#?}", var);
             let var_name = ast::to_pyre_variable_name(var);
             match params.get_mut(&var_name) {
                 None => {
