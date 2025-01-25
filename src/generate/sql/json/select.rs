@@ -592,16 +592,23 @@ fn select_formatted_as_json(
                         first_field = false;
                     }
                     ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                        // let str = link.local_ids.join("");
-                        // return vec![str];
-
                         if !first_field {
                             sql.push_str(",\n");
                         }
-                        sql.push_str(&format!(
-                            "{}    '{}', temp__{}.{}",
-                            indent_str, link.link_name, query_field.name, link.link_name,
-                        ));
+                        if ast::linked_to_unique_field(link) {
+                            // singular result, no need to coalesce
+
+                            sql.push_str(&format!(
+                                "{}    '{}', temp__{}.{}",
+                                indent_str, link.link_name, query_field.name, link.link_name,
+                            ));
+                        } else {
+                            // Coalesce as an empty array
+                            sql.push_str(&format!(
+                                "{}    '{}', coalesce(temp__{}.{}, jsonb('[]'))",
+                                indent_str, link.link_name, query_field.name, link.link_name,
+                            ));
+                        }
                         first_field = false;
                     }
                     _ => continue,
@@ -659,6 +666,14 @@ fn select_formatted_as_json(
     sql.push_str(&format!("{}group by {}\n", indent_str, full_foreign_id));
 }
 
+/*
+This is slightly different than the others.
+
+1. it should use `json`, not jsonb, because it's returning a final result
+
+
+
+*/
 fn final_select_formatted_as_json(
     indent: usize,
     context: &typecheck::Context,
@@ -676,7 +691,7 @@ fn final_select_formatted_as_json(
     let base_table_name = format!("selected__{}", &aliased_name);
 
     // initial selection
-    sql.push_str("\nselect\n");
+    sql.push_str(&format!("\nselect\n{}  json_object(\n", indent_str));
 
     // Compose main json payload
     let mut first_field = true;
@@ -697,9 +712,13 @@ fn final_select_formatted_as_json(
                         if !first_field {
                             sql.push_str(",\n");
                         }
+                        // sql.push_str(&format!(
+                        //     "{}    {}.{} as {}",
+                        //     indent_str, base_table_name, query_field.name, aliased_field_name
+                        // ));
                         sql.push_str(&format!(
-                            "{}    {}.{} as {}",
-                            indent_str, base_table_name, query_field.name, aliased_field_name
+                            "{}    '{}', {}.{}",
+                            indent_str, aliased_field_name, base_table_name, query_field.name
                         ));
                         first_field = false;
                     }
@@ -707,11 +726,27 @@ fn final_select_formatted_as_json(
                         if !first_field {
                             sql.push_str(",\n");
                         }
-                        sql.push_str(&format!(
-                            "{}    temp__{}.{} as {}",
-                            indent_str, query_field.name, aliased_field_name, aliased_field_name
-                        ));
-                        first_field = false;
+
+                        if ast::linked_to_unique_field(link) {
+                            // singular result, no need to coalesce
+                            sql.push_str(&format!(
+                                "{}    '{}', temp__{}.{}",
+                                indent_str,
+                                aliased_field_name,
+                                query_field.name,
+                                aliased_field_name
+                            ));
+                            first_field = false;
+                        } else {
+                            sql.push_str(&format!(
+                                "{}    '{}', coalesce(temp__{}.{}, jsonb('[]'))",
+                                indent_str,
+                                aliased_field_name,
+                                query_field.name,
+                                aliased_field_name
+                            ));
+                            first_field = false;
+                        }
                     }
                     _ => continue,
                 }
@@ -723,7 +758,10 @@ fn final_select_formatted_as_json(
     }
 
     // FROM
-    sql.push_str(&format!("\n{}from {}\n", indent_str, base_table_name));
+    sql.push_str(&format!(
+        "\n  ) as {}\n{}from {}\n",
+        aliased_name, indent_str, base_table_name
+    ));
 
     // Join every link
     for field in &query_table_field.fields {
