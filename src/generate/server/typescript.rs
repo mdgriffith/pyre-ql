@@ -692,7 +692,7 @@ fn to_table_field_flat_decoder(
             result.push_str(&format!(
                 "{}\"{}\": {},\n",
                 spaces,
-                ast::get_select_alias(table_alias, table_field, query_field),
+                ast::get_select_alias(table_alias, query_field),
                 to_ts_type_decoder(true, column.nullable, &column.type_)
             ));
         }

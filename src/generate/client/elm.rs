@@ -757,7 +757,7 @@ fn to_table_field_decoder(
             return format!(
                 "{}|> Db.Read.field \"{}\" {}\n",
                 spaces,
-                ast::get_select_alias(table_alias, table_field, query_field),
+                ast::get_select_alias(table_alias, query_field),
                 to_type_decoder(&column)
             );
         }

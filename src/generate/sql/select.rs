@@ -1,6 +1,5 @@
 use crate::ast;
 use crate::ext::string;
-use crate::generate::sql::cte;
 use crate::generate::sql::to_sql;
 use crate::typecheck;
 
