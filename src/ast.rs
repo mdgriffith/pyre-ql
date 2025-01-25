@@ -281,6 +281,11 @@ pub fn link_identity(local_table: &str, link: &LinkDetails) -> String {
     )
 }
 
+pub fn linked_to_unique_field(link: &LinkDetails) -> bool {
+    // TODO: This should calculate this by looking at constraints on the schema.
+    link.foreign.fields.iter().any(|f| f == "id")
+}
+
 pub fn to_reciprocal(local_namespace: &str, local_table: &str, link: &LinkDetails) -> LinkDetails {
     LinkDetails {
         link_name: string::pluralize(&string::decapitalize(local_table)),
