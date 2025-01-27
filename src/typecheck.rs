@@ -38,7 +38,13 @@ fn field_to_sql_column(
     match field {
         ast::Field::Column(column) => match &column.serialization_type {
             ast::SerializationType::Concrete(concrete) => gathered.push(SqlColumnInfo {
-                name: column.name.clone(),
+                name: match parent_name {
+                    None => column.name.clone(),
+                    Some(prefix) => {
+                        format!("{}{}", prefix, column.name)
+                    }
+                },
+
                 nullable: column.nullable,
                 type_: concrete.clone(),
                 directives: column.directives.clone(),
@@ -56,22 +62,25 @@ fn field_to_sql_column(
                             });
 
                             let base_name = match parent_name {
-                                None => &column.name,
-                                Some(parent) => &format!("{}__{}", parent, column.name),
+                                None => &format!("{}__", column.name),
+                                Some(parent) => &format!("{}__{}__", parent, column.name),
                             };
                             //
                             for var in variants {
                                 // For each variant, we need to capture any additional fields
                                 // Prefixed by the type name and variant name
-                                // So, Status.Active { activatedAt: DateTime }
-                                // Turns into a colum  of status__active__activatedAt
+                                // So, statusFieldName: Status.Active { activatedAt: DateTime }
+                                // Turns into a colum  of statusFieldName__activatedAt
+                                // Variants that have the same fields will share the same columns in the db
+                                // If types are nested, then they'll be recursively namespaced by the fieldnames
+
                                 match &var.fields {
                                     Some(var_fields) => {
                                         for var_f in var_fields {
                                             field_to_sql_column(
                                                 context,
                                                 &var_f,
-                                                Some(format!("{}{}", base_name, var.name)),
+                                                Some(base_name.to_string()),
                                                 gathered,
                                             );
                                         }
