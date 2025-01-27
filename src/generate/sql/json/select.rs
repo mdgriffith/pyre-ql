@@ -583,14 +583,22 @@ fn select_formatted_as_json(
                 let aliased_field_name = ast::get_aliased_name(query_field);
 
                 match table_field {
-                    ast::Field::Column(_) => {
+                    ast::Field::Column(table_column) => {
                         if !first_field {
                             sql.push_str(",\n");
                         }
-                        sql.push_str(&format!(
-                            "{}    '{}', {}.{}",
-                            indent_str, aliased_field_name, base_table_name, query_field.name
-                        ));
+
+                        sql.push_str(&format!("{}    '{}', ", indent_str, aliased_field_name));
+
+                        select_type(
+                            indent + 6,
+                            context,
+                            table_column,
+                            &base_table_name,
+                            &query_field.name,
+                            sql,
+                        );
+
                         first_field = false;
                     }
                     ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
@@ -672,6 +680,107 @@ fn select_formatted_as_json(
     }
 
     sql.push_str(&format!("{}group by {}\n", indent_str, full_foreign_id));
+}
+
+fn select_type(
+    indent: usize,
+    context: &typecheck::Context,
+    column: &ast::Column,
+    base_table_name: &str,
+    query_field_name: &str,
+
+    //
+    sql: &mut String,
+) {
+    match context.types.get(&column.type_) {
+        None => sql.push_str(&format!("{}.{}", base_table_name, query_field_name)),
+        Some((_, type_)) => match type_ {
+            typecheck::Type::Integer => {
+                sql.push_str(&format!("{}.{}", base_table_name, query_field_name))
+            }
+            typecheck::Type::Float => {
+                sql.push_str(&format!("{}.{}", base_table_name, query_field_name))
+            }
+            typecheck::Type::String => {
+                sql.push_str(&format!("{}.{}", base_table_name, query_field_name))
+            }
+            typecheck::Type::OneOf { variants, .. } => {
+                let is_enum = variants.iter().all(|v| v.fields.is_none());
+                if is_enum {
+                    // We just serve the tag
+                    sql.push_str(&format!("{}.{}", base_table_name, query_field_name))
+                } else {
+                    /* We're going to be generated code like this
+                    SELECT
+                    json_object(
+                        '$', CASE
+                            WHEN status = 'Active' THEN 'active'
+                            WHEN status = 'Inactive' THEN json_object(
+                                'tag', 'inactive',
+                                'inactivatedAt', inactivated_at
+                            )
+                        END
+                    ) AS status_json
+                    FROM your_table
+                    */
+
+                    let indent_str = " ".repeat(indent);
+                    let when_indent = " ".repeat(indent + 2);
+                    let obj_indent = " ".repeat(indent + 4);
+                    let obj_field_indent = " ".repeat(indent + 6);
+                    sql.push_str(&format!("\n{}case\n", indent_str));
+                    for var in variants {
+                        sql.push_str(&format!(
+                            "{}when {}.{} = '{}' then",
+                            when_indent, base_table_name, query_field_name, var.name
+                        ));
+
+                        match &var.fields {
+                            None => sql.push_str(&format!(" jsonb_object('$', '{}')\n", var.name)),
+                            Some(fields) => {
+                                sql.push_str(&format!("\n{}jsonb_object(", obj_indent));
+
+                                sql.push_str(&format!(
+                                    "\n{}'$', '{}',",
+                                    obj_field_indent, var.name
+                                ));
+
+                                for field in fields {
+                                    match field {
+                                        ast::Field::Column(inner_column) => {
+                                            sql.push_str(&format!(
+                                                "\n{}'{}', ",
+                                                obj_field_indent, inner_column.name,
+                                            ));
+
+                                            select_type(
+                                                indent + 4,
+                                                context,
+                                                inner_column,
+                                                base_table_name,
+                                                &format!(
+                                                    "{}__{}",
+                                                    query_field_name, &inner_column.name
+                                                ),
+                                                sql,
+                                            );
+                                            sql.push_str(", ");
+                                        }
+                                        _ => continue,
+                                    }
+                                }
+                                sql.push_str(&format!("\n{})\n", obj_indent));
+                            }
+                        }
+                    }
+                    sql.push_str(&format!("{}end", indent_str));
+                }
+            }
+            typecheck::Type::Record(_) => {
+                sql.push_str(&format!("{}.{}", base_table_name, query_field_name))
+            }
+        },
+    }
 }
 
 /*
