@@ -535,6 +535,9 @@ pub fn to_typescript_type(type_: &str) -> String {
 }
 
 // The "Select Alias" is the value that is in the JSON payload
+// It's used for rectangle returns though.
+// For the form is qualified like {table_alias}__{field_alias}
+// This isn't currently used for nested returns (which is what is used)
 pub fn get_select_alias(table_alias: &str, query_field: &QueryField) -> String {
     let field_alias = get_aliased_name(query_field);
 
