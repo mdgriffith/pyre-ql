@@ -7,7 +7,9 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-const ELM_READ_MODULE: &str = include_str!("./static/elm/src/Db/Read.elm");
+mod rectangle;
+
+const ELM_DECODE_HELP: &str = include_str!("./static/elm/src/Json/Decode/Help.elm");
 pub fn write(elm_path: &Path, database: &ast::Database) -> io::Result<()> {
     filesystem::create_dir_if_not_exists(&elm_path)?;
     filesystem::create_dir_if_not_exists(&elm_path.join("Db"))?;
@@ -17,24 +19,29 @@ pub fn write(elm_path: &Path, database: &ast::Database) -> io::Result<()> {
     // Top level Elm files
     let elm_db_path = elm_path.join("Db.elm");
     let elm_file = Path::new(&elm_db_path);
-    let mut output = fs::File::create(elm_file).expect("Failed to create file");
+    let mut output = fs::File::create(elm_file).expect("Failed to create Db.elm");
     output
         .write_all(formatted_elm.as_bytes())
         .expect("Failed to write to file");
 
     // Decode Helper file
-    let elm_db_read_path = elm_path.join("Db/Read.elm");
-    let elm_read_file = Path::new(&elm_db_read_path);
-    let mut output = fs::File::create(elm_read_file).expect("Failed to create file");
+    let elm_json_decode_help_path = elm_path.join("Json/Decode/Help.elm");
+    let elm_json_help_path = Path::new(&elm_json_decode_help_path);
+
+    // Create the directory for Json/Decode/Help.elm
+    std::fs::create_dir_all(elm_json_help_path.parent().unwrap())
+        .expect("Failed to create directory for Json/Decode/Help.elm");
+    let mut output =
+        fs::File::create(elm_json_help_path).expect("Failed to create Json/Decode/Help.elm");
     output
-        .write_all(ELM_READ_MODULE.as_bytes())
+        .write_all(ELM_DECODE_HELP.as_bytes())
         .expect("Failed to write to file");
 
     // Elm Decoders
     let elm_db_decode_path = elm_path.join("Db/Decode.elm");
     let elm_decoders = to_schema_decoders(database);
     let elm_decoder_file = Path::new(&elm_db_decode_path);
-    let mut output = fs::File::create(elm_decoder_file).expect("Failed to create file");
+    let mut output = fs::File::create(elm_decoder_file).expect("Failed to create Db/Decode.elm");
     output
         .write_all(elm_decoders.as_bytes())
         .expect("Failed to write to file");
@@ -43,7 +50,7 @@ pub fn write(elm_path: &Path, database: &ast::Database) -> io::Result<()> {
     let elm_db_encode_path = elm_path.join("Db/Encode.elm");
     let elm_encoders = to_schema_encoders(database);
     let elm_encoder_file = Path::new(&elm_db_encode_path);
-    let mut output = fs::File::create(elm_encoder_file).expect("Failed to create file");
+    let mut output = fs::File::create(elm_encoder_file).expect("Failed to create Db/Encode.elm");
     output
         .write_all(elm_encoders.as_bytes())
         .expect("Failed to write to file");
@@ -463,7 +470,8 @@ pub fn write_queries(
                     .write_all(to_query_file(&context, &q).as_bytes())
                     .expect("Failed to write to file");
             }
-            _ => continue,
+            // Ignore coments and lines
+            ast::QueryDef::QueryComment { .. } | ast::QueryDef::QueryLines { .. } => continue,
         }
     }
     Ok(())
@@ -473,10 +481,10 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     let mut result = format!("module Query.{} exposing (..)\n\n\n", query.name);
 
     result.push_str("import Db\n");
-    result.push_str("import Db.Read\n");
     result.push_str("import Db.Decode\n");
     result.push_str("import Db.Encode\n");
     result.push_str("import Json.Decode as Decode\n");
+    result.push_str("import Josn.Decode.Help as Decode\n");
     result.push_str("import Json.Encode as Encode\n");
     result.push_str("import Time\n");
     result.push_str("\n\n");
@@ -489,9 +497,8 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     ));
     result.push_str("prepare input =\n");
     result.push_str(&format!(
-        "    {{ args = encode input\n    , query = \"{}\"\n    , decoder = decode{}\n    }}\n\n\n",
+        "    {{ args = encode input\n    , query = \"{}\"\n    , decoder = decode\n    }}\n\n\n",
         &query.interface_hash,
-        string::capitalize(&query.name)
     ));
 
     // Top level query alias
@@ -634,15 +641,11 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
 
 fn to_query_toplevel_decoder(context: &typecheck::Context, query: &ast::Query) -> String {
     let mut result = format!(
-        "decode{} : Decode.Decoder {}\n",
-        crate::ext::string::capitalize(&query.name),
+        "decode : Decode.Decoder {}\n",
         crate::ext::string::capitalize(&query.name)
     );
 
-    result.push_str(&format!(
-        "decode{} =\n",
-        crate::ext::string::capitalize(&query.name)
-    ));
+    result.push_str("decode =\n");
     result.push_str(&format!(
         "    Decode.succeed {}\n",
         crate::ext::string::capitalize(&query.name)
@@ -652,8 +655,8 @@ fn to_query_toplevel_decoder(context: &typecheck::Context, query: &ast::Query) -
             ast::TopLevelQueryField::Field(query_field) => {
                 let aliased_field_name = ast::get_aliased_name(query_field);
                 result.push_str(&format!(
-                    "        |> Db.Read.andDecodeIndex {} decode{}\n",
-                    index,
+                    "        |> Decode.andField \"{}\" decode{}\n",
+                    &aliased_field_name,
                     crate::ext::string::capitalize(&aliased_field_name)
                 ));
             }
@@ -671,27 +674,18 @@ fn to_query_decoder(
     table: &ast::RecordDetails,
     fields: &Vec<&ast::QueryField>,
 ) -> String {
+    let decoder_name = format!("decode{}", crate::ext::string::capitalize(table_alias));
+
     let mut result = format!(
-        "decode{} : Db.Read.Query {}\n",
-        crate::ext::string::capitalize(table_alias),
+        "{} : Decode.Decoder {}\n",
+        decoder_name,
         crate::ext::string::capitalize(table_alias)
     );
-    let mut primary_key = vec![];
-    match ast::get_primary_id_field_name(&table.fields) {
-        Some(id) => primary_key.push(id),
-        None => (),
-    }
 
-    let identifiers = format!("[ {} ]", format_db_id(table_alias, &primary_key),);
-
+    result.push_str(&decoder_name);
     result.push_str(&format!(
-        "decode{} =\n",
-        crate::ext::string::capitalize(table_alias)
-    ));
-    result.push_str(&format!(
-        "    Db.Read.query {} {}\n",
+        " =\n    Decode.succeed {}\n",
         crate::ext::string::capitalize(table_alias),
-        identifiers
     ));
     for field in fields {
         let table_field = &table
@@ -755,27 +749,20 @@ fn to_table_field_decoder(
         ast::Field::Column(column) => {
             let spaces = " ".repeat(indent);
             return format!(
-                "{}|> Db.Read.field \"{}\" {}\n",
+                "{}|> Decode.andField \"{}\" {}\n",
                 spaces,
-                ast::get_select_alias(table_alias, query_field),
+                ast::get_aliased_name(query_field),
                 to_type_decoder(&column)
             );
         }
-        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+        ast::Field::FieldDirective(ast::FieldDirective::Link(_)) => {
             let spaces = " ".repeat(indent);
 
-            let foreign_table_alias = ast::get_aliased_name(query_field);
-
             return format!(
-                "{}|> Db.Read.nested\n{}({})\n{}({})\n{}decode{}\n",
+                "{}|> Decode.andField \"{}\" decode{}\n",
                 spaces,
-                // ID columns
-                " ".repeat(indent + 4),
-                format_db_id(table_alias, &link.local_ids),
-                " ".repeat(indent + 4),
-                format_db_id(&foreign_table_alias, &link.foreign.fields),
-                " ".repeat(indent + 4),
-                (crate::ext::string::capitalize(&ast::get_aliased_name(query_field))) // (capitalize(&link.link_name)) // ast::get_select_alias(table_alias, table_field, query_field),
+                ast::get_aliased_name(query_field),
+                (crate::ext::string::capitalize(&ast::get_aliased_name(query_field)))
             );
         }
 
