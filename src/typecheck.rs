@@ -759,9 +759,14 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                         start,
                         end,
                     } => {
+                        // Track field types across variants
+                        let mut field_types: HashMap<String, (String, &ast::Variant)> =
+                            HashMap::new();
+
                         for variant in variants {
                             if let Some(fields) = &variant.fields {
                                 for field in ast::collect_columns(&fields) {
+                                    // Check if type exists
                                     if !context.types.contains_key(&field.type_) {
                                         let mut contexts: Vec<Range> = vec![];
 
@@ -797,6 +802,57 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                                                 ),
                                             }],
                                         });
+                                    }
+
+                                    // Check for type collisions between variants
+                                    match field_types.get(&field.name) {
+                                        Some((existing_type, existing_variant)) => {
+                                            if existing_type != &field.type_ {
+                                                let mut contexts: Vec<Range> = vec![];
+
+                                                match to_single_range(&start, &end) {
+                                                    None => (),
+                                                    Some(new_range) => {
+                                                        contexts.push(new_range);
+                                                    }
+                                                }
+
+                                                match to_single_range(&variant.start, &variant.end)
+                                                {
+                                                    None => (),
+                                                    Some(new_range) => {
+                                                        contexts.push(new_range);
+                                                    }
+                                                }
+
+                                                errors.push(Error {
+                                                    filepath: file.path.clone(),
+                                                    error_type:
+                                                        ErrorType::VariantFieldTypeCollision {
+                                                            field: field.name.clone(),
+                                                            type_one: existing_type.clone(),
+                                                            type_two: field.type_.clone(),
+                                                            variant_one: existing_variant
+                                                                .name
+                                                                .clone(),
+                                                            variant_two: variant.name.clone(),
+                                                        },
+                                                    locations: vec![Location {
+                                                        contexts,
+                                                        primary: to_range(
+                                                            &field.start_typename,
+                                                            &field.end_typename,
+                                                        ),
+                                                    }],
+                                                });
+                                            }
+                                        }
+                                        None => {
+                                            field_types.insert(
+                                                field.name.clone(),
+                                                (field.type_.clone(), variant),
+                                            );
+                                        }
                                     }
                                 }
                             }

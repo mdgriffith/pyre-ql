@@ -1,3 +1,4 @@
+
 use crate::ast;
 use colored::Colorize;
 use nom::ToUsize;
@@ -51,6 +52,13 @@ pub enum ErrorType {
     DuplicateVariant {
         base_variant: VariantDef,
         duplicates: Vec<VariantDef>,
+    },
+    VariantFieldTypeCollision {
+        field: String,
+        type_one: String,
+        type_two: String,
+        variant_one: String,
+        variant_two: String,
     },
     UnknownType {
         found: String,
@@ -157,6 +165,7 @@ pub enum ErrorType {
     LinksDisallowedInUpdates {
         field: String,
     },
+
     InsertColumnIsNotSet {
         field: String,
     },
@@ -1097,6 +1106,24 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
+        ErrorType::VariantFieldTypeCollision {
+            field,
+            type_one,
+            type_two,
+            variant_one,
+            variant_two,
+        } => {
+            format!(
+                "Fields with the same name across variants must have the same type.\n\n    {}.{} {}\n    {}.{} {}",
+                cyan_if(in_color, variant_one),
+                yellow_if(in_color, field),
+                yellow_if(in_color, type_one),
+                cyan_if(in_color, variant_two),
+                yellow_if(in_color, field),
+                yellow_if(in_color, type_two)
+               
+            )
+        }
     }
 }
 
@@ -1143,6 +1170,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::InsertNestedValueAutomaticallySet { .. } => "Can't set automatic field",
         ErrorType::MultipleSchemaWrites { .. } => "Multiple Schema Writes",
         ErrorType::LimitOffsetOnlyInFlatRecord => "Limit/Offset Only In Flat Record",
+        ErrorType::VariantFieldTypeCollision { .. } => "Variant Field Type Collision",
     }
     .to_string()
 }
