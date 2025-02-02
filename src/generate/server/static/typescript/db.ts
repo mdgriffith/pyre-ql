@@ -133,10 +133,32 @@ export const to_runner = <Session, Input, Output>(options: ToRunnerArgs<Session,
       const client = LibSql.createClient(lib_sql_config);
       try {
         const res = await client.batch(sql_arg_list);
+
+        const formatted_return_data: any = {}
+
+        for (const result_set of only_included(options.sql, res)) {
+          // the generated sql formats the data as JSON
+          // But it comes over as string encoded JSON
+          // So we need to parse it
+
+          if (result_set.columns.length < 1) { continue }
+          const col_name = result_set.columns[0];
+          const gathered_rows: any[] = [];
+
+          for (const row of result_set.rows) {
+            console.log(row);
+            if (col_name in row && typeof row[col_name] == 'string') {
+              gathered_rows.push(JSON.parse(row[col_name]));
+            }
+          }
+          formatted_return_data[col_name] = gathered_rows;
+        }
+
+
         return {
           kind: 'success',
           metadata: { outOfDate: false, watched: options.watch_triggers },
-          data: only_included(options.sql, res),
+          data: formatted_return_data
         };
       } catch (error) {
         console.log(error);
