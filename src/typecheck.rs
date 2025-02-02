@@ -967,12 +967,34 @@ pub fn check_query(
             }
         }
     }
+    // Track aliased field names to detect duplicates
+    let mut seen_fields = HashSet::new();
 
     // Verify that all fields exist in the schema
     for field in &query.fields {
         match field {
             ast::TopLevelQueryField::Field(query_field) => {
-                context.top_level_field_alias = ast::get_aliased_name(query_field);
+                let aliased_name = ast::get_aliased_name(query_field);
+
+                if seen_fields.contains(&aliased_name) {
+                    errors.push(Error {
+                        filepath: context.current_filepath.clone(),
+                        error_type: ErrorType::DuplicateQueryField {
+                            field: aliased_name.clone(),
+                        },
+                        locations: vec![Location {
+                            contexts: to_range(&query.start, &query.end),
+                            primary: to_range(
+                                &query_field.start_fieldname,
+                                &query_field.end_fieldname,
+                            ),
+                        }],
+                    });
+                } else {
+                    seen_fields.insert(aliased_name.clone());
+                }
+
+                context.top_level_field_alias = aliased_name;
                 match context.tables.get(&query_field.name) {
                     None => errors.push(Error {
                         filepath: context.current_filepath.clone(),
