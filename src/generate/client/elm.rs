@@ -2,6 +2,7 @@ use crate::ast;
 use crate::ext::string;
 use crate::filesystem;
 
+use crate::generate::typealias;
 use crate::typecheck;
 use std::fs;
 use std::io::{self, Write};
@@ -169,7 +170,22 @@ fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> Stri
 
 // DECODE
 
-const DECODE_BOOL: &str = r#"bool : Decode.Decoder Bool
+pub fn to_schema_decoders(database: &ast::Database) -> String {
+    let mut result = String::new();
+
+    result.push_str("module Db.Decode exposing (..)\n\n");
+    result.push_str("import Db\n");
+    result.push_str("import Db.Read\n");
+    result.push_str("import Json.Decode as Decode\n");
+    result.push_str("import Time\n\n\n");
+
+    result.push_str(
+        r#"field : String -> Decode.Decoder a -> Decode.Decoder (a -> b) -> Decode.Decoder b
+field fieldName_ fieldDecoder_ decoder_ =
+    decoder_ |> Decode.andThen (\func -> Decode.field fieldName_ fieldDecoder_ |> Decode.map func)
+
+
+bool : Decode.Decoder Bool
 bool =
     Decode.oneOf
         [ Decode.bool
@@ -183,48 +199,34 @@ bool =
                         _ ->
                             Decode.succeed True
                 )
-                ]"#;
-pub fn to_schema_decoders(database: &ast::Database) -> String {
-    let mut result = String::new();
+                ]
 
-    result.push_str("module Db.Decode exposing (..)\n\n");
-    result.push_str("import Db\n");
-    result.push_str("import Db.Read\n");
-    result.push_str("import Json.Decode as Decode\n");
-    result.push_str("import Time\n\n\n");
 
-    result.push_str(
-        "field : String -> Decode.Decoder a -> Decode.Decoder (a -> b) -> Decode.Decoder b\n",
+dateTime : Decode.Decoder Time.Posix
+dateTime =
+    Decode.map Time.millisToPosix Decode.int
+
+"#,
     );
-    result.push_str("field fieldName_ fieldDecoder_ decoder_ =\n");
-    result.push_str("    decoder_ |> Decode.andThen (\\func -> Decode.field fieldName_ fieldDecoder_ |> Decode.map func)");
 
     result.push_str("\n\n");
 
     for schema in &database.schemas {
         for file in &schema.files {
             for definition in &file.definitions {
-                result.push_str(&to_decoder_definition(definition));
+                to_decoder_definition(definition, &mut result);
             }
         }
     }
     result
 }
 
-fn to_decoder_definition(definition: &ast::Definition) -> String {
+fn to_decoder_definition(definition: &ast::Definition, result: &mut String) {
     match definition {
-        ast::Definition::Lines { count } => {
-            if (*count > 2) {
-                "\n\n".to_string()
-            } else {
-                "\n".repeat(*count as usize)
-            }
-        }
-        ast::Definition::Session(_) => "".to_string(),
-        ast::Definition::Comment { .. } => "".to_string(),
+        ast::Definition::Lines { count } => (),
+        ast::Definition::Session(_) => (),
+        ast::Definition::Comment { .. } => (),
         ast::Definition::Tagged { name, variants, .. } => {
-            let mut result = "".to_string();
-
             for variant in variants {
                 match &variant.fields {
                     Some(fields) => {
@@ -255,9 +257,8 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
             }
             result.push_str("            )\n");
             result.push_str("        |> Db.Read.custom\n");
-            result
         }
-        ast::Definition::Record { .. } => "".to_string(),
+        ast::Definition::Record { .. } => (),
     }
 }
 
@@ -320,26 +321,6 @@ fn to_json_type_decoder(type_: &str) -> String {
         "Float" => "Decode.float".to_string(),
         "DateTime" => "Db.Read.dateTime".to_string(),
         _ => crate::ext::string::decapitalize(type_).to_string(),
-    }
-}
-
-fn to_type_decoder(column: &ast::Column) -> String {
-    let decoder = match column.type_.as_str() {
-        "String" => "Db.Read.string".to_string(),
-        "Int" => "Db.Read.int".to_string(),
-        "Float" => "Db.Read.float".to_string(),
-        "DateTime" => "Db.Read.dateTime".to_string(),
-        "Boolean" => "Db.Read.bool".to_string(),
-        _ => format!(
-            "Db.Decode.{}",
-            crate::ext::string::decapitalize(&column.type_)
-        )
-        .to_string(),
-    };
-    if column.nullable {
-        format!("(Db.Read.nullable {})", decoder)
-    } else {
-        decoder
     }
 }
 
@@ -491,105 +472,112 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     result.push_str(&to_param_type_alias(&query.args));
 
-    result.push_str(&format!(
-        "prepare : Input -> {{ args : Encode.Value, query : String, decoder : Decode.Decoder {} }}\n",
-        string::capitalize(&query.name)
-    ));
+    result.push_str(
+        "prepare : Input -> { args : Encode.Value, query : String, decoder : Decode.Decoder ReturnData }\n"
+    );
     result.push_str("prepare input =\n");
     result.push_str(&format!(
-        "    {{ args = encode input\n    , query = \"{}\"\n    , decoder = decode\n    }}\n\n\n",
+        "    {{ args = encode input\n    , query = \"{}\"\n    , decoder = decodeReturnResult\n    }}\n\n\n",
         &query.interface_hash,
     ));
+    let formatter = typealias::TypeFormatter {
+        to_comment: Box::new(|s| format!("{{-| {} -}}\n", s)),
+        to_type_def_start: Box::new(|name| format!("type alias {} =\n    {{ ", name)),
+        to_field: Box::new(
+            |name,
+             type_,
+             typealias::FieldMetadata {
+                 is_link,
+                 is_optional,
+             }| {
+                let base_type = to_elm_typename(type_, is_link);
 
-    return_data_aliases(context, query, &mut result);
+                let type_str = if is_link {
+                    if is_optional {
+                        format!("Maybe {}", base_type)
+                    } else {
+                        format!("List {}", base_type)
+                    }
+                } else {
+                    if is_optional {
+                        format!("Maybe {}", base_type)
+                    } else {
+                        base_type.to_string()
+                    }
+                };
+                format!("{} : {}\n", name, type_str)
+            },
+        ),
+        to_type_def_end: Box::new(|| "    }\n".to_string()),
+        to_field_separator: Box::new(|is_last| {
+            if is_last {
+                "".to_string()
+            } else {
+                "    , ".to_string()
+            }
+        }),
+    };
+
+    // Type Alisaes
+    typealias::return_data_aliases(context, query, &mut result, &formatter);
 
     // Helpers
 
-    // Type Alisaes
+    let decoder_formatter = typealias::TypeFormatter {
+        to_comment: Box::new(|s| format!("{{-| {} -}}\n", s)),
+        to_type_def_start: Box::new(|name| {
+            format!(
+                "decode{} : Decoder {}\ndecode{} =\n    Decode.succeed {}\n        ",
+                name, name, name, name
+            )
+        }),
+        to_field: Box::new(
+            |name,
+             type_,
+             typealias::FieldMetadata {
+                 is_link,
+                 is_optional,
+             }| {
+                let decoder = match type_ {
+                    "String" => "Decode.string".to_string(),
+                    "Int" => "Decode.int".to_string(),
+                    "Float" => "Decode.float".to_string(),
+                    "DateTime" => "Db.Decode.dateTime".to_string(),
+                    "Boolean" => "Db.Decode.bool".to_string(),
+                    _ => {
+                        if is_link {
+                            format!("decode{}", &type_).to_string()
+                        } else {
+                            format!("Db.Decode.{}", crate::ext::string::decapitalize(&type_))
+                                .to_string()
+                        }
+                    }
+                };
+
+                let final_decoder: String = if is_optional {
+                    format!("(Decode.nullable {})", decoder)
+                } else {
+                    if is_link {
+                        format!("(Decode.list {})", decoder)
+                    } else {
+                        decoder.to_string()
+                    }
+                };
+
+                format!("|> Decode.andField \"{}\" {}\n", name, final_decoder)
+            },
+        ),
+        to_type_def_end: Box::new(|| "\n".to_string()),
+        to_field_separator: Box::new(|_| "        ".to_string()),
+    };
 
     result.push_str(&to_param_type_encoder(&query.args));
 
     // Top level query decoder
-    result.push_str(&to_query_toplevel_decoder(context, &query));
-    result.push_str("\n\n");
 
-    // Helper Decoders
-    for field in &query.fields {
-        match field {
-            ast::TopLevelQueryField::Field(query_field) => {
-                let table = context.tables.get(&query_field.name).unwrap();
-                result.push_str(&to_query_decoder(
-                    context,
-                    &ast::get_aliased_name(&query_field),
-                    &table.record,
-                    &ast::collect_query_fields(&query_field.fields),
-                ));
-                result.push_str("\n\n");
-            }
-            ast::TopLevelQueryField::Lines { .. } => {}
-            ast::TopLevelQueryField::Comment { .. } => {}
-        }
-    }
+    typealias::return_data_aliases(context, query, &mut result, &decoder_formatter);
 
     result
-}
-
-fn return_data_aliases(context: &typecheck::Context, query: &ast::Query, result: &mut String) {
-    result.push_str(&format!(
-        "{{-| The Return Data! -}}\ntype alias {} =\n",
-        crate::ext::string::capitalize(&query.name)
-    ));
-
-    let mut is_first = true;
-    for field in &query.fields {
-        match field {
-            ast::TopLevelQueryField::Field(query_field) => {
-                if is_first {
-                    result.push_str(&format!("    {{ ",))
-                }
-
-                let field_name = ast::get_aliased_name(query_field);
-                if is_first {
-                    result.push_str(&format!(
-                        "{} : List {}\n",
-                        crate::ext::string::decapitalize(&field_name),
-                        string::capitalize(&query_field.name)
-                    ));
-                } else {
-                    let spaces = " ".repeat(4);
-                    result.push_str(&format!(
-                        "{}, {} : List {}\n",
-                        spaces,
-                        crate::ext::string::decapitalize(&field_name),
-                        string::capitalize(&query_field.name)
-                    ));
-                }
-
-                if is_first {
-                    is_first = false;
-                }
-            }
-            _ => {}
-        }
-    }
-    result.push_str("    }\n\n\n");
-
-    // Children aliases
-    for field in &query.fields {
-        match field {
-            ast::TopLevelQueryField::Field(query_field) => {
-                let table = context.tables.get(&query_field.name).unwrap();
-                result.push_str(&to_query_type_alias(
-                    context,
-                    &table.record,
-                    &query_field.name,
-                    &ast::collect_query_fields(&query_field.fields),
-                ));
-            }
-            ast::TopLevelQueryField::Lines { .. } => {}
-            ast::TopLevelQueryField::Comment { .. } => {}
-        }
-    }
 }
 
 fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
@@ -644,261 +632,19 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
     result
 }
 
-fn to_query_toplevel_decoder(context: &typecheck::Context, query: &ast::Query) -> String {
-    let mut result = format!(
-        "decode : Decode.Decoder {}\n",
-        crate::ext::string::capitalize(&query.name)
-    );
-
-    result.push_str("decode =\n");
-    result.push_str(&format!(
-        "    Decode.succeed {}\n",
-        crate::ext::string::capitalize(&query.name)
-    ));
-    for (index, field) in query.fields.iter().enumerate() {
-        match field {
-            ast::TopLevelQueryField::Field(query_field) => {
-                let aliased_field_name = ast::get_aliased_name(query_field);
-                result.push_str(&format!(
-                    "        |> Decode.andField \"{}\" decode{}\n",
-                    &aliased_field_name,
-                    crate::ext::string::capitalize(&aliased_field_name)
-                ));
-            }
-            ast::TopLevelQueryField::Lines { .. } => {}
-            ast::TopLevelQueryField::Comment { .. } => {}
-        }
-    }
-
-    result
-}
-
-fn to_query_decoder(
-    context: &typecheck::Context,
-    table_alias: &str,
-    table: &ast::RecordDetails,
-    fields: &Vec<&ast::QueryField>,
-) -> String {
-    let decoder_name = format!("decode{}", crate::ext::string::capitalize(table_alias));
-
-    let mut result = format!(
-        "{} : Decode.Decoder {}\n",
-        decoder_name,
-        crate::ext::string::capitalize(table_alias)
-    );
-
-    result.push_str(&decoder_name);
-    result.push_str(&format!(
-        " =\n    Decode.succeed {}\n",
-        crate::ext::string::capitalize(table_alias),
-    ));
-    for field in fields {
-        let table_field = &table
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
-            .unwrap();
-
-        result.push_str(&to_table_field_decoder(
-            8,
-            table_alias,
-            &table_field,
-            &field,
-        ));
-    }
-
-    for field in fields {
-        if field.fields.is_empty() {
-            continue;
-        }
-
-        let fieldname_match = table
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(f, &field.name));
-
-        match fieldname_match {
-            Some(ast::Field::FieldDirective(ast::FieldDirective::Link(link))) => {
-                let link_table = typecheck::get_linked_table(context, &link).unwrap();
-                result.push_str("\n\n");
-                result.push_str(&to_query_decoder(
-                    context,
-                    &ast::get_aliased_name(&field),
-                    &link_table.record,
-                    &ast::collect_query_fields(&field.fields),
-                ));
-            }
-            _ => continue,
-        }
-    }
-
-    result
-}
-
-fn format_db_id(table_alias: &str, ids: &Vec<String>) -> String {
-    let mut result = String::new();
-    for id in ids {
-        let formatted = format!("{}__{}", table_alias, id);
-        result.push_str(&format!("Db.Read.id \"{}\"", formatted));
-    }
-    result
-}
-
-fn to_table_field_decoder(
-    indent: usize,
-    table_alias: &str,
-    table_field: &ast::Field,
-    query_field: &ast::QueryField,
-) -> String {
-    match table_field {
-        ast::Field::Column(column) => {
-            let spaces = " ".repeat(indent);
-            return format!(
-                "{}|> Decode.andField \"{}\" {}\n",
-                spaces,
-                ast::get_aliased_name(query_field),
-                to_type_decoder(&column)
-            );
-        }
-        ast::Field::FieldDirective(ast::FieldDirective::Link(_)) => {
-            let spaces = " ".repeat(indent);
-
-            return format!(
-                "{}|> Decode.andField \"{}\" decode{}\n",
-                spaces,
-                ast::get_aliased_name(query_field),
-                (crate::ext::string::capitalize(&ast::get_aliased_name(query_field)))
-            );
-        }
-
-        _ => "".to_string(),
-    }
-}
-
-fn to_query_type_alias(
-    context: &typecheck::Context,
-    table: &ast::RecordDetails,
-    name: &str,
-    fields: &Vec<&ast::QueryField>,
-) -> String {
-    let mut result = format!("type alias {} =\n", crate::ext::string::capitalize(name));
-
-    let mut is_first = true;
-
-    for field in fields {
-        if is_first {
-            result.push_str(&format!("    {{ ",))
-        }
-
-        let table_field = &table
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
-            .unwrap();
-
-        match table_field {
-            ast::Field::Column(col) => {
-                result.push_str(&to_string_query_field(is_first, 4, &field, col));
-            }
-            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                result.push_str(&to_string_query_field_link(is_first, 4, &field, link));
-            }
-            _ => {}
-        }
-
-        if is_first {
-            is_first = false;
-        }
-    }
-    result.push_str("    }\n\n\n");
-
-    for field in fields {
-        if field.fields.is_empty() {
-            continue;
-        }
-
-        let fieldname_match = table
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(f, &field.name));
-
-        match fieldname_match {
-            Some(ast::Field::FieldDirective(ast::FieldDirective::Link(link))) => {
-                let link_table = typecheck::get_linked_table(context, &link).unwrap();
-
-                result.push_str(&to_query_type_alias(
-                    context,
-                    &link_table.record,
-                    &ast::get_aliased_name(field),
-                    &ast::collect_query_fields(&field.fields),
-                ));
-            }
-            _ => continue,
-        }
-    }
-
-    result
-}
-
-fn to_string_query_field_link(
-    is_first: bool,
-    indent: usize,
-    field: &ast::QueryField,
-    link_details: &ast::LinkDetails,
-) -> String {
-    let field_name = ast::get_aliased_name(field);
-
-    if is_first {
-        return format!(
-            "{} : {}\n",
-            crate::ext::string::decapitalize(&field_name),
-            (format!("List {}", crate::ext::string::capitalize(&field_name)))
-        );
-    } else {
-        let spaces = " ".repeat(indent);
-        return format!(
-            "{}, {} : {}\n",
-            spaces,
-            crate::ext::string::decapitalize(&field_name),
-            (format!("List {}", crate::ext::string::capitalize(&field_name)))
-        );
-    }
-}
-
-fn to_string_query_field(
-    is_first: bool,
-    indent: usize,
-    field: &ast::QueryField,
-    table_column: &ast::Column,
-) -> String {
-    let field_name = ast::get_aliased_name(field);
-    let maybe = if table_column.nullable { "Maybe " } else { "" };
-    if is_first {
-        return format!(
-            "{} : {}{}\n",
-            crate::ext::string::decapitalize(&field_name),
-            maybe,
-            to_elm_typename(&table_column.type_)
-        );
-    } else {
-        let spaces = " ".repeat(indent);
-        return format!(
-            "{}, {} : {}{}\n",
-            spaces,
-            crate::ext::string::decapitalize(&field_name),
-            maybe,
-            to_elm_typename(&table_column.type_)
-        );
-    }
-}
-
-fn to_elm_typename(type_: &str) -> String {
+fn to_elm_typename(type_: &str, is_link: bool) -> String {
     match type_ {
         "String" => type_.to_string(),
         "Int" => type_.to_string(),
         "Float" => type_.to_string(),
         "Bool" => type_.to_string(),
         "DateTime" => "Time.Posix".to_string(),
-        _ => format!("Db.{}", type_).to_string(),
+        _ => {
+            if is_link {
+                type_.to_string()
+            } else {
+                format!("Db.{}", type_).to_string()
+            }
+        }
     }
 }

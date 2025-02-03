@@ -464,37 +464,45 @@ fn to_formatter() -> typealias::TypeFormatter {
     typealias::TypeFormatter {
         to_comment: Box::new(|s| format!("// {}\n", s)),
         to_type_def_start: Box::new(|name| format!("export const {} = Ark.type({{\n", name)),
-        to_field: Box::new(|name, type_, is_link| {
-            let (base_type, is_primitive) = match type_ {
-                "String" => ("string".to_string(), true),
-                "Int" => ("number".to_string(), true),
-                "Float" => ("number".to_string(), true),
-                "Bool" => ("boolean".to_string(), true),
-                "DateTime" => ("Date".to_string(), true),
-                _ => {
-                    if is_link {
-                        (type_.to_string(), false)
-                    } else {
-                        (format!("Decode.{}", type_.to_string()), false)
+        to_field: Box::new(
+            |name,
+             type_,
+             typealias::FieldMetadata {
+                 is_link,
+                 is_optional,
+             }| {
+                let (base_type, is_primitive) = match type_ {
+                    "String" => ("string".to_string(), true),
+                    "Int" => ("number".to_string(), true),
+                    "Float" => ("number".to_string(), true),
+                    "Bool" => ("boolean".to_string(), true),
+                    "DateTime" => ("Date".to_string(), true),
+                    _ => {
+                        if is_link {
+                            (type_.to_string(), false)
+                        } else {
+                            (format!("Decode.{}", type_.to_string()), false)
+                        }
                     }
-                }
-            };
+                };
 
-            let type_str = if is_primitive {
-                if is_link {
-                    format!("\"{}[]\"", base_type)
-                } else {
-                    format!("\"{}\"", base_type)
-                }
-            } else {
-                if is_link {
-                    format!("[{}]", base_type)
-                } else {
-                    format!("{}", base_type)
-                }
-            };
-            format!("    {}: {}", name, type_str)
-        }),
+                #[rustfmt::skip]
+                let type_str = match (is_primitive, is_link, is_optional) {
+                    // Primitive types
+                    (true, true, true) => format!("\"{} | null\"", base_type),
+                    (true, true, false) => format!("\"{}[]\"", base_type),
+                    (true, false, true) => format!("\"{}| null\"", base_type),
+                    (true, false, false) => format!("\"{}\"", base_type),
+                    
+                    // Non-primitive types
+                    (false, true, true) => format!("{} | null", base_type),
+                    (false, true, false) => format!("[{}]", base_type), 
+                    (false, false, true) => format!("{} | null", base_type),
+                    (false, false, false) => base_type.to_string()
+                };
+                format!("    {}: {}", name, type_str)
+            },
+        ),
         to_type_def_end: Box::new(|| "});\n".to_string()),
         to_field_separator: Box::new(|is_last| {
             if is_last {

@@ -4,9 +4,14 @@ use crate::typecheck;
 pub struct TypeFormatter {
     pub to_comment: Box<dyn Fn(&str) -> String>,
     pub to_type_def_start: Box<dyn Fn(&str) -> String>,
-    pub to_field: Box<dyn Fn(&str, &str, bool) -> String>,
+    pub to_field: Box<dyn Fn(&str, &str, FieldMetadata) -> String>,
     pub to_type_def_end: Box<dyn Fn() -> String>,
     pub to_field_separator: Box<dyn Fn(bool) -> String>,
+}
+
+pub struct FieldMetadata {
+    pub is_link: bool,
+    pub is_optional: bool,
 }
 
 /// Generates type alias definitions for query return types using the provided formatting functions
@@ -62,7 +67,10 @@ pub fn return_data_aliases(
                 result.push_str(&(formatter.to_field)(
                     &crate::ext::string::decapitalize(&field_name),
                     &string::capitalize(&field_name),
-                    true, // Top level query fields are always lists
+                    FieldMetadata {
+                        is_link: true,
+                        is_optional: false,
+                    },
                 ));
 
                 result.push_str(&(formatter.to_field_separator)(is_last));
@@ -147,14 +155,28 @@ fn to_query_type_alias(
 
         match table_field {
             ast::Field::Column(col) => {
-                result.push_str(&(formatter.to_field)(&aliased_name, &col.type_, false));
+                result.push_str(&(formatter.to_field)(
+                    &aliased_name,
+                    &col.type_,
+                    FieldMetadata {
+                        is_link: false,
+                        is_optional: col.nullable,
+                    },
+                ));
                 result.push_str(&(formatter.to_field_separator)(is_last));
             }
-            ast::Field::FieldDirective(ast::FieldDirective::Link(_)) => {
+            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                let linked_to_unique = ast::linked_to_unique_field(&link);
+                // If we're linked to a unqiue field
+                // Then we have either 0 or 1 of them
+
                 result.push_str(&(formatter.to_field)(
                     &aliased_name,
                     &get_name(&alias_stack, &aliased_name),
-                    true,
+                    FieldMetadata {
+                        is_link: true,
+                        is_optional: linked_to_unique,
+                    },
                 ));
                 result.push_str(&(formatter.to_field_separator)(is_last));
             }
