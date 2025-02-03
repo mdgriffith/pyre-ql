@@ -58,8 +58,14 @@ pub fn return_data_aliases(
         &crate::ext::string::capitalize("ReturnData"),
     ));
 
+    let last_field_index = query
+        .fields
+        .iter()
+        .rposition(|field| matches!(field, ast::TopLevelQueryField::Field(_)))
+        .unwrap_or(0);
+
     for (i, field) in query.fields.iter().enumerate() {
-        let is_last = i == query.fields.len() - 1;
+        let is_last = i == last_field_index;
         match field {
             ast::TopLevelQueryField::Field(query_field) => {
                 let field_name: String = ast::get_aliased_name(query_field);
@@ -142,8 +148,23 @@ fn to_query_type_alias(
 
     let alias_stack = push_alias_stack(query_field, alias_stack);
 
+    let last_field_index = fields
+        .iter()
+        .rposition(|field| {
+            let table_field = table
+                .fields
+                .iter()
+                .find(|&f| ast::has_field_or_linkname(f, &field.name));
+            matches!(
+                table_field,
+                Some(ast::Field::Column(_))
+                    | Some(ast::Field::FieldDirective(ast::FieldDirective::Link(_)))
+            )
+        })
+        .unwrap_or(0);
+
     for (i, field) in fields.iter().enumerate() {
-        let is_last = i == fields.len() - 1;
+        let is_last = i == last_field_index;
 
         let table_field = &table
             .fields
