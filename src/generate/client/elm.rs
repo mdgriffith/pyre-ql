@@ -501,7 +501,40 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         &query.interface_hash,
     ));
 
-    // Top level query alias
+    return_data_aliases(context, query, &mut result);
+
+    // Helpers
+
+    // Type Alisaes
+
+    result.push_str(&to_param_type_encoder(&query.args));
+
+    // Top level query decoder
+    result.push_str(&to_query_toplevel_decoder(context, &query));
+    result.push_str("\n\n");
+
+    // Helper Decoders
+    for field in &query.fields {
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                let table = context.tables.get(&query_field.name).unwrap();
+                result.push_str(&to_query_decoder(
+                    context,
+                    &ast::get_aliased_name(&query_field),
+                    &table.record,
+                    &ast::collect_query_fields(&query_field.fields),
+                ));
+                result.push_str("\n\n");
+            }
+            ast::TopLevelQueryField::Lines { .. } => {}
+            ast::TopLevelQueryField::Comment { .. } => {}
+        }
+    }
+
+    result
+}
+
+fn return_data_aliases(context: &typecheck::Context, query: &ast::Query, result: &mut String) {
     result.push_str(&format!(
         "{{-| The Return Data! -}}\ntype alias {} =\n",
         crate::ext::string::capitalize(&query.name)
@@ -541,9 +574,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     }
     result.push_str("    }\n\n\n");
 
-    // Helpers
-
-    // Type Alisaes
+    // Children aliases
     for field in &query.fields {
         match field {
             ast::TopLevelQueryField::Field(query_field) => {
@@ -559,32 +590,6 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
             ast::TopLevelQueryField::Comment { .. } => {}
         }
     }
-
-    result.push_str(&to_param_type_encoder(&query.args));
-
-    // Top level query decoder
-    result.push_str(&to_query_toplevel_decoder(context, &query));
-    result.push_str("\n\n");
-
-    // Helper Decoders
-    for field in &query.fields {
-        match field {
-            ast::TopLevelQueryField::Field(query_field) => {
-                let table = context.tables.get(&query_field.name).unwrap();
-                result.push_str(&to_query_decoder(
-                    context,
-                    &ast::get_aliased_name(&query_field),
-                    &table.record,
-                    &ast::collect_query_fields(&query_field.fields),
-                ));
-                result.push_str("\n\n");
-            }
-            ast::TopLevelQueryField::Lines { .. } => {}
-            ast::TopLevelQueryField::Comment { .. } => {}
-        }
-    }
-
-    result
 }
 
 fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
@@ -827,7 +832,6 @@ fn to_query_type_alias(
                     &ast::get_aliased_name(field),
                     &ast::collect_query_fields(&field.fields),
                 ));
-                // result.push_str("\n\n");
             }
             _ => continue,
         }
