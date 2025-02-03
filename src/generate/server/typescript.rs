@@ -460,7 +460,7 @@ fn bool_to_ts_bool(bool: bool) -> String {
     return "false".to_string();
 }
 
-fn to_formatter() -> typealias::TypeFormatter {
+pub fn to_formatter() -> typealias::TypeFormatter {
     typealias::TypeFormatter {
         to_comment: Box::new(|s| format!("// {}\n", s)),
         to_type_def_start: Box::new(|name| format!("export const {} = Ark.type({{\n", name)),
@@ -489,15 +489,15 @@ fn to_formatter() -> typealias::TypeFormatter {
                 #[rustfmt::skip]
                 let type_str = match (is_primitive, is_link, is_optional) {
                     // Primitive types
-                    (true, true, true) => format!("\"{} | null\"", base_type),
+                    (true, true, true) => format!("\"{}?\"", base_type),
                     (true, true, false) => format!("\"{}[]\"", base_type),
-                    (true, false, true) => format!("\"{}| null\"", base_type),
+                    (true, false, true) => format!("\"{}?\"", base_type),
                     (true, false, false) => format!("\"{}\"", base_type),
                     
                     // Non-primitive types
-                    (false, true, true) => format!("{} | null", base_type),
+                    (false, true, true) => format!("\"{}?\"", base_type),
                     (false, true, false) => format!("[{}]", base_type), 
-                    (false, false, true) => format!("{} | null", base_type),
+                    (false, false, true) => format!("\"{}?\"", base_type),
                     (false, false, false) => base_type.to_string()
                 };
                 format!("    {}: {}", name, type_str)
