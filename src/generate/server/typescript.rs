@@ -3,6 +3,7 @@ use crate::ast;
 use crate::ext::string;
 use crate::filesystem;
 use crate::generate;
+use crate::generate::typealias;
 use crate::typecheck;
 use std::collections::HashMap;
 use std::fs;
@@ -310,6 +311,8 @@ pub fn write_queries(
     filesystem::create_dir_if_not_exists(&query_dir)?;
     write_runner(dir, context, query_list);
 
+    let formatter = to_formatter();
+
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
@@ -320,7 +323,7 @@ pub fn write_queries(
 
                 let mut output = fs::File::create(target_path).expect("Failed to create file");
                 output
-                    .write_all(to_query_file(&context, &query_info, &q).as_bytes())
+                    .write_all(to_query_file(&context, &query_info, &q, &formatter).as_bytes())
                     .expect("Failed to write to file");
             }
             _ => continue,
@@ -457,10 +460,57 @@ fn bool_to_ts_bool(bool: bool) -> String {
     return "false".to_string();
 }
 
+fn to_formatter() -> typealias::TypeFormatter {
+    typealias::TypeFormatter {
+        to_comment: Box::new(|s| format!("// {}\n", s)),
+        to_type_def_start: Box::new(|name| format!("export const {} = Ark.type({{\n", name)),
+        to_field: Box::new(|name, type_, is_link| {
+            let (base_type, is_primitive) = match type_ {
+                "String" => ("string".to_string(), true),
+                "Int" => ("number".to_string(), true),
+                "Float" => ("number".to_string(), true),
+                "Bool" => ("boolean".to_string(), true),
+                "DateTime" => ("Date".to_string(), true),
+                _ => {
+                    if is_link {
+                        (type_.to_string(), false)
+                    } else {
+                        (format!("Decode.{}", type_.to_string()), false)
+                    }
+                }
+            };
+
+            let type_str = if is_primitive {
+                if is_link {
+                    format!("\"{}[]\"", base_type)
+                } else {
+                    format!("\"{}\"", base_type)
+                }
+            } else {
+                if is_link {
+                    format!("[{}]", base_type)
+                } else {
+                    format!("{}", base_type)
+                }
+            };
+            format!("    {}: {}", name, type_str)
+        }),
+        to_type_def_end: Box::new(|| "});\n".to_string()),
+        to_field_separator: Box::new(|is_last| {
+            if is_last {
+                "\n".to_string()
+            } else {
+                ",\n".to_string()
+            }
+        }),
+    }
+}
+
 fn to_query_file(
     context: &typecheck::Context,
     query_info: &typecheck::QueryInfo,
     query: &ast::Query,
+    formatter: &typealias::TypeFormatter,
 ) -> String {
     let mut result = "".to_string();
     result.push_str("import * as Ark from 'arktype';\n");
@@ -520,26 +570,30 @@ fn to_query_file(
 
     result.push_str("];\n\n\n");
 
-    // Rectangle data decoder
-    result.push_str("export const ReturnRectangle = Ark.type({\n");
-    for field in &query.fields {
-        match field {
-            ast::TopLevelQueryField::Field(query_field) => {
-                let table = context.tables.get(&query_field.name).unwrap();
+    // return_data_aliases(context, query, &mut result);
 
-                to_flat_query_decoder(
-                    context,
-                    &ast::get_aliased_name(&query_field),
-                    &table.record,
-                    &ast::collect_query_fields(&query_field.fields),
-                    &mut result,
-                );
-            }
-            ast::TopLevelQueryField::Lines { .. } => {}
-            ast::TopLevelQueryField::Comment { .. } => {}
-        }
-    }
-    result.push_str("});\n\n");
+    typealias::return_data_aliases(context, query, &mut result, formatter);
+
+    // Rectangle data decoder
+    // result.push_str("export const ReturnRectangle = Ark.type({\n");
+    // for field in &query.fields {
+    //     match field {
+    //         ast::TopLevelQueryField::Field(query_field) => {
+    //             let table = context.tables.get(&query_field.name).unwrap();
+
+    //             to_flat_query_decoder(
+    //                 context,
+    //                 &ast::get_aliased_name(&query_field),
+    //                 &table.record,
+    //                 &ast::collect_query_fields(&query_field.fields),
+    //                 &mut result,
+    //             );
+    //         }
+    //         ast::TopLevelQueryField::Lines { .. } => {}
+    //         ast::TopLevelQueryField::Comment { .. } => {}
+    //     }
+    // }
+    // result.push_str("});\n\n");
 
     let session_args = get_session_args(&query_info.variables);
 
@@ -553,7 +607,7 @@ export const query = Db.to_runner({{
     session: Env.Session,
     session_args: {},
     input: Input,
-    output: ReturnRectangle,
+    output: ReturnData,
     watch_triggers: {}
 }});
 
@@ -576,7 +630,7 @@ type Input = typeof Input.infer
 
     result.push_str(&validate);
 
-    // Type Alisaes
+    // // Type Alisaes
     // result.push_str("// Return data\n");
     // for field in &query.fields {
     //     let table = context.tables.get(&field.name).unwrap();
@@ -604,6 +658,192 @@ type Input = typeof Input.infer
     //
 
     result
+}
+
+fn return_data_aliases(context: &typecheck::Context, query: &ast::Query, result: &mut String) {
+    result.push_str(&format!(
+        "{{-| The Return Data! -}}\ntype alias {} =\n",
+        crate::ext::string::capitalize(&query.name)
+    ));
+
+    let mut is_first = true;
+    for field in &query.fields {
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                if is_first {
+                    result.push_str(&format!("    {{ ",))
+                }
+
+                let field_name = ast::get_aliased_name(query_field);
+                if is_first {
+                    result.push_str(&format!(
+                        "{} : List {}\n",
+                        crate::ext::string::decapitalize(&field_name),
+                        string::capitalize(&query_field.name)
+                    ));
+                } else {
+                    let spaces = " ".repeat(4);
+                    result.push_str(&format!(
+                        "{}, {} : List {}\n",
+                        spaces,
+                        crate::ext::string::decapitalize(&field_name),
+                        string::capitalize(&query_field.name)
+                    ));
+                }
+
+                if is_first {
+                    is_first = false;
+                }
+            }
+            _ => {}
+        }
+    }
+    result.push_str("    }\n\n\n");
+
+    // Children aliases
+    for field in &query.fields {
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                let table = context.tables.get(&query_field.name).unwrap();
+                result.push_str(&to_query_type_alias(
+                    context,
+                    &table.record,
+                    &query_field.name,
+                    &ast::collect_query_fields(&query_field.fields),
+                ));
+            }
+            ast::TopLevelQueryField::Lines { .. } => {}
+            ast::TopLevelQueryField::Comment { .. } => {}
+        }
+    }
+}
+
+fn to_query_type_alias(
+    context: &typecheck::Context,
+    table: &ast::RecordDetails,
+    name: &str,
+    fields: &Vec<&ast::QueryField>,
+) -> String {
+    let mut result = format!("type alias {} =\n", crate::ext::string::capitalize(name));
+
+    let mut is_first = true;
+
+    for field in fields {
+        if is_first {
+            result.push_str(&format!("    {{ ",))
+        }
+
+        let table_field = &table
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
+            .unwrap();
+
+        match table_field {
+            ast::Field::Column(col) => {
+                result.push_str(&to_string_query_field(is_first, 4, &field, col));
+            }
+            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                result.push_str(&to_string_query_field_link(is_first, 4, &field, link));
+            }
+            _ => {}
+        }
+
+        if is_first {
+            is_first = false;
+        }
+    }
+    result.push_str("    }\n\n\n");
+
+    for field in fields {
+        if field.fields.is_empty() {
+            continue;
+        }
+
+        let fieldname_match = table
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(f, &field.name));
+
+        match fieldname_match {
+            Some(ast::Field::FieldDirective(ast::FieldDirective::Link(link))) => {
+                let link_table = typecheck::get_linked_table(context, &link).unwrap();
+
+                result.push_str(&to_query_type_alias(
+                    context,
+                    &link_table.record,
+                    &ast::get_aliased_name(field),
+                    &ast::collect_query_fields(&field.fields),
+                ));
+            }
+            _ => continue,
+        }
+    }
+
+    result
+}
+
+fn to_string_query_field_link(
+    is_first: bool,
+    indent: usize,
+    field: &ast::QueryField,
+    link_details: &ast::LinkDetails,
+) -> String {
+    let field_name = ast::get_aliased_name(field);
+
+    if is_first {
+        return format!(
+            "{} : {}\n",
+            crate::ext::string::decapitalize(&field_name),
+            (format!("List {}", crate::ext::string::capitalize(&field_name)))
+        );
+    } else {
+        let spaces = " ".repeat(indent);
+        return format!(
+            "{}, {} : {}\n",
+            spaces,
+            crate::ext::string::decapitalize(&field_name),
+            (format!("List {}", crate::ext::string::capitalize(&field_name)))
+        );
+    }
+}
+
+fn to_string_query_field(
+    is_first: bool,
+    indent: usize,
+    field: &ast::QueryField,
+    table_column: &ast::Column,
+) -> String {
+    let field_name = ast::get_aliased_name(field);
+    let maybe = if table_column.nullable { "Maybe " } else { "" };
+    if is_first {
+        return format!(
+            "{} : {}{}\n",
+            crate::ext::string::decapitalize(&field_name),
+            maybe,
+            to_elm_typename(&table_column.type_)
+        );
+    } else {
+        let spaces = " ".repeat(indent);
+        return format!(
+            "{}, {} : {}{}\n",
+            spaces,
+            crate::ext::string::decapitalize(&field_name),
+            maybe,
+            to_elm_typename(&table_column.type_)
+        );
+    }
+}
+
+fn to_elm_typename(type_: &str) -> String {
+    match type_ {
+        "String" => type_.to_string(),
+        "Int" => type_.to_string(),
+        "Float" => type_.to_string(),
+        "Bool" => type_.to_string(),
+        "DateTime" => "Time.Posix".to_string(),
+        _ => format!("Db.{}", type_).to_string(),
+    }
 }
 
 fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {

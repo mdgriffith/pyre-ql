@@ -13,6 +13,7 @@ pub mod migration;
 pub mod server;
 pub mod sql;
 pub mod to_string;
+pub mod typealias;
 
 pub enum Client {
     Elm,
