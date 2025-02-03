@@ -1,6 +1,7 @@
 use crate::ast;
 use crate::ext::string;
 use crate::filesystem;
+use crate::generate::typealias;
 
 use crate::typecheck;
 use std::fs;
@@ -454,6 +455,9 @@ pub fn write_queries(
 ) -> io::Result<()> {
     let query_dir = dir.join("query");
     filesystem::create_dir_if_not_exists(&query_dir)?;
+
+    let formatter = crate::generate::server::typescript::to_formatter();
+
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
@@ -461,7 +465,7 @@ pub fn write_queries(
 
                 let mut output = fs::File::create(target_path).expect("Failed to create file");
                 output
-                    .write_all(to_query_file(&context, &q).as_bytes())
+                    .write_all(to_query_file(&context, &q, &formatter).as_bytes())
                     .expect("Failed to write to file");
             }
             _ => continue,
@@ -509,7 +513,11 @@ pub fn write_queries(
     Ok(())
 }
 
-fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
+fn to_query_file(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    formatter: &typealias::TypeFormatter,
+) -> String {
     // let mut result = format!("module Query.{} exposing (..)\n\n\n", query.name);
 
     // result.push_str("import Db\n");
@@ -522,9 +530,19 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     // result.push_str("\n\n");
 
     let mut result = String::new();
-    result.push_str("import * as Ark from 'arktype';\n\n");
+    result.push_str("import * as Ark from 'arktype';\n");
+    result.push_str("import * as Decode from '../db/decode';\n\n");
+
+    result.push_str(&format!(
+        "export const hash = \"{}\"\n\n",
+        &query.interface_hash
+    ));
 
     result.push_str(&to_param_type_alias(&query.args));
+
+    result.push_str("\n\n");
+
+    typealias::return_data_aliases(context, query, &mut result, formatter);
 
     // result.push_str("const prepare =  input =\n");
     // result.push_str(&format!(
