@@ -252,6 +252,88 @@ pub enum FieldDirective {
     Watched(WatchedDetails),
     TableName((Range, String)),
     Link(LinkDetails),
+    Permissions(PermissionDetails),
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub enum PermissionDetails {
+    Star(WhereArg),
+    OnOperation(Vec<PermissionOnOperation>),
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct PermissionOnOperation {
+    pub operations: Vec<QueryOperation>,
+    pub where_: WhereArg,
+}
+
+pub fn to_permission_details(info: &PermissionDetails) -> PermissionOperations {
+    match info {
+        PermissionDetails::Star(where_) => PermissionOperations {
+            select: Some(where_.clone()),
+            insert: Some(where_.clone()),
+            update: Some(where_.clone()),
+            delete: Some(where_.clone()),
+        },
+        PermissionDetails::OnOperation(operations) => {
+            let mut select_wheres = Vec::new();
+            let mut insert_wheres = Vec::new();
+            let mut update_wheres = Vec::new();
+            let mut delete_wheres = Vec::new();
+
+            for op in operations {
+                for operation in &op.operations {
+                    match operation {
+                        QueryOperation::Select => select_wheres.push(op.where_.clone()),
+                        QueryOperation::Insert => insert_wheres.push(op.where_.clone()),
+                        QueryOperation::Update => update_wheres.push(op.where_.clone()),
+                        QueryOperation::Delete => delete_wheres.push(op.where_.clone()),
+                    }
+                }
+            }
+
+            PermissionOperations {
+                // Using .remove(0) to take ownership of the first element since we only need it once
+                // and we're about to drop the Vec anyway
+                select: if select_wheres.is_empty() {
+                    None
+                } else if select_wheres.len() == 1 {
+                    Some(select_wheres.remove(0))
+                } else {
+                    Some(WhereArg::And(select_wheres))
+                },
+                insert: if insert_wheres.is_empty() {
+                    None
+                } else if insert_wheres.len() == 1 {
+                    Some(insert_wheres.remove(0))
+                } else {
+                    Some(WhereArg::And(insert_wheres))
+                },
+                update: if update_wheres.is_empty() {
+                    None
+                } else if update_wheres.len() == 1 {
+                    Some(update_wheres.remove(0))
+                } else {
+                    Some(WhereArg::And(update_wheres))
+                },
+                delete: if delete_wheres.is_empty() {
+                    None
+                } else if delete_wheres.len() == 1 {
+                    Some(delete_wheres.remove(0))
+                } else {
+                    Some(WhereArg::And(delete_wheres))
+                },
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct PermissionOperations {
+    pub select: Option<WhereArg>,
+    pub insert: Option<WhereArg>,
+    pub update: Option<WhereArg>,
+    pub delete: Option<WhereArg>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -666,7 +748,7 @@ pub fn direction_to_string(direction: &Direction) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum WhereArg {
     Column(String, Operator, QueryValue),
     And(Vec<WhereArg>),
@@ -720,7 +802,7 @@ pub fn session_field_name(col: &Column) -> String {
     format!("Session.{}", col.name)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum Operator {
     Equal,
     NotEqual,

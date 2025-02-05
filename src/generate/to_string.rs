@@ -262,6 +262,47 @@ fn to_string_field_directive(
         ast::FieldDirective::Link(details) => {
             to_string_link_details_shorthand(namespace, indent, details)
         }
+        ast::FieldDirective::Permissions(info) => {
+            to_string_permissions_details(namespace, indent, info)
+        }
+    }
+}
+
+fn to_string_permissions_details(
+    namespace: &str,
+    indentation: &Indentation,
+    details: &ast::PermissionDetails,
+) -> String {
+    let spaces = " ".repeat(indentation.minimum);
+    match details {
+        ast::PermissionDetails::Star(where_) => {
+            format!("{}@permissions {{{}}}\n", spaces, format_where(where_))
+        }
+        ast::PermissionDetails::OnOperation(operations) => {
+            let mut result = format!("{}@permissions {{\n", spaces);
+
+            // For each operation, outputs a line like:
+            //   "    select, update {column = value}"
+            // where the operations are lowercase and comma-separated,
+            // followed by the where clause
+            for op in operations {
+                let op_spaces = " ".repeat(indentation.minimum + 4);
+                let ops = op
+                    .operations
+                    .iter()
+                    .map(|o| format!("{:?}", o).to_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                result.push_str(&format!(
+                    "{}{} {{{}}}\n",
+                    op_spaces,
+                    ops,
+                    format_where(&op.where_)
+                ));
+            }
+            result.push_str(&format!("{}}}\n", spaces));
+            result
+        }
     }
 }
 
