@@ -110,8 +110,14 @@ pub fn select_to_string(
 
     let mut result = String::new();
 
-    let initial_selection =
-        initial_select(initial_indent, context, query, table, query_table_field);
+    let initial_selection = initial_select(
+        initial_indent,
+        context,
+        query,
+        query_info,
+        table,
+        query_table_field,
+    );
     let parent_table_alias = &get_temp_table_name(&query_table_field);
 
     let mut rendered_initial = false;
@@ -189,28 +195,32 @@ pub fn initial_select(
     indent: usize,
     context: &typecheck::Context,
     query: &ast::Query,
+    query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
-    query_table_field: &ast::QueryField,
+    query_field: &ast::QueryField,
 ) -> String {
+    let mut result = String::new();
     let indent_str = " ".repeat(indent);
-    let mut field_names: Vec<String> = Vec::new();
+    result.push_str(&indent_str);
+    result.push_str("select ");
 
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
-    let new_fieldnames = &to_fieldnames(
+    let fieldnames = &to_fieldnames(
         context,
-        &ast::get_aliased_name(&query_table_field),
+        &ast::get_aliased_name(&query_field),
         table,
-        &query_table_field.fields,
+        &query_field.fields,
     );
-    field_names.append(&mut new_fieldnames.clone());
+    result.push_str(&fieldnames.join(", "));
+    result.push_str("\n");
+    result.push_str(&indent_str);
+    result.push_str("from ");
+    result.push_str(&table_name);
+    result.push_str("\n");
 
-    format!(
-        "{}select {}\n{}from {}",
-        indent_str,
-        field_names.join(", "),
-        indent_str,
-        table_name,
-    )
+    to_sql::render_where(context, table, query_info, query_field, &mut result);
+
+    result
 }
 
 fn select_linked(
