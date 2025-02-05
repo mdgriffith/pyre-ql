@@ -34,7 +34,7 @@ pub fn update_to_string(
     result.push_str(&format!("set {}", values.join(", ")));
 
     result.push_str("\n");
-    select::render_where(context, table, query_info, query_field, &mut result);
+    to_sql::render_where(context, table, query_info, query_field, &mut result);
 
     statements.push(to_sql::include(result));
     statements

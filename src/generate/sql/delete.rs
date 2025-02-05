@@ -1,5 +1,4 @@
 use crate::ast;
-use crate::generate::sql::select;
 use crate::generate::sql::to_sql;
 use crate::typecheck;
 
@@ -18,7 +17,7 @@ pub fn delete_to_string(
 
     let mut sql = format!("delete from {}\n", table_name);
 
-    select::render_where(context, table, query_info, query_field, &mut sql);
+    to_sql::render_where(context, table, query_info, query_field, &mut sql);
     statements.push(to_sql::ignore(sql));
 
     statements
