@@ -336,10 +336,70 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
     let (input, field_directive) = cut(alt((
         parse_watch(),
         parse_tablename(to_location(&start_pos)),
+        parse_table_permission,
         parse_link,
     )))(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaColumn);
     Ok((input, field_directive))
+}
+
+fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
+    let (input, _) = tag("permissions")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("{")(input)?;
+    let (input, _) = multispace0(input)?;
+
+    // Parse either a star permission or operation-specific permissions
+    let (input, details) = alt((
+        // Star permission case
+        |input| {
+            let (input, where_) = parse_where_arg(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = tag("}")(input)?;
+            Ok((input, ast::PermissionDetails::Star(where_)))
+        },
+        // Operation-specific permissions case
+        |input| {
+            let (input, operations) = separated_list0(newline, |input| {
+                let (input, _) = multispace0(input)?;
+                let (input, ops) = separated_list1(
+                    tag(","),
+                    alt((
+                        value(ast::QueryOperation::Select, tag("select")),
+                        value(ast::QueryOperation::Insert, tag("insert")),
+                        value(ast::QueryOperation::Update, tag("update")),
+                        value(ast::QueryOperation::Delete, tag("delete")),
+                    )),
+                )(input)?;
+                let (input, _) = multispace0(input)?;
+                let (input, where_) = with_comma_sep_braces(parse_where_arg)(input)?;
+
+                let where_ = if where_.len() == 1 {
+                    where_.into_iter().next().unwrap()
+                } else {
+                    ast::WhereArg::And(where_)
+                };
+                Ok((
+                    input,
+                    ast::PermissionOnOperation {
+                        operations: ops,
+                        where_: where_,
+                    },
+                ))
+            })(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = tag("}")(input)?;
+            Ok((input, ast::PermissionDetails::OnOperation(operations)))
+        },
+    ))(input)?;
+
+    let (input, _) = multispace0(input)?;
+    let (input, _) = newline(input)?;
+
+    Ok((
+        input,
+        ast::Field::FieldDirective(ast::FieldDirective::Permissions(details)),
+    ))
 }
 
 fn parse_watch() -> impl Fn(Text) -> ParseResult<ast::Field> {
