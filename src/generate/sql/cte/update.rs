@@ -1,5 +1,4 @@
 use crate::ast;
-use crate::generate::sql::select;
 use crate::generate::sql::to_sql;
 use crate::typecheck;
 
@@ -23,18 +22,20 @@ pub fn update_to_string(
 
     let mut values: Vec<String> = Vec::new();
 
-    let new_values = &to_field_set_values(
-        context,
-        &ast::get_aliased_name(&query_field),
-        table,
-        &ast::collect_query_fields(&query_field.fields),
-    );
+    let new_values = &to_field_set_values(table, &ast::collect_query_fields(&query_field.fields));
     values.append(&mut new_values.clone());
 
     result.push_str(&format!("set {}", values.join(", ")));
 
     result.push_str("\n");
-    to_sql::render_where(context, table, query_info, query_field, &mut result);
+    to_sql::render_where(
+        context,
+        table,
+        query_info,
+        query_field,
+        &ast::QueryOperation::Update,
+        &mut result,
+    );
 
     statements.push(to_sql::include(result));
     statements
@@ -42,12 +43,7 @@ pub fn update_to_string(
 
 // SET values
 
-fn to_field_set_values(
-    context: &typecheck::Context,
-    table_alias: &str,
-    table: &typecheck::Table,
-    fields: &Vec<&ast::QueryField>,
-) -> Vec<String> {
+fn to_field_set_values(table: &typecheck::Table, fields: &Vec<&ast::QueryField>) -> Vec<String> {
     let mut result = vec![];
 
     for field in fields {

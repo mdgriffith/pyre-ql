@@ -128,39 +128,27 @@ pub fn render_where(
     table: &typecheck::Table,
     query_info: &typecheck::QueryInfo,
     query_field: &ast::QueryField,
+    operation: &ast::QueryOperation,
     result: &mut String,
 ) {
-    let mut where_vals = vec![];
-
-    let new_params = render_where_params(
-        &ast::collect_query_args(&query_field.fields),
-        table,
-        query_info,
-        query_field,
-    );
-
-    where_vals.extend(new_params);
-
-    let new_where_vals = to_where(
-        context,
-        table,
-        query_info,
-        &ast::collect_query_fields(&query_field.fields),
-    );
-
-    where_vals.extend(new_where_vals);
-
-    if !&where_vals.is_empty() {
-        result.push_str("where\n  ");
-        let mut first = true;
-        for wher in &where_vals {
-            if first {
-                result.push_str(&format!("{}\n", wher));
-                first = false;
-            } else {
-                result.push_str(&format!(" {}\n", wher));
-            }
+    // Normal @where
+    let mut wheres = ast::collect_wheres(&query_field.fields);
+    // Add any permissions from the table
+    match ast::get_permissions(&table.record, operation) {
+        Some(perms) => {
+            wheres.push(perms);
         }
+        None => {}
+    }
+
+    if wheres.is_empty() {
+        return;
+    }
+    result.push_str("where\n");
+
+    for where_arg in &wheres {
+        let where_str = render_where_arg(&where_arg, table, query_info, query_field);
+        result.push_str(&format!(" {}\n", where_str));
     }
 }
 
@@ -169,6 +157,7 @@ fn to_where(
     table: &typecheck::Table,
     query_info: &typecheck::QueryInfo,
     query_fields: &Vec<&ast::QueryField>,
+    operation: &ast::QueryOperation,
 ) -> Vec<String> {
     let mut result: Vec<String> = vec![];
 
@@ -184,6 +173,7 @@ fn to_where(
             context,
             table,
             table_field,
+            operation,
             query_info,
             query_field,
         ));
@@ -196,17 +186,27 @@ fn to_subwhere(
     context: &typecheck::Context,
     table: &typecheck::Table,
     table_field: &ast::Field,
+    operation: &ast::QueryOperation,
     query_info: &typecheck::QueryInfo,
     query_field: &ast::QueryField,
 ) -> Vec<String> {
     match table_field {
         ast::Field::Column(_) => {
-            return render_where_params(
-                &ast::collect_query_args(&query_field.fields),
-                table,
-                query_info,
-                query_field,
-            );
+            let mut wheres = ast::collect_wheres(&query_field.fields);
+
+            // Add any permissions from the table
+            match ast::get_permissions(&table.record, operation) {
+                Some(perms) => {
+                    wheres.push(perms);
+                }
+                None => {}
+            }
+            let mut result = vec![];
+
+            for where_arg in &wheres {
+                result.push(render_where_arg(&where_arg, table, query_info, query_field));
+            }
+            return result;
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
             // let foreign_table_alias = match query_field.alias {
@@ -222,6 +222,7 @@ fn to_subwhere(
                 link_table,
                 query_info,
                 &ast::collect_query_fields(&query_field.fields),
+                operation,
             );
 
             return inner_list;
@@ -229,19 +230,6 @@ fn to_subwhere(
 
         _ => vec![],
     }
-}
-
-fn render_where_params(
-    args: &Vec<ast::Arg>,
-    table: &typecheck::Table,
-    query_info: &typecheck::QueryInfo,
-    query_field: &ast::QueryField,
-) -> Vec<String> {
-    let mut result = vec![];
-    for where_arg in ast::collect_where_args(args) {
-        result.push(render_where_arg(&where_arg, table, query_info, query_field));
-    }
-    result
 }
 
 fn render_where_arg(

@@ -17,7 +17,14 @@ pub fn delete_to_string(
 
     let mut sql = format!("delete from {}\n", table_name);
 
-    to_sql::render_where(context, table, query_info, query_field, &mut sql);
+    to_sql::render_where(
+        context,
+        table,
+        query_info,
+        query_field,
+        &ast::QueryOperation::Delete,
+        &mut sql,
+    );
     statements.push(to_sql::ignore(sql));
 
     statements

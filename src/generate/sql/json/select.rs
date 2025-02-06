@@ -155,6 +155,7 @@ pub fn select_to_string(
                     4,
                     context,
                     query,
+                    query_info,
                     parent_table_alias,
                     linked_table,
                     query_field,
@@ -169,15 +170,7 @@ pub fn select_to_string(
     }
 
     // The final selection
-    final_select_formatted_as_json(
-        0,
-        context,
-        query,
-        parent_table_alias,
-        table,
-        query_table_field,
-        &mut result,
-    );
+    final_select_formatted_as_json(0, context, table, query_table_field, &mut result);
 
     statements.push(to_sql::include(result));
     statements
@@ -218,7 +211,14 @@ pub fn initial_select(
     result.push_str(&table_name);
     result.push_str("\n");
 
-    to_sql::render_where(context, table, query_info, query_field, &mut result);
+    to_sql::render_where(
+        context,
+        table,
+        query_info,
+        query_field,
+        &ast::QueryOperation::Select,
+        &mut result,
+    );
 
     result
 }
@@ -227,9 +227,10 @@ fn select_linked(
     indent: usize,
     context: &typecheck::Context,
     query: &ast::Query,
+    query_info: &typecheck::QueryInfo,
     parent_table_name: &String,
     table: &typecheck::Table,
-    query_table_field: &ast::QueryField,
+    query_field: &ast::QueryField,
     link: &ast::LinkDetails,
 
     //
@@ -292,14 +293,13 @@ fn select_linked(
 
      */
 
-    if !selects_for_link(query_table_field, table) {
+    if !selects_for_link(query_field, table) {
         select_single_json(
             indent,
             context,
-            query,
             parent_table_name,
             table,
-            query_table_field,
+            query_field,
             link,
             sql,
         );
@@ -312,9 +312,9 @@ fn select_linked(
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
     let new_fieldnames = &to_fieldnames(
         context,
-        &ast::get_aliased_name(&query_table_field),
+        &ast::get_aliased_name(&query_field),
         table,
-        &query_table_field.fields,
+        &query_field.fields,
     );
     field_names.push(link.foreign.fields.clone().join(", "));
     field_names.append(&mut new_fieldnames.clone());
@@ -329,7 +329,16 @@ fn select_linked(
         table_name,
     ));
 
-    let all_query_fields = ast::collect_query_fields(&query_table_field.fields);
+    to_sql::render_where(
+        context,
+        table,
+        query_info,
+        query_field,
+        &ast::QueryOperation::Select,
+        sql,
+    );
+
+    let all_query_fields = ast::collect_query_fields(&query_field.fields);
 
     let mut full_local_id = String::new();
     for local_id in &link.local_ids {
@@ -351,7 +360,7 @@ fn select_linked(
     // result.push_str(&format!("{}group by {}", indent_str, full_foreign_id));
 
     // Recursively define children
-    let parent_temp_table = &get_temp_table_name(&query_table_field);
+    let parent_temp_table = &get_temp_table_name(&query_field);
 
     for query_field in all_query_fields {
         let table_field = &table
@@ -373,6 +382,7 @@ fn select_linked(
                     indent,
                     context,
                     query,
+                    query_info,
                     parent_temp_table,
                     linked_table,
                     query_field,
@@ -384,20 +394,11 @@ fn select_linked(
         }
     }
 
-    let json_table_name = &get_json_temp_table_name(&query_table_field);
+    let json_table_name = &get_json_temp_table_name(&query_field);
 
     sql.push_str(&format!("), {} as (", json_table_name));
     // Format as JSON
-    select_formatted_as_json(
-        indent,
-        context,
-        query,
-        parent_table_name,
-        table,
-        query_table_field,
-        link,
-        sql,
-    );
+    select_formatted_as_json(indent, context, table, query_field, link, sql);
 }
 
 fn selects_for_link(query: &ast::QueryField, table: &typecheck::Table) -> bool {
@@ -443,7 +444,7 @@ A simple as possible json selection
 fn select_single_json(
     indent: usize,
     context: &typecheck::Context,
-    query: &ast::Query,
+
     parent_table_name: &String,
     table: &typecheck::Table,
     query_table_field: &ast::QueryField,
@@ -552,8 +553,7 @@ We're formatting a grouped table
 fn select_formatted_as_json(
     indent: usize,
     context: &typecheck::Context,
-    query: &ast::Query,
-    parent_table_name: &String,
+
     table: &typecheck::Table,
     query_table_field: &ast::QueryField,
     link: &ast::LinkDetails,
@@ -804,8 +804,6 @@ This is slightly different than the others.
 fn final_select_formatted_as_json(
     indent: usize,
     context: &typecheck::Context,
-    query: &ast::Query,
-    parent_table_name: &String,
     table: &typecheck::Table,
     query_table_field: &ast::QueryField,
 

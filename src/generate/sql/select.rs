@@ -68,7 +68,14 @@ pub fn select_to_string(
     );
 
     // WHERE
-    to_sql::render_where(context, table, query_info, query_field, &mut selection);
+    to_sql::render_where(
+        context,
+        table,
+        query_info,
+        query_field,
+        &ast::QueryOperation::Select,
+        &mut selection,
+    );
 
     // Order by
     to_sql::render_order_by(query_field, &mut selection);
