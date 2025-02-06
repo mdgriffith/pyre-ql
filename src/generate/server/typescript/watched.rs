@@ -22,8 +22,8 @@ pub fn write(dir: &Path, context: &typecheck::Context) {
 
     content
         .push_str("\n\n// All tables that are currently being watched\nexport enum WatchedKind {");
-    let mut at_least_one_watched = false;
-    for (name, table) in &context.tables {
+
+    for (_, table) in &context.tables {
         for watched_operation in ast::to_watched_operations(&table.record) {
             content.push_str(&format!(
                 "\n  {}{} = {},",
@@ -39,7 +39,7 @@ pub fn write(dir: &Path, context: &typecheck::Context) {
     }
     content.push_str("\n}");
 
-    for (name, table) in &context.tables {
+    for (_, table) in &context.tables {
         for watched_operation in ast::to_watched_operations(&table.record) {
             let name = format!(
                 "{}{}",
@@ -55,7 +55,7 @@ pub fn write(dir: &Path, context: &typecheck::Context) {
 
     content.push_str("\n\nexport type Watched");
     let mut at_least_one_constructor = false;
-    for (name, table) in &context.tables {
+    for (_, table) in &context.tables {
         for watched_operation in ast::to_watched_operations(&table.record) {
             let name = format!(
                 "{}{}",
@@ -86,7 +86,7 @@ pub fn write(dir: &Path, context: &typecheck::Context) {
 fn write_runner(context: &typecheck::Context, content: &mut String) {
     content.push_str("export interface Operations {\n");
 
-    for (name, table) in &context.tables {
+    for (_, table) in &context.tables {
         for watched_operation in ast::to_watched_operations(&table.record) {
             content.push_str(&format!(
                 "  {}{}: (env: any) => void;\n",
@@ -107,7 +107,7 @@ fn write_runner(context: &typecheck::Context, content: &mut String) {
     content.push_str("  watched.forEach((event) => {\n");
     content.push_str("    switch (event.kind) {\n");
 
-    for (name, table) in &context.tables {
+    for (_, table) in &context.tables {
         for watched_operation in ast::to_watched_operations(&table.record) {
             content.push_str(&format!(
                 "\n      case WatchedKind.{}{}:\n        {}",

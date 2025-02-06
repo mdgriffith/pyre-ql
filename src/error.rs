@@ -620,7 +620,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
         }
         ErrorType::DuplicateVariant {
             base_variant,
-            duplicates,
+            ..
         } => {
             let mut result = "".to_string();
             result.push_str(&format!(
@@ -691,10 +691,10 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
         }
 
         ErrorType::TypeMismatch {
-            table,
             column_defined_as,
             variable_name,
             variable_defined_as,
+            ..
         } => {
             let mut result = "".to_string();
             result.push_str(&format!(
@@ -761,7 +761,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result
         }
 
-        ErrorType::MultiplePrimaryKeys { record, field } => {
+        ErrorType::MultiplePrimaryKeys { record , .. } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -837,7 +837,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
         ErrorType::LinkSelectionIsEmpty {
             link_name,
             foreign_table,
-            foreign_table_fields,
+            ..
         } => {
             let mut result = "".to_string();
 

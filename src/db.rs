@@ -67,9 +67,9 @@ fn foreign_key_list(table_name: &str) -> String {
     format!("PRAGMA foreign_key_list({})", table_name)
 }
 
-fn table_indices(table_name: &str) -> String {
-    format!("PRAGMA index_list({})", table_name)
-}
+// fn table_indices(table_name: &str) -> String {
+//     format!("PRAGMA index_list({})", table_name)
+// }
 
 #[derive(Debug)]
 pub struct Introspection {
@@ -379,7 +379,7 @@ pub async fn introspect(
                     }
 
                     // Read Migration Table
-                    if (has_migrations_table) {
+                    if has_migrations_table {
                         let args: Vec<String> = vec![];
                         let migration_list_result = conn.query(LIST_MIGRATIONS, args).await;
                         match migration_list_result {

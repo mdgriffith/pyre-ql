@@ -72,6 +72,38 @@ pub enum Definition {
         end_name: Option<Location>,
     },
 }
+pub fn get_permissions(record: &RecordDetails, operation: &QueryOperation) -> Option<WhereArg> {
+    for field in &record.fields {
+        if let Field::FieldDirective(directive) = field {
+            match directive {
+                FieldDirective::Permissions(perm) => match perm {
+                    PermissionDetails::Star(where_arg) => return Some(where_arg.clone()),
+                    PermissionDetails::OnOperation(ops) => {
+                        let mut matching_wheres = Vec::new();
+                        for op in ops {
+                            for op_type in &op.operations {
+                                if *op_type == *operation {
+                                    matching_wheres.push(op.where_.clone());
+                                }
+                            }
+                        }
+
+                        if matching_wheres.is_empty() {
+                            return None;
+                        } else if matching_wheres.len() == 1 {
+                            return Some(matching_wheres.remove(0));
+                        } else {
+                            return Some(WhereArg::And(matching_wheres));
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+
+    None
+}
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct RecordDetails {
@@ -113,22 +145,6 @@ pub enum Field {
     ColumnLines { count: usize },
     ColumnComment { text: String },
     FieldDirective(FieldDirective),
-}
-
-pub fn field_to_column_type(field: &Field) -> Option<SerializationType> {
-    match field {
-        Field::Column(Column {
-            serialization_type, ..
-        }) => Some(serialization_type.clone()),
-        _ => None,
-    }
-}
-
-pub fn is_link(field: &Field) -> bool {
-    match field {
-        Field::FieldDirective(FieldDirective::Link(_)) => true,
-        _ => false,
-    }
 }
 
 pub fn has_default_value(col: &Column) -> bool {
@@ -222,13 +238,6 @@ pub fn has_link_named(field: &Field, desired_name: &str) -> bool {
     }
 }
 
-pub fn is_field_directive(field: &Field) -> bool {
-    match field {
-        Field::FieldDirective(_) => true,
-        _ => false,
-    }
-}
-
 pub fn is_column(field: &Field) -> bool {
     match field {
         Field::Column { .. } => true,
@@ -267,67 +276,6 @@ pub struct PermissionOnOperation {
     pub where_: WhereArg,
 }
 
-pub fn to_permission_details(info: &PermissionDetails) -> PermissionOperations {
-    match info {
-        PermissionDetails::Star(where_) => PermissionOperations {
-            select: Some(where_.clone()),
-            insert: Some(where_.clone()),
-            update: Some(where_.clone()),
-            delete: Some(where_.clone()),
-        },
-        PermissionDetails::OnOperation(operations) => {
-            let mut select_wheres = Vec::new();
-            let mut insert_wheres = Vec::new();
-            let mut update_wheres = Vec::new();
-            let mut delete_wheres = Vec::new();
-
-            for op in operations {
-                for operation in &op.operations {
-                    match operation {
-                        QueryOperation::Select => select_wheres.push(op.where_.clone()),
-                        QueryOperation::Insert => insert_wheres.push(op.where_.clone()),
-                        QueryOperation::Update => update_wheres.push(op.where_.clone()),
-                        QueryOperation::Delete => delete_wheres.push(op.where_.clone()),
-                    }
-                }
-            }
-
-            PermissionOperations {
-                // Using .remove(0) to take ownership of the first element since we only need it once
-                // and we're about to drop the Vec anyway
-                select: if select_wheres.is_empty() {
-                    None
-                } else if select_wheres.len() == 1 {
-                    Some(select_wheres.remove(0))
-                } else {
-                    Some(WhereArg::And(select_wheres))
-                },
-                insert: if insert_wheres.is_empty() {
-                    None
-                } else if insert_wheres.len() == 1 {
-                    Some(insert_wheres.remove(0))
-                } else {
-                    Some(WhereArg::And(insert_wheres))
-                },
-                update: if update_wheres.is_empty() {
-                    None
-                } else if update_wheres.len() == 1 {
-                    Some(update_wheres.remove(0))
-                } else {
-                    Some(WhereArg::And(update_wheres))
-                },
-                delete: if delete_wheres.is_empty() {
-                    None
-                } else if delete_wheres.len() == 1 {
-                    Some(delete_wheres.remove(0))
-                } else {
-                    Some(WhereArg::And(delete_wheres))
-                },
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct PermissionOperations {
     pub select: Option<WhereArg>,
@@ -342,15 +290,6 @@ pub struct WatchedDetails {
     pub inserts: bool,
     pub updates: bool,
     pub deletes: bool,
-}
-
-pub fn operation_matches_watch(op: &QueryOperation, watched: &WatchedDetails) -> bool {
-    match op {
-        QueryOperation::Select => watched.selects,
-        QueryOperation::Insert => watched.inserts,
-        QueryOperation::Update => watched.updates,
-        QueryOperation::Delete => watched.deletes,
-    }
 }
 
 pub fn link_identity(local_table: &str, link: &LinkDetails) -> String {
@@ -437,17 +376,6 @@ pub fn collect_links(fields: &Vec<Field>) -> Vec<LinkDetails> {
         }
     }
     links
-}
-
-pub fn column_order(a: &Field, b: &Field) -> std::cmp::Ordering {
-    match (a, b) {
-        (Field::FieldDirective(_), Field::FieldDirective(_)) => std::cmp::Ordering::Equal,
-        (Field::ColumnComment { .. }, Field::FieldDirective(_)) => std::cmp::Ordering::Equal,
-        (Field::FieldDirective(_), Field::ColumnComment { .. }) => std::cmp::Ordering::Equal,
-        (Field::FieldDirective(_), _) => std::cmp::Ordering::Less,
-        (_, Field::FieldDirective(_)) => std::cmp::Ordering::Greater,
-        _ => std::cmp::Ordering::Equal,
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -664,22 +592,6 @@ pub struct LocatedArg {
     pub end: Option<Location>,
 }
 
-pub fn is_query_field_arg(field: &ArgField) -> bool {
-    match field {
-        ArgField::Arg(_) => true,
-        _ => false,
-    }
-}
-
-pub fn query_field_order(a: &ArgField, b: &ArgField) -> std::cmp::Ordering {
-    match (a, b) {
-        (ArgField::Arg(_), ArgField::Arg(_)) => std::cmp::Ordering::Equal,
-        (ArgField::Arg(_), _) => std::cmp::Ordering::Less,
-        (_, ArgField::Arg(_)) => std::cmp::Ordering::Greater,
-        _ => std::cmp::Ordering::Equal,
-    }
-}
-
 pub fn collect_query_fields(fields: &Vec<ArgField>) -> Vec<&QueryField> {
     let mut args = Vec::new();
     for field in fields {
@@ -691,29 +603,16 @@ pub fn collect_query_fields(fields: &Vec<ArgField>) -> Vec<&QueryField> {
     args
 }
 
-pub fn collect_primary_fields(fields: &Vec<ArgField>) -> Vec<&QueryField> {
-    let mut args = Vec::new();
-    for field in fields {
-        match field {
-            ArgField::Field(arg) => {
-                if arg.fields.is_empty() {
-                    args.push(arg)
-                }
-            }
-            _ => {}
-        }
-    }
-    args
-}
-
-pub fn collect_query_args(fields: &Vec<ArgField>) -> Vec<Arg> {
-    let mut args = Vec::new();
+pub fn collect_wheres(fields: &Vec<ArgField>) -> Vec<WhereArg> {
+    let mut wheres = Vec::new();
     for field in fields {
         if let ArgField::Arg(arg) = field {
-            args.push(arg.arg.clone());
+            if let Arg::Where(where_arg) = &arg.arg {
+                wheres.push(where_arg.clone());
+            }
         }
     }
-    args
+    wheres
 }
 
 #[derive(Debug, Clone)]
@@ -722,17 +621,6 @@ pub enum Arg {
     Offset(QueryValue),
     OrderBy(Direction, String),
     Where(WhereArg),
-}
-
-pub fn collect_where_args<'a>(args: &'a Vec<Arg>) -> Vec<&'a WhereArg> {
-    let mut wheres = Vec::new();
-    for arg in args {
-        match arg {
-            Arg::Where(wher) => wheres.push(wher),
-            _ => {}
-        }
-    }
-    wheres
 }
 
 #[derive(Debug, Clone)]

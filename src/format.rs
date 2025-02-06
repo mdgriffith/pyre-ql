@@ -36,15 +36,7 @@ pub fn schema(schem: &mut ast::Schema) {
     // Get all links and calculate reciprocals
     for file in schem.files.iter() {
         for def in &file.definitions {
-            if let ast::Definition::Record {
-                name,
-                fields,
-                start,
-                end,
-                start_name,
-                end_name,
-            } = def
-            {
+            if let ast::Definition::Record { name, fields, .. } = def {
                 for field in fields {
                     match field {
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
@@ -121,20 +113,12 @@ fn format_definition(
             *count = std::cmp::max(1, std::cmp::min(*count, 2));
         }
         ast::Definition::Session(_) => (),
-        ast::Definition::Comment { text } => (),
-        ast::Definition::Tagged {
-            name,
-            variants,
-            start,
-            end,
-        } => (),
+        ast::Definition::Comment { .. } => (),
+        ast::Definition::Tagged { .. } => (),
         ast::Definition::Record {
             name,
             ref mut fields,
-            start,
-            end,
-            start_name,
-            end_name,
+            ..
         } => {
             let empty_links = &vec![];
             let links_on_this_table = links.get(name).unwrap_or(empty_links);
@@ -271,8 +255,8 @@ pub fn query_list(db_schema: &ast::Database, queries: &mut ast::QueryList) {
                                                 arg.type_ = type_.clone();
                                             }
                                             typecheck::ParamInfo::NotDefinedButUsed {
-                                                used_at,
                                                 type_,
+                                                ..
                                             } => {
                                                 arg.type_ = type_.clone();
                                             }
@@ -287,7 +271,7 @@ pub fn query_list(db_schema: &ast::Database, queries: &mut ast::QueryList) {
                             for (name, param) in query_info.variables.iter() {
                                 match param {
                                     typecheck::ParamInfo::Defined { .. } => (),
-                                    typecheck::ParamInfo::NotDefinedButUsed { used_at, type_ } => {
+                                    typecheck::ParamInfo::NotDefinedButUsed { type_, .. } => {
                                         q.args.push(ast::QueryParamDefinition {
                                             name: name.clone(),
                                             type_: type_.clone(),
@@ -306,6 +290,6 @@ pub fn query_list(db_schema: &ast::Database, queries: &mut ast::QueryList) {
                 }
             }
         }
-        Err(errors) => (),
+        Err(_) => (),
     }
 }

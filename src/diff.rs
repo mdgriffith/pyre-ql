@@ -1,6 +1,5 @@
 use crate::ast;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 // Define a type to represent the diff of two schemas
 #[derive(Debug, Serialize, Deserialize)]
@@ -43,21 +42,6 @@ pub enum RecordChange {
         old: crate::ast::Column,
         new: crate::ast::Column,
     },
-}
-// Function to diff two Database values
-pub fn diff(db1: &crate::ast::Database, db2: &crate::ast::Database) -> HashMap<String, SchemaDiff> {
-    let mut schema_diffs = HashMap::new();
-    for schema1 in &db1.schemas {
-        if let Some(schema2) = db2
-            .schemas
-            .iter()
-            .find(|s| s.namespace == schema1.namespace)
-        {
-            let namespace = schema1.namespace.clone();
-            schema_diffs.insert(namespace, diff_schema(schema1, schema2));
-        }
-    }
-    schema_diffs
 }
 
 // Function to diff two Schema values

@@ -163,7 +163,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
         0 => match get_stdin()? {
             Some(stdin) => {
                 let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                let schema = parse_database_schemas(&options, &paths)?;
+                let schema = parse_database_schemas(&paths)?;
 
                 // We're assuming this file is a query because we don't have a filepath
                 format_query_to_std_out(&options, &schema, &stdin)?;
@@ -185,7 +185,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                         write_schema(&options, &true, &schema)?;
                     } else {
                         let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                        let schema = parse_database_schemas(&options, &paths)?;
+                        let schema = parse_database_schemas(&paths)?;
 
                         format_query_to_std_out(&options, &schema, &stdin)?;
                     }
@@ -197,7 +197,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                         write_schema(&options, &to_stdout, &schema)?;
                     } else {
                         let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                        let database = parse_database_schemas(&options, &paths)?;
+                        let database = parse_database_schemas(&paths)?;
 
                         format_query(&options, &database, &to_stdout, file_path)?;
                     }
@@ -217,7 +217,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                     write_schema(&options, &to_stdout, &schema)?;
                 } else {
                     let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                    let database = parse_database_schemas(&options, &paths)?;
+                    let database = parse_database_schemas(&paths)?;
 
                     format_query(&options, &database, &to_stdout, &file_path)?;
                 }
@@ -231,7 +231,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
 }
 
 pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()> {
-    match run_check(&options, filesystem::collect_filepaths(&options.in_dir)?) {
+    match run_check(filesystem::collect_filepaths(&options.in_dir)?) {
         Ok(errors) => {
             let has_errors = !errors.is_empty();
             if json {
@@ -410,7 +410,7 @@ pub async fn generate_migration<'a>(
 
                     // filepaths to .pyre files
                     let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                    let current_db = parse_database_schemas(&options, &paths)?;
+                    let current_db = parse_database_schemas(&paths)?;
 
                     match typecheck::check_schema(&current_db) {
                         Ok(context) => {
@@ -465,7 +465,7 @@ fn check_namespace_requirements(namespace: &Option<String>, options: &Options) {
     match namespaces_result {
         Ok(namespaces_found) => match namespaces_found {
             filesystem::NamespacesFound::Default => {
-                if let Some(namespace) = namespace {
+                if let Some(_) = namespace {
                     println!("{}", error::format_custom_error("Namespace is not needed", "It looks like you only have one schema, which means you don't need to provide a namespace."));
                     std::process::exit(1);
                 }
@@ -518,7 +518,7 @@ fn check_namespace_requirements(namespace: &Option<String>, options: &Options) {
 // Generation
 
 fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::Result<()> {
-    let schema = parse_database_schemas(&options, &paths)?;
+    let schema = parse_database_schemas(&paths)?;
 
     match typecheck::check_schema(&schema) {
         Err(error_list) => {
@@ -593,7 +593,7 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
 // Formatting
 
 fn format_all(options: &Options, paths: filesystem::Found) -> io::Result<()> {
-    let mut database = parse_database_schemas(&options, &paths)?;
+    let mut database = parse_database_schemas(&paths)?;
 
     format::database(&mut database);
     write_db_schema(options, &database)?;
@@ -785,10 +785,7 @@ fn parse_single_schema_from_source(
     Ok(schema)
 }
 
-fn parse_database_schemas(
-    options: &Options,
-    paths: &filesystem::Found,
-) -> io::Result<ast::Database> {
+fn parse_database_schemas(paths: &filesystem::Found) -> io::Result<ast::Database> {
     let mut database = ast::Database {
         schemas: Vec::new(),
     };
@@ -822,8 +819,8 @@ struct FileError {
     errors: Vec<error::Error>,
 }
 
-fn run_check(options: &Options, paths: filesystem::Found) -> io::Result<Vec<FileError>> {
-    let schema = parse_database_schemas(&options, &paths)?;
+fn run_check(paths: filesystem::Found) -> io::Result<Vec<FileError>> {
+    let schema = parse_database_schemas(&paths)?;
     let mut all_file_errors = Vec::new();
 
     match typecheck::check_schema(&schema) {
