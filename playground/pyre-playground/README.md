@@ -8,6 +8,7 @@ Getting started:
 
 ```sh
 bun install
+mkdir db
 touch db/playground.db
 pyre migrate db/playground.db
 pyre generate
