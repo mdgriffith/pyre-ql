@@ -24,5 +24,5 @@ open http://localhost:3000
 And seed some user data via 
 ```sh
 bun run seed
-bun run list-users
+bun run request
 ```
