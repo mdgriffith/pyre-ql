@@ -209,16 +209,10 @@ fn to_subwhere(
             return result;
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            // let foreign_table_alias = match query_field.alias {
-            //     Some(ref alias) => &alias,
-            //     None => &link.foreign.table,
-            // };
             let link_table = typecheck::get_linked_table(context, &link).unwrap();
-            // let foreign_table_name =
-            //     ast::get_tablename(&link.foreign.table, &link_table.record.fields);
+
             let inner_list = to_where(
                 context,
-                // &ast::get_aliased_name(&query_field),
                 link_table,
                 query_info,
                 &ast::collect_query_fields(&query_field.fields),
