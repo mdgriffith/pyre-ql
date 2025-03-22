@@ -287,10 +287,6 @@ fn select_linked(
         There is no need to `group`` or `json_group_array` in this case.
 
 
-
-
-
-
      */
 
     if !selects_for_link(query_field, table) {
@@ -961,7 +957,6 @@ fn to_fieldnames(
     table: &typecheck::Table,
     query_fields: &Vec<ast::ArgField>,
 ) -> Vec<String> {
-    let mut result = vec![];
     let mut selected_set = HashSet::new();
 
     for field in query_fields {
@@ -974,15 +969,7 @@ fn to_fieldnames(
                     .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
                     .unwrap();
 
-                match to_table_fieldname(table_field, query_field) {
-                    Some(selected_fieldname) => {
-                        if !selected_set.contains(&selected_fieldname) {
-                            selected_set.insert(selected_fieldname.clone());
-                            result.push(selected_fieldname);
-                        }
-                    }
-                    None => (),
-                }
+                add_concret_fieldnames(context, table_field, query_field, &mut selected_set);
             }
             ast::ArgField::Arg(_)
             | ast::ArgField::Lines { .. }
@@ -990,20 +977,53 @@ fn to_fieldnames(
         }
     }
 
-    result
+    selected_set.into_iter().collect()
 }
 
-fn to_table_fieldname(table_field: &ast::Field, query_field: &ast::QueryField) -> Option<String> {
+fn add_concret_fieldnames(
+    context: &typecheck::Context,
+    table_field: &ast::Field,
+    query_field: &ast::QueryField,
+    selected_set: &mut HashSet<String>,
+) {
     match table_field {
-        ast::Field::Column(_) => {
-            let str = query_field.name.to_string();
-            return Some(str);
+        ast::Field::Column(column) => {
+            let query_field_name = query_field.name.clone();
+            selected_set.insert(query_field_name.clone());
+
+            match context.types.get(&column.type_) {
+                None => (),
+                Some((_, type_)) => match type_ {
+                    typecheck::Type::OneOf { variants, .. } => {
+                        for variant in variants {
+                            match &variant.fields {
+                                None => (),
+                                Some(fields) => {
+                                    for field in fields {
+                                        match field {
+                                            ast::Field::Column(inner_column) => {
+                                                selected_set.insert(format!(
+                                                    "{}__{}",
+                                                    query_field_name, &inner_column.name
+                                                ));
+                                            }
+                                            _ => (),
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => (),
+                },
+            };
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let str = link.local_ids.join("");
-            return Some(str);
+            for local_id in &link.local_ids {
+                selected_set.insert(local_id.clone());
+            }
         }
-        _ => None,
+        _ => (),
     }
 }
 
