@@ -755,13 +755,20 @@ fn select_type(
                                     obj_field_indent, var.name
                                 ));
 
+                                let mut first_field = true;
                                 for field in fields {
                                     match field {
                                         ast::Field::Column(inner_column) => {
-                                            sql.push_str(&format!(
-                                                "\n{}'{}', ",
-                                                obj_field_indent, inner_column.name,
-                                            ));
+                                            if !first_field {
+                                                sql.push_str(
+                                                    format!(",\n{}", obj_field_indent).as_str(),
+                                                );
+                                            } else {
+                                                sql.push_str(
+                                                    format!("\n{}", obj_field_indent).as_str(),
+                                                );
+                                            }
+                                            sql.push_str(&format!("'{}', ", inner_column.name,));
 
                                             select_type(
                                                 indent + 4,
@@ -774,7 +781,8 @@ fn select_type(
                                                 ),
                                                 sql,
                                             );
-                                            sql.push_str(", ");
+                                            // sql.push_str(", ");
+                                            first_field = false;
                                         }
                                         _ => continue,
                                     }
