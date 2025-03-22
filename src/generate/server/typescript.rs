@@ -459,6 +459,7 @@ pub fn to_formatter() -> typealias::TypeFormatter {
                     }
                 };
 
+
                 #[rustfmt::skip]
                 let type_str = match (is_primitive, is_link, is_optional) {
                     // Primitive types
@@ -468,12 +469,13 @@ pub fn to_formatter() -> typealias::TypeFormatter {
                     (true, false, false) => format!("\"{}\"", base_type),
                     
                     // Non-primitive types
-                    (false, true, true) => format!("\"{}?\"", base_type),
+                    // Because it's opitional, it means it's 0-1, not 0-n
+                    (false, true, true) => format!("{}.optional()", base_type),
                     (false, true, false) => format!("[{}]", base_type), 
-                    (false, false, true) => format!("\"{}?\"", base_type),
+                    (false, false, true) => format!("{}.optional()", base_type),
                     (false, false, false) => base_type.to_string()
                 };
-                format!("    {}: {}", name, type_str)
+                format!("  {}: {}", name, type_str)
             },
         ),
         to_type_def_end: Box::new(|| "});\n".to_string()),
@@ -581,15 +583,15 @@ fn to_query_file(
     let validate = format!(
         r#"
 export const query = Db.to_runner({{
-    id: "{}",
-    primary_db: Env.DatabaseKey.{},
-    attached_dbs: {},
-    sql: sql,
-    session: Env.Session,
-    session_args: {},
-    input: Input,
-    output: ReturnData,
-    watch_triggers: {}
+  id: "{}",
+  primary_db: Env.DatabaseKey.{},
+  attached_dbs: {},
+  sql: sql,
+  session: Env.Session,
+  session_args: {},
+  input: Input,
+  output: ReturnData,
+  watch_triggers: {}
 }});
 
 type Input = typeof Input.infer
