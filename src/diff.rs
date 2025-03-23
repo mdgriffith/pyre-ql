@@ -37,11 +37,15 @@ pub enum TaggedChange {
 pub enum RecordChange {
     AddedField(crate::ast::Column),
     RemovedField(crate::ast::Column),
-    ModifiedField {
-        name: String,
-        old: crate::ast::Column,
-        new: crate::ast::Column,
-    },
+    ModifiedField { name: String, changes: ColumnDiff },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ColumnDiff {
+    pub type_changed: Option<(String, String)>, // (old_type, new_type)
+    pub nullable_changed: Option<(bool, bool)>, // (old_nullable, new_nullable)
+    pub added_directives: Vec<crate::ast::ColumnDirective>,
+    pub removed_directives: Vec<crate::ast::ColumnDirective>,
 }
 
 // Function to diff two Schema values
@@ -175,11 +179,10 @@ fn diff_fields(
 
     for field2 in fields2 {
         if let Some(field1) = fields1.iter().find(|f| f.name == field2.name) {
-            if field1 != field2 {
+            if let Some(column_diff) = diff_column(field1, field2) {
                 changes.push(RecordChange::ModifiedField {
                     name: field2.name.clone(),
-                    old: field1.clone(),
-                    new: field2.clone(),
+                    changes: column_diff,
                 });
             }
         } else {
@@ -224,4 +227,57 @@ fn diff_variants(
     }
 
     changes
+}
+
+fn diff_column(old: &crate::ast::Column, new: &crate::ast::Column) -> Option<ColumnDiff> {
+    let mut has_changes = false;
+    let mut diff = ColumnDiff {
+        type_changed: None,
+        nullable_changed: None,
+        added_directives: Vec::new(),
+        removed_directives: Vec::new(),
+    };
+
+    // Create HashMaps with directive keys
+    let mut old_directives = std::collections::HashMap::new();
+    let mut new_directives = std::collections::HashMap::new();
+
+    // Helper function to get directive key
+    let get_key = |directive: &crate::ast::ColumnDirective| -> String {
+        match directive {
+            crate::ast::ColumnDirective::PrimaryKey => "_key".to_string(),
+            crate::ast::ColumnDirective::Unique => "_uniq".to_string(),
+            crate::ast::ColumnDirective::Default { id, .. } => id.clone(),
+        }
+    };
+
+    // Populate HashMaps
+    for directive in &old.directives {
+        old_directives.insert(get_key(directive), directive.clone());
+    }
+    for directive in &new.directives {
+        new_directives.insert(get_key(directive), directive.clone());
+    }
+
+    // Find added directives
+    for (key, directive) in &new_directives {
+        if !old_directives.contains_key(key) {
+            diff.added_directives.push(directive.clone());
+            has_changes = true;
+        }
+    }
+
+    // Find removed directives
+    for (key, directive) in &old_directives {
+        if !new_directives.contains_key(key) {
+            diff.removed_directives.push(directive.clone());
+            has_changes = true;
+        }
+    }
+
+    if has_changes {
+        Some(diff)
+    } else {
+        None
+    }
 }
