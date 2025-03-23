@@ -149,7 +149,7 @@ pub enum Field {
 
 pub fn has_default_value(col: &Column) -> bool {
     col.directives.iter().any(|d| match d {
-        ColumnDirective::Default(_) => true,
+        ColumnDirective::Default { .. } => true,
         _ => false,
     })
 }
@@ -428,7 +428,7 @@ pub fn empty_range() -> Range {
 pub enum ColumnDirective {
     PrimaryKey,
     Unique,
-    Default(DefaultValue),
+    Default { id: String, value: DefaultValue },
     // Check(String),
 }
 

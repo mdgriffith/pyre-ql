@@ -662,20 +662,31 @@ fn parse_column_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
 
 fn parse_default_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
     let (input, _) = tag("default(")(input)?;
-
     let (input, _) = space0(input)?;
     let (input, default) = alt((
-        parse_token("now", ast::DefaultValue::Now),
+        parse_token("now", ("now".to_string(), ast::DefaultValue::Now)),
         parse_default_value,
     ))(input)?;
     let (input, _) = space0(input)?;
     let (input, _) = tag(")")(input)?;
-    Ok((input, ast::ColumnDirective::Default(default)))
+    Ok((
+        input,
+        ast::ColumnDirective::Default {
+            id: default.0,
+            value: default.1,
+        },
+    ))
 }
 
-fn parse_default_value(input: Text) -> ParseResult<ast::DefaultValue> {
-    let (input, val) = parse_value(input)?;
-    Ok((input, ast::DefaultValue::Value(val)))
+fn parse_default_value(input: Text) -> ParseResult<(String, ast::DefaultValue)> {
+    let start_offset = input.location_offset();
+    let (input_after, val) = parse_value(input)?;
+    let end_offset = input_after.location_offset();
+
+    let original_text = &input_after.fragment()[..end_offset - start_offset];
+    let id = original_text.to_string();
+
+    Ok((input_after, (id, ast::DefaultValue::Value(val))))
 }
 
 fn parse_directive_named<'a, T>(tag_str: &'a str, value: T) -> impl Fn(Text) -> ParseResult<T> + 'a

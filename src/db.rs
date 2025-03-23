@@ -304,32 +304,39 @@ pub async fn introspect(
                                     if str.to_lowercase() == "current_timestamp"
                                         || str.to_lowercase() == "unixepoch()"
                                     {
-                                        directives.push(ast::ColumnDirective::Default(
-                                            ast::DefaultValue::Now,
-                                        ));
+                                        directives.push(ast::ColumnDirective::Default {
+                                            id: "now".to_string(),
+                                            value: ast::DefaultValue::Now,
+                                        });
+                                    } else if str == "NULL" {
+                                        // Defaulting to NULL is standard for optional fields
+                                        // So, doesn't really mean anything if it comes back from the db
                                     } else if str == "true" {
-                                        directives.push(ast::ColumnDirective::Default(
-                                            ast::DefaultValue::Value(ast::QueryValue::Bool((
-                                                ast::empty_range(),
-                                                true,
-                                            ))),
-                                        ));
+                                        directives.push(ast::ColumnDirective::Default {
+                                            id: "true".to_string(),
+                                            value: ast::DefaultValue::Value(ast::QueryValue::Bool(
+                                                (ast::empty_range(), true),
+                                            )),
+                                        });
                                     } else if str == "false" {
-                                        directives.push(ast::ColumnDirective::Default(
-                                            ast::DefaultValue::Value(ast::QueryValue::Bool((
-                                                ast::empty_range(),
-                                                false,
-                                            ))),
-                                        ));
+                                        directives.push(ast::ColumnDirective::Default {
+                                            id: "false".to_string(),
+                                            value: ast::DefaultValue::Value(ast::QueryValue::Bool(
+                                                (ast::empty_range(), false),
+                                            )),
+                                        });
                                     } else if str.starts_with("'") {
                                         let my_string = str.trim_matches('\'');
 
-                                        directives.push(ast::ColumnDirective::Default(
-                                            ast::DefaultValue::Value(ast::QueryValue::String((
-                                                ast::empty_range(),
-                                                my_string.to_string(),
-                                            ))),
-                                        ));
+                                        directives.push(ast::ColumnDirective::Default {
+                                            id: str.to_string(),
+                                            value: ast::DefaultValue::Value(
+                                                ast::QueryValue::String((
+                                                    ast::empty_range(),
+                                                    my_string.to_string(),
+                                                )),
+                                            ),
+                                        });
                                     } else {
                                         let parsed = parser::parse_number(parser::Text::new_extra(
                                             &str,
@@ -337,9 +344,10 @@ pub async fn introspect(
                                         ));
                                         match parsed {
                                             Ok((_, val)) => {
-                                                directives.push(ast::ColumnDirective::Default(
-                                                    ast::DefaultValue::Value(val),
-                                                ));
+                                                directives.push(ast::ColumnDirective::Default {
+                                                    id: str.to_string(),
+                                                    value: ast::DefaultValue::Value(val),
+                                                });
                                             }
                                             Err(err) => {
                                                 println!("Unrecognized default {}", str)

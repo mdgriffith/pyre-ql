@@ -111,7 +111,7 @@ fn column_directive_to_string(
     match directive {
         ColumnDirective::PrimaryKey => "primary key autoincrement".to_string(),
         ColumnDirective::Unique => "unique".to_string(),
-        ColumnDirective::Default(def) => match def {
+        ColumnDirective::Default { id, value } => match value {
             DefaultValue::Now => match column.type_ {
                 ConcreteSerializationType::Date => "default current_date".to_string(),
                 ConcreteSerializationType::DateTime => "default (unixepoch())".to_string(),
@@ -187,10 +187,14 @@ fn handle_modified_record(record_diff: &DetailedRecordDiff) -> String {
                     field.name, record_diff.name
                 ));
             }
-            RecordChange::ModifiedField { name, old, new } => {
+            RecordChange::ModifiedField { name, changes } => {
+                // sql_statements.push(format!(
+                //     "-- Modifying column {} in table {} requires manual migration from {} to {}.",
+                //     name, record_diff.name, old.type_, new.type_
+                // ));
                 sql_statements.push(format!(
-                    "-- Modifying column {} in table {} requires manual migration from {} to {}.",
-                    name, record_diff.name, old.type_, new.type_
+                    "-- Modifying column {} in table {} requires manual migration.",
+                    name, record_diff.name
                 ));
             }
         }
