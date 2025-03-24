@@ -11,13 +11,15 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-const MIGRATION_TABLE: &str = "_pyre_migrations";
+pub mod introspect;
+
+pub const MIGRATION_TABLE: &str = "_pyre_migrations";
 
 // List all tables
 // Returns list of string
-const LIST_TABLES: &str = "SELECT name FROM sqlite_master WHERE type='table';";
+pub const LIST_TABLES: &str = "SELECT name FROM sqlite_master WHERE type='table';";
 
-const LIST_MIGRATIONS: &str = "SELECT name FROM _pyre_migrations;";
+pub const LIST_MIGRATIONS: &str = "SELECT name FROM _pyre_migrations;";
 
 // [
 //   {
