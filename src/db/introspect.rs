@@ -94,18 +94,45 @@ struct DbTable {
 
 */
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(try_from = "String")]
+pub enum ForeignKeyAction {
+    #[serde(rename = "CASCADE")]
+    Cascade,
+    #[serde(rename = "RESTRICT")]
+    Restrict,
+    #[serde(rename = "NO ACTION")]
+    NoAction,
+    #[serde(rename = "SET NULL")]
+    SetNull,
+    #[serde(rename = "SET DEFAULT")]
+    SetDefault,
+}
+
+impl TryFrom<String> for ForeignKeyAction {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "CASCADE" => Ok(ForeignKeyAction::Cascade),
+            "RESTRICT" => Ok(ForeignKeyAction::Restrict),
+            "NO ACTION" => Ok(ForeignKeyAction::NoAction),
+            "SET NULL" => Ok(ForeignKeyAction::SetNull),
+            "SET DEFAULT" => Ok(ForeignKeyAction::SetDefault),
+            _ => Err(format!("Unknown foreign key action: {}", value)),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct ForeignKey {
     pub id: usize,
     pub seq: usize,
-
-    // Target table
     pub table: String,
     pub from: String,
     pub to: String,
-    pub on_update: String,
-    pub on_delete: String,
-
+    pub on_update: ForeignKeyAction,
+    pub on_delete: ForeignKeyAction,
     #[serde(rename = "match")]
     pub match_: String,
 }
