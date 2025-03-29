@@ -1,8 +1,6 @@
-use crate::ast;
-use crate::format;
-use crate::parser;
 use libsql;
 use serde;
+use serde::{Deserialize, Serialize};
 
 /*
 Introspection is used to drive migrations.
@@ -18,66 +16,66 @@ Migration SQL.
 
 */
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Introspection {
     pub tables: Vec<Table>,
     pub migrations_recorded: Vec<String>,
     pub warnings: Vec<Warning>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Table {
-    name: String,
-    columns: Vec<ColumnInfo>,
-    foreign_keys: Vec<ForeignKey>,
+    pub name: String,
+    pub columns: Vec<ColumnInfo>,
+    pub foreign_keys: Vec<ForeignKey>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Warning {
     WasManuallyModified(String),
 }
 
 // Intermediates
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 struct DbTable {
     name: String,
 }
 
-#[derive(Debug, serde::Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
-struct ForeignKey {
-    id: usize,
-    seq: usize,
+pub struct ForeignKey {
+    pub id: usize,
+    pub seq: usize,
 
     // Target table
-    table: String,
-    from: String,
-    to: String,
-    on_update: String,
-    on_delete: String,
+    pub table: String,
+    pub from: String,
+    pub to: String,
+    pub on_update: String,
+    pub on_delete: String,
 
     #[serde(rename = "match")]
-    match_: String,
+    pub match_: String,
 }
 
-#[derive(Debug, serde::Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
-struct ColumnInfo {
-    cid: usize,
-    name: String,
+pub struct ColumnInfo {
+    pub cid: usize,
+    pub name: String,
     #[serde(rename = "type")]
-    column_type: String,
+    pub column_type: String,
     #[serde(deserialize_with = "deserialize_notnull")]
-    notnull: bool,
-    dflt_value: Option<String>,
+    pub notnull: bool,
+    pub dflt_value: Option<String>,
 
     #[serde(deserialize_with = "deserialize_notnull")]
-    pk: bool,
+    pub pk: bool,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 struct MigrationRun {
     name: String,
