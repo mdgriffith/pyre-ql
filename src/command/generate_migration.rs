@@ -67,14 +67,17 @@ pub async fn generate_migration<'a>(
                     let current_db = parse_database_schemas(&paths)?;
 
                     match typecheck::check_schema(&current_db) {
-                        Ok(_context) => {
+                        Ok(context) => {
                             let current_schema = current_db
                                 .schemas
                                 .iter()
                                 .find(|s| s.namespace == target_namespace)
                                 .expect("Schema not found");
 
-                            let db_diff = crate::db::diff::diff(&current_schema, &introspection);
+                            let db_diff =
+                                crate::db::diff::diff(&context, &current_schema, &introspection);
+
+                            println!("DB Diff: {:#?}", db_diff);
 
                             filesystem::create_dir_if_not_exists(migration_dir)?;
 

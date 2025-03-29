@@ -30,6 +30,7 @@ pub struct ColumnDiff {
 }
 
 pub fn diff(
+    context: &crate::typecheck::Context,
     schema: &crate::ast::Schema,
     introspection: &crate::db::introspect::Introspection,
 ) -> Diff {
@@ -42,7 +43,8 @@ pub fn diff(
     for file in &schema.files {
         for def in &file.definitions {
             if let crate::ast::Definition::Record { name, fields, .. } = def {
-                schema_tables.insert(name, fields);
+                let table_name = crate::ast::get_tablename(name, fields);
+                schema_tables.insert(table_name, (name, fields));
             }
         }
     }
@@ -51,14 +53,14 @@ pub fn diff(
         introspection.tables.iter().map(|t| (&t.name, t)).collect();
 
     // Find added and modified tables
-    for (name, schema_fields) in &schema_tables {
-        match intro_tables.get(*name) {
+    for (table_name, (_record_name, schema_fields)) in &schema_tables {
+        match intro_tables.get(table_name) {
             None => {
-                let table = create_table_from_fields(name, schema_fields);
+                let table = create_table_from_fields(context, table_name, schema_fields);
                 added.push(table);
             }
             Some(intro_table) => {
-                let schema_table = create_table_from_fields(name, schema_fields);
+                let schema_table = create_table_from_fields(context, table_name, schema_fields);
                 if let Some(record_diff) = compare_record(&schema_table, intro_table) {
                     modified_records.push(record_diff);
                 }
@@ -67,9 +69,9 @@ pub fn diff(
     }
 
     // Find removed tables
-    for name in intro_tables.keys() {
-        if !schema_tables.contains_key(name) {
-            removed.push(intro_tables[name].clone());
+    for (table_name, intro_table) in intro_tables {
+        if !schema_tables.contains_key(table_name) {
+            removed.push((*intro_table).clone());
         }
     }
 
@@ -82,32 +84,94 @@ pub fn diff(
 
 // Helper function to create a Table from fields
 fn create_table_from_fields(
+    context: &crate::typecheck::Context,
     name: &str,
     fields: &Vec<crate::ast::Field>,
 ) -> crate::db::introspect::Table {
-    let columns = fields
-        .iter()
-        .filter_map(|f| {
-            if let crate::ast::Field::Column(col) = f {
-                Some(crate::db::introspect::ColumnInfo {
-                    cid: 0, // This will be set by SQLite
-                    name: col.name.clone(),
-                    column_type: col.type_.clone(),
-                    notnull: !col.nullable,
-                    dflt_value: None, // We don't track default values in the diff
-                    pk: col
-                        .directives
-                        .iter()
-                        .any(|d| matches!(d, crate::ast::ColumnDirective::PrimaryKey)),
-                })
-            } else {
-                None
+    let mut columns = Vec::new();
+
+    for f in fields {
+        if let crate::ast::Field::Column(col) = f {
+            match &col.serialization_type {
+                crate::ast::SerializationType::Concrete(_) => {
+                    // For concrete types, create a single column
+                    columns.push(crate::db::introspect::ColumnInfo {
+                        cid: 0, // This will be set by SQLite
+                        name: col.name.clone(),
+                        column_type: col.type_.clone(),
+                        notnull: !col.nullable,
+                        dflt_value: None, // We don't track default values in the diff
+                        pk: col
+                            .directives
+                            .iter()
+                            .any(|d| matches!(d, crate::ast::ColumnDirective::PrimaryKey)),
+                    });
+                }
+                crate::ast::SerializationType::FromType(typename) => {
+                    if let Some((_, type_)) = context.types.get(typename) {
+                        match type_ {
+                            crate::typecheck::Type::OneOf { variants } => {
+                                // Add discriminator column only for OneOf types
+                                columns.push(crate::db::introspect::ColumnInfo {
+                                    cid: 0,
+                                    name: col.name.clone(),
+                                    column_type: "Text".to_string(),
+                                    notnull: !col.nullable,
+                                    dflt_value: None,
+                                    pk: false,
+                                });
+
+                                // Track seen fields to avoid duplicates
+                                let mut seen_fields = std::collections::HashSet::new();
+
+                                for variant in variants {
+                                    if let Some(var_fields) = &variant.fields {
+                                        for var_field in var_fields {
+                                            if let crate::ast::Field::Column(var_col) = var_field {
+                                                let field_name =
+                                                    format!("{}__{}", col.name, var_col.name);
+
+                                                // Only add the field if we haven't seen it before
+                                                if !seen_fields.contains(&field_name) {
+                                                    seen_fields.insert(field_name.clone());
+                                                    columns.push(
+                                                        crate::db::introspect::ColumnInfo {
+                                                            cid: 0,
+                                                            name: field_name,
+                                                            column_type: var_col.type_.clone(),
+                                                            notnull: false, // Variant fields are always technically nullable
+                                                            dflt_value: None,
+                                                            pk: false,
+                                                        },
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // For other types (Integer, Float, String, Record), create a single column
+                            _ => {
+                                columns.push(crate::db::introspect::ColumnInfo {
+                                    cid: 0,
+                                    name: col.name.clone(),
+                                    column_type: typename.clone(),
+                                    notnull: !col.nullable,
+                                    dflt_value: None,
+                                    pk: col.directives.iter().any(|d| {
+                                        matches!(d, crate::ast::ColumnDirective::PrimaryKey)
+                                    }),
+                                });
+                            }
+                        }
+                    }
+                }
             }
-        })
-        .collect();
+        }
+    }
 
     crate::db::introspect::Table {
-        name: name.to_string(),
+        name: crate::ast::get_tablename(name, fields),
         columns,
         foreign_keys: vec![],
     }
