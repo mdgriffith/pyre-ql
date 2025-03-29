@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ast;
 use crate::db;
+use crate::db::introspect::MigrationState;
 use crate::diff;
 use crate::error;
 use crate::filesystem;
@@ -278,7 +279,9 @@ pub async fn introspect<'a>(
             let full_namespace = namespace
                 .clone()
                 .unwrap_or(ast::DEFAULT_SCHEMANAME.to_string());
-            let introspection_result = db::introspect(&conn, &full_namespace).await;
+
+            // Use introspect module directly
+            let introspection_result = crate::db::introspect::introspect(&conn).await;
             match introspection_result {
                 Ok(introspection) => {
                     let path: PathBuf = if full_namespace != ast::DEFAULT_SCHEMANAME {
@@ -299,10 +302,21 @@ pub async fn introspect<'a>(
                     } else {
                         println!("Schema written to {:?}", path.to_str());
 
-                        if ast::is_empty_schema(&introspection.schema) {
+                        if introspection.tables.is_empty() {
                             println!("I was able to successfully connect to the database, but I couldn't find any tables or views!");
                         } else {
-                            write_schema(options, &false, &introspection.schema)?;
+                            // Convert introspection to schema file
+                            let schema_file =
+                                crate::db::introspect::to_schema::to_schema(&introspection);
+
+                            // Create schema with the converted file
+                            let schema = ast::Schema {
+                                namespace: full_namespace,
+                                session: None,
+                                files: vec![schema_file],
+                            };
+
+                            write_schema(options, &false, &schema)?;
                         }
                     }
                 }
@@ -380,7 +394,7 @@ pub async fn generate_migration<'a>(
             println!("Failed to connect to database: {:?}", e);
         }
         Ok(conn) => {
-            let introspection_result = db::introspect::introspect(&conn, &target_namespace).await;
+            let introspection_result = db::introspect::introspect(&conn).await;
             match introspection_result {
                 Ok(introspection) => {
                     let existing_migrations =
@@ -388,7 +402,12 @@ pub async fn generate_migration<'a>(
 
                     let not_applied: Vec<String> = existing_migrations
                         .iter()
-                        .filter(|migration| !introspection.migrations_recorded.contains(migration))
+                        .filter(|migration| match &introspection.migration_state {
+                            MigrationState::NoMigrationTable => true,
+                            MigrationState::MigrationTable { migrations } => {
+                                !migrations.iter().any(|m| m.name == **migration)
+                            }
+                        })
                         .map(|m| m.yellow().to_string())
                         .collect();
 
