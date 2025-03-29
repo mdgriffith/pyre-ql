@@ -5,7 +5,7 @@ pub fn to_sql(diff: &Diff) -> String {
 
     // Handle removed tables first (to avoid foreign key conflicts)
     for table in &diff.removed {
-        sql_statements.push(format!("DROP TABLE IF EXISTS `{}`", table.name));
+        sql_statements.push(format!("drop table if exists `{}`", table.name));
     }
 
     // Handle added tables
@@ -13,7 +13,7 @@ pub fn to_sql(diff: &Diff) -> String {
         let columns: Vec<String> = table.columns.iter().map(column_definition).collect();
 
         let mut create_stmt = format!(
-            "CREATE TABLE `{}` (\n  {}\n)",
+            "create table \"{}\" (\n  {}\n)",
             table.name,
             columns.join(",\n  ")
         );
@@ -39,14 +39,14 @@ pub fn to_sql(diff: &Diff) -> String {
             match change {
                 RecordChange::AddedField(column) => {
                     sql_statements.push(format!(
-                        "ALTER TABLE `{}` ADD COLUMN {}",
+                        "alter table \"{}\" add column {}",
                         record_diff.name,
                         column_definition(column)
                     ));
                 }
                 RecordChange::RemovedField(column) => {
                     sql_statements.push(format!(
-                        "ALTER TABLE `{}` DROP COLUMN `{}`",
+                        "alter table \"{}\" drop column \"{}\"",
                         record_diff.name, column.name
                     ));
                 }
@@ -69,15 +69,15 @@ fn column_definition(column: &crate::db::introspect::ColumnInfo) -> String {
     let mut def = format!("`{}` {}", column.name, column.column_type);
 
     if column.pk {
-        def.push_str(" PRIMARY KEY");
+        def.push_str(" primary key");
     }
 
     if column.notnull {
-        def.push_str(" NOT NULL");
+        def.push_str(" not null");
     }
 
     if let Some(default_value) = &column.dflt_value {
-        def.push_str(&format!(" DEFAULT {}", default_value));
+        def.push_str(&format!(" default {}", default_value));
     }
 
     def
