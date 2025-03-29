@@ -380,35 +380,28 @@ pub async fn generate_migration<'a>(
             println!("Failed to connect to database: {:?}", e);
         }
         Ok(conn) => {
-            let introspection_result = db::introspect(&conn, &target_namespace).await;
+            let introspection_result = db::introspect::introspect(&conn, &target_namespace).await;
             match introspection_result {
                 Ok(introspection) => {
                     let existing_migrations =
                         db::read_migration_items(target_namespace_dir).unwrap_or(vec![]);
 
-                    let mut not_applied: Vec<String> = vec![];
-                    for migration_from_file in existing_migrations {
-                        let mut migrated = false;
-                        for migration_recorded in introspection.migrations_recorded.iter() {
-                            if &migration_from_file == migration_recorded {
-                                migrated = true;
-                                break;
-                            }
-                        }
-                        if !migrated {
-                            not_applied.push(migration_from_file.yellow().to_string());
-                        }
-                    }
-                    if not_applied.len() > 0 {
+                    let not_applied: Vec<String> = existing_migrations
+                        .iter()
+                        .filter(|migration| !introspection.migrations_recorded.contains(migration))
+                        .map(|m| m.yellow().to_string())
+                        .collect();
+
+                    if !not_applied.is_empty() {
                         println!(
                             "\nIt looks like some migrations have not been applied:\n\n    {}",
                             not_applied.join("\n   ")
                         );
-                        println!("\nRun `pyre migrate` to apply these migrations before generating a new one.",);
+                        println!("\nRun `pyre migrate` to apply these migrations before generating a new one.");
                         return Ok(());
                     }
 
-                    // filepaths to .pyre files
+                    // Parse current schema
                     let paths = filesystem::collect_filepaths(&options.in_dir)?;
                     let current_db = parse_database_schemas(&paths)?;
 
@@ -420,18 +413,30 @@ pub async fn generate_migration<'a>(
                                 .find(|s| s.namespace == target_namespace)
                                 .expect("Schema not found");
 
-                            let schema_diff =
-                                diff::diff_schema(&introspection.schema, current_schema);
+                            // Generate diff between introspection and current schema
+                            let db_diff =
+                                crate::db::diff::diff(&current_schema.files[0], &introspection);
 
+                            // Create migration directory if it doesn't exist
                             filesystem::create_dir_if_not_exists(migration_dir)?;
 
-                            write_migration(
-                                &context,
-                                current_schema,
-                                &schema_diff,
-                                name,
-                                target_namespace_dir,
-                            )?;
+                            // Format like {year}{month}{day}{hour}{minute}
+                            let current_date = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
+                            let migration_folder =
+                                target_namespace_dir.join(format!("{}_{}", current_date, name));
+                            filesystem::create_dir_if_not_exists(&migration_folder)?;
+
+                            // Write migration files
+                            let migration_file = migration_folder.join("migration.sql");
+                            let diff_file = migration_folder.join("schema.diff");
+
+                            // Generate and write SQL
+                            let sql = crate::db::diff::to_sql::to_sql(&db_diff);
+                            fs::write(&migration_file, sql)?;
+
+                            // Write diff file
+                            let json_diff = serde_json::to_string(&db_diff)?;
+                            fs::write(&diff_file, json_diff)?;
                         }
                         Err(error_list) => {
                             for err in error_list {
@@ -440,7 +445,6 @@ pub async fn generate_migration<'a>(
                                         .unwrap_or("");
 
                                 let formatted_error = error::format_error(&schema_source, &err);
-
                                 eprintln!("{}", &formatted_error);
                             }
                             std::process::exit(1);
@@ -448,7 +452,7 @@ pub async fn generate_migration<'a>(
                     }
                 }
                 Err(err) => {
-                    println!("Failed to connect to database: {:?}", err);
+                    println!("Failed to introspect database: {:?}", err);
                 }
             }
         }
@@ -686,59 +690,6 @@ fn write_schema(options: &Options, to_stdout: &bool, schema: &ast::Schema) -> io
         let formatted = generate::to_string::schema_to_string(&schema.namespace, schema_file);
         output.write_all(formatted.as_bytes())?;
     }
-    Ok(())
-}
-
-fn write_migration(
-    context: &typecheck::Context,
-    schema: &ast::Schema,
-
-    diff: &diff::SchemaDiff,
-    migration_name: &str,
-    namespace_folder: &Path,
-) -> io::Result<()> {
-    let sql = generate::migration::to_sql(context, schema, diff);
-
-    // Format like {year}{month}{day}{hour}{minute}
-    let current_date = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
-
-    filesystem::create_dir_if_not_exists(&namespace_folder)?;
-
-    let migration_folder = namespace_folder.join(format!("{}_{}", current_date, migration_name));
-    filesystem::create_dir_if_not_exists(&migration_folder)?;
-
-    // Write the migration files
-    let migration_file = migration_folder.join("migration.sql");
-    let diff_file_path = migration_folder.join("schema.diff");
-
-    // Write migration file
-    let output = fs::File::create(migration_file);
-
-    match output {
-        Ok(mut file) => {
-            file.write_all(sql.as_bytes())?;
-        }
-        Err(e) => {
-            eprintln!("Failed to create file: {:?}", e);
-            return Err(e);
-        }
-    };
-
-    // Write diff
-    let diff_file = Path::new(&diff_file_path);
-    let output = fs::File::create(diff_file);
-
-    match output {
-        Ok(mut file) => {
-            let json_diff = serde_json::to_string(diff).unwrap();
-            file.write_all(json_diff.as_bytes())?;
-        }
-        Err(e) => {
-            eprintln!("Failed to create file: {:?}", e);
-            return Err(e);
-        }
-    };
-
     Ok(())
 }
 
