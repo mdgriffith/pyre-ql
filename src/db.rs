@@ -11,6 +11,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+pub mod diff;
 pub mod introspect;
 
 pub const MIGRATION_TABLE: &str = "_pyre_migrations";
