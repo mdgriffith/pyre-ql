@@ -2,6 +2,14 @@ use libsql;
 use serde;
 use serde::{Deserialize, Serialize};
 
+pub mod to_schema;
+
+// List all tables
+// Returns list of string
+const LIST_TABLES: &str = "SELECT name FROM sqlite_master WHERE type='table';";
+
+const LIST_MIGRATIONS: &str = "SELECT name FROM _pyre_migrations;";
+
 /*
 Introspection is used to drive migrations.
 
@@ -17,9 +25,20 @@ Migration SQL.
 */
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct Migration {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum MigrationState {
+    NoMigrationTable,
+    MigrationTable { migrations: Vec<Migration> },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Introspection {
     pub tables: Vec<Table>,
-    pub migrations_recorded: Vec<String>,
+    pub migration_state: MigrationState,
     pub warnings: Vec<Warning>,
 }
 
@@ -43,6 +62,35 @@ struct DbTable {
     name: String,
 }
 
+/*
+
+
+
+// [
+//   {
+//     "id": "0",
+//     "seq": "0",
+//     "table": "rulebooks",
+//     "from": "rulebookId",
+//     "to": "id",
+//     "on_update": "CASCADE",
+//     "on_delete": "CASCADE",
+//     "match": "NONE"
+//   },
+//   {
+//     "id": "1",
+//     "seq": "0",
+//     "table": "users",
+//     "from": "userId",
+//     "to": "id",
+//     "on_update": "CASCADE",
+//     "on_delete": "CASCADE",
+//     "match": "NONE"
+//   }
+// ]
+
+
+*/
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct ForeignKey {
@@ -60,6 +108,24 @@ pub struct ForeignKey {
     pub match_: String,
 }
 
+// [
+//   {
+//     "cid": "0",
+//     "name": "id",
+//     "type": "INTEGER",
+//     "notnull": "1",
+//     "dflt_value": null,
+//     "pk": "1"
+//   },
+//   {
+//     "cid": "1",
+//     "name": "createdAt",
+//     "type": "DATETIME",
+//     "notnull": "1",
+//     "dflt_value": "CURRENT_TIMESTAMP",
+//     "pk": "0"
+//   },
+// ]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct ColumnInfo {
@@ -93,31 +159,57 @@ where
     }
 }
 
-pub async fn introspect(
-    db: &libsql::Database,
-    namespace: &str,
-) -> Result<Introspection, libsql::Error> {
+pub async fn get_migration_state(
+    conn: &libsql::Connection,
+) -> Result<MigrationState, libsql::Error> {
+    let args: Vec<String> = vec![];
+    let table_list_result = conn.query(LIST_TABLES, args).await?;
+    let mut has_migrations_table = false;
+
+    let mut table_rows = table_list_result;
+    while let Some(row) = table_rows.next().await? {
+        let table = libsql::de::from_row::<DbTable>(&row).unwrap();
+        if table.name == crate::db::MIGRATION_TABLE {
+            has_migrations_table = true;
+            break;
+        }
+    }
+
+    if !has_migrations_table {
+        return Ok(MigrationState::NoMigrationTable);
+    }
+
+    let args: Vec<String> = vec![];
+    let migration_list_result = conn.query(LIST_MIGRATIONS, args).await?;
+    let mut migrations = Vec::new();
+
+    let mut migration_rows = migration_list_result;
+    while let Some(row) = migration_rows.next().await? {
+        let migration_run = libsql::de::from_row::<MigrationRun>(&row).unwrap();
+        migrations.push(Migration {
+            name: migration_run.name,
+        });
+    }
+
+    Ok(MigrationState::MigrationTable { migrations })
+}
+
+pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::Error> {
     match db.connect() {
         Ok(conn) => {
             let args: Vec<String> = vec![];
-            let table_list_result = conn.query(crate::db::LIST_TABLES, args).await;
+            let table_list_result = conn.query(LIST_TABLES, args).await;
             let mut tables: Vec<Table> = vec![];
-            let mut migrations_recorded: Vec<String> = vec![];
-            let mut has_migrations_table = false;
 
             match table_list_result {
                 Ok(mut table_rows) => {
                     while let Some(row) = table_rows.next().await? {
                         let table = libsql::de::from_row::<DbTable>(&row).unwrap();
-                        if table.name == "sqlite_sequence" {
-                            // Built in table, skip pls
-                            continue;
-                        } else if table.name == crate::db::MIGRATION_TABLE {
-                            // Built in table, skip pls
-                            has_migrations_table = true;
+                        if table.name == "sqlite_sequence"
+                            || table.name == crate::db::MIGRATION_TABLE
+                        {
                             continue;
                         }
-                        // print!("{:?}\n", table);
 
                         let mut foreign_keys: Vec<ForeignKey> = vec![];
                         let mut columns: Vec<ColumnInfo> = vec![];
@@ -160,29 +252,11 @@ pub async fn introspect(
                         })
                     }
 
-                    // Read Migration Table
-                    if has_migrations_table {
-                        let args: Vec<String> = vec![];
-                        let migration_list_result =
-                            conn.query(crate::db::LIST_MIGRATIONS, args).await;
-                        match migration_list_result {
-                            Ok(mut migration_rows) => {
-                                while let Some(row) = migration_rows.next().await? {
-                                    let migration =
-                                        libsql::de::from_row::<MigrationRun>(&row).unwrap();
-                                    migrations_recorded.push(migration.name);
-                                }
-                            }
-                            Err(e) => {
-                                println!("Error: {}", e);
-                                return Err(e);
-                            }
-                        }
-                    }
+                    let migration_state = get_migration_state(&conn).await?;
 
                     Ok(Introspection {
                         tables,
-                        migrations_recorded,
+                        migration_state,
                         warnings: vec![],
                     })
                 }
