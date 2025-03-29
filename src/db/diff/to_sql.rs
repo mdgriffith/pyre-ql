@@ -5,7 +5,7 @@ pub fn to_sql(diff: &Diff) -> String {
 
     // Handle removed tables first (to avoid foreign key conflicts)
     for table in &diff.removed {
-        sql_statements.push(format!("drop table if exists `{}`", table.name));
+        sql_statements.push(format!("drop table if exists \"{}\"", table.name));
     }
 
     // Handle added tables
