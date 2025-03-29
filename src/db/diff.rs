@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub mod to_sql;
 // Define a type to represent the diff of two schemas
@@ -29,25 +30,22 @@ pub struct ColumnDiff {
 }
 
 pub fn diff(
-    schema: &crate::ast::SchemaFile,
+    schema: &crate::ast::Schema,
     introspection: &crate::db::introspect::Introspection,
 ) -> Diff {
     let mut added = Vec::new();
     let mut removed = Vec::new();
     let mut modified_records = Vec::new();
 
-    // Create lookup maps for faster comparison - need to extract tables from definitions
-    let schema_tables: std::collections::HashMap<_, _> = schema
-        .definitions
-        .iter()
-        .filter_map(|def| {
+    // Create lookup maps for faster comparison - need to extract tables from all schema files
+    let mut schema_tables: std::collections::HashMap<_, _> = HashMap::new();
+    for file in &schema.files {
+        for def in &file.definitions {
             if let crate::ast::Definition::Record { name, fields, .. } = def {
-                Some((name, fields))
-            } else {
-                None
+                schema_tables.insert(name, fields);
             }
-        })
-        .collect();
+        }
+    }
 
     let intro_tables: std::collections::HashMap<_, _> =
         introspection.tables.iter().map(|t| (&t.name, t)).collect();
