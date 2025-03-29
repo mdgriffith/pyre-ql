@@ -9,7 +9,6 @@ use crate::generate;
 use crate::typecheck;
 
 pub mod client;
-pub mod migration;
 pub mod server;
 pub mod sql;
 pub mod to_string;
