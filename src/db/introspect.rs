@@ -123,6 +123,41 @@ impl TryFrom<String> for ForeignKeyAction {
     }
 }
 
+/// Specifies how NULL values in foreign keys are handled during constraint checking.
+/// Note: In current SQLite versions, this is effectively a no-op as only SIMPLE
+/// matching behavior is implemented, regardless of the specified value.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(try_from = "String")]
+pub enum ForeignKeyMatch {
+    /// SIMPLE matching allows a foreign key to be NULL unless the parent key is a composite key
+    /// and only some columns of the foreign key are NULL. If the foreign key is a composite key
+    /// and any column is NULL, then all columns must be NULL for the constraint to be satisfied.
+    Simple,
+
+    /// FULL matching requires that either all or none of the foreign key columns be NULL.
+    /// If any foreign key column is NULL, then all columns must be NULL for the constraint
+    /// to be satisfied. If all foreign key columns are non-NULL, they must match a parent key.
+    Full,
+
+    /// NONE matching allows any column in the foreign key to be NULL, regardless of whether
+    /// other columns in the foreign key are NULL or not. This is the default behavior if
+    /// no MATCH clause is specified.
+    None,
+}
+
+impl TryFrom<String> for ForeignKeyMatch {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "SIMPLE" => Ok(ForeignKeyMatch::Simple),
+            "FULL" => Ok(ForeignKeyMatch::Full),
+            "NONE" => Ok(ForeignKeyMatch::None),
+            _ => Err(format!("Unknown foreign key match: {}", value)),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct ForeignKey {
@@ -134,7 +169,7 @@ pub struct ForeignKey {
     pub on_update: ForeignKeyAction,
     pub on_delete: ForeignKeyAction,
     #[serde(rename = "match")]
-    pub match_: String,
+    pub match_: ForeignKeyMatch,
 }
 
 // [
