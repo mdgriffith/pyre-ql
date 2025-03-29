@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 pub mod to_schema;
 
+pub const MIGRATION_TABLE: &str = "_pyre_migrations";
+
 // List all tables
 // Returns list of string
 const LIST_TABLES: &str = "SELECT name FROM sqlite_master WHERE type='table';";
@@ -169,7 +171,7 @@ pub async fn get_migration_state(
     let mut table_rows = table_list_result;
     while let Some(row) = table_rows.next().await? {
         let table = libsql::de::from_row::<DbTable>(&row).unwrap();
-        if table.name == crate::db::MIGRATION_TABLE {
+        if table.name == MIGRATION_TABLE {
             has_migrations_table = true;
             break;
         }
@@ -205,9 +207,7 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                 Ok(mut table_rows) => {
                     while let Some(row) = table_rows.next().await? {
                         let table = libsql::de::from_row::<DbTable>(&row).unwrap();
-                        if table.name == "sqlite_sequence"
-                            || table.name == crate::db::MIGRATION_TABLE
-                        {
+                        if table.name == "sqlite_sequence" || table.name == MIGRATION_TABLE {
                             continue;
                         }
 

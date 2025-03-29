@@ -501,46 +501,40 @@ pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(
             ));
         }
         Ok(migration_files) => {
-            let introspection_result = introspect(&db, ast::DEFAULT_SCHEMANAME).await;
-            match introspection_result {
+            // Read
+            let conn_result = db.connect();
+            match conn_result {
                 Err(err) => {
                     return Err(MigrationError::SqlError(err));
                 }
-                Ok(introspection) => {
-                    // Read
-                    let conn_result = db.connect();
-                    match conn_result {
-                        Err(err) => {
-                            return Err(MigrationError::SqlError(err));
-                        }
-                        Ok(conn) => {
-                            create_migration_table_if_not_exists(&conn).await.unwrap();
+                Ok(conn) => {
+                    create_migration_table_if_not_exists(&conn).await.unwrap();
 
-                            for (migration_filename, migration_contents) in
-                                migration_files.file_contents
-                            {
-                                // Check if migration has been run
-                                if introspection
-                                    .migrations_recorded
-                                    .contains(&migration_filename)
-                                {
-                                    continue;
-                                }
+                    let migration_state = introspect::get_migration_state(&conn).await.unwrap();
 
-                                // Run migration
-                                let tx = conn
-                                    .transaction_with_behavior(
-                                        libsql::TransactionBehavior::Immediate,
-                                    )
-                                    .await
-                                    .unwrap();
-
-                                tx.execute_batch(&migration_contents).await.unwrap();
-                                record_migration(&tx, &migration_filename).await.unwrap();
-
-                                tx.commit().await.unwrap();
+                    for (migration_filename, migration_contents) in migration_files.file_contents {
+                        // Check if migration has been run
+                        let should_skip = match &migration_state {
+                            introspect::MigrationState::NoMigrationTable => false,
+                            introspect::MigrationState::MigrationTable { migrations } => {
+                                migrations.iter().any(|m| m.name == migration_filename)
                             }
+                        };
+
+                        if should_skip {
+                            continue;
                         }
+
+                        // Run migration
+                        let tx = conn
+                            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
+                            .await
+                            .unwrap();
+
+                        tx.execute_batch(&migration_contents).await.unwrap();
+                        record_migration(&tx, &migration_filename).await.unwrap();
+
+                        tx.commit().await.unwrap();
                     }
                 }
             }
