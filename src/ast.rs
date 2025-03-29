@@ -466,6 +466,21 @@ pub enum ConcreteSerializationType {
     JsonB, // This is a blob, but we know it's valid json
 }
 
+impl ConcreteSerializationType {
+    pub fn to_sql_type(&self) -> String {
+        match self {
+            ConcreteSerializationType::Integer => "INTEGER".to_string(),
+            ConcreteSerializationType::Real => "REAL".to_string(),
+            ConcreteSerializationType::Text => "TEXT".to_string(),
+            ConcreteSerializationType::Blob => "BLOB".to_string(),
+            ConcreteSerializationType::Date => "TEXT".to_string(), // Dates stored as strings
+            ConcreteSerializationType::DateTime => "INTEGER".to_string(), // DateTime as unix epoch
+            ConcreteSerializationType::VectorBlob { .. } => "BLOB".to_string(),
+            ConcreteSerializationType::JsonB => "BLOB".to_string(),
+        }
+    }
+}
+
 // Taken from:
 // https://docs.turso.tech/features/ai-and-embeddings#types
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

@@ -93,12 +93,12 @@ fn create_table_from_fields(
     for f in fields {
         if let crate::ast::Field::Column(col) = f {
             match &col.serialization_type {
-                crate::ast::SerializationType::Concrete(_) => {
+                crate::ast::SerializationType::Concrete(concrete) => {
                     // For concrete types, create a single column
                     columns.push(crate::db::introspect::ColumnInfo {
                         cid: 0, // This will be set by SQLite
                         name: col.name.clone(),
-                        column_type: col.type_.clone(),
+                        column_type: concrete.to_sql_type(),
                         notnull: !col.nullable,
                         dflt_value: None, // We don't track default values in the diff
                         pk: col
@@ -115,7 +115,8 @@ fn create_table_from_fields(
                                 columns.push(crate::db::introspect::ColumnInfo {
                                     cid: 0,
                                     name: col.name.clone(),
-                                    column_type: "Text".to_string(),
+                                    column_type: crate::ast::ConcreteSerializationType::Text
+                                        .to_sql_type(),
                                     notnull: !col.nullable,
                                     dflt_value: None,
                                     pk: false,
