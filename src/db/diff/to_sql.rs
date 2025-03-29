@@ -69,14 +69,14 @@ fn column_definition(column: &crate::db::introspect::ColumnInfo) -> String {
     let mut def = format!("`{}` {}", column.name, column.column_type);
 
     if column.pk {
-        def.push_str(" primary key");
+        def.push_str(" primary key autoincrement");
     }
 
     if column.notnull {
         def.push_str(" not null");
     }
 
-    if let Some(default_value) = &column.dflt_value {
+    if let Some(default_value) = &column.default_value {
         def.push_str(&format!(" default {}", default_value));
     }
 

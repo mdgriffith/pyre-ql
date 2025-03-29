@@ -199,7 +199,9 @@ pub struct ColumnInfo {
     pub column_type: String,
     #[serde(deserialize_with = "deserialize_notnull")]
     pub notnull: bool,
-    pub dflt_value: Option<String>,
+
+    #[serde(rename = "dflt_value")]
+    pub default_value: Option<String>,
 
     #[serde(deserialize_with = "deserialize_notnull")]
     pub pk: bool,

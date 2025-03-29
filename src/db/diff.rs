@@ -110,7 +110,7 @@ fn add_fields(
                         name: column_name,
                         column_type: concrete.to_sql_type(),
                         notnull: !force_nullable && !col.nullable,
-                        dflt_value: None,
+                        default_value: None,
                         pk: col
                             .directives
                             .iter()
@@ -127,7 +127,7 @@ fn add_fields(
                                     column_type: crate::ast::ConcreteSerializationType::Text
                                         .to_sql_type(),
                                     notnull: !force_nullable && !col.nullable,
-                                    dflt_value: None,
+                                    default_value: None,
                                     pk: false,
                                 });
 
@@ -151,7 +151,7 @@ fn add_fields(
                                     name: column_name,
                                     column_type: typename.clone(),
                                     notnull: !force_nullable && !col.nullable,
-                                    dflt_value: None,
+                                    default_value: None,
                                     pk: col.directives.iter().any(|d| {
                                         matches!(d, crate::ast::ColumnDirective::PrimaryKey)
                                     }),
