@@ -6,11 +6,16 @@ pub mod to_schema;
 
 pub const MIGRATION_TABLE: &str = "_pyre_migrations";
 
+pub const SCHEMA_TABLE: &str = "_pyre_schema";
+
 // List all tables
 // Returns list of string
 const LIST_TABLES: &str = "SELECT name FROM sqlite_master WHERE type='table';";
 
 const LIST_MIGRATIONS: &str = "SELECT name FROM _pyre_migrations;";
+
+// Add this near the top with other constants
+const GET_SCHEMA: &str = "SELECT schema FROM _pyre_schema LIMIT 1;";
 
 /*
 Introspection is used to drive migrations.
@@ -41,7 +46,7 @@ pub enum MigrationState {
 pub struct Introspection {
     pub tables: Vec<Table>,
     pub migration_state: MigrationState,
-    pub warnings: Vec<Warning>,
+    pub schema: Option<crate::ast::Schema>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,11 +54,6 @@ pub struct Table {
     pub name: String,
     pub columns: Vec<ColumnInfo>,
     pub foreign_keys: Vec<ForeignKey>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum Warning {
-    WasManuallyModified(String),
 }
 
 // Intermediates
@@ -318,10 +318,26 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
 
                     let migration_state = get_migration_state(&conn).await?;
 
+                    // Query for schema
+                    let args: Vec<String> = vec![];
+                    let mut schema_result = conn.query(GET_SCHEMA, args).await?;
+                    let schema = if let Some(row) = schema_result.next().await? {
+                        // Deserialize the schema JSON string into Schema struct
+                        match libsql::de::from_row::<String>(&row) {
+                            Ok(schema_str) => match serde_json::from_str(&schema_str) {
+                                Ok(schema) => Some(schema),
+                                Err(_) => None,
+                            },
+                            Err(_) => None,
+                        }
+                    } else {
+                        None
+                    };
+
                     Ok(Introspection {
                         tables,
                         migration_state,
-                        warnings: vec![],
+                        schema,
                     })
                 }
                 Err(e) => {

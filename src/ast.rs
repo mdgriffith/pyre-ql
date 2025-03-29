@@ -6,7 +6,7 @@ pub struct Database {
     pub schemas: Vec<Schema>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Schema {
     pub namespace: String,
     pub session: Option<SessionDetails>,
@@ -40,7 +40,7 @@ pub fn is_empty_schema(schema: &Schema) -> bool {
     return false;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct SchemaFile {
     pub path: String,
     pub definitions: Vec<Definition>,
