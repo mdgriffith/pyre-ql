@@ -82,25 +82,34 @@ pub fn diff(
     }
 }
 
-// Helper function to create a Table from fields
-fn create_table_from_fields(
+fn add_fields(
     context: &crate::typecheck::Context,
-    name: &str,
     fields: &Vec<crate::ast::Field>,
-) -> crate::db::introspect::Table {
-    let mut columns = Vec::new();
-
+    columns: &mut Vec<crate::db::introspect::ColumnInfo>,
+    field_namespace: Option<String>,
+    seen_fields: &mut std::collections::HashSet<String>,
+) {
     for f in fields {
         if let crate::ast::Field::Column(col) = f {
+            let column_name = if let Some(namespace) = &field_namespace {
+                format!("{}__{}", namespace, col.name)
+            } else {
+                col.name.clone()
+            };
+
+            if seen_fields.contains(&column_name) {
+                continue;
+            }
+            seen_fields.insert(column_name.clone());
+
             match &col.serialization_type {
                 crate::ast::SerializationType::Concrete(concrete) => {
-                    // For concrete types, create a single column
                     columns.push(crate::db::introspect::ColumnInfo {
-                        cid: 0, // This will be set by SQLite
-                        name: col.name.clone(),
+                        cid: 0,
+                        name: column_name,
                         column_type: concrete.to_sql_type(),
                         notnull: !col.nullable,
-                        dflt_value: None, // We don't track default values in the diff
+                        dflt_value: None,
                         pk: col
                             .directives
                             .iter()
@@ -111,10 +120,9 @@ fn create_table_from_fields(
                     if let Some((_, type_)) = context.types.get(typename) {
                         match type_ {
                             crate::typecheck::Type::OneOf { variants } => {
-                                // Add discriminator column only for OneOf types
                                 columns.push(crate::db::introspect::ColumnInfo {
                                     cid: 0,
-                                    name: col.name.clone(),
+                                    name: column_name.clone(),
                                     column_type: crate::ast::ConcreteSerializationType::Text
                                         .to_sql_type(),
                                     notnull: !col.nullable,
@@ -122,40 +130,23 @@ fn create_table_from_fields(
                                     pk: false,
                                 });
 
-                                // Track seen fields to avoid duplicates
-                                let mut seen_fields = std::collections::HashSet::new();
-
                                 for variant in variants {
                                     if let Some(var_fields) = &variant.fields {
-                                        for var_field in var_fields {
-                                            if let crate::ast::Field::Column(var_col) = var_field {
-                                                let field_name =
-                                                    format!("{}__{}", col.name, var_col.name);
-
-                                                // Only add the field if we haven't seen it before
-                                                if !seen_fields.contains(&field_name) {
-                                                    seen_fields.insert(field_name.clone());
-                                                    columns.push(
-                                                        crate::db::introspect::ColumnInfo {
-                                                            cid: 0,
-                                                            name: field_name,
-                                                            column_type: var_col.type_.clone(),
-                                                            notnull: false, // Variant fields are always technically nullable
-                                                            dflt_value: None,
-                                                            pk: false,
-                                                        },
-                                                    );
-                                                }
-                                            }
-                                        }
+                                        // Recursive call with the current column name as namespace
+                                        add_fields(
+                                            context,
+                                            var_fields,
+                                            columns,
+                                            Some(column_name.clone()),
+                                            seen_fields,
+                                        );
                                     }
                                 }
                             }
-                            // For other types (Integer, Float, String, Record), create a single column
                             _ => {
                                 columns.push(crate::db::introspect::ColumnInfo {
                                     cid: 0,
-                                    name: col.name.clone(),
+                                    name: column_name,
                                     column_type: typename.clone(),
                                     notnull: !col.nullable,
                                     dflt_value: None,
@@ -170,6 +161,21 @@ fn create_table_from_fields(
             }
         }
     }
+}
+
+fn create_table_from_fields(
+    context: &crate::typecheck::Context,
+    name: &str,
+    fields: &Vec<crate::ast::Field>,
+) -> crate::db::introspect::Table {
+    let mut columns = Vec::new();
+    add_fields(
+        context,
+        fields,
+        &mut columns,
+        None,
+        &mut std::collections::HashSet::new(),
+    );
 
     crate::db::introspect::Table {
         name: crate::ast::get_tablename(name, fields),
