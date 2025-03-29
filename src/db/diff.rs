@@ -88,6 +88,7 @@ fn add_fields(
     columns: &mut Vec<crate::db::introspect::ColumnInfo>,
     field_namespace: Option<String>,
     seen_fields: &mut std::collections::HashSet<String>,
+    force_nullable: bool,
 ) {
     for f in fields {
         if let crate::ast::Field::Column(col) = f {
@@ -108,7 +109,7 @@ fn add_fields(
                         cid: 0,
                         name: column_name,
                         column_type: concrete.to_sql_type(),
-                        notnull: !col.nullable,
+                        notnull: !force_nullable && !col.nullable,
                         dflt_value: None,
                         pk: col
                             .directives
@@ -125,20 +126,21 @@ fn add_fields(
                                     name: column_name.clone(),
                                     column_type: crate::ast::ConcreteSerializationType::Text
                                         .to_sql_type(),
-                                    notnull: !col.nullable,
+                                    notnull: !force_nullable && !col.nullable,
                                     dflt_value: None,
                                     pk: false,
                                 });
 
                                 for variant in variants {
                                     if let Some(var_fields) = &variant.fields {
-                                        // Recursive call with the current column name as namespace
+                                        // Pass true for force_nullable for variant fields
                                         add_fields(
                                             context,
                                             var_fields,
                                             columns,
                                             Some(column_name.clone()),
                                             seen_fields,
+                                            true, // Force nullable for variant fields
                                         );
                                     }
                                 }
@@ -148,7 +150,7 @@ fn add_fields(
                                     cid: 0,
                                     name: column_name,
                                     column_type: typename.clone(),
-                                    notnull: !col.nullable,
+                                    notnull: !force_nullable && !col.nullable,
                                     dflt_value: None,
                                     pk: col.directives.iter().any(|d| {
                                         matches!(d, crate::ast::ColumnDirective::PrimaryKey)
@@ -175,6 +177,7 @@ fn create_table_from_fields(
         &mut columns,
         None,
         &mut std::collections::HashSet::new(),
+        false,
     );
 
     crate::db::introspect::Table {
