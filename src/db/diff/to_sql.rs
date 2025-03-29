@@ -23,7 +23,7 @@ pub fn to_sql(diff: &Diff) -> String {
             create_stmt = create_stmt.trim_end_matches(')').to_string();
             for fk in &table.foreign_keys {
                 create_stmt.push_str(&format!(
-                    ",\n  FOREIGN KEY ({}) REFERENCES {}({})",
+                    ",\n  foreign key ({}) references {}({})",
                     fk.from, fk.table, fk.to
                 ));
             }
