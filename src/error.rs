@@ -1,4 +1,3 @@
-
 use crate::ast;
 use colored::Colorize;
 use nom::ToUsize;
@@ -1331,3 +1330,15 @@ pub fn format_libsql_error(e: &libsql::Error) -> String {
         }
     }
 }
+
+pub fn report_and_exit(error_list: Vec<Error>, paths: &crate::filesystem::Found) -> ! {
+    for err in error_list {
+        let schema_source = crate::filesystem::get_schema_source(&err.filepath, paths).unwrap_or("");
+        let formatted_error = format_error(&schema_source, &err);
+        eprintln!("{}", &formatted_error);
+    }
+    std::process::exit(1);
+}
+
+
+

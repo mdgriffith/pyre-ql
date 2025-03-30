@@ -22,15 +22,7 @@ fn execute(_options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::
 
     match typecheck::check_schema(&schema) {
         Err(error_list) => {
-            for err in error_list {
-                let schema_source =
-                    filesystem::get_schema_source(&err.filepath, &paths).unwrap_or("");
-
-                let formatted_error = error::format_error(&schema_source, &err);
-
-                eprintln!("{}", &formatted_error);
-            }
-            std::process::exit(1);
+            error::report_and_exit(error_list, &paths);
         }
         Ok(mut context) => {
             // Clear the generated folder
