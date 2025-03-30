@@ -1,3 +1,4 @@
+use crate::ast;
 use crate::error;
 
 use libsql;
@@ -10,8 +11,6 @@ use std::path::{Path, PathBuf};
 
 pub mod diff;
 pub mod introspect;
-
-pub const MIGRATION_TABLE: &str = "_pyre_migrations";
 
 #[derive(Debug)]
 pub enum DbError {
@@ -158,9 +157,19 @@ impl MigrationError {
     }
 }
 
-pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(), MigrationError> {
+/*
+
+This doesn't do any checking on the schema or the migrations, it just runs them.
+
+
+*/
+pub async fn migrate(
+    db: &libsql::Database,
+    schema: &ast::Schema,
+    migration_folder: &Path,
+) -> Result<(), MigrationError> {
     // Read migration directory
-    let migration_file_result = read_migrations(migration_folder);
+    let migration_file_result = read_migration_folder(migration_folder);
     match migration_file_result {
         Err(err) => {
             return Err(MigrationError::MigrationReadIoError(
@@ -180,6 +189,12 @@ pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(
 
                     let migration_state = introspect::get_migration_state(&conn).await.unwrap();
 
+                    // Run migration
+                    let tx = conn
+                        .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
+                        .await
+                        .unwrap();
+
                     for (migration_filename, migration_contents) in migration_files.file_contents {
                         // Check if migration has been run
                         let should_skip = match &migration_state {
@@ -193,17 +208,13 @@ pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(
                             continue;
                         }
 
-                        // Run migration
-                        let tx = conn
-                            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
-                            .await
-                            .unwrap();
-
                         tx.execute_batch(&migration_contents).await.unwrap();
                         record_migration(&tx, &migration_filename).await.unwrap();
-
-                        tx.commit().await.unwrap();
                     }
+
+                    insert_schema(&tx, schema).await.unwrap();
+
+                    tx.commit().await.unwrap();
                 }
             }
         }
@@ -212,16 +223,37 @@ pub async fn migrate(db: &libsql::Database, migration_folder: &Path) -> Result<(
     Ok(())
 }
 
+async fn insert_schema(
+    tx: &libsql::Transaction,
+    schema: &ast::Schema,
+) -> Result<(), libsql::Error> {
+    let schema_json = serde_json::to_string(schema).unwrap();
+    let insert_schema = &format!(
+        r#"INSERT INTO {} (schema) VALUES (json(?));"#,
+        crate::ext::string::quote(introspect::SCHEMA_TABLE)
+    );
+    tx.execute(insert_schema, libsql::params![schema_json])
+        .await?;
+    Ok(())
+}
+
 async fn create_migration_table_if_not_exists(
     conn: &libsql::Connection,
 ) -> Result<(), libsql::Error> {
     let create_migration_table = &format!(
         r#"
-CREATE TABLE IF NOT EXISTS {} (
-    id INTEGER PRIMARY KEY,
+create table if not exists {} (
+    id integer primary key,
     name TEXT NOT NULL
-);"#,
-        crate::ext::string::quote(MIGRATION_TABLE)
+);
+
+create table if not exists {} (
+    id integer primary key,
+    schema blob not null check (jsonb_valid(schema))
+);
+"#,
+        crate::ext::string::quote(introspect::MIGRATION_TABLE),
+        crate::ext::string::quote(introspect::SCHEMA_TABLE)
     );
     conn.execute_batch(create_migration_table).await
 }
@@ -232,7 +264,7 @@ async fn record_migration(
 ) -> Result<u64, libsql::Error> {
     let insert_migration = &format!(
         r#"INSERT INTO {} (name) VALUES (?);"#,
-        crate::ext::string::quote(MIGRATION_TABLE)
+        crate::ext::string::quote(introspect::MIGRATION_TABLE)
     );
     conn.execute(insert_migration, libsql::params![migration_name])
         .await
@@ -260,7 +292,7 @@ pub struct Migrations {
     pub file_contents: Vec<(String, String)>,
 }
 
-pub fn read_migrations(migration_folder: &Path) -> Result<Migrations, std::io::Error> {
+pub fn read_migration_folder(migration_folder: &Path) -> Result<Migrations, std::io::Error> {
     // Initialize the HashMap and Vec
     let mut file_map: HashMap<String, bool> = HashMap::new();
     let mut file_contents: Vec<(String, String)> = Vec::new();
