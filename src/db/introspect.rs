@@ -267,11 +267,24 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
             let table_list_result = conn.query(LIST_TABLES, args).await;
             let mut tables: Vec<Table> = vec![];
 
+            let mut has_schema_table = false;
+            let mut has_migration_table = false;
+
+            // Get schema
             match table_list_result {
                 Ok(mut table_rows) => {
                     while let Some(row) = table_rows.next().await? {
                         let table = libsql::de::from_row::<DbTable>(&row).unwrap();
-                        if table.name == "sqlite_sequence" || table.name == MIGRATION_TABLE {
+                        if table.name == "sqlite_sequence"
+                            || table.name == MIGRATION_TABLE
+                            || table.name == SCHEMA_TABLE
+                        {
+                            if table.name == SCHEMA_TABLE {
+                                has_schema_table = true;
+                            }
+                            if table.name == MIGRATION_TABLE {
+                                has_migration_table = true;
+                            }
                             continue;
                         }
 
@@ -316,23 +329,28 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                         })
                     }
 
-                    let migration_state = get_migration_state(&conn).await?;
+                    let migration_state = if has_migration_table {
+                        get_migration_state(&conn).await?
+                    } else {
+                        MigrationState::NoMigrationTable
+                    };
 
                     // Query for schema
-                    let args: Vec<String> = vec![];
-                    let mut schema_result = conn.query(GET_SCHEMA, args).await?;
-                    let schema = if let Some(row) = schema_result.next().await? {
-                        // Deserialize the schema JSON string into Schema struct
-                        match libsql::de::from_row::<String>(&row) {
-                            Ok(schema_str) => match serde_json::from_str(&schema_str) {
-                                Ok(schema) => Some(schema),
-                                Err(_) => None,
-                            },
-                            Err(_) => None,
+                    let mut schema = None;
+                    if has_schema_table {
+                        let args: Vec<String> = vec![];
+                        let mut schema_result = conn.query(GET_SCHEMA, args).await?;
+                        if let Some(row) = schema_result.next().await? {
+                            // Deserialize the schema JSON string into Schema struct
+                            match libsql::de::from_row::<String>(&row) {
+                                Ok(schema_str) => match serde_json::from_str(&schema_str) {
+                                    Ok(schema_json) => schema = Some(schema_json),
+                                    Err(_) => (),
+                                },
+                                Err(_) => (),
+                            }
                         }
-                    } else {
-                        None
-                    };
+                    }
 
                     Ok(Introspection {
                         tables,
