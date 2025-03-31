@@ -1,4 +1,5 @@
 use crate::ast;
+use crate::error::{ColumnDiff, Error, ErrorType};
 use serde::{Deserialize, Serialize};
 
 // Define a type to represent the diff of two schemas
@@ -10,6 +11,80 @@ pub struct SchemaDiff {
     pub modified_taggeds: Vec<DetailedTaggedDiff>,
 }
 
+pub fn to_errors(diff: SchemaDiff) -> Vec<Error> {
+    let mut errors = Vec::new();
+
+    // Check for dropped tables
+    for table in &diff.removed {
+        match table {
+            crate::ast::Definition::Record { name, .. } => {
+                errors.push(Error {
+                    error_type: ErrorType::MigrationTableDropped {
+                        table_name: name.clone(),
+                    },
+                    filepath: "".to_string(), // We don't have filepath information in diffs
+                    locations: vec![],
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // Check for modified records
+    for record_diff in &diff.modified_records {
+        for change in &record_diff.changes {
+            match change {
+                RecordChange::RemovedField(field) => {
+                    errors.push(Error {
+                        error_type: ErrorType::MigrationColumnDropped {
+                            table_name: record_diff.name.clone(),
+                            column_name: field.name.clone(),
+                            added_columns: vec![],
+                        },
+                        filepath: "".to_string(),
+                        locations: vec![],
+                    });
+                }
+                RecordChange::ModifiedField { name, changes } => {
+                    errors.push(Error {
+                        error_type: ErrorType::MigrationColumnModified {
+                            table_name: record_diff.name.clone(),
+                            column_name: name.clone(),
+                            changes: changes.clone(),
+                        },
+                        filepath: "".to_string(),
+                        locations: vec![],
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Check for modified tagged types
+    for tagged_diff in &diff.modified_taggeds {
+        for change in &tagged_diff.changes {
+            match change {
+                TaggedChange::RemovedVariant(variant) => {
+                    errors.push(Error {
+                        error_type: ErrorType::MigrationVariantRemoved {
+                            tagged_name: tagged_diff.name.clone(),
+                            variant_name: variant.name.clone(),
+                        },
+                        filepath: "".to_string(),
+                        locations: vec![],
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    errors
+}
+
+// These are semantic errors in the diff
+// Which involves the schema changes that are not acknoledged by the new schema.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DetailedTaggedDiff {
     pub name: String,
@@ -38,14 +113,6 @@ pub enum RecordChange {
     AddedField(crate::ast::Column),
     RemovedField(crate::ast::Column),
     ModifiedField { name: String, changes: ColumnDiff },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ColumnDiff {
-    pub type_changed: Option<(String, String)>, // (old_type, new_type)
-    pub nullable_changed: Option<(bool, bool)>, // (old_nullable, new_nullable)
-    pub added_directives: Vec<crate::ast::ColumnDirective>,
-    pub removed_directives: Vec<crate::ast::ColumnDirective>,
 }
 
 // Function to diff two Schema values

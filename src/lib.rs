@@ -1,7 +1,6 @@
 mod ast;
 pub mod command;
 mod db;
-mod diff;
 mod error;
 mod ext;
 mod filesystem;

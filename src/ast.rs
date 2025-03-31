@@ -1,5 +1,8 @@
 use crate::ext::string;
+
 use serde::{Deserialize, Serialize};
+
+pub mod diff;
 
 #[derive(Debug)]
 pub struct Database {
