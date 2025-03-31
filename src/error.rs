@@ -181,6 +181,25 @@ pub enum ErrorType {
         other_schemas: Vec<String>,
     },
     LimitOffsetOnlyInFlatRecord,
+
+    // Schema Diff Errors
+    MigrationTableDropped {
+        table_name: String,
+    },
+    MigrationColumnDropped {
+        table_name: String,
+        column_name: String,
+        added_columns: Vec<String>,
+    },
+    MigrationColumnModified {
+        table_name: String,
+        column_name: String,
+        changes: ColumnDiff,
+    },
+    MigrationVariantRemoved {
+        tagged_name: String,
+        variant_name: String,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1123,6 +1142,18 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
                
             )
         }
+        ErrorType::MigrationTableDropped { table_name } => {
+            format!("The table {} has been dropped. This might be causing issues in your query.", yellow_if(in_color, table_name))
+        }
+        ErrorType::MigrationColumnDropped { table_name, column_name, added_columns } => {
+            format!("The column {} has been dropped from the table {}. This might be causing issues in your query. Consider adding the column back or updating your query to use the new column format.", yellow_if(in_color, column_name), yellow_if(in_color, table_name))
+        }
+        ErrorType::MigrationColumnModified { table_name, column_name, changes } => {
+            format!("The column {} has been modified in the table {}. This might be causing issues in your query. Consider updating your query to use the new column format.", yellow_if(in_color, column_name), yellow_if(in_color, table_name))
+        }
+        ErrorType::MigrationVariantRemoved { tagged_name, variant_name } => {
+            format!("The variant {} has been removed from the tagged type {}. This might be causing issues in your query. Consider updating your query to use the new variant format.", yellow_if(in_color, variant_name), yellow_if(in_color, tagged_name))
+        }
     }
 }
 
@@ -1170,6 +1201,10 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::MultipleSchemaWrites { .. } => "Multiple Schema Writes",
         ErrorType::LimitOffsetOnlyInFlatRecord => "Limit/Offset Only In Flat Record",
         ErrorType::VariantFieldTypeCollision { .. } => "Variant Field Type Collision",
+        ErrorType::MigrationTableDropped { .. } => "Table Dropped",
+        ErrorType::MigrationColumnDropped { .. } => "Column Dropped",
+        ErrorType::MigrationColumnModified { .. } => "Column Modified",
+        ErrorType::MigrationVariantRemoved { .. } => "Variant Removed",
     }
     .to_string()
 }
@@ -1338,6 +1373,14 @@ pub fn report_and_exit(error_list: Vec<Error>, paths: &crate::filesystem::Found)
         eprintln!("{}", &formatted_error);
     }
     std::process::exit(1);
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ColumnDiff {
+    pub type_changed: Option<(String, String)>, // (old_type, new_type)
+    pub nullable_changed: Option<(bool, bool)>, // (old_nullable, new_nullable)
+    pub added_directives: Vec<ast::ColumnDirective>,
+    pub removed_directives: Vec<ast::ColumnDirective>,
 }
 
 
