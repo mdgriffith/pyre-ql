@@ -85,6 +85,15 @@ enum Commands {
         migration_dir: String,
     },
 
+    /// Create new resources
+    New {
+        #[command(subcommand)]
+        resource: NewCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum NewCommands {
     /// Generate a migration
     Migration {
         /// The migration name.
@@ -147,23 +156,25 @@ async fn main() -> io::Result<()> {
         } => {
             command::migrate(&options, database, auth, migration_dir, namespace).await?;
         }
-        Commands::Migration {
-            name,
-            db,
-            auth,
-            migration_dir,
-            namespace,
-        } => {
-            command::generate_migration(
-                &options,
+        Commands::New { resource } => match resource {
+            NewCommands::Migration {
                 name,
                 db,
                 auth,
-                Path::new(migration_dir),
+                migration_dir,
                 namespace,
-            )
-            .await?;
-        }
+            } => {
+                command::generate_migration(
+                    &options,
+                    name,
+                    db,
+                    auth,
+                    Path::new(migration_dir),
+                    namespace,
+                )
+                .await?;
+            }
+        },
     }
     Ok(())
 }
