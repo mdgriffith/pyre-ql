@@ -8,7 +8,7 @@ use pyre::parser;
 use pyre::typecheck;
 
 pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()> {
-    match run_check(filesystem::collect_filepaths(&options.in_dir)?) {
+    match run_check(crate::filesystem::collect_filepaths(&options.in_dir)?) {
         Ok(errors) => {
             let has_errors = !errors.is_empty();
             if json {

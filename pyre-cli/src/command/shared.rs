@@ -36,7 +36,7 @@ pub struct FileError {
 }
 
 pub fn check_namespace_requirements(namespace: &Option<String>, options: &Options) {
-    let namespaces_result = filesystem::read_namespaces(Path::new(&options.in_dir));
+    let namespaces_result = crate::filesystem::read_namespaces(Path::new(&options.in_dir));
     match namespaces_result {
         Ok(namespaces_found) => match namespaces_found {
             filesystem::NamespacesFound::Default => {

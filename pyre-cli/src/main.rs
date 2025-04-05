@@ -4,6 +4,7 @@ use std::path::Path;
 
 mod command;
 mod db;
+mod filesystem;
 
 #[derive(Parser)]
 #[command(name = "pyre")]

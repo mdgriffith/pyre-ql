@@ -23,7 +23,7 @@ pub async fn migrate<'a>(
     };
 
     // Get schema
-    let paths = filesystem::collect_filepaths(&options.in_dir)?;
+    let paths = crate::filesystem::collect_filepaths(&options.in_dir)?;
     let all_schemas = parse_database_schemas(&paths)?;
 
     let real_namespace = match namespace {
@@ -88,7 +88,7 @@ pub async fn push<'a>(
     check_namespace_requirements(&namespace, &options);
 
     // Get schema
-    let paths = filesystem::collect_filepaths(&options.in_dir)?;
+    let paths = crate::filesystem::collect_filepaths(&options.in_dir)?;
     let all_schemas = parse_database_schemas(&paths)?;
 
     let real_namespace = match namespace {

@@ -25,11 +25,11 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
 
     if multidb {
         let schema_dir = pyre_dir.join("schema");
-        filesystem::create_dir_if_not_exists(&schema_dir)?;
+        crate::filesystem::create_dir_if_not_exists(&schema_dir)?;
 
         // Create Base Schema
         let base_dir = schema_dir.join("base");
-        filesystem::create_dir_if_not_exists(&base_dir)?;
+        crate::filesystem::create_dir_if_not_exists(&base_dir)?;
 
         database.schemas.push(ast::Schema {
             namespace: "Base".to_string(),
@@ -49,7 +49,7 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
 
         // Create User Schema
         let user_dir = schema_dir.join("user");
-        filesystem::create_dir_if_not_exists(&user_dir)?;
+        crate::filesystem::create_dir_if_not_exists(&user_dir)?;
 
         database.schemas.push(ast::Schema {
             namespace: "User".to_string(),

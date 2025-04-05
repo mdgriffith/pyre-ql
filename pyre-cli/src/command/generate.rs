@@ -12,7 +12,7 @@ use pyre::typecheck;
 pub fn generate(options: &Options, out: &str) -> io::Result<()> {
     execute(
         options,
-        filesystem::collect_filepaths(&options.in_dir)?,
+        crate::filesystem::collect_filepaths(&options.in_dir)?,
         Path::new(out),
     )
 }
@@ -36,7 +36,7 @@ fn execute(_options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::
             clear(&out_dir)?;
 
             // Ensure dir is present
-            filesystem::create_dir_if_not_exists(&out_dir)?;
+            crate::filesystem::create_dir_if_not_exists(&out_dir)?;
 
             let mut files: Vec<filesystem::GeneratedFile<String>> = Vec::new();
 
@@ -86,7 +86,7 @@ fn execute(_options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::
                 }
             }
 
-            filesystem::write_generated_files(out_dir, files)?;
+            crate::filesystem::write_generated_files(out_dir, files)?;
         }
     }
 

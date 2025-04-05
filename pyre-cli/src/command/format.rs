@@ -6,8 +6,8 @@ use super::shared::{
     get_stdin, parse_database_schemas, parse_single_schema, parse_single_schema_from_source,
     write_db_schema, write_schema, Options,
 };
+use crate::filesystem;
 use pyre::ast;
-use pyre::filesystem;
 use pyre::format;
 use pyre::generate;
 use pyre::parser;
@@ -32,7 +32,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
 
             match get_stdin()? {
                 Some(stdin) => {
-                    if filesystem::is_schema_file(file_path) {
+                    if pyre::filesystem::is_schema_file(file_path) {
                         let mut schema = parse_single_schema_from_source(file_path, &stdin)?;
                         format::schema(&mut schema);
                         // Always write to stdout if stdin is provided
@@ -45,7 +45,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                     }
                 }
                 None => {
-                    if filesystem::is_schema_file(file_path) {
+                    if pyre::filesystem::is_schema_file(file_path) {
                         let mut schema = parse_single_schema(file_path)?;
                         format::schema(&mut schema);
                         write_schema(&options, &to_stdout, &schema)?;
@@ -65,7 +65,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                     continue;
                 }
 
-                if filesystem::is_schema_file(&file_path) {
+                if pyre::filesystem::is_schema_file(&file_path) {
                     let mut schema = parse_single_schema(&file_path)?;
                     format::schema(&mut schema);
                     write_schema(&options, &to_stdout, &schema)?;
@@ -84,7 +84,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
     Ok(())
 }
 
-fn format_all(options: &Options, paths: filesystem::Found) -> io::Result<()> {
+fn format_all(options: &Options, paths: pyre::filesystem::Found) -> io::Result<()> {
     let mut database = parse_database_schemas(&paths)?;
 
     format::database(&mut database);

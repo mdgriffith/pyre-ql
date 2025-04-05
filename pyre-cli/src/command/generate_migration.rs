@@ -63,7 +63,7 @@ pub async fn generate_migration<'a>(
                         return Ok(());
                     }
 
-                    let paths = filesystem::collect_filepaths(&options.in_dir)?;
+                    let paths = crate::filesystem::collect_filepaths(&options.in_dir)?;
                     let current_db = parse_database_schemas(&paths)?;
 
                     match typecheck::check_schema(&current_db) {
@@ -79,12 +79,12 @@ pub async fn generate_migration<'a>(
 
                             println!("DB Diff: {:#?}", db_diff);
 
-                            filesystem::create_dir_if_not_exists(migration_dir)?;
+                            crate::filesystem::create_dir_if_not_exists(migration_dir)?;
 
                             let current_date = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
                             let migration_folder =
                                 target_namespace_dir.join(format!("{}_{}", current_date, name));
-                            filesystem::create_dir_if_not_exists(&migration_folder)?;
+                            crate::filesystem::create_dir_if_not_exists(&migration_folder)?;
 
                             let migration_file = migration_folder.join("migration.sql");
                             let diff_file = migration_folder.join("schema.diff");
