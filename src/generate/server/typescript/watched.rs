@@ -1,8 +1,7 @@
 use crate::ast;
 use crate::ext::string;
 use crate::typecheck;
-use std::fs;
-use std::io::Write;
+
 use std::path::Path;
 
 pub fn operation_name(operation: &ast::QueryOperation) -> String {
@@ -15,9 +14,10 @@ pub fn operation_name(operation: &ast::QueryOperation) -> String {
     .to_string()
 }
 
-pub fn write(dir: &Path, context: &typecheck::Context) {
-    let target_path = dir.join("watched.ts");
-
+pub fn generate(
+    files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
+    context: &typecheck::Context,
+) {
     let mut content = String::new();
 
     content
@@ -77,10 +77,10 @@ pub fn write(dir: &Path, context: &typecheck::Context) {
         write_runner(context, &mut content);
     }
 
-    let mut output = fs::File::create(target_path).expect("Failed to create file");
-    output
-        .write_all(content.as_bytes())
-        .expect("Failed to write to file");
+    files.push(crate::filesystem::generate_text_file(
+        Path::new("watched.ts"),
+        content,
+    ));
 }
 
 fn write_runner(context: &typecheck::Context, content: &mut String) {

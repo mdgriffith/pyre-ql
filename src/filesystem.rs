@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
+use std::path::PathBuf;
 use walkdir::WalkDir;
 
 #[derive(Debug)]
@@ -189,3 +190,48 @@ pub fn create_dir_if_not_exists(path: &Path) -> io::Result<()> {
         fs::create_dir_all(path)
     }
 }
+
+/// Represents a file to be generated
+#[derive(Debug)]
+pub struct GeneratedFile<T> {
+    pub path: std::path::PathBuf,
+    pub contents: T,
+}
+
+/// Writes a collection of generated files to disk under a base directory
+pub fn write_generated_files<T: AsRef<[u8]>>(
+    base_path: &Path,
+    files: Vec<GeneratedFile<T>>,
+) -> io::Result<()> {
+    for file in files {
+        let full_path = base_path.join(file.path);
+
+        // Create parent directories if they don't exist
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        fs::write(full_path, file.contents)?;
+    }
+
+    Ok(())
+}
+
+impl<T> GeneratedFile<T> {
+    pub fn new(path: impl Into<PathBuf>, contents: T) -> Self {
+        Self {
+            path: path.into(),
+            contents,
+        }
+    }
+}
+
+// Helper function for common text file generation
+pub fn generate_text_file(
+    path: impl Into<PathBuf>,
+    contents: impl Into<String>,
+) -> GeneratedFile<String> {
+    GeneratedFile::new(path, contents.into())
+}
+
+// Writing files

@@ -1,10 +1,8 @@
 use std::collections::HashMap;
-use std::io::{self};
 use std::path::Path;
 use std::path::PathBuf;
 
 use crate::ast;
-use crate::filesystem;
 use crate::generate;
 use crate::typecheck;
 
@@ -23,21 +21,15 @@ pub enum Server {
     Typescript,
 }
 
-pub fn write_schema(
+pub fn generate_schema(
     context: &typecheck::Context,
     database: &ast::Database,
     base_out_dir: &Path,
-) -> io::Result<()> {
-    write_client_schema(&Client::Elm, context, database, base_out_dir)?;
-    write_client_schema(&Client::Node, context, database, base_out_dir)?;
-    write_server_schema(&Server::Typescript, context, database, base_out_dir)
-}
-
-pub fn clear(path: &Path) -> io::Result<()> {
-    if path.exists() {
-        std::fs::remove_dir_all(path)?;
-    }
-    Ok(())
+    files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
+) {
+    write_client_schema(&Client::Elm, context, database, base_out_dir, files);
+    write_client_schema(&Client::Node, context, database, base_out_dir, files);
+    write_server_schema(&Server::Typescript, context, database, base_out_dir, files)
 }
 
 // CLIENT
@@ -47,13 +39,13 @@ fn write_client_schema(
     context: &typecheck::Context,
     database: &ast::Database,
     base_out_dir: &Path,
-) -> io::Result<()> {
+    files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
+) {
     let client_dir = base_out_dir.join("client");
-    filesystem::create_dir_if_not_exists(&client_dir)?;
     let out_dir = to_client_dir_path(client, &client_dir);
     match client {
-        Client::Elm => generate::client::elm::write(&out_dir, database),
-        Client::Node => generate::client::node::write(&out_dir, database),
+        Client::Elm => generate::client::elm::generate(database, files),
+        Client::Node => generate::client::node::generate(&out_dir, database, files),
     }
 }
 
@@ -64,18 +56,18 @@ fn write_server_schema(
     context: &typecheck::Context,
     database: &ast::Database,
     base_out_dir: &Path,
-) -> io::Result<()> {
+    files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
+) {
     // Target directory is
     // {base_out_dir}/server/{lang}
     let server_dir = base_out_dir.join("server");
-    filesystem::create_dir_if_not_exists(&server_dir)?;
     let out_dir = to_server_dir_path(lang, &server_dir);
     // out_dir is
     // {base_out_dir}/server/{lang}
     match lang {
         Server::Typescript => {
             // Server schema
-            generate::server::typescript::write(&context, database, &out_dir)
+            generate::server::typescript::generate(&context, database, &out_dir, files)
         }
     }
 }
@@ -101,7 +93,8 @@ pub fn write_queries(
     all_query_info: &HashMap<String, typecheck::QueryInfo>,
     database: &ast::Database,
     base_out_dir: &Path,
-) -> io::Result<()> {
+    files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
+) {
     write_client_queries(
         &Client::Elm,
         context,
@@ -109,7 +102,8 @@ pub fn write_queries(
         all_query_info,
         database,
         base_out_dir,
-    )?;
+        files,
+    );
     write_client_queries(
         &Client::Node,
         context,
@@ -117,15 +111,17 @@ pub fn write_queries(
         all_query_info,
         database,
         base_out_dir,
-    )?;
+        files,
+    );
     write_server_queries(
         &Server::Typescript,
         context,
         query_list,
         all_query_info,
         database,
-        base_out_dir,
-    )
+        files,
+    );
+    ()
 }
 
 // CLIENT
@@ -137,14 +133,19 @@ fn write_client_queries(
     all_query_info: &HashMap<String, typecheck::QueryInfo>,
     database: &ast::Database,
     base_out_dir: &Path,
-) -> io::Result<()> {
+    files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
+) {
     let client_dir = base_out_dir.join("client");
-    filesystem::create_dir_if_not_exists(&client_dir)?;
+    // filesystem::create_dir_if_not_exists(&client_dir)?;
     let out_dir = to_client_dir_path(client, &client_dir);
 
     match client {
-        Client::Elm => generate::client::elm::write_queries(&out_dir, &context, &query_list),
-        Client::Node => generate::client::node::write_queries(&out_dir, &context, &query_list),
+        Client::Elm => {
+            generate::client::elm::generate_queries(&context, &query_list, &out_dir, files)
+        }
+        Client::Node => {
+            generate::client::node::generate_queries(&context, &query_list, &out_dir, files)
+        }
     }
 }
 
@@ -156,19 +157,20 @@ fn write_server_queries(
     query_list: &ast::QueryList,
     all_query_info: &HashMap<String, typecheck::QueryInfo>,
     database: &ast::Database,
-    base_out_dir: &Path,
-) -> io::Result<()> {
-    let server_dir = base_out_dir.join("server");
-    filesystem::create_dir_if_not_exists(&server_dir)?;
+    files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
+) {
+    let server_dir = Path::new("server");
+    // filesystem::create_dir_if_not_exists(&server_dir)?;
     let out_dir = to_server_dir_path(lang, &server_dir);
     match lang {
         Server::Typescript => {
             // Server queries
-            generate::server::typescript::write_queries(
-                &out_dir,
+            generate::server::typescript::generate_queries(
                 context,
                 &all_query_info,
                 &query_list,
+                &out_dir,
+                files,
             )
         }
     }

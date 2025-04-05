@@ -4,16 +4,15 @@ use crate::filesystem;
 use crate::generate::typealias;
 
 use crate::typecheck;
-use std::fs;
-use std::io::{self, Write};
 use std::path::Path;
 
 const NODE_REQUEST_MODULE: &str = include_str!("./static/node/db/request.ts");
 
-pub fn write(base_path: &Path, database: &ast::Database) -> io::Result<()> {
-    filesystem::create_dir_if_not_exists(&base_path)?;
-    filesystem::create_dir_if_not_exists(&base_path.join("db"))?;
-
+pub fn generate(
+    base_path: &Path,
+    database: &ast::Database,
+    files: &mut Vec<filesystem::GeneratedFile<String>>,
+) {
     // let formatted_elm = write_schema(database);
 
     // Top level Elm files
@@ -25,12 +24,10 @@ pub fn write(base_path: &Path, database: &ast::Database) -> io::Result<()> {
     //     .expect("Failed to write to file");
 
     // Decode Helper file
-    let db_request_path = base_path.join("db/request.ts");
-    let req_file = Path::new(&db_request_path);
-    let mut output = fs::File::create(req_file).expect("Failed to create file");
-    output
-        .write_all(NODE_REQUEST_MODULE.as_bytes())
-        .expect("Failed to write to file");
+    files.push(filesystem::GeneratedFile {
+        path: base_path.join("db/request.ts"),
+        contents: NODE_REQUEST_MODULE.to_string(),
+    });
 
     // Elm Decoders
     // let elm_db_decode_path = elm_path.join("Db/Decode.elm");
@@ -49,8 +46,6 @@ pub fn write(base_path: &Path, database: &ast::Database) -> io::Result<()> {
     // output
     //     .write_all(elm_encoders.as_bytes())
     //     .expect("Failed to write to file");
-
-    Ok(())
 }
 
 pub fn write_schema(database: &ast::Database) -> String {
@@ -448,25 +443,22 @@ fn to_type_encoder(fieldname: &str, type_: &str) -> String {
 
 //  QUERIES
 //
-pub fn write_queries(
-    dir: &Path,
+pub fn generate_queries(
     context: &typecheck::Context,
     query_list: &ast::QueryList,
-) -> io::Result<()> {
-    let query_dir = dir.join("query");
-    filesystem::create_dir_if_not_exists(&query_dir)?;
-
+    dir: &Path,
+    files: &mut Vec<filesystem::GeneratedFile<String>>,
+) {
     let formatter = crate::generate::server::typescript::to_formatter();
 
+    // Generate individual query files
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
-                let target_path = query_dir.join(&format!("{}.ts", q.name.to_string()));
-
-                let mut output = fs::File::create(target_path).expect("Failed to create file");
-                output
-                    .write_all(to_query_file(&context, &q, &formatter).as_bytes())
-                    .expect("Failed to write to file");
+                files.push(filesystem::GeneratedFile {
+                    path: dir.join("query").join(format!("{}.ts", q.name.to_string())),
+                    contents: to_query_file(context, q, &formatter),
+                });
             }
             _ => continue,
         }
@@ -478,14 +470,18 @@ pub fn write_queries(
 
     let mut query_file_contents = String::new();
     query_file_contents.push_str("\n\n");
+
+    // Generate imports and function definitions
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
+                // Add import
                 query_file_imports.push_str(&format!(
                     "import * as {}_Query from './query/{}';\n",
                     q.name, q.name
                 ));
 
+                // Add query function
                 let mut query_definition = format!(
                     "export async function {}(base_url: string, input: {}_Query.Input, headers?: Record<string, string>){{\n",
                     q.name, q.name
@@ -501,16 +497,14 @@ pub fn write_queries(
         }
     }
 
+    // Combine imports and contents
     query_file_imports.push_str(&query_file_contents);
 
-    let query_file = dir.join("query.ts");
-    let query_file_path = Path::new(&query_file);
-    let mut output = fs::File::create(query_file_path).expect("Failed to create file");
-    output
-        .write_all(query_file_imports.as_bytes())
-        .expect("Failed to write to file");
-
-    Ok(())
+    // Add the central query file
+    files.push(filesystem::GeneratedFile {
+        path: dir.join("query.ts"),
+        contents: query_file_imports,
+    });
 }
 
 fn to_query_file(

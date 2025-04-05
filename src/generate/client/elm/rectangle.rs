@@ -3,8 +3,6 @@ use crate::ext::string;
 use crate::filesystem;
 
 use crate::typecheck;
-use std::fs;
-use std::io::{self, Write};
 use std::path::Path;
 
 /*
@@ -35,47 +33,60 @@ Though now I've made the server do the "denesting" in the db, so we use a differ
 */
 
 const ELM_READ_MODULE: &str = include_str!("../static/elm/src/Db/Read.elm");
-pub fn write(elm_path: &Path, database: &ast::Database) -> io::Result<()> {
-    filesystem::create_dir_if_not_exists(&elm_path)?;
-    filesystem::create_dir_if_not_exists(&elm_path.join("Db"))?;
-
-    let formatted_elm = write_schema(database);
+pub fn generate(
+    elm_path: &Path,
+    database: &ast::Database,
+) -> Vec<crate::filesystem::GeneratedFile<String>> {
+    let mut files = Vec::new();
 
     // Top level Elm files
-    let elm_db_path = elm_path.join("Db.elm");
-    let elm_file = Path::new(&elm_db_path);
-    let mut output = fs::File::create(elm_file).expect("Failed to create file");
-    output
-        .write_all(formatted_elm.as_bytes())
-        .expect("Failed to write to file");
+    files.push(filesystem::generate_text_file(
+        elm_path.join("Db.elm"),
+        write_schema(database),
+    ));
 
     // Decode Helper file
-    let elm_db_read_path = elm_path.join("Db/Read.elm");
-    let elm_read_file = Path::new(&elm_db_read_path);
-    let mut output = fs::File::create(elm_read_file).expect("Failed to create file");
-    output
-        .write_all(ELM_READ_MODULE.as_bytes())
-        .expect("Failed to write to file");
+    files.push(filesystem::generate_text_file(
+        elm_path.join("Db/Read.elm"),
+        ELM_READ_MODULE,
+    ));
 
     // Elm Decoders
-    let elm_db_decode_path = elm_path.join("Db/Decode.elm");
-    let elm_decoders = to_schema_decoders(database);
-    let elm_decoder_file = Path::new(&elm_db_decode_path);
-    let mut output = fs::File::create(elm_decoder_file).expect("Failed to create file");
-    output
-        .write_all(elm_decoders.as_bytes())
-        .expect("Failed to write to file");
+    files.push(filesystem::generate_text_file(
+        elm_path.join("Db/Decode.elm"),
+        to_schema_decoders(database),
+    ));
 
     // Elm Encoders
-    let elm_db_encode_path = elm_path.join("Db/Encode.elm");
-    let elm_encoders = to_schema_encoders(database);
-    let elm_encoder_file = Path::new(&elm_db_encode_path);
-    let mut output = fs::File::create(elm_encoder_file).expect("Failed to create file");
-    output
-        .write_all(elm_encoders.as_bytes())
-        .expect("Failed to write to file");
+    files.push(filesystem::generate_text_file(
+        elm_path.join("Db/Encode.elm"),
+        to_schema_encoders(database),
+    ));
 
-    Ok(())
+    files
+}
+
+pub fn generate_queries(
+    dir: &Path,
+    context: &typecheck::Context,
+    query_list: &ast::QueryList,
+) -> Vec<crate::filesystem::GeneratedFile<String>> {
+    let mut files = Vec::new();
+
+    for operation in &query_list.queries {
+        match operation {
+            ast::QueryDef::Query(q) => {
+                files.push(filesystem::generate_text_file(
+                    dir.join("Query")
+                        .join(format!("{}.elm", q.name.to_string())),
+                    to_query_file(context, q),
+                ));
+            }
+            _ => continue,
+        }
+    }
+
+    files
 }
 
 pub fn write_schema(database: &ast::Database) -> String {
@@ -473,29 +484,6 @@ fn to_type_encoder(fieldname: &str, type_: &str) -> String {
 
 //  QUERIES
 //
-pub fn write_queries(
-    dir: &Path,
-    context: &typecheck::Context,
-    query_list: &ast::QueryList,
-) -> io::Result<()> {
-    let query_dir = dir.join("Query");
-    filesystem::create_dir_if_not_exists(&query_dir)?;
-    for operation in &query_list.queries {
-        match operation {
-            ast::QueryDef::Query(q) => {
-                let target_path = query_dir.join(&format!("{}.elm", q.name.to_string()));
-
-                let mut output = fs::File::create(target_path).expect("Failed to create file");
-                output
-                    .write_all(to_query_file(&context, &q).as_bytes())
-                    .expect("Failed to write to file");
-            }
-            _ => continue,
-        }
-    }
-    Ok(())
-}
-
 fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     let mut result = format!("module Query.{} exposing (..)\n\n\n", query.name);
 

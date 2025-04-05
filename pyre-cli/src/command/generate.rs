@@ -17,6 +17,13 @@ pub fn generate(options: &Options, out: &str) -> io::Result<()> {
     )
 }
 
+fn clear(path: &Path) -> io::Result<()> {
+    if path.exists() {
+        std::fs::remove_dir_all(path)?;
+    }
+    Ok(())
+}
+
 fn execute(_options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::Result<()> {
     let schema = parse_database_schemas(&paths)?;
 
@@ -26,13 +33,15 @@ fn execute(_options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::
         }
         Ok(mut context) => {
             // Clear the generated folder
-            generate::clear(&out_dir)?;
+            clear(&out_dir)?;
 
             // Ensure dir is present
             filesystem::create_dir_if_not_exists(&out_dir)?;
 
+            let mut files: Vec<filesystem::GeneratedFile<String>> = Vec::new();
+
             // Generate schema files
-            generate::write_schema(&context, &schema, out_dir)?;
+            generate::generate_schema(&context, &schema, out_dir, &mut files);
 
             for query_file_path in paths.query_files {
                 let mut query_file = fs::File::open(query_file_path.clone())?;
@@ -54,7 +63,8 @@ fn execute(_options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::
                                     &all_query_info,
                                     &schema,
                                     out_dir,
-                                )?;
+                                    &mut files,
+                                );
                             }
                             Err(error_list) => {
                                 let mut errors = "".to_string();
@@ -75,6 +85,8 @@ fn execute(_options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::
                     }
                 }
             }
+
+            filesystem::write_generated_files(out_dir, files)?;
         }
     }
 

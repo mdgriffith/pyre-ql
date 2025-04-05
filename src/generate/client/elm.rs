@@ -1,62 +1,30 @@
 use crate::ast;
 use crate::ext::string;
-use crate::filesystem;
+use crate::filesystem::{generate_text_file, GeneratedFile};
 
 use crate::generate::typealias;
 use crate::typecheck;
-use std::fs;
-use std::io::{self, Write};
 use std::path::Path;
+use std::path::PathBuf;
 
 mod rectangle;
 
 const ELM_DECODE_HELP: &str = include_str!("./static/elm/src/Json/Decode/Help.elm");
-pub fn write(elm_path: &Path, database: &ast::Database) -> io::Result<()> {
-    filesystem::create_dir_if_not_exists(&elm_path)?;
-    filesystem::create_dir_if_not_exists(&elm_path.join("Db"))?;
 
-    let formatted_elm = write_schema(database);
-
-    // Top level Elm files
-    let elm_db_path = elm_path.join("Db.elm");
-    let elm_file = Path::new(&elm_db_path);
-    let mut output = fs::File::create(elm_file).expect("Failed to create Db.elm");
-    output
-        .write_all(formatted_elm.as_bytes())
-        .expect("Failed to write to file");
-
-    // Decode Helper file
-    let elm_json_decode_help_path = elm_path.join("Json/Decode/Help.elm");
-    let elm_json_help_path = Path::new(&elm_json_decode_help_path);
-
-    // Create the directory for Json/Decode/Help.elm
-    std::fs::create_dir_all(elm_json_help_path.parent().unwrap())
-        .expect("Failed to create directory for Json/Decode/Help.elm");
-    let mut output =
-        fs::File::create(elm_json_help_path).expect("Failed to create Json/Decode/Help.elm");
-    output
-        .write_all(ELM_DECODE_HELP.as_bytes())
-        .expect("Failed to write to file");
-
-    // Elm Decoders
-    let elm_db_decode_path = elm_path.join("Db/Decode.elm");
-    let elm_decoders = to_schema_decoders(database);
-    let elm_decoder_file = Path::new(&elm_db_decode_path);
-    let mut output = fs::File::create(elm_decoder_file).expect("Failed to create Db/Decode.elm");
-    output
-        .write_all(elm_decoders.as_bytes())
-        .expect("Failed to write to file");
-
-    // Elm Encoders
-    let elm_db_encode_path = elm_path.join("Db/Encode.elm");
-    let elm_encoders = to_schema_encoders(database);
-    let elm_encoder_file = Path::new(&elm_db_encode_path);
-    let mut output = fs::File::create(elm_encoder_file).expect("Failed to create Db/Encode.elm");
-    output
-        .write_all(elm_encoders.as_bytes())
-        .expect("Failed to write to file");
-
-    Ok(())
+pub fn generate(database: &ast::Database, files: &mut Vec<GeneratedFile<String>>) {
+    files.push(generate_text_file("Db.elm", write_schema(database)));
+    files.push(generate_text_file(
+        "Json/Decode/Help.elm",
+        ELM_DECODE_HELP.to_string(),
+    ));
+    files.push(generate_text_file(
+        "Db/Decode.elm",
+        to_schema_decoders(database),
+    ));
+    files.push(generate_text_file(
+        "Db/Encode.elm",
+        to_schema_encoders(database),
+    ));
 }
 
 pub fn write_schema(database: &ast::Database) -> String {
@@ -434,28 +402,26 @@ fn to_type_encoder(fieldname: &str, type_: &str) -> String {
 
 //  QUERIES
 //
-pub fn write_queries(
-    dir: &Path,
+
+pub fn generate_queries(
     context: &typecheck::Context,
     query_list: &ast::QueryList,
-) -> io::Result<()> {
-    let query_dir = dir.join("Query");
-    filesystem::create_dir_if_not_exists(&query_dir)?;
+    base_out_dir: &Path,
+    files: &mut Vec<GeneratedFile<String>>,
+) {
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
-                let target_path = query_dir.join(&format!("{}.elm", q.name.to_string()));
-
-                let mut output = fs::File::create(target_path).expect("Failed to create file");
-                output
-                    .write_all(to_query_file(&context, &q).as_bytes())
-                    .expect("Failed to write to file");
+                files.push(generate_text_file(
+                    base_out_dir
+                        .join("Query")
+                        .join(format!("{}.elm", q.name.to_string())),
+                    to_query_file(context, q),
+                ));
             }
-            // Ignore coments and lines
             ast::QueryDef::QueryComment { .. } | ast::QueryDef::QueryLines { .. } => continue,
         }
     }
-    Ok(())
 }
 
 fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {

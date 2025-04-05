@@ -6,64 +6,28 @@ use crate::generate;
 use crate::generate::typealias;
 use crate::typecheck;
 use std::collections::HashMap;
-use std::fs;
-use std::io::{self, Write};
+use crate::filesystem::generate_text_file;
 use std::path::Path;
 
 const DB_ENGINE: &str = include_str!("./static/typescript/db.ts");
 
-/// Write all typescript files
-pub fn write(
-    context: &typecheck::Context,
+/// Generate all typescript files
+pub fn generate(
+    _context: &typecheck::Context,
     database: &ast::Database,
-    typescript_dir: &Path,
-) -> io::Result<()> {
-    filesystem::create_dir_if_not_exists(&typescript_dir)?;
-    filesystem::create_dir_if_not_exists(&typescript_dir.join("db"))?;
-
-    watched::write(&typescript_dir, context);
-
-    // Top level TS files
-    // DB engine as db.ts
-    let ts_db_path = &typescript_dir.join(Path::new("db.ts"));
-    let ts_file = Path::new(&ts_db_path);
-    let mut output = fs::File::create(ts_file).expect("Failed to create file");
-    output
-        .write_all(DB_ENGINE.as_bytes())
-        .expect("Failed to write to file");
-
-    // Config types as db/env.ts
-    // Includes:
-    //   Session type
-    //   Database mapping
-    let ts_config_path_str = &typescript_dir.join(Path::new("db/env.ts"));
-    let ts_config_path = Path::new(&ts_config_path_str);
-    let mut output = fs::File::create(ts_config_path).expect("Failed to create file");
-    if let Some(config_ts) = to_env(&database) {
-        output
-            .write_all(config_ts.as_bytes())
-            .expect("Failed to write to file");
+    base_out_dir: &Path,
+    files: &mut Vec<filesystem::GeneratedFile<String>>
+) {
+    // Generate core files
+    files.push(generate_text_file(base_out_dir.join("db.ts"), DB_ENGINE.to_string()));
+    
+    if let Some(config_ts) = to_env(database) {
+        files.push(generate_text_file(base_out_dir.join("db/env.ts"), config_ts));
     }
-
-    // Schema-level data types
-    let ts_db_data_path = &typescript_dir.join(Path::new("db/data.ts"));
-    let ts_data_path = Path::new(&ts_db_data_path);
-    let mut output_data = fs::File::create(ts_data_path).expect("Failed to create file");
-    let formatted_ts = schema(&database);
-    output_data
-        .write_all(formatted_ts.as_bytes())
-        .expect("Failed to write to file");
-
-    // TS Decoders for custom types.
-    let ts_db_decoder_path = &typescript_dir.join(Path::new("db/decode.ts"));
-    let ts_decoders = to_schema_decoders(&database);
-    let ts_decoder_file = Path::new(&ts_db_decoder_path);
-    let mut output = fs::File::create(ts_decoder_file).expect("Failed to create file");
-    output
-        .write_all(ts_decoders.as_bytes())
-        .expect("Failed to write to file");
-
-    Ok(())
+    
+    files.push(generate_text_file(base_out_dir.join("db/data.ts"), schema(database)));
+    files.push(generate_text_file(base_out_dir.join("db/decode.ts"), to_schema_decoders(database)));
+    
 }
 
 pub fn schema(database: &ast::Database) -> String {
@@ -239,12 +203,11 @@ fn to_decoder_definition(definition: &ast::Definition) -> String {
 fn to_decoder_variant(
     is_first: bool,
     indent_size: usize,
-    typename: &str,
+    _typename: &str,
     variant: &ast::Variant,
 ) -> String {
     let outer_indent = " ".repeat(indent_size);
-    let indent = " ".repeat(indent_size + 4);
-    let inner_indent = " ".repeat(indent_size + 8);
+    
 
     let or = &format!("{}{}", outer_indent, ".or");
     let starter = if is_first { "Ark.type" } else { or };
@@ -291,43 +254,41 @@ fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
 
 //  QUERIES
 //
-pub fn write_queries(
-    dir: &Path,
+pub fn generate_queries(
     context: &typecheck::Context,
     all_query_info: &HashMap<String, typecheck::QueryInfo>,
     query_list: &ast::QueryList,
-) -> io::Result<()> {
-    let query_dir = dir.join("query");
-    filesystem::create_dir_if_not_exists(&query_dir)?;
-    write_runner(dir, context, query_list);
+    base_out_dir: &Path,
+    files: &mut Vec<filesystem::GeneratedFile<String>>
+) {
+    // Generate the main query runner file
+    files.push(
+        generate_runner(context, base_out_dir, query_list)
+    );
 
     let formatter = to_formatter();
 
+    // Generate individual query files
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
                 let query_info = all_query_info.get(&q.name).unwrap();
-
-                let target_path =
-                    query_dir.join(&format!("{}.ts", crate::ext::string::decapitalize(&q.name)));
-
-                let mut output = fs::File::create(target_path).expect("Failed to create file");
-                output
-                    .write_all(to_query_file(&context, &query_info, &q, &formatter).as_bytes())
-                    .expect("Failed to write to file");
+                let filename = format!("{}/query/{}.ts", base_out_dir.to_string_lossy(), crate::ext::string::decapitalize(&q.name));
+                let content = to_query_file(context, query_info, q, &formatter);
+                files.push(generate_text_file(filename, content));
             }
             _ => continue,
         }
     }
-    Ok(())
 }
 
-fn write_runner(dir: &Path, context: &typecheck::Context, query_list: &ast::QueryList) {
-    let target_path = dir.join("query.ts");
+fn generate_runner(_context: &typecheck::Context, base_out_dir: &Path, query_list: &ast::QueryList) -> filesystem::GeneratedFile<String> {
     let mut content = String::new();
 
     content.push_str("import * as Env from \"./db/env\";\n");
     content.push_str("import * as Db from \"./db\";\n");
+    
+    // Import all query modules
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
@@ -340,6 +301,8 @@ fn write_runner(dir: &Path, context: &typecheck::Context, query_list: &ast::Quer
             _ => continue,
         }
     }
+
+    // Generate the run function
     content.push_str("\nexport const run = async (\n");
     content.push_str("  env: Env.Config,\n");
     content.push_str("  id: string,\n");
@@ -348,11 +311,11 @@ fn write_runner(dir: &Path, context: &typecheck::Context, query_list: &ast::Quer
     content.push_str("): Promise<Db.ExecuteResult> => {\n");
     content.push_str("    switch (id) {\n");
 
+    // Add case for each query
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
                 content.push_str(&format!("        case \"{}\":\n", q.interface_hash));
-
                 content.push_str(&format!(
                     "            return {}.query.run(env, session, args);\n",
                     &q.name
@@ -361,18 +324,19 @@ fn write_runner(dir: &Path, context: &typecheck::Context, query_list: &ast::Quer
             _ => continue,
         }
     }
+
+    // Add default case
     content.push_str("        default:\n");
     content.push_str(
         "            return { kind: \"error\", errorType: Db.ErrorType.UnknownQuery, message: \"\" }\n"
     );
-
     content.push_str("    }\n");
     content.push_str("};\n");
 
-    let mut output = fs::File::create(target_path).expect("Failed to create file");
-    output
-        .write_all(content.as_bytes())
-        .expect("Failed to write to file");
+    generate_text_file(
+        format!("{}/query.ts", base_out_dir.to_string_lossy()),
+        content
+    )
 }
 
 pub fn literal_quote(s: &str) -> String {
