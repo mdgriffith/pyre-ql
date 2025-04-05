@@ -1,5 +1,4 @@
 use pyre::ast;
-use pyre::error;
 
 use libsql;
 use serde;
@@ -9,6 +8,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+pub mod error;
 pub mod introspect;
 
 #[derive(Debug)]
@@ -21,17 +21,18 @@ pub enum DbError {
 impl DbError {
     pub fn format_error(&self) -> String {
         match self {
-            DbError::AuthTokenRequired => error::format_custom_error(
+            DbError::AuthTokenRequired => pyre::error::format_custom_error(
                 "Authentication Error",
                 "Authentication token is required",
             ),
-            DbError::EnvVarNotFound(var) => error::format_custom_error(
+            DbError::EnvVarNotFound(var) => pyre::error::format_custom_error(
                 "Unknown Environment Variable",
                 &format!("Environment variable {} not found", var),
             ),
-            DbError::DatabaseError(e) => {
-                error::format_custom_error("Database Error", &format!("Database error: {:?}", e))
-            }
+            DbError::DatabaseError(e) => pyre::error::format_custom_error(
+                "Database Error",
+                &format!("Database error: {:?}", e),
+            ),
         }
     }
 }
@@ -144,14 +145,16 @@ impl MigrationError {
     pub fn format_error(&self) -> String {
         match self {
             MigrationError::SqlError(sql_error) => error::format_libsql_error(sql_error),
-            MigrationError::MigrationReadIoError(io_error, path) => error::format_custom_error(
-                "Migration Read Error",
-                &format!(
+            MigrationError::MigrationReadIoError(io_error, path) => {
+                pyre::error::format_custom_error(
+                    "Migration Read Error",
+                    &format!(
                     "I was looking for migrations in {},\nbut ran into the following issue:\n\n{}",
-                    error::yellow_if(true, &path.display().to_string()),
+                    pyre::error::yellow_if(true, &path.display().to_string()),
                     io_error
                 ),
-            ),
+                )
+            }
         }
     }
 }

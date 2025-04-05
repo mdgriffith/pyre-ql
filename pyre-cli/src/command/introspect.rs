@@ -58,7 +58,7 @@ pub async fn introspect<'a>(
                     }
                 }
                 Err(libsql_error) => {
-                    println!("{}", error::format_libsql_error(&libsql_error));
+                    println!("{}", crate::db::error::format_libsql_error(&libsql_error));
                 }
             }
         }
