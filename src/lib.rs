@@ -10,3 +10,4 @@ mod hash;
 mod parser;
 mod platform;
 mod typecheck;
+mod wasm;

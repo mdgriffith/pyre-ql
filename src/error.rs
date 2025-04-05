@@ -200,6 +200,10 @@ pub enum ErrorType {
         tagged_name: String,
         variant_name: String,
     },
+    MigrationSchemaNotFound {
+        namespace: Option<String>,
+    },
+    MigrationMissingSchema,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1154,6 +1158,15 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
         ErrorType::MigrationVariantRemoved { tagged_name, variant_name } => {
             format!("The variant {} has been removed from the tagged type {}. This might be causing issues in your query. Consider updating your query to use the new variant format.", yellow_if(in_color, variant_name), yellow_if(in_color, tagged_name))
         }
+        ErrorType::MigrationSchemaNotFound { namespace } => {
+            match namespace {
+                Some(name) => format!("A migration was attempted for the schema named {}, but it was not found.", yellow_if(in_color, &name)),
+                None => format!("A migration was attempted for the default schema, but it was not found.")
+            }
+        }
+        ErrorType::MigrationMissingSchema => {
+            format!("There is no schema recorded in the database.")
+        }
     }
 }
 
@@ -1205,6 +1218,8 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::MigrationColumnDropped { .. } => "Column Dropped",
         ErrorType::MigrationColumnModified { .. } => "Column Modified",
         ErrorType::MigrationVariantRemoved { .. } => "Variant Removed",
+        ErrorType::MigrationSchemaNotFound { .. } => "Schema Not Found",
+        ErrorType::MigrationMissingSchema => "Missing Schema",
     }
     .to_string()
 }
