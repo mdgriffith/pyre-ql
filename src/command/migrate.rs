@@ -82,14 +82,10 @@ pub async fn push<'a>(
     options: &'a Options<'a>,
     database: &str,
     auth: &Option<String>,
-    migration_dir: &str,
+
     namespace: &Option<String>,
 ) -> io::Result<()> {
     check_namespace_requirements(&namespace, &options);
-    let namespace_migration_dir = match namespace {
-        Some(ns) => Path::new(migration_dir).join(ns),
-        None => Path::new(migration_dir).to_path_buf(),
-    };
 
     // Get schema
     let paths = filesystem::collect_filepaths(&options.in_dir)?;

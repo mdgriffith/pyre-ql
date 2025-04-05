@@ -80,6 +80,10 @@ enum Commands {
         #[arg(long)]
         namespace: Option<String>,
 
+        /// Push changes directly to the DB
+        #[arg(long, default_value_t = false)]
+        push: bool,
+
         /// Directory where migration files are stored.
         #[arg(long, default_value = "pyre/migrations")]
         migration_dir: String,
@@ -151,10 +155,15 @@ async fn main() -> io::Result<()> {
         Commands::Migrate {
             database,
             auth,
+            push,
             migration_dir,
             namespace,
         } => {
-            command::migrate(&options, database, auth, migration_dir, namespace).await?;
+            if *push {
+                command::push(&options, database, auth, namespace).await?;
+            } else {
+                command::migrate(&options, database, auth, migration_dir, namespace).await?;
+            }
         }
         Commands::New { resource } => match resource {
             NewCommands::Migration {

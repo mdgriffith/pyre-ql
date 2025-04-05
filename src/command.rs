@@ -14,4 +14,5 @@ pub use generate_migration::generate_migration;
 pub use init::init;
 pub use introspect::introspect;
 pub use migrate::migrate;
+pub use migrate::push;
 pub use shared::Options;
