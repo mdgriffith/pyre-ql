@@ -10,12 +10,12 @@ pub const SCHEMA_TABLE: &str = "_pyre_schema";
 
 // List all tables
 // Returns list of string
-const LIST_TABLES: &str = "SELECT name FROM sqlite_master WHERE type='table';";
+pub const LIST_TABLES: &str = "SELECT name FROM sqlite_master WHERE type='table';";
 
-const LIST_MIGRATIONS: &str = "SELECT name FROM _pyre_migrations;";
+pub const LIST_MIGRATIONS: &str = "SELECT name FROM _pyre_migrations;";
 
 // Add this near the top with other constants
-const GET_SCHEMA: &str = "SELECT schema FROM _pyre_schema LIMIT 1;";
+pub const GET_SCHEMA: &str = "SELECT schema FROM _pyre_schema LIMIT 1;";
 
 /*
 Introspection is used to drive migrations.
@@ -60,8 +60,8 @@ pub struct Table {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
-struct DbTable {
-    name: String,
+pub struct DbTable {
+    pub name: String,
 }
 
 /*
@@ -209,8 +209,8 @@ pub struct ColumnInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
-struct MigrationRun {
-    name: String,
+pub struct MigrationRun {
+    pub name: String,
 }
 
 fn deserialize_notnull<'de, D>(deserializer: D) -> Result<bool, D::Error>

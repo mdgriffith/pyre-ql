@@ -2,12 +2,12 @@ use std::io;
 use std::path::Path;
 
 use super::shared::{check_namespace_requirements, parse_database_schemas, Options};
-use crate::ast;
-use crate::ast::diff;
 use crate::db;
-use crate::error;
-use crate::filesystem;
-use crate::typecheck;
+use pyre::ast;
+use pyre::ast::diff;
+use pyre::error;
+use pyre::filesystem;
+use pyre::typecheck;
 
 pub async fn migrate<'a>(
     options: &'a Options<'a>,
@@ -136,14 +136,11 @@ pub async fn push<'a>(
 
                                 // If there are no errors, we can now generate sql.
 
-                                let db_diff = crate::db::diff::diff(
-                                    &context,
-                                    &current_schema,
-                                    &introspection,
-                                );
+                                let db_diff =
+                                    pyre::db::diff::diff(&context, &current_schema, &introspection);
 
                                 // Generate sql
-                                let sql = crate::db::diff::to_sql::to_sql(&db_diff);
+                                let sql = pyre::db::diff::to_sql::to_sql(&db_diff);
 
                                 let conn = conn.connect().unwrap();
                                 let tx = conn

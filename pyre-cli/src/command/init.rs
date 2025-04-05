@@ -2,10 +2,10 @@ use std::fs;
 use std::io;
 
 use super::shared::{id_column, write_db_schema, Options};
-use crate::ast;
-use crate::error;
-use crate::filesystem;
-use crate::format;
+use pyre::ast;
+use pyre::error;
+use pyre::filesystem;
+use pyre::format;
 
 pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
     let mut database = ast::Database {

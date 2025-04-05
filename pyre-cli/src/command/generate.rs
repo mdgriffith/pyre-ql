@@ -3,11 +3,11 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use super::shared::{parse_database_schemas, Options};
-use crate::error;
-use crate::filesystem;
-use crate::generate;
-use crate::parser;
-use crate::typecheck;
+use pyre::error;
+use pyre::filesystem;
+use pyre::generate;
+use pyre::parser;
+use pyre::typecheck;
 
 pub fn generate(options: &Options, out: &str) -> io::Result<()> {
     execute(

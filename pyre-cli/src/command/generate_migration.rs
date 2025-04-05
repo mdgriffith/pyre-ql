@@ -5,12 +5,12 @@ use std::io;
 use std::path::Path;
 
 use super::shared::{check_namespace_requirements, parse_database_schemas, Options};
-use crate::ast;
 use crate::db;
-use crate::db::introspect::MigrationState;
-use crate::error;
-use crate::filesystem;
-use crate::typecheck;
+use pyre::ast;
+use pyre::db::introspect::MigrationState;
+use pyre::error;
+use pyre::filesystem;
+use pyre::typecheck;
 
 pub async fn generate_migration<'a>(
     options: &'a Options<'a>,
@@ -75,7 +75,7 @@ pub async fn generate_migration<'a>(
                                 .expect("Schema not found");
 
                             let db_diff =
-                                crate::db::diff::diff(&context, &current_schema, &introspection);
+                                pyre::db::diff::diff(&context, &current_schema, &introspection);
 
                             println!("DB Diff: {:#?}", db_diff);
 
@@ -89,7 +89,7 @@ pub async fn generate_migration<'a>(
                             let migration_file = migration_folder.join("migration.sql");
                             let diff_file = migration_folder.join("schema.diff");
 
-                            let sql = crate::db::diff::to_sql::to_sql(&db_diff);
+                            let sql = pyre::db::diff::to_sql::to_sql(&db_diff);
                             fs::write(&migration_file, sql)?;
 
                             let json_diff = serde_json::to_string(&db_diff)?;

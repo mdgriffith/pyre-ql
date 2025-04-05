@@ -1,5 +1,5 @@
-use crate::ast;
-use crate::error;
+use pyre::ast;
+use pyre::error;
 
 use libsql;
 use serde;
@@ -9,7 +9,6 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-pub mod diff;
 pub mod introspect;
 
 #[derive(Debug)]
@@ -198,8 +197,8 @@ pub async fn migrate(
                     for (migration_filename, migration_contents) in migration_files.file_contents {
                         // Check if migration has been run
                         let should_skip = match &migration_state {
-                            introspect::MigrationState::NoMigrationTable => false,
-                            introspect::MigrationState::MigrationTable { migrations } => {
+                            pyre::db::introspect::MigrationState::NoMigrationTable => false,
+                            pyre::db::introspect::MigrationState::MigrationTable { migrations } => {
                                 migrations.iter().any(|m| m.name == migration_filename)
                             }
                         };
@@ -230,7 +229,7 @@ async fn insert_schema(
     let schema_json = serde_json::to_string(schema).unwrap();
     let insert_schema = &format!(
         r#"INSERT INTO {} (schema) VALUES (json(?));"#,
-        crate::ext::string::quote(introspect::SCHEMA_TABLE)
+        pyre::ext::string::quote(pyre::db::introspect::SCHEMA_TABLE)
     );
     tx.execute(insert_schema, libsql::params![schema_json])
         .await?;
@@ -252,8 +251,8 @@ create table if not exists {} (
     schema blob not null check (jsonb_valid(schema))
 );
 "#,
-        crate::ext::string::quote(introspect::MIGRATION_TABLE),
-        crate::ext::string::quote(introspect::SCHEMA_TABLE)
+        pyre::ext::string::quote(pyre::db::introspect::MIGRATION_TABLE),
+        pyre::ext::string::quote(pyre::db::introspect::SCHEMA_TABLE)
     );
     conn.execute_batch(create_migration_table).await
 }
@@ -264,7 +263,7 @@ async fn record_migration(
 ) -> Result<u64, libsql::Error> {
     let insert_migration = &format!(
         r#"INSERT INTO {} (name) VALUES (?);"#,
-        crate::ext::string::quote(introspect::MIGRATION_TABLE)
+        pyre::ext::string::quote(pyre::db::introspect::MIGRATION_TABLE)
     );
     conn.execute(insert_migration, libsql::params![migration_name])
         .await

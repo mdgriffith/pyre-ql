@@ -1,7 +1,9 @@
 use clap::{Parser, Subcommand};
-use pyre::command;
 use std::io::{self};
 use std::path::Path;
+
+mod command;
+mod db;
 
 #[derive(Parser)]
 #[command(name = "pyre")]

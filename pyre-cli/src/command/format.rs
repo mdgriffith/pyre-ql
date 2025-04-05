@@ -6,11 +6,11 @@ use super::shared::{
     get_stdin, parse_database_schemas, parse_single_schema, parse_single_schema_from_source,
     write_db_schema, write_schema, Options,
 };
-use crate::ast;
-use crate::filesystem;
-use crate::format;
-use crate::generate;
-use crate::parser;
+use pyre::ast;
+use pyre::filesystem;
+use pyre::format;
+use pyre::generate;
+use pyre::parser;
 
 pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Result<()> {
     match files.len() {

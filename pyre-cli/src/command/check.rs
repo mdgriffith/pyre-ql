@@ -2,10 +2,10 @@ use serde_json;
 use std::io::{self, Read};
 
 use super::shared::{parse_database_schemas, FileError, Options};
-use crate::error;
-use crate::filesystem;
-use crate::parser;
-use crate::typecheck;
+use pyre::error;
+use pyre::filesystem;
+use pyre::parser;
+use pyre::typecheck;
 
 pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()> {
     match run_check(filesystem::collect_filepaths(&options.in_dir)?) {

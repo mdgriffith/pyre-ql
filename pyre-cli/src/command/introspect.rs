@@ -3,9 +3,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use super::shared::{write_schema, Options};
-use crate::ast;
 use crate::db;
-use crate::error;
+use pyre::ast;
+use pyre::error;
 
 pub async fn introspect<'a>(
     options: &'a Options<'a>,
@@ -45,7 +45,7 @@ pub async fn introspect<'a>(
                             println!("I was able to successfully connect to the database, but I couldn't find any tables or views!");
                         } else {
                             let schema_file =
-                                crate::db::introspect::to_schema::to_schema(&introspection);
+                                pyre::db::introspect::to_schema::to_schema(&introspection);
 
                             let schema = ast::Schema {
                                 namespace: full_namespace,
