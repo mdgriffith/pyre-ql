@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod diff;
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Database {
     pub schemas: Vec<Schema>,
 }
