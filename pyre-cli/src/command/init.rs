@@ -4,7 +4,6 @@ use std::io;
 use super::shared::{id_column, write_db_schema, Options};
 use pyre::ast;
 use pyre::error;
-use pyre::filesystem;
 use pyre::format;
 
 pub fn init(options: &Options, multidb: bool) -> io::Result<()> {

@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use super::shared::{write_schema, Options};
 use crate::db;
 use pyre::ast;
-use pyre::error;
 
 pub async fn introspect<'a>(
     options: &'a Options<'a>,

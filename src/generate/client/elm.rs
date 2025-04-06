@@ -5,7 +5,6 @@ use crate::filesystem::{generate_text_file, GeneratedFile};
 use crate::generate::typealias;
 use crate::typecheck;
 use std::path::Path;
-use std::path::PathBuf;
 
 mod rectangle;
 
@@ -48,7 +47,7 @@ pub fn write_schema(database: &ast::Database) -> String {
 fn to_string_definition(definition: &ast::Definition) -> String {
     match definition {
         ast::Definition::Lines { count } => {
-            if (*count > 2) {
+            if *count > 2 {
                 "\n\n".to_string()
             } else {
                 "\n".repeat(*count as usize)
@@ -77,7 +76,7 @@ fn to_type_alias(name: &str, fields: &Vec<ast::Field>) -> String {
         if is_first & ast::is_column(field) {
             result.push_str(&format!("    {{ ",))
         }
-        if (ast::is_column_space(field)) {
+        if ast::is_column_space(field) {
             continue;
         }
 
@@ -114,7 +113,7 @@ fn to_string_variant(is_first: bool, indent_size: usize, variant: &ast::Variant)
 fn to_string_field(is_first: bool, indent: usize, field: &ast::Field) -> String {
     match field {
         ast::Field::ColumnLines { count } => {
-            if (*count > 2) {
+            if *count > 2 {
                 "\n\n".to_string()
             } else {
                 "\n".repeat(*count as usize)
@@ -191,7 +190,7 @@ dateTime =
 
 fn to_decoder_definition(definition: &ast::Definition, result: &mut String) {
     match definition {
-        ast::Definition::Lines { count } => (),
+        ast::Definition::Lines { .. } => (),
         ast::Definition::Session(_) => (),
         ast::Definition::Comment { .. } => (),
         ast::Definition::Tagged { name, variants, .. } => {
@@ -317,8 +316,8 @@ pub fn to_schema_encoders(database: &ast::Database) -> String {
 
 fn to_encoder_definition(definition: &ast::Definition) -> String {
     match definition {
-        ast::Definition::Lines { count } => "".to_string(),
-        ast::Definition::Comment { text } => "".to_string(),
+        ast::Definition::Lines { .. } => "".to_string(),
+        ast::Definition::Comment { .. } => "".to_string(),
         ast::Definition::Session(_) => "".to_string(),
         ast::Definition::Tagged { name, variants, .. } => {
             let mut result = "".to_string();
@@ -330,10 +329,9 @@ fn to_encoder_definition(definition: &ast::Definition) -> String {
             ));
             result.push_str(&format!("{} input_ =\n", string::decapitalize(name)));
             result.push_str("    case input_ of\n");
-            let mut is_first = true;
+
             for variant in variants {
-                result.push_str(&to_encoder_variant(is_first, 8, name, variant));
-                is_first = false;
+                result.push_str(&to_encoder_variant(8, name, variant));
             }
             result
         }
@@ -341,12 +339,7 @@ fn to_encoder_definition(definition: &ast::Definition) -> String {
     }
 }
 
-fn to_encoder_variant(
-    is_first: bool,
-    indent_size: usize,
-    typename: &str,
-    variant: &ast::Variant,
-) -> String {
+fn to_encoder_variant(indent_size: usize, _typename: &str, variant: &ast::Variant) -> String {
     let outer_indent = " ".repeat(indent_size);
     let indent = " ".repeat(indent_size + 4);
     let inner_indent = " ".repeat(indent_size + 8);
@@ -357,10 +350,8 @@ fn to_encoder_variant(
                 outer_indent, variant.name, indent, inner_indent, variant.name
             );
 
-            let mut is_first_field = true;
             for field in fields {
-                result.push_str(&to_field_encoder(is_first_field, indent_size + 8, &field));
-                is_first_field = false
+                result.push_str(&to_field_encoder(indent_size + 8, &field));
             }
             result.push_str(&format!("{}]\n\n", inner_indent));
 
@@ -373,7 +364,7 @@ fn to_encoder_variant(
     }
 }
 
-fn to_field_encoder(is_first: bool, indent: usize, field: &ast::Field) -> String {
+fn to_field_encoder(indent: usize, field: &ast::Field) -> String {
     match field {
         ast::Field::Column(column) => {
             let spaces = " ".repeat(indent);
@@ -381,7 +372,7 @@ fn to_field_encoder(is_first: bool, indent: usize, field: &ast::Field) -> String
                 "{}, ( \"{}\", {} inner_details__.{})\n",
                 spaces,
                 column.name,
-                to_type_encoder(&column.name, &column.type_),
+                to_type_encoder(&column.type_),
                 column.name
             );
         }
@@ -390,7 +381,7 @@ fn to_field_encoder(is_first: bool, indent: usize, field: &ast::Field) -> String
     }
 }
 
-fn to_type_encoder(fieldname: &str, type_: &str) -> String {
+fn to_type_encoder(type_: &str) -> String {
     match type_ {
         "String" => "Encode.string".to_string(),
         "Int" => "Encode.int".to_string(),
@@ -581,7 +572,7 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
             result.push_str(&format!(
                 "        [ ( {}, {} input.{} )\n",
                 string::quote(&arg.name),
-                to_type_encoder(&type_string, &type_string),
+                to_type_encoder(&type_string),
                 &arg.name
             ));
             is_first = false;
@@ -589,7 +580,7 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
             result.push_str(&format!(
                 "        , ( {}, {} input.{})\n",
                 string::quote(&arg.name),
-                to_type_encoder(&type_string, &type_string),
+                to_type_encoder(&type_string),
                 &arg.name
             ));
         }

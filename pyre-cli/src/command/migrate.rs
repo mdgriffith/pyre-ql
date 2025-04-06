@@ -6,7 +6,6 @@ use crate::db;
 use pyre::ast;
 use pyre::ast::diff;
 use pyre::error;
-use pyre::filesystem;
 use pyre::typecheck;
 
 pub async fn migrate<'a>(

@@ -69,7 +69,7 @@ pub fn write_schema(database: &ast::Database) -> String {
 fn to_string_definition(definition: &ast::Definition) -> String {
     match definition {
         ast::Definition::Lines { count } => {
-            if (*count > 2) {
+            if *count > 2 {
                 "\n\n".to_string()
             } else {
                 "\n".repeat(*count as usize)
