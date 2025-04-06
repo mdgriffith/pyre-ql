@@ -3,6 +3,13 @@ name = "pyre-wasm"
 version = "0.1.0"
 edition = "2021"
 
+[profile.release]
+opt-level = "s"   # Optimize for size
+lto = true        # Enable Link Time Optimization
+codegen-units = 1 # Reduce number of codegen units to increase optimization
+panic = "abort"   # Remove panic unwinding code
+strip = true      # Strip debug symbols
+
 [lib]
 crate-type = ["cdylib"]
 path = "src/lib.rs"
