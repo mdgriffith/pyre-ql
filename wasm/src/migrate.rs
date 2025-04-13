@@ -5,6 +5,7 @@ use pyre::error;
 use pyre::parser;
 use pyre::typecheck;
 use serde::{Deserialize, Serialize};
+use serde_wasm_bindgen;
 use wasm_bindgen::prelude::*;
 
 const FILEPATH: &str = "schema.pyre";
@@ -42,16 +43,13 @@ pub async fn migrate(
     let context = typecheck::check_schema(&new_database)?;
 
     // Get the recorded schema from introspection
-    let db_recorded_schema = introspection.schema.as_ref().ok_or_else(|| {
-        vec![error::Error {
-            error_type: error::ErrorType::MigrationMissingSchema,
-            filepath: FILEPATH.to_string(),
-            locations: vec![],
-        }]
-    })?;
+    let db_recorded_schema = introspection
+        .schema
+        .as_ref()
+        .map_or_else(|| ast::Schema::default(), |schema| schema.clone());
 
     // Diff the schemas and check for errors
-    let schema_diff = diff::diff_schema(&schema_clone, db_recorded_schema);
+    let schema_diff = diff::diff_schema(&schema_clone, &db_recorded_schema);
     let errors = diff::to_errors(schema_diff);
     if !errors.is_empty() {
         return Err(errors);
@@ -97,6 +95,16 @@ pub async fn migrate_wasm(input: String) -> String {
     };
 
     match migrate(&input.introspection, &input.schema_source).await {
+        Ok(sql) => serde_json::to_string(&MigrateOutput { sql }).unwrap(),
+        Err(errors) => serde_json::to_string(&MigrateError { errors }).unwrap(),
+    }
+}
+
+#[wasm_bindgen]
+pub async fn migrate_wasm_direct(introspection: JsValue, schema_source: String) -> String {
+    let introspection: introspect::Introspection =
+        serde_wasm_bindgen::from_value(introspection).unwrap();
+    match migrate(&introspection, &schema_source).await {
         Ok(sql) => serde_json::to_string(&MigrateOutput { sql }).unwrap(),
         Err(errors) => serde_json::to_string(&MigrateError { errors }).unwrap(),
     }
