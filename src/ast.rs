@@ -8,7 +8,6 @@ pub mod diff;
 pub struct Database {
     pub schemas: Vec<Schema>,
 }
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Schema {
     pub namespace: String,
@@ -17,6 +16,16 @@ pub struct Schema {
 }
 
 pub const DEFAULT_SCHEMANAME: &str = "_default";
+
+impl Default for Schema {
+    fn default() -> Self {
+        Schema {
+            namespace: DEFAULT_SCHEMANAME.to_string(),
+            session: None,
+            files: Vec::new(),
+        }
+    }
+}
 
 pub fn default_session_details() -> SessionDetails {
     SessionDetails {
