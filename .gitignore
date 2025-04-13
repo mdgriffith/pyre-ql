@@ -17,3 +17,5 @@ generated
 
 test.db
 *.db
+
+node_modules
