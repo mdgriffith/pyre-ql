@@ -1,3 +1,5 @@
+use console_log;
+use log::info;
 use pyre::ast;
 use pyre::ast::diff;
 use pyre::db::introspect;
@@ -47,6 +49,8 @@ pub async fn migrate(
         .schema
         .as_ref()
         .map_or_else(|| ast::Schema::default(), |schema| schema.clone());
+
+    info!("Recorded schema: {:#?}", db_recorded_schema);
 
     // Diff the schemas and check for errors
     let schema_diff = diff::diff_schema(&schema_clone, &db_recorded_schema);
