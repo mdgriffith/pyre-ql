@@ -1,0 +1,8 @@
+#!/bin/bash
+
+set -e
+
+cargo build
+(cd wasm ; wasm-pack build --target web)
+
+
