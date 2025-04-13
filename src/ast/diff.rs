@@ -116,31 +116,31 @@ pub enum RecordChange {
 }
 
 // Function to diff two Schema values
-pub fn diff_schema(schema1: &crate::ast::Schema, schema2: &crate::ast::Schema) -> SchemaDiff {
+pub fn diff_schema(old_schema: &crate::ast::Schema, new_schema: &crate::ast::Schema) -> SchemaDiff {
     let mut added = Vec::new();
     let mut removed = Vec::new();
     let mut modified_records = Vec::new();
     let mut modified_taggeds = Vec::new();
 
     // Collect `Tagged` and `Record` definitions from both schemas
-    let mut defs1: Vec<ast::Definition> = vec![];
-    for file in schema1.files.iter() {
+    let mut old_defs: Vec<ast::Definition> = vec![];
+    for file in old_schema.files.iter() {
         for def in &file.definitions {
             match def {
                 crate::ast::Definition::Tagged { .. } | crate::ast::Definition::Record { .. } => {
-                    defs1.push(def.clone());
+                    old_defs.push(def.clone());
                 }
                 _ => continue,
             }
         }
     }
 
-    let mut defs2: Vec<ast::Definition> = vec![];
-    for file in schema2.files.iter() {
-        for def in &file.definitions {
-            match def {
+    let mut new_defs: Vec<ast::Definition> = vec![];
+    for new_file in new_schema.files.iter() {
+        for new_def in &new_file.definitions {
+            match new_def {
                 crate::ast::Definition::Tagged { .. } | crate::ast::Definition::Record { .. } => {
-                    defs2.push(def.clone());
+                    new_defs.push(new_def.clone());
                 }
                 _ => continue,
             }
@@ -148,8 +148,8 @@ pub fn diff_schema(schema1: &crate::ast::Schema, schema2: &crate::ast::Schema) -
     }
 
     // Find added and modified definitions
-    for def2 in &defs2 {
-        if let Some(def1) = defs1.iter().find(|&d| match (d, def2) {
+    for new_def in &new_defs {
+        if let Some(old_def) = old_defs.iter().find(|&d| match (d, new_def) {
             (
                 crate::ast::Definition::Tagged { name: name1, .. },
                 crate::ast::Definition::Tagged { name: name2, .. },
@@ -160,17 +160,17 @@ pub fn diff_schema(schema1: &crate::ast::Schema, schema2: &crate::ast::Schema) -
             ) => name1 == name2,
             _ => false,
         }) {
-            if def1 != def2 {
-                match def2 {
+            if old_def != new_def {
+                match new_def {
                     crate::ast::Definition::Tagged { name, .. } => {
-                        let changes = find_tagged_changes(def1, def2);
+                        let changes = find_tagged_changes(old_def, new_def);
                         modified_taggeds.push(DetailedTaggedDiff {
                             name: name.clone(),
                             changes,
                         });
                     }
                     crate::ast::Definition::Record { name, .. } => {
-                        let changes = find_record_changes(def1, def2);
+                        let changes = find_record_changes(old_def, new_def);
                         modified_records.push(DetailedRecordDiff {
                             name: name.clone(),
                             changes,
@@ -180,13 +180,13 @@ pub fn diff_schema(schema1: &crate::ast::Schema, schema2: &crate::ast::Schema) -
                 }
             }
         } else {
-            added.push((*def2).clone());
+            added.push((*new_def).clone());
         }
     }
 
     // Find removed definitions
-    for def1 in &defs1 {
-        if !defs2.iter().any(|d| match (d, def1) {
+    for old_def in &old_defs {
+        if !new_defs.iter().any(|d| match (d, old_def) {
             (
                 crate::ast::Definition::Tagged { name: name2, .. },
                 crate::ast::Definition::Tagged { name: name1, .. },
@@ -197,7 +197,7 @@ pub fn diff_schema(schema1: &crate::ast::Schema, schema2: &crate::ast::Schema) -
             ) => name1 == name2,
             _ => false,
         }) {
-            removed.push((*def1).clone());
+            removed.push((*old_def).clone());
         }
     }
 
