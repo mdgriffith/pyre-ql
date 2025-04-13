@@ -2,7 +2,7 @@
 name = "pyre"
 version = "0.1.1"
 edition = "2021"
-default-features = false
+
 
 [features]
 default = ["filesystem", "database"]
