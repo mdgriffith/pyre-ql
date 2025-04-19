@@ -122,9 +122,9 @@ pub async fn push<'a>(
                     let introspection_result = crate::db::introspect::introspect(&conn).await;
                     match introspection_result {
                         Ok(introspection) => {
-                            if let crate::db::introspect::SchemaResult::Success {
+                            if let pyre::db::introspect::SchemaResult::Success {
                                 schema: ref db_recorded_schema,
-                                context,
+                                context: ref db_context,
                             } = introspection.schema
                             {
                                 let schema_diff =
@@ -139,8 +139,11 @@ pub async fn push<'a>(
 
                                 // If there are no errors, we can now generate sql.
 
-                                let db_diff =
-                                    pyre::db::diff::diff(&context, &current_schema, &introspection);
+                                let db_diff = pyre::db::diff::diff(
+                                    db_context,
+                                    &current_schema,
+                                    &introspection,
+                                );
 
                                 // Generate sql
                                 let sql = pyre::db::diff::to_sql::to_sql(&db_diff);
