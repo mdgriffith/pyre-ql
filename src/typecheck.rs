@@ -150,7 +150,7 @@ pub fn get_linked_table<'a>(context: &'a Context, link: &'a ast::LinkDetails) ->
         .get(&crate::ext::string::decapitalize(&link.foreign.table))
 }
 
-fn empty_context() -> Context {
+pub fn empty_context() -> Context {
     let mut fns = HashMap::new();
     platform::add_builtin(&mut fns);
 

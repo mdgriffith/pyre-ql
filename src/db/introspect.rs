@@ -1,3 +1,7 @@
+use crate::ast;
+use crate::error;
+use crate::parser;
+use crate::typecheck;
 use serde;
 use serde::{Deserialize, Serialize};
 
@@ -26,8 +30,6 @@ Then we diff `Introspection` with `Schema` which produces a `Diff`, which can be
 Migration SQL.
 
 
-
-
 */
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,11 +43,34 @@ pub enum MigrationState {
     MigrationTable { migrations: Vec<Migration> },
 }
 
+#[derive(Debug)]
+pub enum SchemaResult {
+    FailedToParse {
+        source: String,
+        errors: Vec<error::Error>,
+    },
+    FailedToTypecheck {
+        schema: ast::Schema,
+        errors: Vec<error::Error>,
+    },
+    Success {
+        schema: ast::Schema,
+        context: typecheck::Context,
+    },
+}
+
 #[derive(Debug, Serialize, Deserialize)]
+pub struct IntrospectionRaw {
+    pub tables: Vec<Table>,
+    pub migration_state: MigrationState,
+    pub schema_source: String,
+}
+
+#[derive(Debug)]
 pub struct Introspection {
     pub tables: Vec<Table>,
     pub migration_state: MigrationState,
-    pub schema: Option<crate::ast::Schema>,
+    pub schema: SchemaResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,5 +246,67 @@ where
         0 => Ok(false),
         1 => Ok(true),
         _ => Err(serde::de::Error::custom("unexpected value")),
+    }
+}
+
+pub fn from_raw(raw: IntrospectionRaw) -> Introspection {
+    if raw.schema_source.is_empty() {
+        let context = typecheck::empty_context();
+        return Introspection {
+            tables: raw.tables,
+            migration_state: raw.migration_state,
+            schema: SchemaResult::Success {
+                schema: ast::Schema::default(),
+                context,
+            },
+        };
+    }
+
+    let mut schema = ast::Schema {
+        namespace: ast::DEFAULT_SCHEMANAME.to_string(),
+        session: None,
+        files: vec![],
+    };
+
+    // Attempt to parse the schema source
+    let schema_result = match parser::run("schema.pyre", &raw.schema_source, &mut schema) {
+        Ok(()) => {
+            // Create a Database from the schema
+            let database = ast::Database {
+                schemas: vec![schema.clone()],
+            };
+
+            // Typecheck the schema
+            match typecheck::check_schema(&database) {
+                Ok(context) => SchemaResult::Success { schema, context },
+                Err(errors) => SchemaResult::FailedToTypecheck { schema, errors },
+            }
+        }
+        Err(err) => {
+            let source = raw.schema_source.clone();
+            if let Some(parsing_error) = parser::convert_parsing_error(err) {
+                SchemaResult::FailedToParse {
+                    source,
+                    errors: vec![parsing_error],
+                }
+            } else {
+                SchemaResult::FailedToParse {
+                    source,
+                    errors: vec![error::Error {
+                        error_type: error::ErrorType::ParsingError(error::ParsingErrorDetails {
+                            expecting: error::Expecting::PyreFile,
+                        }),
+                        filepath: "schema.pyre".to_string(),
+                        locations: vec![],
+                    }],
+                }
+            }
+        }
+    };
+
+    Introspection {
+        tables: raw.tables,
+        migration_state: raw.migration_state,
+        schema: schema_result,
     }
 }

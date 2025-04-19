@@ -6,9 +6,11 @@ use pyre::db::introspect;
 use pyre::db::migrate;
 use pyre::error;
 use pyre::parser;
+use pyre::query::run_query;
 use pyre::typecheck;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen;
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 const QUERY_FILE: &str = "query.pyre";
@@ -17,7 +19,7 @@ const QUERY_FILE: &str = "query.pyre";
  * Dynamically parse a query and return the sql that is generated
  */
 pub async fn query(
-    context: &typecheck::Context,
+    context: &Arc<typecheck::Context>,
     query_source: &str,
 ) -> Result<String, Vec<error::Error>> {
     // Parse query_source into a `ast::QueryList`
@@ -25,7 +27,7 @@ pub async fn query(
         Ok(query_list) => {
             // Typecheck and generate
             let typecheck_result =
-                typecheck::check_queries(&context, &query_list, &mut context.clone());
+                typecheck::check_queries(context, &query_list, &mut context.clone());
 
             match typecheck_result {
                 Ok(all_query_info) => {
@@ -55,16 +57,14 @@ struct QueryError {
     errors: Vec<error::Error>,
 }
 
-#[wasm_bindgen]
-pub async fn run_query(introspection: JsValue, query_source: String) -> String {
-    // Get or parse the schema from cache
-    let (_, context) = match cache::get_or_parse_schema(introspection) {
-        Ok(result) => result,
-        Err(errors) => return serde_json::to_string(&QueryError { errors }).unwrap(),
+pub async fn run_query_wasm(query_source: String) -> String {
+    let schema = match cache::get_schema() {
+        Ok(schema) => schema,
+        Err(errors) => return serde_json::to_string(&errors).unwrap(),
     };
 
-    match query(&context, &query_source).await {
-        Ok(sql) => serde_json::to_string(&QueryOutput { sql }).unwrap(),
-        Err(errors) => serde_json::to_string(&QueryError { errors }).unwrap(),
+    match run_query(&schema, &query_source) {
+        Ok(result) => serde_json::to_string(&result).unwrap(),
+        Err(errors) => serde_json::to_string(&errors).unwrap(),
     }
 }

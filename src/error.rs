@@ -4,14 +4,14 @@ use nom::ToUsize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone,Deserialize, Serialize)]
 pub struct Error {
     pub error_type: ErrorType,
     pub filepath: String,
     pub locations: Vec<Location>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ParsingErrorDetails {
     pub expecting: Expecting,
 }
@@ -32,7 +32,7 @@ pub enum Expecting {
     LinkDirective,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ErrorType {
     ParsingError(ParsingErrorDetails),
 

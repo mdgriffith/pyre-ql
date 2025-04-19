@@ -9,6 +9,7 @@ use pyre::parser;
 use pyre::typecheck;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen;
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 const FILEPATH: &str = "schema.pyre";
@@ -21,11 +22,13 @@ const FILEPATH: &str = "schema.pyre";
  */
 pub async fn migrate(
     introspection: &introspect::Introspection,
-    schema_source: &str,
+    new_schema_source: &str,
 ) -> Result<String, Vec<error::Error>> {
+    // First, parse and typecheck the new schema
+
     // Parse the schema source into a Schema
-    let mut schema = ast::Schema::default();
-    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    let mut new_schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", new_schema_source, &mut new_schema);
     if let Err(e) = parse_result {
         return Err(vec![error::Error {
             error_type: error::ErrorType::ParsingError(error::ParsingErrorDetails {
@@ -35,23 +38,26 @@ pub async fn migrate(
             locations: vec![],
         }]);
     }
-    let schema_clone = schema.clone();
+    let schema_clone = new_schema.clone();
     // Create a Database from the parsed Schema
     let new_database = ast::Database {
-        schemas: vec![schema],
+        schemas: vec![new_schema],
     };
 
     // Typecheck the new schema
-    let context = typecheck::check_schema(&new_database)?;
+    let new_context = typecheck::check_schema(&new_database)?;
 
     // Get the recorded schema from introspection
-    let db_recorded_schema = introspection
-        .schema
-        .as_ref()
-        .map_or_else(|| ast::Schema::default(), |schema| schema.clone());
+    let (db_recorded_schema, db_recorded_context) = match &introspection.schema {
+        introspect::SchemaResult::FailedToParse { source, errors } => {
+            return Err(errors.clone());
+        }
+        introspect::SchemaResult::FailedToTypecheck { errors, .. } => {
+            return Err(errors.clone());
+        }
+        introspect::SchemaResult::Success { schema, context } => (schema, context),
+    };
 
-    // info!("Schema: {:#?}", schema_clone);
-    // info!("Recorded schema: {:#?}", db_recorded_schema);
     // Diff the schemas and check for errors
     let schema_diff = diff::diff_schema(&db_recorded_schema, &schema_clone);
 
@@ -61,7 +67,7 @@ pub async fn migrate(
     }
 
     // Generate the SQL from the diff
-    let db_diff = pyre::db::diff::diff(&context, &schema_clone, introspection);
+    let db_diff = pyre::db::diff::diff(&new_context, &db_recorded_schema, &introspection);
     let mut sql = pyre::db::diff::to_sql::to_sql(&db_diff);
 
     match introspection.migration_state {
@@ -84,34 +90,29 @@ pub async fn migrate(
     Ok(sql)
 }
 
-#[derive(Deserialize, Serialize)]
-struct MigrateInput {
-    introspection: introspect::Introspection,
-    schema_source: String,
-}
-
-#[derive(Serialize)]
-struct MigrateOutput {
-    sql: String,
-}
-
 #[derive(Serialize)]
 struct MigrateError {
     errors: Vec<error::Error>,
 }
 
 #[wasm_bindgen]
-pub async fn migrate_wasm(introspection: JsValue, schema_source: String) -> String {
-    // Get or parse the schema from cache
-    let (_, context) = match cache::get_or_parse_schema(introspection.clone()) {
-        Ok(result) => result,
-        Err(errors) => return serde_json::to_string(&MigrateError { errors }).unwrap(),
+pub async fn migrate_wasm(schema_source: String) -> String {
+    let introspection = match cache::get() {
+        Some(introspection) => introspection,
+        None => {
+            return serde_json::to_string(&MigrateError {
+                errors: vec![error::Error {
+                    error_type: error::ErrorType::MigrationMissingSchema,
+                    filepath: "".to_string(),
+                    locations: vec![],
+                }],
+            })
+            .unwrap()
+        }
     };
 
-    let introspection: introspect::Introspection =
-        serde_wasm_bindgen::from_value(introspection).unwrap();
     match migrate(&introspection, &schema_source).await {
-        Ok(sql) => serde_json::to_string(&MigrateOutput { sql }).unwrap(),
-        Err(errors) => serde_json::to_string(&MigrateError { errors }).unwrap(),
+        Ok(result) => serde_json::to_string(&result).unwrap(),
+        Err(errors) => serde_json::to_string(&errors).unwrap(),
     }
 }

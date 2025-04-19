@@ -122,7 +122,11 @@ pub async fn push<'a>(
                     let introspection_result = crate::db::introspect::introspect(&conn).await;
                     match introspection_result {
                         Ok(introspection) => {
-                            if let Some(ref db_recorded_schema) = introspection.schema {
+                            if let crate::db::introspect::SchemaResult::Success {
+                                schema: ref db_recorded_schema,
+                                context,
+                            } = introspection.schema
+                            {
                                 let schema_diff =
                                     diff::diff_schema(&current_schema, db_recorded_schema);
 

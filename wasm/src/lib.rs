@@ -3,7 +3,7 @@ use log::Level;
 use wasm_bindgen::prelude::*;
 mod cache;
 mod migrate;
-mod query;
+// mod query;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -11,11 +11,18 @@ pub fn start() {
 }
 
 #[wasm_bindgen]
-pub async fn migrate(introspection: JsValue, schema_source: String) -> String {
-    migrate::migrate_wasm(introspection, schema_source).await
+pub fn set_schema(introspection: JsValue) -> Result<(), JsValue> {
+    cache::set_schema(introspection);
+    // Note, we probably want to return any errors here just in case.
+    Ok(())
 }
 
 #[wasm_bindgen]
-pub async fn run_query(introspection: JsValue, query_source: String) -> String {
-    query::run_query(introspection, query_source).await
+pub async fn migrate(schema_source: String) -> String {
+    migrate::migrate_wasm(schema_source).await
 }
+
+// #[wasm_bindgen]
+// pub async fn run_query(query_source: String) -> String {
+//     query::run_query(query_source).await
+// }
