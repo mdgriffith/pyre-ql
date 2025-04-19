@@ -1,7 +1,9 @@
 use console_log;
 use log::Level;
 use wasm_bindgen::prelude::*;
+mod cache;
 mod migrate;
+mod query;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -10,5 +12,10 @@ pub fn start() {
 
 #[wasm_bindgen]
 pub async fn migrate(introspection: JsValue, schema_source: String) -> String {
-    migrate::migrate_wasm_direct(introspection, schema_source).await
+    migrate::migrate_wasm(introspection, schema_source).await
+}
+
+#[wasm_bindgen]
+pub async fn run_query(introspection: JsValue, query_source: String) -> String {
+    query::run_query(introspection, query_source).await
 }
