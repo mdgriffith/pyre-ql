@@ -20,6 +20,16 @@ pub const LIST_MIGRATIONS: &str = "SELECT name FROM _pyre_migrations;";
 // Add this near the top with other constants
 pub const GET_SCHEMA: &str = "SELECT schema FROM _pyre_schema LIMIT 1;";
 
+pub const IS_INITIALIZED: &str = r#"
+SELECT 
+  CASE 
+    WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='_pyre_migrations')
+    AND EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='_pyre_schema')
+    THEN 1
+    ELSE 0
+  END as is_initialized;
+"#;
+
 pub const INTROSPECT_SQL: &str = r#"
 WITH RECURSIVE
   -- Get all tables except system tables
@@ -95,7 +105,10 @@ SELECT json_object(
     )
   ),
   'migration_state', json((SELECT state_json FROM migration_state)),
-  'schema_source', ''
+  'schema_source', COALESCE(
+    (SELECT schema FROM _pyre_schema ORDER BY created_at DESC LIMIT 1),
+    ''
+  )
 ) as result
 FROM table_info ti
 LEFT JOIN foreign_keys fk ON ti.table_name = fk.table_name;
