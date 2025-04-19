@@ -229,12 +229,12 @@ async fn insert_schema(
     tx: &libsql::Transaction,
     schema: &ast::Schema,
 ) -> Result<(), libsql::Error> {
-    let schema_json = serde_json::to_string(schema).unwrap();
+    let schema_string = pyre::generate::to_string::schema_to_string("", schema);
     let insert_schema = &format!(
-        r#"INSERT INTO {} (schema) VALUES (json(?));"#,
+        r#"INSERT INTO {} (schema) VALUES (?);"#,
         pyre::ext::string::quote(pyre::db::introspect::SCHEMA_TABLE)
     );
-    tx.execute(insert_schema, libsql::params![schema_json])
+    tx.execute(insert_schema, libsql::params![schema_string])
         .await?;
     Ok(())
 }

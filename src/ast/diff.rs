@@ -1,9 +1,8 @@
 use crate::ast;
 use crate::error::{ColumnDiff, Error, ErrorType};
-use serde::{Deserialize, Serialize};
 
 // Define a type to represent the diff of two schemas
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct SchemaDiff {
     pub added: Vec<crate::ast::Definition>,
     pub removed: Vec<crate::ast::Definition>,
@@ -85,19 +84,19 @@ pub fn to_errors(diff: SchemaDiff) -> Vec<Error> {
 
 // These are semantic errors in the diff
 // Which involves the schema changes that are not acknoledged by the new schema.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct DetailedTaggedDiff {
     pub name: String,
     pub changes: Vec<TaggedChange>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct DetailedRecordDiff {
     pub name: String,
     pub changes: Vec<RecordChange>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub enum TaggedChange {
     AddedVariant(crate::ast::Variant),
     RemovedVariant(crate::ast::Variant),
@@ -108,7 +107,7 @@ pub enum TaggedChange {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub enum RecordChange {
     AddedField(crate::ast::Column),
     RemovedField(crate::ast::Column),

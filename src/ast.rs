@@ -1,14 +1,13 @@
 use crate::ext::string;
-
 use serde::{Deserialize, Serialize};
 
 pub mod diff;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct Database {
     pub schemas: Vec<Schema>,
 }
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Schema {
     pub namespace: String,
     pub session: Option<SessionDetails>,
@@ -35,7 +34,7 @@ pub fn default_session_details() -> SessionDetails {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SessionDetails {
     pub fields: Vec<Field>,
 
@@ -52,14 +51,14 @@ pub fn is_empty_schema(schema: &Schema) -> bool {
     return false;
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SchemaFile {
     pub path: String,
     pub definitions: Vec<Definition>,
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Definition {
     Lines {
         count: usize,
@@ -117,7 +116,7 @@ pub fn get_permissions(record: &RecordDetails, operation: &QueryOperation) -> Op
     None
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecordDetails {
     pub name: String,
     pub fields: Vec<Field>,
@@ -129,7 +128,7 @@ pub struct RecordDetails {
     pub end_name: Option<Location>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Variant {
     pub name: String,
     pub fields: Option<Vec<Field>>,
@@ -151,7 +150,7 @@ pub fn to_variant(name: &str) -> Variant {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Field {
     Column(Column),
     ColumnLines { count: usize },
@@ -268,7 +267,7 @@ pub fn link_equivalent(a: &LinkDetails, b: &LinkDetails) -> bool {
     a.local_ids == b.local_ids && a.foreign == b.foreign
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FieldDirective {
     Watched(WatchedDetails),
     TableName((Range, String)),
@@ -276,19 +275,19 @@ pub enum FieldDirective {
     Permissions(PermissionDetails),
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PermissionDetails {
     Star(WhereArg),
     OnOperation(Vec<PermissionOnOperation>),
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PermissionOnOperation {
     pub operations: Vec<QueryOperation>,
     pub where_: WhereArg,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PermissionOperations {
     pub select: Option<WhereArg>,
     pub insert: Option<WhereArg>,
@@ -296,7 +295,7 @@ pub struct PermissionOperations {
     pub delete: Option<WhereArg>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WatchedDetails {
     pub selects: bool,
     pub inserts: bool,
@@ -350,7 +349,7 @@ pub fn get_foreign_tablename(schema: &Schema, link: &LinkDetails) -> String {
     link.foreign.table.clone()
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LinkDetails {
     pub link_name: String,
     pub local_ids: Vec<String>,
@@ -361,7 +360,7 @@ pub struct LinkDetails {
     pub end_name: Option<Location>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Qualified {
     pub schema: String,
     pub table: String,
@@ -390,7 +389,7 @@ pub fn collect_links(fields: &Vec<Field>) -> Vec<LinkDetails> {
     links
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Column {
     pub name: String,
     pub type_: String,
@@ -408,14 +407,14 @@ pub struct Column {
     pub end_typename: Option<Location>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Location {
     pub offset: usize,
     pub line: u32,
     pub column: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Range {
     pub start: Location,
     pub end: Location,
@@ -436,7 +435,7 @@ pub fn empty_range() -> Range {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ColumnDirective {
     PrimaryKey,
     Unique,
@@ -445,7 +444,7 @@ pub enum ColumnDirective {
 }
 
 // CURRENT_TIME, CURRENT_DATE or CURRENT_TIMESTAMP
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DefaultValue {
     Now,
     Value(QueryValue),
@@ -457,13 +456,13 @@ pub enum DefaultValue {
 // REAL. The value is a floating point value, stored as an 8-byte IEEE floating point number.
 // TEXT. The value is a text string, stored using the database encoding (UTF-8, UTF-16BE or UTF-16LE).
 // BLOB. The value is a blob of data, stored exactly as it was input.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SerializationType {
     Concrete(ConcreteSerializationType),
     FromType(String), // defined as another named type.
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ConcreteSerializationType {
     Integer,
     Real,
@@ -495,7 +494,7 @@ impl ConcreteSerializationType {
 
 // Taken from:
 // https://docs.turso.tech/features/ai-and-embeddings#types
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum VectorType {
     Float64,
     Float32,
@@ -542,7 +541,7 @@ pub enum TopLevelQueryField {
     Comment { text: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum QueryOperation {
     Select,
     Insert,
@@ -663,14 +662,14 @@ pub fn direction_to_string(direction: &Direction) -> String {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum WhereArg {
     Column(String, Operator, QueryValue),
     And(Vec<WhereArg>),
     Or(Vec<WhereArg>),
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum QueryValue {
     Fn(FnDetails),
 
@@ -683,13 +682,13 @@ pub enum QueryValue {
     Null(Range),
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LiteralTypeValueDetails {
     pub name: String,
     // Eventually we want the full recursive structure here
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FnDetails {
     pub name: String,
     pub args: Vec<QueryValue>,
@@ -699,7 +698,7 @@ pub struct FnDetails {
     pub location_arg: Range,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VariableDetails {
     pub name: String,
     pub session_field: Option<String>,
@@ -717,7 +716,7 @@ pub fn session_field_name(col: &Column) -> String {
     format!("Session.{}", col.name)
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Operator {
     Equal,
     NotEqual,

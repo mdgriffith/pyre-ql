@@ -1,7 +1,7 @@
 use libsql;
 use pyre::db::introspect::{
-    ColumnInfo, DbTable, ForeignKey, Introspection, Migration, MigrationRun, MigrationState, Table,
-    GET_SCHEMA, LIST_MIGRATIONS, LIST_TABLES, MIGRATION_TABLE, SCHEMA_TABLE,
+    DbTable, Introspection, Migration, MigrationRun, MigrationState, LIST_MIGRATIONS, LIST_TABLES,
+    MIGRATION_TABLE,
 };
 
 pub async fn get_migration_state(

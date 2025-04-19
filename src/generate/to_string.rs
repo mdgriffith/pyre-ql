@@ -2,7 +2,15 @@ use crate::ast;
 use nom::ToUsize;
 use std::collections::BTreeMap;
 
-pub fn schema_to_string(namespace: &str, schema_file: &ast::SchemaFile) -> String {
+pub fn schema_to_string(namespace: &str, schema: &ast::Schema) -> String {
+    let mut result = String::new();
+    for schema_file in &schema.files {
+        result.push_str(&schemafile_to_string(namespace, schema_file));
+    }
+    result
+}
+
+pub fn schemafile_to_string(namespace: &str, schema_file: &ast::SchemaFile) -> String {
     let mut result = String::new();
 
     for definition in &schema_file.definitions {

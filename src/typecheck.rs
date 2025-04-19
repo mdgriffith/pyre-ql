@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub enum Type {
     Integer,
     Float,
@@ -103,7 +103,7 @@ fn field_to_sql_column(
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct Context {
     pub current_filepath: String,
 
@@ -120,13 +120,13 @@ pub struct Context {
     pub variants: HashMap<String, (Option<Range>, Vec<VariantDef>)>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct Table {
     pub schema: String,
     pub record: ast::RecordDetails,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 struct FuncDefinition {
     name: String,
     arg_types: Vec<String>,
