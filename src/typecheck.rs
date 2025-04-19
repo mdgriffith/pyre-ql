@@ -107,10 +107,6 @@ fn field_to_sql_column(
 pub struct Context {
     pub current_filepath: String,
 
-    // Used to track which params are used in which
-    // toplevel query field.
-    pub top_level_field_alias: String,
-
     pub valid_namespaces: HashSet<String>,
     pub session: Option<ast::SessionDetails>,
     pub funcs: HashMap<String, platform::FuncDefinition>,
@@ -156,7 +152,6 @@ pub fn empty_context() -> Context {
 
     let mut context = Context {
         current_filepath: "".to_string(),
-        top_level_field_alias: "".to_string(),
         valid_namespaces: HashSet::new(),
         session: None,
         funcs: fns,
@@ -628,6 +623,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
     }
 }
 
+// Check for duplicate variants
 fn check_schema_definitions(context: &Context, database: &ast::Database, errors: &mut Vec<Error>) {
     let vars = context.variants.clone();
     for (variant_name, (maybe_type_range, mut instances)) in vars {
@@ -865,16 +861,12 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
     }
 }
 
-// Check query
-
 pub fn check_queries<'a>(
-    database: &ast::Database,
     query_list: &ast::QueryList,
-    context: &mut Context,
+    context: &Context,
 ) -> Result<HashMap<String, QueryInfo>, Vec<Error>> {
     let mut errors: Vec<Error> = Vec::new();
     let mut all_params: HashMap<String, QueryInfo> = HashMap::new();
-    check_schema_definitions(&context, database, &mut errors);
 
     for query in &query_list.queries {
         match query {
@@ -923,11 +915,13 @@ struct UsedNamespaces {
     secondary: HashSet<String>,
 }
 
-pub fn check_query(
-    context: &mut Context,
-    errors: &mut Vec<Error>,
-    query: &ast::Query,
-) -> QueryInfo {
+struct QueryContext {
+    // Used to track which params are used in which
+    // toplevel query field.
+    top_level_field_alias: String,
+}
+
+pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Query) -> QueryInfo {
     // We need to check
     // 1. The field exists on the record in the schema
     //    What type is the field (add to `QueryField`)
@@ -940,6 +934,10 @@ pub fn check_query(
     let mut used_namespaces: UsedNamespaces = UsedNamespaces {
         primary: HashSet::new(),
         secondary: HashSet::new(),
+    };
+
+    let mut query_context = QueryContext {
+        top_level_field_alias: "".to_string(),
     };
 
     // Check that all param types are known
@@ -1050,7 +1048,7 @@ pub fn check_query(
                     seen_fields.insert(aliased_name.clone());
                 }
 
-                context.top_level_field_alias = aliased_name;
+                query_context.top_level_field_alias = aliased_name;
                 match context.tables.get(&query_field.name) {
                     None => errors.push(Error {
                         filepath: context.current_filepath.clone(),
@@ -1068,6 +1066,7 @@ pub fn check_query(
                     }),
                     Some(table) => check_table_query(
                         context,
+                        &query_context,
                         errors,
                         &query.operation,
                         None,
@@ -1161,6 +1160,7 @@ fn get_secondary_dbs(namespaces: &UsedNamespaces, primary_db: &str) -> HashSet<S
 
 fn check_where_args(
     context: &Context,
+    query_context: &QueryContext,
     start: &Option<ast::Location>,
     end: &Option<ast::Location>,
     table: &ast::RecordDetails,
@@ -1171,12 +1171,30 @@ fn check_where_args(
     match where_args {
         ast::WhereArg::And(ands) => {
             for and in ands {
-                check_where_args(context, start, end, table, errors, params, and);
+                check_where_args(
+                    context,
+                    query_context,
+                    start,
+                    end,
+                    table,
+                    errors,
+                    params,
+                    and,
+                );
             }
         }
         ast::WhereArg::Or(ors) => {
             for or in ors {
-                check_where_args(context, start, end, table, errors, params, or);
+                check_where_args(
+                    context,
+                    query_context,
+                    start,
+                    end,
+                    table,
+                    errors,
+                    params,
+                    or,
+                );
             }
         }
         ast::WhereArg::Column(field_name, operator, query_val) => {
@@ -1228,10 +1246,11 @@ fn check_where_args(
             }
 
             match column_type {
-                None => mark_as_used(context, query_val, params),
+                None => mark_as_used(&query_context, query_val, params),
                 Some(column_type_string) => {
                     check_value(
                         context,
+                        &query_context,
                         query_val,
                         start,
                         end,
@@ -1251,7 +1270,7 @@ fn check_where_args(
 }
 
 fn mark_as_used(
-    context: &Context,
+    query_context: &QueryContext,
     value: &ast::QueryValue,
     params: &mut HashMap<String, ParamInfo>,
 ) {
@@ -1278,7 +1297,7 @@ fn mark_as_used(
                             // mark as used
                             *used = true;
                             used_by_top_level_field_alias
-                                .insert(context.top_level_field_alias.clone());
+                                .insert(query_context.top_level_field_alias.clone());
                         }
                         ParamInfo::NotDefinedButUsed { used_at, type_ } => (),
                     };
@@ -1291,6 +1310,7 @@ fn mark_as_used(
 
 fn check_value(
     context: &Context,
+    query_context: &QueryContext,
     value: &ast::QueryValue,
     start: &Option<ast::Location>,
     end: &Option<ast::Location>,
@@ -1394,7 +1414,15 @@ fn check_value(
                             func.args.iter().zip(func_definition.arg_types.iter())
                         {
                             check_value(
-                                context, arg, start, end, errors, params, table_name, arg_type,
+                                context,
+                                &query_context,
+                                arg,
+                                start,
+                                end,
+                                errors,
+                                params,
+                                table_name,
+                                arg_type,
                                 false,
                             );
                         }
@@ -1428,7 +1456,7 @@ fn check_value(
                             // mark as used
                             *used = true;
                             used_by_top_level_field_alias
-                                .insert(context.top_level_field_alias.clone());
+                                .insert(query_context.top_level_field_alias.clone());
 
                             match &type_ {
                                 None => {
@@ -1609,6 +1637,7 @@ fn insert_primary_schema(
 
 fn check_table_query(
     context: &Context,
+    query_context: &QueryContext,
     errors: &mut Vec<Error>,
     operation: &ast::QueryOperation,
     through_link: Option<&ast::LinkDetails>,
@@ -1652,6 +1681,7 @@ fn check_table_query(
 
                         check_value(
                             context,
+                            &query_context,
                             &limit_val,
                             &arg.start,
                             &arg.end,
@@ -1670,6 +1700,7 @@ fn check_table_query(
 
                         check_value(
                             context,
+                            &query_context,
                             &offset_value,
                             &arg.start,
                             &arg.end,
@@ -1688,6 +1719,7 @@ fn check_table_query(
 
                         check_where_args(
                             context,
+                            &query_context,
                             &arg.start,
                             &arg.end,
                             &table.record,
@@ -1736,7 +1768,15 @@ fn check_table_query(
                         ast::Field::Column(column) => {
                             if column.name == field.name {
                                 is_known_field = true;
-                                check_field(context, params, operation, errors, column, field)
+                                check_field(
+                                    context,
+                                    &query_context,
+                                    params,
+                                    operation,
+                                    errors,
+                                    column,
+                                    field,
+                                )
                             }
                         }
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
@@ -1745,6 +1785,7 @@ fn check_table_query(
                                 has_nested_selected = true;
                                 check_link(
                                     context,
+                                    &query_context,
                                     operation,
                                     errors,
                                     &table.record,
@@ -1905,6 +1946,7 @@ fn check_table_query(
 
 fn check_field(
     context: &Context,
+    query_context: &QueryContext,
     params: &mut HashMap<String, ParamInfo>,
     operation: &ast::QueryOperation,
     mut errors: &mut Vec<Error>,
@@ -1931,6 +1973,7 @@ fn check_field(
         Some(set) => {
             check_value(
                 context,
+                &query_context,
                 &set,
                 &field.start,
                 &field.end,
@@ -2001,6 +2044,7 @@ fn get_column_reference(fields: &Vec<ast::Field>) -> Vec<(String, String)> {
 
 fn check_link(
     context: &Context,
+    query_context: &QueryContext,
     operation: &ast::QueryOperation,
     errors: &mut Vec<Error>,
     local_table: &ast::RecordDetails,
@@ -2100,6 +2144,7 @@ fn check_link(
             }),
             Some(table) => check_table_query(
                 context,
+                &query_context,
                 errors,
                 operation,
                 Some(link),

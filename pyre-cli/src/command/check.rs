@@ -63,8 +63,7 @@ fn run_check(paths: filesystem::Found) -> io::Result<Vec<FileError>> {
                 match parser::parse_query(&query_file_path, &query_source_str) {
                     Ok(query_list) => {
                         context.current_filepath = query_file_path.clone();
-                        let typecheck_result =
-                            typecheck::check_queries(&schema, &query_list, &mut context);
+                        let typecheck_result = typecheck::check_queries(&query_list, &mut context);
 
                         match typecheck_result {
                             Ok(_) => {}
