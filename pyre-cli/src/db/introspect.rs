@@ -39,102 +39,89 @@ pub async fn get_migration_state(
     Ok(MigrationState::MigrationTable { migrations })
 }
 
+#[derive(serde::Deserialize)]
+struct IntrospectionRow {
+    result: String,
+}
+
+#[derive(serde::Deserialize)]
+struct IsInitialized {
+    #[serde(deserialize_with = "deserialize_bool_from_int")]
+    is_initialized: bool,
+}
+
+fn deserialize_bool_from_int<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let i: i32 = serde::Deserialize::deserialize(deserializer)?;
+    Ok(i == 1)
+}
+
 pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::Error> {
     match db.connect() {
+        Err(e) => {
+            println!("Error: {}", e);
+            Err(e)
+        }
         Ok(conn) => {
             let args: Vec<String> = vec![];
-            let table_list_result = conn.query(LIST_TABLES, args).await;
-            let mut tables: Vec<Table> = vec![];
+            let is_initialized_result =
+                conn.query(pyre::db::introspect::IS_INITIALIZED, args).await;
 
-            let mut has_schema_table = false;
-            let mut has_migration_table = false;
+            match is_initialized_result {
+                Ok(mut is_initialized_rows) => {
+                    if let Some(row) = is_initialized_rows.next().await? {
+                        let is_initialized = libsql::de::from_row::<IsInitialized>(&row).unwrap();
+                        if is_initialized.is_initialized {
+                            let args: Vec<String> = vec![];
+                            let introspection_result =
+                                conn.query(pyre::db::introspect::INTROSPECT_SQL, args).await;
 
-            // Get schema
-            match table_list_result {
-                Ok(mut table_rows) => {
-                    while let Some(row) = table_rows.next().await? {
-                        let table = libsql::de::from_row::<DbTable>(&row).unwrap();
-                        if table.name == "sqlite_sequence"
-                            || table.name == MIGRATION_TABLE
-                            || table.name == SCHEMA_TABLE
-                        {
-                            if table.name == SCHEMA_TABLE {
-                                has_schema_table = true;
-                            }
-                            if table.name == MIGRATION_TABLE {
-                                has_migration_table = true;
-                            }
-                            continue;
-                        }
+                            match introspection_result {
+                                Ok(mut introspection_rows) => {
+                                    if let Some(row) = introspection_rows.next().await? {
+                                        let introspection =
+                                            libsql::de::from_row::<IntrospectionRow>(&row).unwrap();
 
-                        let mut foreign_keys: Vec<ForeignKey> = vec![];
-                        let mut columns: Vec<ColumnInfo> = vec![];
+                                        let introspection_raw: Result<
+                                            pyre::db::introspect::IntrospectionRaw,
+                                            serde_json::Error,
+                                        > = serde_json::from_str(&introspection.result);
 
-                        let args: Vec<String> = vec![];
-                        // List all Foreign Keys
-                        let mut foreign_key_list_result = conn
-                            .query(&format!("PRAGMA foreign_key_list({})", table.name), args)
-                            .await
-                            .unwrap();
-
-                        while let Some(fk_row) = foreign_key_list_result.next().await? {
-                            let fk_result = libsql::de::from_row::<ForeignKey>(&fk_row);
-                            match fk_result {
-                                Ok(fk) => foreign_keys.push(fk),
+                                        if let Ok(introspection_raw) = introspection_raw {
+                                            return Ok(pyre::db::introspect::from_raw(
+                                                introspection_raw,
+                                            ));
+                                        } else {
+                                            // This is likely not correct
+                                            return Ok(Introspection {
+                                                tables: vec![],
+                                                migration_state: MigrationState::NoMigrationTable,
+                                                schema:
+                                                    pyre::db::introspect::SchemaResult::Success {
+                                                        schema: pyre::ast::Schema::default(),
+                                                        context: pyre::typecheck::empty_context(),
+                                                    },
+                                            });
+                                        }
+                                    }
+                                }
                                 Err(e) => {
-                                    println!("{:?}", e);
+                                    println!("Error: {}", e);
+                                    return Err(e);
                                 }
                             }
                         }
-
-                        // All columns
-                        let column_args: Vec<String> = vec![];
-                        let mut table_info_result = conn
-                            .query(&format!("PRAGMA table_info({})", table.name), column_args)
-                            .await
-                            .unwrap();
-
-                        while let Some(table_info_row) = table_info_result.next().await? {
-                            let column_info =
-                                libsql::de::from_row::<ColumnInfo>(&table_info_row).unwrap();
-                            // print!("{:?}\n", table_info);
-                            columns.push(column_info);
-                        }
-
-                        tables.push(Table {
-                            name: table.name,
-                            columns,
-                            foreign_keys,
-                        })
                     }
-
-                    let migration_state = if has_migration_table {
-                        get_migration_state(&conn).await?
-                    } else {
-                        MigrationState::NoMigrationTable
-                    };
-
-                    // Query for schema
-                    let mut schema = None;
-                    if has_schema_table {
-                        let args: Vec<String> = vec![];
-                        let mut schema_result = conn.query(GET_SCHEMA, args).await?;
-                        if let Some(row) = schema_result.next().await? {
-                            // Deserialize the schema JSON string into Schema struct
-                            match libsql::de::from_row::<String>(&row) {
-                                Ok(schema_str) => match serde_json::from_str(&schema_str) {
-                                    Ok(schema_json) => schema = Some(schema_json),
-                                    Err(_) => (),
-                                },
-                                Err(_) => (),
-                            }
-                        }
-                    }
-
+                    // This is likely not correct
                     Ok(Introspection {
-                        tables,
-                        migration_state,
-                        schema,
+                        tables: vec![],
+                        migration_state: MigrationState::NoMigrationTable,
+                        schema: pyre::db::introspect::SchemaResult::Success {
+                            schema: pyre::ast::Schema::default(),
+                            context: pyre::typecheck::empty_context(),
+                        },
                     })
                 }
                 Err(e) => {
@@ -142,10 +129,6 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
                     Err(e)
                 }
             }
-        }
-        Err(e) => {
-            println!("Error: {}", e);
-            Err(e)
         }
     }
 }

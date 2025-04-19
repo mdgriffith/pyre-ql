@@ -30,6 +30,7 @@ SELECT
   END as is_initialized;
 "#;
 
+// This produces a JSON object that can be decoded into an `IntrospectionRaw`
 pub const INTROSPECT_SQL: &str = r#"
 WITH RECURSIVE
   -- Get all tables except system tables
