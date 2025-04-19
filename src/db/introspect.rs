@@ -20,6 +20,87 @@ pub const LIST_MIGRATIONS: &str = "SELECT name FROM _pyre_migrations;";
 // Add this near the top with other constants
 pub const GET_SCHEMA: &str = "SELECT schema FROM _pyre_schema LIMIT 1;";
 
+pub const INTROSPECT_SQL: &str = r#"
+WITH RECURSIVE
+  -- Get all tables except system tables
+  all_tables AS (
+    SELECT name 
+    FROM sqlite_master 
+    WHERE type='table' 
+    AND name NOT IN ('sqlite_sequence', '_pyre_migrations', '_pyre_schema')
+  ),
+  -- Get table info for each table
+  table_info AS (
+    SELECT 
+      t.name as table_name,
+      json_group_array(
+        json_object(
+          'cid', c.cid,
+          'name', c.name,
+          'type', c.type,
+          'notnull', c.'notnull',
+          'dflt_value', c.dflt_value,
+          'pk', c.pk
+        )
+      ) as columns_json
+    FROM all_tables t
+    CROSS JOIN pragma_table_info(t.name) c
+    GROUP BY t.name
+  ),
+  -- Get foreign key info for each table
+  foreign_keys AS (
+    SELECT 
+      t.name as table_name,
+      json_group_array(
+        json_object(
+          'id', f.id,
+          'seq', f.seq,
+          'table', f.'table',
+          'from', f.'from',
+          'to', f.'to',
+          'on_update', f.on_update,
+          'on_delete', f.on_delete,
+          'match', f.'match'
+        )
+      ) as fks_json
+    FROM all_tables t
+    CROSS JOIN pragma_foreign_key_list(t.name) f
+    GROUP BY t.name
+  ),
+  -- Get migration state
+  migration_state AS (
+    SELECT 
+      CASE 
+        WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='_pyre_migrations') THEN
+          json_object(
+            'MigrationTable',
+            json_object(
+              'migrations',
+              json_group_array(
+                json_object('name', name)
+              )
+            )
+          )
+        ELSE json('{"NoMigrationTable": null}')
+      END as state_json
+    FROM _pyre_migrations
+  )
+SELECT json_object(
+  'tables',
+  json_group_array(
+    json_object(
+      'name', ti.table_name,
+      'columns', json(ti.columns_json),
+      'foreign_keys', COALESCE(json(fk.fks_json), '[]')
+    )
+  ),
+  'migration_state', json((SELECT state_json FROM migration_state)),
+  'schema_source', ''
+) as result
+FROM table_info ti
+LEFT JOIN foreign_keys fk ON ti.table_name = fk.table_name;
+"#;
+
 /*
 Introspection is used to drive migrations.
 
