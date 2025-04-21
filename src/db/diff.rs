@@ -10,6 +10,10 @@ pub struct Diff {
     pub modified_records: Vec<DetailedRecordDiff>,
 }
 
+pub fn is_empty(diff: &Diff) -> bool {
+    diff.added.is_empty() && diff.removed.is_empty() && diff.modified_records.is_empty()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DetailedRecordDiff {
     pub name: String,
