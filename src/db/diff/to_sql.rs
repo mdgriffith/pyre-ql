@@ -1,11 +1,14 @@
 use super::*;
-
-pub fn to_sql(diff: &Diff) -> Vec<String> {
+use crate::generate::sql::to_sql::SqlAndParams;
+pub fn to_sql(diff: &Diff) -> Vec<SqlAndParams> {
     let mut sql_statements = Vec::new();
 
     // Handle removed tables first (to avoid foreign key conflicts)
     for table in &diff.removed {
-        sql_statements.push(format!("drop table if exists \"{}\"", table.name));
+        sql_statements.push(SqlAndParams::Sql(format!(
+            "drop table if exists \"{}\"",
+            table.name
+        )));
     }
 
     // Handle added tables
@@ -30,7 +33,7 @@ pub fn to_sql(diff: &Diff) -> Vec<String> {
             create_stmt.push(')');
         }
 
-        sql_statements.push(create_stmt);
+        sql_statements.push(SqlAndParams::Sql(create_stmt));
     }
 
     // Handle modified tables
@@ -38,25 +41,25 @@ pub fn to_sql(diff: &Diff) -> Vec<String> {
         for change in &record_diff.changes {
             match change {
                 RecordChange::AddedField(column) => {
-                    sql_statements.push(format!(
+                    sql_statements.push(SqlAndParams::Sql(format!(
                         "alter table \"{}\" add column {}",
                         record_diff.name,
                         column_definition(column)
-                    ));
+                    )));
                 }
                 RecordChange::RemovedField(column) => {
-                    sql_statements.push(format!(
+                    sql_statements.push(SqlAndParams::Sql(format!(
                         "alter table \"{}\" drop column \"{}\"",
                         record_diff.name, column.name
-                    ));
+                    )));
                 }
                 RecordChange::ModifiedField { name, changes } => {
                     // For SQLite, we can't directly modify columns, so we need to recreate the table
                     // This would require more complex migration logic
-                    sql_statements.push(format!(
+                    sql_statements.push(SqlAndParams::Sql(format!(
                         "-- WARNING: Column modification for `{}`.`{}` requires table recreation",
                         record_diff.name, name
-                    ));
+                    )));
                 }
             }
         }

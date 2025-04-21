@@ -4,13 +4,14 @@ use pyre::ast;
 use pyre::ast::diff;
 use pyre::db::introspect;
 use pyre::error;
+use pyre::generate::sql::to_sql::SqlAndParams;
 use pyre::parser;
 use pyre::typecheck;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
-use web_sys::console;
+// use web_sys::console;
 
 const FILEPATH: &str = "schema.pyre";
 
@@ -101,10 +102,6 @@ pub async fn migrate(
     // Generate the SQL from the diff
     let db_diff = pyre::db::diff::diff(&new_context, &new_schema_clone, &introspection);
 
-    // Log the db_diff to console
-    console::log_1(&serde_wasm_bindgen::to_value(&db_diff).unwrap());
-    let diff_sql = pyre::db::diff::to_sql::to_sql(&db_diff);
-
     if pyre::db::diff::is_empty(&db_diff) {
         return Ok(MigrationSql {
             sql: vec![],
@@ -120,13 +117,17 @@ pub async fn migrate(
         });
     }
 
+    // Log the db_diff to console
+    // console::log_1(&serde_wasm_bindgen::to_value(&db_diff).unwrap());
+    let mut sql = pyre::db::diff::to_sql::to_sql(&db_diff);
+
     let mut sql_executed = String::new();
-    let mut sql = Vec::new();
-    for sql_statement in diff_sql {
-        sql.push(SqlAndParams::Sql(sql_statement.clone()));
-        sql_executed.push_str(&sql_statement);
-        sql_executed.push_str(";\n");
-    }
+    // let mut sql = Vec::new();
+    // for sql_statement in diff_sql {
+    //     // sql.push(SqlAndParams::Sql(sql_statement.clone()));
+    //     sql_executed.push_str(&sql_statement);
+    //     sql_executed.push_str(";\n");
+    // }
 
     match introspection.migration_state {
         introspect::MigrationState::NoMigrationTable => {
@@ -159,13 +160,6 @@ pub async fn migrate(
             args: vec![name.to_string(), sql_executed.clone()],
         },
     })
-}
-
-#[derive(Serialize)]
-#[serde(untagged)]
-pub enum SqlAndParams {
-    Sql(String),
-    SqlWithParams { sql: String, args: Vec<String> },
 }
 
 // #[wasm_bindgen]

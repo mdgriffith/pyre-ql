@@ -1,6 +1,15 @@
 use crate::ast;
 use crate::ext::string;
 use crate::typecheck;
+use serde::Serialize;
+
+// Serializes in a format that libsql can use
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum SqlAndParams {
+    Sql(String),
+    SqlWithParams { sql: String, args: Vec<String> },
+}
 
 pub struct Prepared {
     pub include: bool,

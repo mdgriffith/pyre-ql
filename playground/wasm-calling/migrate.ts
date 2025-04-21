@@ -108,7 +108,7 @@ export async function runMigration(db: Client, schemaSource: string) {
             console.log("----");
 
             if (result.Ok.sql.length > 0) {
-                const migrationResult = await db.batch(result.Ok.sql);
+                await db.batch(result.Ok.sql);
                 await db.execute(result.Ok.mark_success);
                 const introspection = await introspect(db);
                 await set_schema(introspection);
