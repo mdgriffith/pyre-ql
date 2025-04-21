@@ -1,6 +1,4 @@
-use pyre::ast;
 use pyre::db::introspect;
-use pyre::typecheck;
 use serde_wasm_bindgen;
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::prelude::*;
@@ -8,28 +6,6 @@ use wasm_bindgen::prelude::*;
 // Use thread_local to store the cached data
 thread_local! {
     static CACHED_SCHEMA: Mutex<Option<Arc<introspect::Introspection>>> = Mutex::new(None);
-}
-
-pub fn get_or_parse_schema(introspection: JsValue) -> Arc<introspect::Introspection> {
-    CACHED_SCHEMA.with(|cache| {
-        let mut cache = cache.lock().unwrap();
-
-        // If we have a cached schema, return references to it
-        if let Some(introspection_cached) = cache.as_ref() {
-            return introspection_cached.clone();
-        }
-
-        // Otherwise parse and typecheck the schema
-        let introspection_raw: introspect::IntrospectionRaw =
-            serde_wasm_bindgen::from_value(introspection).unwrap();
-
-        let introspection = introspect::from_raw(introspection_raw);
-
-        // Cache the result
-        *cache = Some(Arc::new(introspection));
-
-        cache.as_ref().unwrap().clone()
-    })
 }
 
 pub fn get() -> Option<Arc<introspect::Introspection>> {
@@ -47,13 +23,16 @@ pub fn set_schema(introspection: JsValue) -> () {
         let mut cache = cache.lock().unwrap();
 
         // Parse and typecheck the schema
-        let introspection_raw: introspect::IntrospectionRaw =
-            serde_wasm_bindgen::from_value(introspection).unwrap();
-
-        let introspection = introspect::from_raw(introspection_raw);
-
-        // Cache the result
-        *cache = Some(Arc::new(introspection));
+        match serde_wasm_bindgen::from_value::<introspect::IntrospectionRaw>(introspection) {
+            Ok(introspection_raw) => {
+                let introspection = introspect::from_raw(introspection_raw);
+                // Cache the result
+                *cache = Some(Arc::new(introspection));
+            }
+            Err(e) => {
+                web_sys::console::error_1(&format!("Failed to parse introspection: {}", e).into());
+            }
+        }
 
         ()
     })
