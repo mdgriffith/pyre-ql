@@ -27,11 +27,98 @@ SELECT
     AND EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='_pyre_schema')
     THEN 1
     ELSE 0
-  END as is_initialized;
+  END as is_initialized
 "#;
 
 // This produces a JSON object that can be decoded into an `IntrospectionRaw`
 pub const INTROSPECT_SQL: &str = r#"
+WITH RECURSIVE
+  -- Get all tables except system tables
+  all_tables AS (
+    SELECT name 
+    FROM sqlite_master 
+    WHERE type='table' 
+    AND name NOT IN ('sqlite_sequence', '_pyre_migrations', '_pyre_schema')
+  ),
+  -- Get table info for each table
+  table_info AS (
+    SELECT 
+      t.name as table_name,
+      jsonb_group_array(
+        jsonb_object(
+          'cid', c.cid,
+          'name', c.name,
+          'type', c.type,
+          'notnull', c.'notnull',
+          'dflt_value', c.dflt_value,
+          'pk', c.pk
+        )
+      ) as columns_json
+    FROM all_tables t
+    CROSS JOIN pragma_table_info(t.name) c
+    GROUP BY t.name
+  ),
+  -- Get foreign key info for each table
+  foreign_keys AS (
+    SELECT 
+      t.name as table_name,
+      jsonb_group_array(
+        jsonb_object(
+          'id', f.id,
+          'seq', f.seq,
+          'table', f.'table',
+          'from', f.'from',
+          'to', f.'to',
+          'on_update', f.on_update,
+          'on_delete', f.on_delete,
+          'match', f.'match'
+        )
+      ) as fks_json
+    FROM all_tables t
+    CROSS JOIN pragma_foreign_key_list(t.name) f
+    GROUP BY t.name
+  ),
+  -- Get migration state
+  migration_state AS (
+    SELECT 
+      CASE 
+        WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='_pyre_migrations') THEN
+          jsonb_object(
+            'MigrationTable',
+            jsonb_object(
+              'migrations',
+              jsonb_group_array(
+                jsonb_object('name', name)
+              )
+            )
+          )
+        ELSE jsonb('{"NoMigrationTable": null}')
+      END as state_json
+    FROM _pyre_migrations
+  )
+SELECT json_object(
+  'tables',
+  jsonb_group_array(
+    jsonb_object(
+      'name', ti.table_name,
+      'columns', jsonb(ti.columns_json),
+      'foreign_keys', COALESCE(jsonb(fk.fks_json), jsonb('[]'))
+    )
+  ),
+  'migration_state', json((SELECT state_json FROM migration_state)),
+  'schema_source', COALESCE(
+    (SELECT schema FROM _pyre_schema ORDER BY created_at DESC LIMIT 1),
+    ''
+  )
+) as result
+FROM table_info ti
+LEFT JOIN foreign_keys fk ON ti.table_name = fk.table_name;
+"#;
+
+// This is the same sql as INTROSPECT_SQL but does not query
+// the migration table or schema table.
+// This is used to introspect an uninitialized database.
+pub const INTROSPECT_UNINITIALIZED_SQL: &str = r#"
 WITH RECURSIVE
   -- Get all tables except system tables
   all_tables AS (
@@ -77,24 +164,6 @@ WITH RECURSIVE
     FROM all_tables t
     CROSS JOIN pragma_foreign_key_list(t.name) f
     GROUP BY t.name
-  ),
-  -- Get migration state
-  migration_state AS (
-    SELECT 
-      CASE 
-        WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='_pyre_migrations') THEN
-          json_object(
-            'MigrationTable',
-            json_object(
-              'migrations',
-              json_group_array(
-                json_object('name', name)
-              )
-            )
-          )
-        ELSE json('{"NoMigrationTable": null}')
-      END as state_json
-    FROM _pyre_migrations
   )
 SELECT json_object(
   'tables',
@@ -105,11 +174,8 @@ SELECT json_object(
       'foreign_keys', COALESCE(json(fk.fks_json), '[]')
     )
   ),
-  'migration_state', json((SELECT state_json FROM migration_state)),
-  'schema_source', COALESCE(
-    (SELECT schema FROM _pyre_schema ORDER BY created_at DESC LIMIT 1),
-    ''
-  )
+  'migration_state', json('{"NoMigrationTable": null}'),
+  'schema_source', ''
 ) as result
 FROM table_info ti
 LEFT JOIN foreign_keys fk ON ti.table_name = fk.table_name;
