@@ -106,7 +106,18 @@ pub async fn migrate(
     let diff_sql = pyre::db::diff::to_sql::to_sql(&db_diff);
 
     if pyre::db::diff::is_empty(&db_diff) {
-        return Err(vec![]);
+        return Ok(MigrationSql {
+            sql: vec![],
+            mark_success: SqlAndParams::SqlWithParams {
+                sql: pyre::db::migrate::INSERT_MIGRATION_SUCCESS.to_string(),
+                args: vec![name.to_string(), "".to_string()],
+            },
+            mark_failure: SqlAndParams::SqlWithParams {
+                sql: pyre::db::migrate::INSERT_MIGRATION_ERROR.to_string(),
+                // They'll need to add the error message
+                args: vec![name.to_string(), "".to_string()],
+            },
+        });
     }
 
     let mut sql_executed = String::new();

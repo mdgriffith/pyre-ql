@@ -45,7 +45,6 @@ async function introspect(db: Client): Promise<Introspection> {
     }
 
     const isInitialized = isInitializedResult.rows[0].is_initialized === 1;
-    console.log("Is initialized?", isInitialized);
 
 
     if (isInitialized) {
@@ -55,13 +54,11 @@ async function introspect(db: Client): Promise<Introspection> {
 
         try {
             const introspectionResult = await db.execute(introspectionQuery);
-            console.log("Introspection result", introspectionResult);
             if (introspectionResult.rows.length === 0) {
                 throw new Error("Failed to get introspection result");
             }
             const introspectionJson = JSON.parse(introspectionResult.rows[0].result as string);
-            console.log("Initialized")
-            console.log(introspectionResult.rows[0].result);
+
             return introspectionJson;
 
         } catch (error) {
@@ -109,30 +106,16 @@ export async function runMigration(db: Client, schemaSource: string) {
             console.log("Running migration");
             console.log(result.Ok.sql);
             console.log("----");
-            const migrationResult = await db.batch(result.Ok.sql);
-            console.log("Migration result", migrationResult);
-            console.log("Migration executed");
-            console.log("Marking migration success");
-            // await db.execute(result.Ok.mark_success);
 
-            // const tableResult = await db.execute("SELECT * FROM sqlite_master WHERE type='table'");
-            // console.log("Table result", tableResult);
+            if (result.Ok.sql.length > 0) {
+                const migrationResult = await db.batch(result.Ok.sql);
+                await db.execute(result.Ok.mark_success);
+                const introspection = await introspect(db);
+                await set_schema(introspection);
+            } else {
+                console.log("No changes, skipping");
+            }
 
-            //             const tableResult2 = await db.execute(`SELECT 
-            //   CASE 
-            //     WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='_pyre_migrations')
-            //     AND EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='_pyre_schema')
-            //     THEN 1
-            //     ELSE 0
-            //   END as is_initialized;`);
-            //             console.log("Table result 2", tableResult2);
-
-            // Reset cached schema
-            console.log("INTROSPECTING POST MIGRATION")
-            const introspection = await introspect(db);
-            console.log("SETTING INTROSPECTION");
-            await set_schema(introspection);
-            console.log("INTROSPECTION SET");
         } catch (error) {
             const markFailure = result.Ok.mark_failure
             // We have to add an error message to the mark failure
@@ -140,6 +123,7 @@ export async function runMigration(db: Client, schemaSource: string) {
             await db.execute(markFailure);
         }
     } else {
+        console.log("Error")
         console.error(result.Err);
     }
 
