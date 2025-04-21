@@ -1,6 +1,6 @@
 use super::*;
 
-pub fn to_sql(diff: &Diff) -> String {
+pub fn to_sql(diff: &Diff) -> Vec<String> {
     let mut sql_statements = Vec::new();
 
     // Handle removed tables first (to avoid foreign key conflicts)
@@ -62,7 +62,7 @@ pub fn to_sql(diff: &Diff) -> String {
         }
     }
 
-    sql_statements.join(";\n") + ";"
+    sql_statements
 }
 
 fn column_definition(column: &crate::db::introspect::ColumnInfo) -> String {
