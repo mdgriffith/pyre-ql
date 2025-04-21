@@ -18,11 +18,27 @@ pub fn set_schema(introspection: JsValue) -> Result<(), JsValue> {
 }
 
 #[wasm_bindgen]
-pub async fn migrate(schema_source: String) -> String {
-    migrate::migrate_wasm(schema_source).await
+pub async fn migrate(name: String, schema_source: String) -> JsValue {
+    let result = migrate::migrate_wasm(name, schema_source).await;
+    serde_wasm_bindgen::to_value(&result).unwrap()
 }
 
 #[wasm_bindgen]
 pub async fn run_query(query_source: String) -> String {
     query::run_query_wasm(query_source).await
+}
+
+#[wasm_bindgen]
+pub fn sql_is_initialized() -> String {
+    pyre::db::introspect::IS_INITIALIZED.to_string()
+}
+
+#[wasm_bindgen]
+pub fn sql_introspect() -> String {
+    pyre::db::introspect::INTROSPECT_SQL.to_string()
+}
+
+#[wasm_bindgen]
+pub fn sql_introspect_uninitialized() -> String {
+    pyre::db::introspect::INTROSPECT_UNINITIALIZED_SQL.to_string()
 }
