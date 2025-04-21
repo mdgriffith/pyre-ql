@@ -1,3 +1,4 @@
+use libsql;
 use std::io;
 use std::path::Path;
 
@@ -156,7 +157,16 @@ pub async fn push<'a>(
                                     .await
                                     .unwrap();
 
-                                tx.execute_batch(&sql).await.unwrap();
+                                for sql_statement in sql {
+                                    match sql_statement {
+                                        pyre::generate::sql::to_sql::SqlAndParams::Sql(sql_string) => {
+                                            tx.execute(&sql_string, libsql::params_from_iter::<Vec<libsql::Value>>(vec![])).await.unwrap();
+                                        }
+                                        pyre::generate::sql::to_sql::SqlAndParams::SqlWithParams { sql, args } => {
+                                            tx.execute(&sql, libsql::params_from_iter(args)).await.unwrap();
+                                        }
+                                    }
+                                }
 
                                 tx.commit().await.unwrap();
 

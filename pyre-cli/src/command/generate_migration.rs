@@ -90,8 +90,27 @@ pub async fn generate_migration<'a>(
                             let diff_file = migration_folder.join("schema.diff");
 
                             let sql = pyre::db::diff::to_sql::to_sql(&db_diff);
-                            fs::write(&migration_file, sql)?;
 
+                            let mut all_sql_as_string = String::new();
+                            for sql_statement in sql {
+                                match sql_statement {
+                                    pyre::generate::sql::to_sql::SqlAndParams::Sql(sql_string) => {
+                                        all_sql_as_string.push_str(&sql_string.clone());
+                                        all_sql_as_string.push_str(";\n");
+                                    }
+                                    pyre::generate::sql::to_sql::SqlAndParams::SqlWithParams {
+                                        sql,
+                                        args,
+                                    } => {
+                                        all_sql_as_string.push_str(&sql);
+                                        // for arg in args {
+                                        //     all_sql_as_string.push_str(&arg);
+                                        // }
+                                        all_sql_as_string.push_str(";\n");
+                                    }
+                                }
+                            }
+                            fs::write(&migration_file, all_sql_as_string)?;
                             let json_diff = serde_json::to_string(&db_diff)?;
                             fs::write(&diff_file, json_diff)?;
                         }
