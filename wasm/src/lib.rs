@@ -1,5 +1,6 @@
 use console_log;
 use log::Level;
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 mod cache;
 mod migrate;
@@ -13,19 +14,19 @@ pub fn start() {
 #[wasm_bindgen]
 pub fn set_schema(introspection: JsValue) -> Result<(), JsValue> {
     cache::set_schema(introspection);
-    // Note, we probably want to return any errors here just in case.
     Ok(())
 }
 
 #[wasm_bindgen]
-pub async fn migrate(name: String, schema_source: String) -> JsValue {
-    let result = migrate::migrate_wasm(name, schema_source).await;
+pub fn migrate(name: String, schema_source: String) -> JsValue {
+    let result = migrate::migrate_wasm(name, schema_source);
     serde_wasm_bindgen::to_value(&result).unwrap()
 }
 
 #[wasm_bindgen]
-pub async fn run_query(query_source: String) -> String {
-    query::run_query_wasm(query_source).await
+pub fn query_to_sql(query_source: String) -> JsValue {
+    let result = query::query_to_sql_wasm(query_source);
+    serde_wasm_bindgen::to_value(&result).unwrap()
 }
 
 #[wasm_bindgen]
