@@ -5,26 +5,30 @@ use pyre::ast::diff;
 use pyre::db::introspect;
 use pyre::db::migrate;
 use pyre::error;
+use pyre::generate::sql::to_sql::SqlAndParams;
 use pyre::parser;
 use pyre::typecheck;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen;
 use std::collections::HashMap;
-use std::sync::Arc;
+// use std::sync::Arc;
 use wasm_bindgen::prelude::*;
+use web_sys::console;
 
 const QUERY_FILE: &str = "query.pyre";
 
 /**
  * Dynamically parse a query and return the sql that is generated
  */
-pub async fn run_query(
+pub fn query_to_sql(
     context: &typecheck::Context,
     query_source: &str,
-) -> Result<String, Vec<error::Error>> {
+) -> Result<Vec<SqlAndParams>, Vec<error::Error>> {
     match parser::parse_query(&QUERY_FILE, query_source) {
         Ok(query_list) => {
             let query_list: ast::QueryList = query_list;
+
+            console::log_1(&serde_wasm_bindgen::to_value("Parsed").unwrap());
 
             // Find the first query in the list
             // We're only running exactly one query in this context.
@@ -33,6 +37,9 @@ pub async fn run_query(
                 match query_def {
                     ast::QueryDef::Query(query) => {
                         if found_query.is_some() {
+                            console::log_1(
+                                &serde_wasm_bindgen::to_value("More than one query").unwrap(),
+                            );
                             // Found more than one query
                             return Err(vec![error::Error {
                                 error_type: error::ErrorType::ParsingError(
@@ -62,7 +69,7 @@ pub async fn run_query(
                         return Err(errors);
                     }
 
-                    let mut sql = String::new();
+                    let mut sql = Vec::new();
                     for field in &query.fields {
                         match field {
                             ast::TopLevelQueryField::Field(query_field) => {
@@ -75,7 +82,7 @@ pub async fn run_query(
                                     query_field,
                                 );
                                 for prepared in prepared {
-                                    sql.push_str(&prepared.sql);
+                                    sql.push(SqlAndParams::Sql(prepared.sql));
                                 }
                             }
                             _ => (),
@@ -94,51 +101,40 @@ pub async fn run_query(
                 }
             }
         }
-        Err(err) => Err(vec![error::Error {
-            error_type: error::ErrorType::ParsingError(error::ParsingErrorDetails {
-                expecting: error::Expecting::PyreFile,
-            }),
-            filepath: QUERY_FILE.to_string(),
-            locations: vec![],
-        }]),
+        Err(err) => match parser::convert_parsing_error(err) {
+            Some(error) => Err(vec![error]),
+            None => Err(vec![error::Error {
+                error_type: error::ErrorType::ParsingError(error::ParsingErrorDetails {
+                    expecting: error::Expecting::PyreFile,
+                }),
+                filepath: QUERY_FILE.to_string(),
+                locations: vec![],
+            }]),
+        },
     }
 }
 
-#[derive(Serialize)]
-struct QueryOutput {
-    sql: String,
-}
-
-#[derive(Serialize)]
-struct QueryError {
-    errors: Vec<error::Error>,
-}
-
-pub async fn run_query_wasm(query_source: String) -> String {
+pub fn query_to_sql_wasm(query_source: String) -> Result<Vec<SqlAndParams>, Vec<String>> {
     let introspection = match cache::get() {
         Some(introspection) => introspection,
         None => {
-            return serde_json::to_string(&error::Error {
-                error_type: error::ErrorType::MigrationMissingSchema,
-                filepath: "".to_string(),
-                locations: vec![],
-            })
-            .unwrap()
+            return Err(vec!["No schema found".to_string()]);
         }
     };
 
     match &introspection.schema {
         introspect::SchemaResult::Success { context, .. } => {
-            match run_query(&context, &query_source).await {
-                Ok(result) => serde_json::to_string(&result).unwrap(),
-                Err(errors) => serde_json::to_string(&errors).unwrap(),
+            match query_to_sql(&context, &query_source) {
+                Ok(result) => Ok(result),
+                Err(errors) => {
+                    let mut formatted_errors = Vec::new();
+                    for error in errors {
+                        formatted_errors.push(error::format_error(&query_source, &error));
+                    }
+                    Err(formatted_errors)
+                }
             }
         }
-        _ => serde_json::to_string(&error::Error {
-            error_type: error::ErrorType::MigrationMissingSchema,
-            filepath: "".to_string(),
-            locations: vec![],
-        })
-        .unwrap(),
+        _ => Err(vec!["No schema found".to_string()]),
     }
 }
