@@ -1,6 +1,5 @@
 use crate::error::{DefInfo, Error, ErrorType, Location, Range, VariantDef};
 use crate::{ast, error, platform};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -124,13 +123,6 @@ pub struct Context {
 pub struct Table {
     pub schema: String,
     pub record: ast::RecordDetails,
-}
-
-#[derive(Debug)]
-struct FuncDefinition {
-    name: String,
-    arg_types: Vec<String>,
-    return_type: String,
 }
 
 fn convert_range(range: &ast::Range) -> Range {
@@ -1054,7 +1046,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                         filepath: context.current_filepath.clone(),
                         error_type: ErrorType::UnknownTable {
                             found: query_field.name.clone(),
-                            existing: vec![],
+                            existing: context.tables.keys().cloned().collect(),
                         },
                         locations: vec![Location {
                             contexts: to_range(&query.start, &query.end),
@@ -2135,7 +2127,7 @@ fn check_link(
                 filepath: context.current_filepath.clone(),
                 error_type: ErrorType::UnknownTable {
                     found: link.foreign.table.clone(),
-                    existing: vec![],
+                    existing: context.tables.keys().cloned().collect(),
                 },
                 locations: vec![Location {
                     contexts: vec![],
