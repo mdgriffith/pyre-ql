@@ -86,6 +86,20 @@ pub fn diff(
     }
 }
 
+fn default_value_to_sql(default: &crate::ast::DefaultValue) -> Option<String> {
+    match default {
+        crate::ast::DefaultValue::Now => Some("unixepoch()".to_string()),
+        crate::ast::DefaultValue::Value(value) => match value {
+            crate::ast::QueryValue::String((_, s)) => Some(format!("'{}'", s)),
+            crate::ast::QueryValue::Int((_, i)) => Some(i.to_string()),
+            crate::ast::QueryValue::Float((_, f)) => Some(f.to_string()),
+            crate::ast::QueryValue::Bool((_, b)) => Some(if *b { "1" } else { "0" }.to_string()),
+            crate::ast::QueryValue::Null(_) => Some("null".to_string()),
+            _ => None, // Other types not supported as defaults
+        },
+    }
+}
+
 fn add_fields(
     context: &crate::typecheck::Context,
     fields: &Vec<crate::ast::Field>,
@@ -107,6 +121,13 @@ fn add_fields(
             }
             seen_fields.insert(column_name.clone());
 
+            let default_value = col.directives.iter().find_map(|d| match d {
+                crate::ast::ColumnDirective::Default { value, .. } => {
+                    return Some(format!("({})", default_value_to_sql(value).unwrap()));
+                }
+                _ => None,
+            });
+
             match &col.serialization_type {
                 crate::ast::SerializationType::Concrete(concrete) => {
                     columns.push(crate::db::introspect::ColumnInfo {
@@ -114,7 +135,7 @@ fn add_fields(
                         name: column_name,
                         column_type: concrete.to_sql_type(),
                         notnull: !force_nullable && !col.nullable,
-                        default_value: None,
+                        default_value,
                         pk: col
                             .directives
                             .iter()
