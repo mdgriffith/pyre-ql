@@ -201,7 +201,7 @@ fn parse_typename(input: Text) -> ParseResult<&str> {
 fn parse_fieldname(input: Text) -> ParseResult<&str> {
     let (input, val) = recognize(tuple((
         alt((
-            take_while1(|c: char| c.is_lowercase()), // First character can be lowercase
+            take_while1(|c: char| c.is_lowercase()), // First character must be lowercase
             take_while1(|c: char| c == '_'),         // or an underscore
         )),
         many0(alt((alphanumeric1, take_while1(|c: char| c == '_')))), // Followed by alphanumeric or underscores
@@ -814,7 +814,6 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
     ))(input)?;
     let (input, _) = cut(multispace1)(input)?;
     let (input, start_pos) = position(input)?;
-    let input = expecting(input, crate::error::Expecting::ParamDefinition);
     let (input, name) = cut(parse_typename)(input)?;
 
     let (input, param_defs_or_nothing) = cut(opt(parse_query_param_definitions))(input)?;
