@@ -49,7 +49,7 @@ pub struct MigrationSql {
  *
  *
  */
-pub async fn migrate(
+pub fn migrate(
     name: String,
     introspection: &introspect::Introspection,
     new_schema_source: &str,
@@ -123,8 +123,7 @@ pub async fn migrate(
 
     let mut sql_executed = String::new();
     // let mut sql = Vec::new();
-    // for sql_statement in diff_sql {
-    //     // sql.push(SqlAndParams::Sql(sql_statement.clone()));
+    // for sql_statement in sql {
     //     sql_executed.push_str(&sql_statement);
     //     sql_executed.push_str(";\n");
     // }
@@ -162,8 +161,7 @@ pub async fn migrate(
     })
 }
 
-// #[wasm_bindgen]
-pub async fn migrate_wasm(
+pub fn migrate_wasm(
     name: String,
     schema_source: String,
 ) -> Result<MigrationSql, Vec<error::Error>> {
@@ -178,5 +176,5 @@ pub async fn migrate_wasm(
         }
     };
 
-    migrate(name, &introspection, &schema_source).await
+    migrate(name, &introspection, &schema_source)
 }
