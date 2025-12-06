@@ -257,7 +257,7 @@ create table if not exists {} (
         pyre::ext::string::quote(pyre::db::introspect::MIGRATION_TABLE),
         pyre::ext::string::quote(pyre::db::introspect::SCHEMA_TABLE)
     );
-    conn.execute_batch(create_migration_table).await
+    conn.execute_batch(create_migration_table).await.map(|_| ())
 }
 
 async fn record_migration(

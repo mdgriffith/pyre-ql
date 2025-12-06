@@ -23,6 +23,18 @@ pub fn format_libsql_error(e: &libsql::Error) -> String {
         libsql::Error::SyncNotSupported(s) => {
             pyre::error::format_custom_error("Sync Not Supported", s)
         }
+        libsql::Error::LoadExtensionNotSupported => pyre::error::format_custom_error(
+            "Load Extension Not Supported",
+            "Loading extensions is only supported in local databases",
+        ),
+        libsql::Error::AuthorizerNotSupported => pyre::error::format_custom_error(
+            "Authorizer Not Supported",
+            "Authorizers are only supported in local databases",
+        ),
+        libsql::Error::UpdateHookNotSupported => pyre::error::format_custom_error(
+            "Update Hook Not Supported",
+            "Update hooks are only supported in local databases",
+        ),
         libsql::Error::ColumnNotFound(_) => {
             pyre::error::format_custom_error("Column Not Found", "Column not found")
         }
@@ -65,5 +77,25 @@ pub fn format_libsql_error(e: &libsql::Error) -> String {
         libsql::Error::InvalidTlsConfiguration(e) => {
             pyre::error::format_custom_error("Invalid TLS Configuration", &format!("{}", e))
         }
+        libsql::Error::TransactionalBatchError(s) => {
+            pyre::error::format_custom_error("Transactional Batch Error", s)
+        }
+        libsql::Error::InvalidBlobSize(expected) => pyre::error::format_custom_error(
+            "Invalid Blob Size",
+            &format!("Invalid blob size, expected {}", expected),
+        ),
+        libsql::Error::Sync(e) => pyre::error::format_custom_error("Sync Error", &format!("{}", e)),
+        libsql::Error::WalConflict => pyre::error::format_custom_error(
+            "WAL Frame Insert Conflict",
+            "WAL frame insert conflict",
+        ),
+        libsql::Error::ReservedBytesNotSupported => pyre::error::format_custom_error(
+            "Reserved Bytes Not Supported",
+            "Reserved bytes are not supported for this database",
+        ),
+        // `libsql::Error` is marked as `#[non_exhaustive]`, so we must keep a
+        // wildcard arm for forward compatibility. If new variants are added in
+        // a future libsql release, they will be routed here so we notice them.
+        _ => pyre::error::format_custom_error("Unknown libsql Error", &format!("{:?}", e)),
     }
 }
