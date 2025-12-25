@@ -15,6 +15,7 @@ record Player {
     userId Int
     name   String
     points Int
+    status Status
 
     gameId Int
 

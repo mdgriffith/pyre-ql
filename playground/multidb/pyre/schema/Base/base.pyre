@@ -52,8 +52,8 @@ type Status
         reason String
      }
    | Special2 {
-        reason2 String
-        error   String
+        reason String
+        error  String
      }
 
 

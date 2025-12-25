@@ -37,20 +37,29 @@ query UserInit {
 
 query Games {
     game {
+        @where { id = 1 }
         id
         name
-        players {
+        myPlayersAlias2: players {
             id
-            name
+            aliasedName: name
             points
-            user {
-                id
-                name
-                posts {
-                    title
-                    content
-                }
-
+            status
+            singleGame: games {
+                gameName: name
+            }
+        }
+    }
+    game2: game {
+        @where { id = 1 }
+        id
+        name
+        myPlayersAlias: players {
+            id
+            aliasedName: name
+            points
+            singleGame: games {
+                gameName: name
             }
         }
     }

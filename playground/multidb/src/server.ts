@@ -34,27 +34,10 @@ app.post("/db/:req", async (c) => {
   const result = await Query.run(env, req, session, args);
 
   if (result.kind === "success") {
-    // console.log(JSON.stringify(result.data));
-    // return c.json(result.data.map((d) => d.rows));
-    // return c.json(result.data.map((d) => JSON.parse(d.rows)));
+    console.log(result.data);
+    console.log(JSON.stringify(result.data, null, 2));
 
-    const formatted: any = {}
-
-    for (const result_set of result.data) {
-      if (result_set.columns.length < 1) { continue }
-      const col_name = result_set.columns[0];
-      const gathered_rows = [];
-
-      for (const row of result_set.rows) {
-        if (col_name in row && typeof row[col_name] == 'string') {
-          gathered_rows.push(JSON.parse(row[col_name]));
-        }
-      }
-
-      formatted[col_name] = gathered_rows;
-
-    }
-    return c.json(formatted)
+    return c.json(result.data)
   } else {
     console.log(result);
     c.status(500);
@@ -62,7 +45,11 @@ app.post("/db/:req", async (c) => {
   }
 });
 
+// Explicitly define the export
+const server = {
+  port: 3000,
+  fetch: app.fetch,
+};
 
-
-export default app;
+export default server;
 

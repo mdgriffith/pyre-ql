@@ -2,18 +2,13 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { createClient } from "@libsql/client";
 import type { Client } from "@libsql/client";
-import init, { migrate, run_query, sql_is_initialized, sql_introspect, sql_introspect_uninitialized, set_schema } from '../../wasm/pkg/pyre_wasm.js';
+import init, { migrate, query_to_sql, sql_is_initialized, sql_introspect, sql_introspect_uninitialized, set_schema } from '../../wasm/pkg/pyre_wasm.js';
 
 // Initialize WASM with Node.js file system
 const wasmPath = join(process.cwd(), '..', '..', 'wasm', 'pkg', 'pyre_wasm_bg.wasm');
 const wasmBuffer = readFileSync(wasmPath);
 await init(wasmBuffer);
 
-// Type definitions matching the Rust structs
-interface MigrateInput {
-    introspection: Introspection;
-    schema_source: string;
-}
 
 interface Introspection {
     tables: Array<{
@@ -49,7 +44,7 @@ async function introspect(db: Client): Promise<Introspection> {
 
     if (isInitialized) {
         // If initialized, run the introspection query
-        console.log("Running introspection query");
+        // console.log("Running introspection query");
         const introspectionQuery = sql_introspect();
 
         try {
@@ -69,15 +64,15 @@ async function introspect(db: Client): Promise<Introspection> {
     } else {
         const uninitializedIntrospect = sql_introspect_uninitialized();
 
-        console.log("RUNNING UNINITIALIZED INTROSPECTION---\n", uninitializedIntrospect);
+        // console.log("RUNNING UNINITIALIZED INTROSPECTION---\n", uninitializedIntrospect);
 
         const introspectionResult = await db.execute(uninitializedIntrospect);
 
         if (introspectionResult.rows.length === 0) {
             throw new Error("Failed to get introspection result");
         }
-        console.log("Uninitialized")
-        console.log(introspectionResult.rows[0].result);
+        // console.log("Uninitialized")
+        // console.log(introspectionResult.rows[0].result);
         return JSON.parse(introspectionResult.rows[0].result as string);
 
     }
@@ -89,16 +84,11 @@ async function introspect(db: Client): Promise<Introspection> {
  * @returns A promise that resolves to the SQL migration script or rejects with errors
  */
 export async function runMigration(db: Client, schemaSource: string) {
-    // Set up console logging for WASM debug output
-    const originalConsoleLog = console.log;
-    console.log = (...args) => {
-        originalConsoleLog('[WASM Debug]', ...args);
-    };
+
 
     console.time('Migration execution time');
-    const result = await migrate("init", schemaSource);
+    const result = migrate("init", schemaSource);
     console.timeEnd('Migration execution time');
-    console.log = originalConsoleLog;
 
     if ("Ok" in result) {
         // Run the SQL for the migration
@@ -111,12 +101,14 @@ export async function runMigration(db: Client, schemaSource: string) {
                 await db.batch(result.Ok.sql);
                 await db.execute(result.Ok.mark_success);
                 const introspection = await introspect(db);
-                await set_schema(introspection);
+                console.log("STORED Introspection", introspection);
+                set_schema(introspection);
             } else {
                 console.log("No changes, skipping");
             }
 
         } catch (error) {
+            console.log("ERROR", error);
             const markFailure = result.Ok.mark_failure
             // We have to add an error message to the mark failure
             markFailure.args.push(JSON.stringify(error));
@@ -126,12 +118,12 @@ export async function runMigration(db: Client, schemaSource: string) {
         console.log("Error")
         console.error(result.Err);
     }
-
 }
 
 
 const schemaSource = `
 record User {
+    @tablename "users"
     accounts      @link(Account.userId)
     posts         @link(Post.authorUserId)
     databaseUsers @link(DatabaseUser.userId)
@@ -184,27 +176,75 @@ type Status
      }
 `
 
+
+const seed = `
+insert Seed {
+    user {
+        name = "Porkchop"
+        status = Active
+        accounts {
+            name = "My account"
+            status = "Untyped status"
+        }
+        posts {
+            title = "My first post"
+            content = "This is my first post"
+            status = Active
+        }
+        databaseUsers {
+            databaseId = "user.db"
+        }
+
+    }
+}
+`
+
+async function initialize(db: Client) {
+    const introspection = await introspect(db);
+    set_schema(introspection);
+    // Doesn't actually run the migration
+    // But convinces the wasm to fully load.
+    migrate("init", schemaSource);
+
+}
+
+async function run(db: Client, pyre_query: string) {
+
+    const sql = query_to_sql(pyre_query);
+    if (sql.Ok) {
+        console.log(sql.Ok);
+        const result = await db.batch(sql.Ok);
+        console.log("Retrieved");
+        console.log(result);
+        for (const set of result) {
+            console.log("SET", set);
+            for (const row of set.rows) {
+                console.log(row);
+            }
+        }
+    } else {
+        console.log("Error");
+        console.log(sql.Err);
+    }
+}
+
 // Example usage
 export async function exampleMigration() {
+
     // Create an in-memory database
     const db = createClient({
         url: "file::memory:"
     });
 
-    const introspection = await introspect(db);
-    console.log("Introspection executed");
-    await set_schema(introspection);
-    console.log("Schema set");
+    await initialize(db);
 
     await runMigration(db, schemaSource);
-
-
-    console.log("RUNNING AGAIN")
 
     // Should skip
     await runMigration(db, schemaSource);
 
-
+    // Seed the database
+    run(db, seed);
 
 }
 
