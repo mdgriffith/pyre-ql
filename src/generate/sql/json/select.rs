@@ -121,6 +121,7 @@ pub fn select_to_string(
     let parent_table_alias = &get_temp_table_name(&query_table_field);
 
     let mut rendered_initial = false;
+    let mut has_links = false;
 
     for query_field in all_query_fields.iter() {
         let table_field = &table
@@ -132,6 +133,7 @@ pub fn select_to_string(
 
         match table_field {
             ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                has_links = true;
                 // We are inserting a link, so we need to do a nested insert
                 let linked_table = typecheck::get_linked_table(context, &link).unwrap();
 
@@ -167,6 +169,16 @@ pub fn select_to_string(
             }
             _ => (),
         }
+    }
+
+    // If there are no links, we still need to create the initial CTE
+    // because final_select_formatted_as_json always references it
+    if !has_links && !rendered_initial {
+        result.push_str("with ");
+        result.push_str(parent_table_alias);
+        result.push_str(" as (\n");
+        result.push_str(&initial_selection);
+        result.push_str("\n)\n");
     }
 
     // The final selection
