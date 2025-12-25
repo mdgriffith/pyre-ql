@@ -206,7 +206,7 @@ pub fn check_schema(db: &ast::Database) -> Result<Context, Vec<Error>> {
 
     check_schema_definitions(&context, db, &mut errors);
 
-    if (!errors.is_empty()) {
+    if !errors.is_empty() {
         return Err(errors);
     }
 
@@ -438,10 +438,10 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                             }],
                                         });
                                     }
-                                    if (column
+                                    if column
                                         .directives
                                         .iter()
-                                        .any(|item| *item == ast::ColumnDirective::PrimaryKey))
+                                        .any(|item| *item == ast::ColumnDirective::PrimaryKey)
                                     {
                                         if has_primary_id {
                                             errors.push(Error {

@@ -98,7 +98,7 @@ fn to_type_alias(name: &str, fields: &Vec<ast::Field>) -> String {
         if is_first & ast::is_column(field) {
             result.push_str(&format!("    {{ ",))
         }
-        if (ast::is_column_space(field)) {
+        if ast::is_column_space(field) {
             continue;
         }
 
@@ -135,7 +135,7 @@ fn to_string_variant(is_first: bool, indent_size: usize, variant: &ast::Variant)
 fn to_string_field(is_first: bool, indent: usize, field: &ast::Field) -> String {
     match field {
         ast::Field::ColumnLines { count } => {
-            if (*count > 2) {
+            if *count > 2 {
                 "\n\n".to_string()
             } else {
                 "\n".repeat(*count as usize)
@@ -204,7 +204,7 @@ pub fn to_schema_decoders(database: &ast::Database) -> String {
 fn to_decoder_definition(definition: &ast::Definition) -> String {
     match definition {
         ast::Definition::Lines { count } => {
-            if (*count > 2) {
+            if *count > 2 {
                 "\n\n".to_string()
             } else {
                 "\n".repeat(*count as usize)

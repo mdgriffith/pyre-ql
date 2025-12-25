@@ -17,20 +17,26 @@ pub struct FieldMetadata {
 /// Generates type alias definitions for query return types using the provided formatting functions
 ///
 /// # Example
-/// ```rust
+/// ```rust,no_run
+/// use pyre::generate::typealias::{TypeFormatter, FieldMetadata, return_data_aliases};
+/// use pyre::typecheck;
+/// use pyre::ast;
+///
+/// # let context: &typecheck::Context = todo!();
+/// # let query: &ast::Query = todo!();
 /// let elm_formatter = TypeFormatter {
 ///     to_comment: Box::new(|s| format!("{{-| {} -}}\n", s)),
 ///     to_type_def_start: Box::new(|name| format!("type alias {} =\n", name)),
-///     to_field: Box::new(|name, type_, is_list| {
-///         let type_str = if is_list { format!("List {}", type_) } else { type_.to_string() };
+///     to_field: Box::new(|name, type_, metadata: FieldMetadata| {
+///         let type_str = type_.to_string();
 ///         format!("    {} : {}", name, type_str)
 ///     }),
 ///     to_type_def_end: Box::new(|| "    }\n".to_string()),
-///     to_field_separator: Box::new(|| ",\n".to_string()),
+///     to_field_separator: Box::new(|_| ",\n".to_string()),
 /// };
 ///
 /// let mut result = String::new();
-/// return_data_aliases(&context, &query, &mut result, &elm_formatter);
+/// return_data_aliases(context, query, &mut result, &elm_formatter);
 /// ```
 pub fn return_data_aliases(
     context: &typecheck::Context,
