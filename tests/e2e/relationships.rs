@@ -48,14 +48,26 @@ async fn test_one_to_many_relationship() -> Result<(), TestError> {
     "#;
 
     let mut params = HashMap::new();
-    params.insert("title".to_string(), libsql::Value::Text("First Post".to_string()));
-    params.insert("content".to_string(), libsql::Value::Text("Content here".to_string()));
+    params.insert(
+        "title".to_string(),
+        libsql::Value::Text("First Post".to_string()),
+    );
+    params.insert(
+        "content".to_string(),
+        libsql::Value::Text("Content here".to_string()),
+    );
     params.insert("authorId".to_string(), libsql::Value::Integer(1));
     db.execute_insert_with_params(insert_post1, params).await?;
 
     let mut params = HashMap::new();
-    params.insert("title".to_string(), libsql::Value::Text("Second Post".to_string()));
-    params.insert("content".to_string(), libsql::Value::Text("More content".to_string()));
+    params.insert(
+        "title".to_string(),
+        libsql::Value::Text("Second Post".to_string()),
+    );
+    params.insert(
+        "content".to_string(),
+        libsql::Value::Text("More content".to_string()),
+    );
     params.insert("authorId".to_string(), libsql::Value::Integer(1));
     db.execute_insert_with_params(insert_post1, params).await?;
 
@@ -94,10 +106,7 @@ async fn test_one_to_many_relationship() -> Result<(), TestError> {
     );
 
     // Check that posts are included
-    assert!(
-        user.get("posts").is_some(),
-        "User should have posts field"
-    );
+    assert!(user.get("posts").is_some(), "User should have posts field");
 
     let posts = user.get("posts").and_then(|p| p.as_array()).unwrap();
     assert_eq!(posts.len(), 2, "User should have 2 posts");

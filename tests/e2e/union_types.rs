@@ -32,17 +32,29 @@ async fn test_union_type_in_schema() -> Result<(), TestError> {
 
     let mut params = HashMap::new();
     params.insert("name".to_string(), libsql::Value::Text("Alice".to_string()));
-    params.insert("status".to_string(), libsql::Value::Text("Active".to_string()));
+    params.insert(
+        "status".to_string(),
+        libsql::Value::Text("Active".to_string()),
+    );
     db.execute_insert_with_params(insert_alice, params).await?;
 
     let mut params = HashMap::new();
     params.insert("name".to_string(), libsql::Value::Text("Bob".to_string()));
-    params.insert("status".to_string(), libsql::Value::Text("Inactive".to_string()));
+    params.insert(
+        "status".to_string(),
+        libsql::Value::Text("Inactive".to_string()),
+    );
     db.execute_insert_with_params(insert_alice, params).await?;
 
     let mut params = HashMap::new();
-    params.insert("name".to_string(), libsql::Value::Text("Charlie".to_string()));
-    params.insert("status".to_string(), libsql::Value::Text("Special".to_string()));
+    params.insert(
+        "name".to_string(),
+        libsql::Value::Text("Charlie".to_string()),
+    );
+    params.insert(
+        "status".to_string(),
+        libsql::Value::Text("Special".to_string()),
+    );
     db.execute_insert_with_params(insert_alice, params).await?;
 
     // Query users with status
