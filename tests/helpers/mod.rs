@@ -13,6 +13,8 @@ use tempfile::TempDir;
 // Re-export for use in tests
 pub use pyre::generate::sql::to_sql::SqlAndParams;
 
+pub mod schema;
+
 pub struct TestDatabase {
     pub db: Database,
     pub temp_dir: TempDir,
@@ -310,6 +312,7 @@ impl TestDatabase {
 
     /// Parse JSON results from query execution
     /// Returns a map of field names to arrays of JSON objects
+    /// Queries return JSON in a column named "result" which contains an object with query field names as keys
     pub async fn parse_query_results(
         &self,
         rows: Vec<libsql::Rows>,
@@ -323,41 +326,67 @@ impl TestDatabase {
                 continue;
             }
 
-            let mut column_names = Vec::new();
-            for i in 0..column_count {
-                column_names.push(
-                    rows_set
-                        .column_name(i)
-                        .ok_or(TestError::NoQueryFound)?
-                        .to_string(),
-                );
-            }
-
-            // Process rows - queries return JSON in the first column
+            // Process rows - queries return JSON in a column named "result"
             while let Some(row) = rows_set.next().await.map_err(TestError::Database)? {
-                for (i, col_name) in column_names.iter().enumerate() {
+                // Look for a column named "result" (or use the first column if "result" doesn't exist)
+                let mut found_result = false;
+                for i in 0..column_count {
+                    let col_name = rows_set.column_name(i).ok_or(TestError::NoQueryFound)?;
+
                     // Get the JSON value from the column
                     if let Ok(json_str) = row.get::<String>(i as i32) {
                         if let Ok(json_value) = serde_json::from_str::<JsonValue>(&json_str) {
-                            // The JSON might be an array or an object
-                            match json_value {
-                                JsonValue::Array(arr) => {
-                                    result
-                                        .entry(col_name.clone())
-                                        .or_insert_with(Vec::new)
-                                        .extend(arr);
+                            // If this is the "result" column, it contains an object with query field names as keys
+                            if col_name == "result" {
+                                if let JsonValue::Object(obj) = json_value {
+                                    // Extract each field from the result object
+                                    for (key, value) in obj {
+                                        match value {
+                                            JsonValue::Array(arr) => {
+                                                result
+                                                    .entry(key.clone())
+                                                    .or_insert_with(Vec::new)
+                                                    .extend(arr);
+                                            }
+                                            JsonValue::Object(_) => {
+                                                result
+                                                    .entry(key.clone())
+                                                    .or_insert_with(Vec::new)
+                                                    .push(value);
+                                            }
+                                            _ => {
+                                                result
+                                                    .entry(key.clone())
+                                                    .or_insert_with(Vec::new)
+                                                    .push(value);
+                                            }
+                                        }
+                                    }
+                                    found_result = true;
+                                    break; // Found result column, no need to check other columns
                                 }
-                                JsonValue::Object(_) => {
-                                    result
-                                        .entry(col_name.clone())
-                                        .or_insert_with(Vec::new)
-                                        .push(json_value);
-                                }
-                                _ => {
-                                    result
-                                        .entry(col_name.clone())
-                                        .or_insert_with(Vec::new)
-                                        .push(json_value);
+                            } else if !found_result && i == column_count - 1 {
+                                // Fallback: if we've checked all columns and no "result" column found,
+                                // treat the column name as field name (for backwards compatibility)
+                                match json_value {
+                                    JsonValue::Array(arr) => {
+                                        result
+                                            .entry(col_name.to_string())
+                                            .or_insert_with(Vec::new)
+                                            .extend(arr);
+                                    }
+                                    JsonValue::Object(_) => {
+                                        result
+                                            .entry(col_name.to_string())
+                                            .or_insert_with(Vec::new)
+                                            .push(json_value);
+                                    }
+                                    _ => {
+                                        result
+                                            .entry(col_name.to_string())
+                                            .or_insert_with(Vec::new)
+                                            .push(json_value);
+                                    }
                                 }
                             }
                         }
@@ -373,6 +402,136 @@ impl TestDatabase {
     pub async fn execute_raw(&self, sql: &str) -> Result<libsql::Rows, TestError> {
         let conn = self.db.connect().map_err(TestError::Database)?;
         conn.query(sql, ()).await.map_err(TestError::Database)
+    }
+
+    /// Seed the database with standard test data
+    /// This creates users, posts, and accounts based on the schema
+    pub async fn seed_standard_data(&self) -> Result<(), TestError> {
+        // Check if schema has User record (table names are lowercase in context)
+        if self.context.tables.contains_key("user") {
+            // Check if User has status field (for schemas with union types)
+            let has_status = self
+                .context
+                .tables
+                .get("user")
+                .map(|t| {
+                    t.record.fields.iter().any(|f| match f {
+                        pyre::ast::Field::Column(col) => col.name == "status",
+                        _ => false,
+                    })
+                })
+                .unwrap_or(false);
+
+            if has_status {
+                // Insert users with status
+                let insert_user = r#"
+                    insert CreateUser($name: String, $status: Status) {
+                        user {
+                            name = $name
+                            status = $status
+                        }
+                    }
+                "#;
+
+                let mut params = HashMap::new();
+                params.insert("name".to_string(), libsql::Value::Text("Alice".to_string()));
+                params.insert(
+                    "status".to_string(),
+                    libsql::Value::Text("Active".to_string()),
+                );
+                self.execute_insert_with_params(insert_user, params).await?;
+
+                let mut params = HashMap::new();
+                params.insert("name".to_string(), libsql::Value::Text("Bob".to_string()));
+                params.insert(
+                    "status".to_string(),
+                    libsql::Value::Text("Inactive".to_string()),
+                );
+                self.execute_insert_with_params(insert_user, params).await?;
+            } else {
+                // Insert users without status
+                let insert_user = r#"
+                    insert CreateUser($name: String) {
+                        user {
+                            name = $name
+                        }
+                    }
+                "#;
+
+                let mut params = HashMap::new();
+                params.insert("name".to_string(), libsql::Value::Text("Alice".to_string()));
+                self.execute_insert_with_params(insert_user, params).await?;
+
+                let mut params = HashMap::new();
+                params.insert("name".to_string(), libsql::Value::Text("Bob".to_string()));
+                self.execute_insert_with_params(insert_user, params).await?;
+            }
+        }
+
+        // Check if schema has Post record (table names are lowercase in context)
+        if self.context.tables.contains_key("post") {
+            let insert_post = r#"
+                insert CreatePost($title: String, $content: String, $authorId: Int) {
+                    post {
+                        title = $title
+                        content = $content
+                        authorId = $authorId
+                    }
+                }
+            "#;
+
+            let mut params = HashMap::new();
+            params.insert(
+                "title".to_string(),
+                libsql::Value::Text("First Post".to_string()),
+            );
+            params.insert(
+                "content".to_string(),
+                libsql::Value::Text("Content here".to_string()),
+            );
+            params.insert("authorId".to_string(), libsql::Value::Integer(1));
+            self.execute_insert_with_params(insert_post, params).await?;
+
+            let mut params = HashMap::new();
+            params.insert(
+                "title".to_string(),
+                libsql::Value::Text("Second Post".to_string()),
+            );
+            params.insert(
+                "content".to_string(),
+                libsql::Value::Text("More content".to_string()),
+            );
+            params.insert("authorId".to_string(), libsql::Value::Integer(1));
+            self.execute_insert_with_params(insert_post, params).await?;
+        }
+
+        // Check if schema has Account record (table names are lowercase in context)
+        if self.context.tables.contains_key("account") {
+            let insert_account = r#"
+                insert CreateAccount($userId: Int, $name: String, $status: String) {
+                    account {
+                        userId = $userId
+                        name = $name
+                        status = $status
+                    }
+                }
+            "#;
+
+            let mut params = HashMap::new();
+            params.insert("userId".to_string(), libsql::Value::Integer(1));
+            params.insert(
+                "name".to_string(),
+                libsql::Value::Text("Account 1".to_string()),
+            );
+            params.insert(
+                "status".to_string(),
+                libsql::Value::Text("active".to_string()),
+            );
+            self.execute_insert_with_params(insert_account, params)
+                .await?;
+        }
+
+        Ok(())
     }
 }
 

@@ -65,7 +65,13 @@ pub fn diff(
             }
             Some(intro_table) => {
                 let schema_table = create_table_from_fields(context, table_name, schema_fields);
-                if let Some(record_diff) = compare_record(&schema_table, intro_table) {
+                if let Some(record_diff) = compare_record(
+                    context,
+                    &schema_table,
+                    intro_table,
+                    schema_fields,
+                    introspection,
+                ) {
                     modified_records.push(record_diff);
                 }
             }
@@ -214,8 +220,11 @@ fn create_table_from_fields(
 
 // Helper function to compare record fields
 fn compare_record(
+    context: &crate::typecheck::Context,
     schema_table: &crate::db::introspect::Table,
     intro_table: &crate::db::introspect::Table,
+    schema_fields: &Vec<crate::ast::Field>,
+    introspection: &crate::db::introspect::Introspection,
 ) -> Option<DetailedRecordDiff> {
     let mut changes = Vec::new();
 
@@ -262,6 +271,81 @@ fn compare_record(
     for name in intro_columns.keys() {
         if !schema_columns.contains_key(name) {
             changes.push(RecordChange::RemovedField(intro_columns[name].clone()));
+        }
+    }
+
+    // Compare relationships - relationships don't create columns, so we need to compare them separately
+    // Get relationships from schema fields
+    let schema_links: Vec<_> = schema_fields
+        .iter()
+        .filter_map(|f| match f {
+            crate::ast::Field::FieldDirective(crate::ast::FieldDirective::Link(link)) => Some(link),
+            _ => None,
+        })
+        .collect();
+
+    // Extract relationships from introspection schema
+    let intro_relationships = match &introspection.schema {
+        crate::db::introspect::SchemaResult::Success { schema, .. } => {
+            // Extract relationships from the introspection schema
+            let mut relationships = Vec::new();
+            for file in &schema.files {
+                for def in &file.definitions {
+                    if let crate::ast::Definition::Record { name, fields, .. } = def {
+                        let table_name = crate::ast::get_tablename(name, fields);
+                        if table_name == schema_table.name {
+                            relationships.extend(crate::ast::collect_links(fields));
+                        }
+                    }
+                }
+            }
+            relationships
+        }
+        _ => Vec::new(),
+    };
+
+    // Compare relationships by comparing link names and foreign table/fields
+    // We can't use HashSet with Qualified directly because it doesn't implement Hash,
+    // so we'll create a comparable signature for each relationship
+    let schema_link_signatures: std::collections::HashSet<_> = schema_links
+        .iter()
+        .map(|link| {
+            (
+                link.link_name.clone(),
+                link.local_ids.clone(),
+                link.foreign.table.clone(),
+                link.foreign.fields.clone(),
+            )
+        })
+        .collect();
+    let intro_link_signatures: std::collections::HashSet<_> = intro_relationships
+        .iter()
+        .map(|link| {
+            (
+                link.link_name.clone(),
+                link.local_ids.clone(),
+                link.foreign.table.clone(),
+                link.foreign.fields.clone(),
+            )
+        })
+        .collect();
+
+    if schema_link_signatures != intro_link_signatures {
+        // Relationships have changed - mark as modified if there are no other changes
+        // or add to existing changes
+        if changes.is_empty() {
+            // Add a dummy change to mark the record as modified
+            // We'll use a special change type for relationship changes
+            changes.push(RecordChange::AddedField(
+                crate::db::introspect::ColumnInfo {
+                    cid: 0,
+                    name: "__relationship_change__".to_string(),
+                    column_type: "TEXT".to_string(),
+                    notnull: false,
+                    default_value: None,
+                    pk: false,
+                },
+            ));
         }
     }
 

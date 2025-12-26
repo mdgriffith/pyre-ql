@@ -1,4 +1,7 @@
-use crate::helpers::{TestDatabase, TestError};
+#[path = "helpers/mod.rs"]
+mod helpers;
+
+use helpers::{TestDatabase, TestError};
 use std::collections::HashMap;
 
 #[tokio::test]

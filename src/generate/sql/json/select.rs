@@ -830,9 +830,15 @@ fn final_select_formatted_as_json(
 
     let aliased_name = ast::get_aliased_name(query_table_field);
     let base_table_name = format!("selected__{}", &aliased_name);
+    let query_field_name = &query_table_field.name;
 
-    // initial selection
+    // initial selection - wrap in JSON_GROUP_ARRAY and then in JSON_OBJECT with field name as key
     sql.push_str(&format!("\nselect\n{}  json_object(\n", indent_str));
+    sql.push_str(&format!(
+        "{}    '{}', coalesce(json_group_array(\n",
+        indent_str, query_field_name
+    ));
+    sql.push_str(&format!("{}      json_object(\n", indent_str));
 
     // Compose main json payload
     let mut first_field = true;
@@ -858,7 +864,7 @@ fn final_select_formatted_as_json(
                         //     indent_str, base_table_name, query_field.name, aliased_field_name
                         // ));
                         sql.push_str(&format!(
-                            "{}    '{}', {}.{}",
+                            "{}        '{}', {}.{}",
                             indent_str, aliased_field_name, base_table_name, query_field.name
                         ));
                         first_field = false;
@@ -871,7 +877,7 @@ fn final_select_formatted_as_json(
                         if ast::linked_to_unique_field(link) {
                             // singular result, no need to coalesce
                             sql.push_str(&format!(
-                                "{}    '{}', temp__{}.{}",
+                                "{}        '{}', temp__{}.{}",
                                 indent_str,
                                 aliased_field_name,
                                 query_field.name,
@@ -880,7 +886,7 @@ fn final_select_formatted_as_json(
                             first_field = false;
                         } else {
                             sql.push_str(&format!(
-                                "{}    '{}', coalesce(temp__{}.{}, jsonb('[]'))",
+                                "{}        '{}', coalesce(temp__{}.{}, jsonb('[]'))",
                                 indent_str,
                                 aliased_field_name,
                                 query_field.name,
@@ -898,10 +904,12 @@ fn final_select_formatted_as_json(
         }
     }
 
-    // FROM
+    // Close inner json_object and json_group_array, then wrap in outer json_object
+    // Use COALESCE to handle empty results - json_group_array returns NULL when no rows
+    // Match the example SQL pattern: COALESCE(p.players_json, '[]')
     sql.push_str(&format!(
-        "\n  ) as {}\n{}from {}\n",
-        aliased_name, indent_str, base_table_name
+        "\n{}      )\n{}    ), '[]')\n{}  ) as result\n{}from {}\n",
+        indent_str, indent_str, indent_str, indent_str, base_table_name
     ));
 
     // Join every link

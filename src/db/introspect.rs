@@ -171,7 +171,7 @@ SELECT json_object(
     json_object(
       'name', ti.table_name,
       'columns', json(ti.columns_json),
-      'foreign_keys', COALESCE(json(fk.fks_json), '[]')
+      'foreign_keys', COALESCE(json(fk.fks_json), json('[]'))
     )
   ),
   'migration_state', json('{"NoMigrationTable": null}'),
