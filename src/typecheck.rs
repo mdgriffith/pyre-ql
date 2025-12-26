@@ -421,6 +421,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                         let mut tablenames: Vec<Range> = Vec::new();
                         let mut has_primary_id = false;
                         let mut field_names = HashSet::new();
+                        let mut permissions_count = 0;
 
                         for field in fields {
                             match field {
@@ -469,6 +470,10 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                     tablename_range,
                                     tablename,
                                 ))) => tablenames.push(convert_range(tablename_range)),
+
+                                ast::Field::FieldDirective(ast::FieldDirective::Permissions(_)) => {
+                                    permissions_count += 1;
+                                }
 
                                 ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                                     if !context.valid_namespaces.contains(&link.foreign.schema) {
@@ -584,6 +589,19 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                 locations: vec![Location {
                                     contexts: to_range(&start, &end),
                                     primary: tablenames,
+                                }],
+                            });
+                        }
+
+                        if permissions_count > 1 {
+                            errors.push(Error {
+                                filepath: file.path.clone(),
+                                error_type: ErrorType::MultiplePermissions {
+                                    record: name.clone(),
+                                },
+                                locations: vec![Location {
+                                    contexts: to_range(&start, &end),
+                                    primary: to_range(&start_name, &end_name),
                                 }],
                             });
                         }

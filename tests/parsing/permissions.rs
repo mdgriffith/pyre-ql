@@ -1,5 +1,7 @@
 use pyre::ast;
+use pyre::error::ErrorType;
 use pyre::parser;
+use pyre::typecheck;
 
 /// Helper function to format errors without color for testing
 fn format_error_no_color(file_contents: &str, error: &pyre::error::Error) -> String {
@@ -451,12 +453,54 @@ record Post {
     "#;
 
     let mut schema = ast::Schema::default();
-    let result = parser::run("schema.pyre", schema_source, &mut schema);
-    // This might parse but be invalid semantically - parser might allow it
-    // The typechecker or runtime would need to handle this
-    if result.is_ok() {
-        println!("Parser allows multiple @permissions directives");
-    }
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema should parse successfully");
+
+    // Typecheck should fail with MultiplePermissions error
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_err(),
+        "Typecheck should fail with multiple @permissions directives"
+    );
+
+    let errors = typecheck_result.unwrap_err();
+    assert!(
+        errors.iter().any(|e| matches!(&e.error_type, ErrorType::MultiplePermissions { record } if record == "Post")),
+        "Should have MultiplePermissions error for Post record. Errors: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_single_permission_allowed() {
+    // A single @permissions directive should be allowed
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    @permissions { authorId = Session.userId }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema should parse successfully");
+
+    // Typecheck should succeed with a single @permissions directive
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_ok(),
+        "Typecheck should succeed with a single @permissions directive. Errors: {:?}",
+        typecheck_result.err()
+    );
 }
 
 #[test]
