@@ -1983,7 +1983,104 @@ fn check_field(
                     if let Type::OneOf { variants } = type_ {
                         // Find the variant that matches
                         if let Some(variant) = variants.iter().find(|v| v.name == details.name) {
-                            // If the variant has fields and the query field has nested fields, process them
+                            // Process fields stored in the LiteralTypeValueDetails (from inline syntax like Create { name = $name })
+                            if let Some(variant_fields) = &variant.fields {
+                                if let Some(fields) = &details.fields {
+                                    // Collect the names of fields that were provided
+                                    let provided_field_names: std::collections::HashSet<String> = fields
+                                        .iter()
+                                        .map(|(name, _)| name.clone())
+                                        .collect();
+                                    
+                                    // Process each field assignment to mark variables as used
+                                    for (field_name, field_value) in fields {
+                                        // Find the matching variant field
+                                        if let Some(variant_col) =
+                                            variant_fields.iter().find(|f| match f {
+                                                ast::Field::Column(col) => {
+                                                    col.name == *field_name
+                                                }
+                                                _ => false,
+                                            })
+                                        {
+                                            if let ast::Field::Column(variant_col) = variant_col {
+                                                // Check the field value to mark variables as used
+                                                check_value(
+                                                    context,
+                                                    &query_context,
+                                                    field_value,
+                                                    &field.start,
+                                                    &field.end,
+                                                    &mut errors,
+                                                    params,
+                                                    &variant_col.name,
+                                                    &variant_col.type_,
+                                                    variant_col.nullable,
+                                                );
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Check that all required (non-nullable) fields are present
+                                    let missing_fields: Vec<String> = variant_fields
+                                        .iter()
+                                        .filter_map(|f| match f {
+                                            ast::Field::Column(col) if !col.nullable => {
+                                                if !provided_field_names.contains(&col.name) {
+                                                    Some(col.name.clone())
+                                                } else {
+                                                    None
+                                                }
+                                            }
+                                            _ => None,
+                                        })
+                                        .collect();
+                                    
+                                    if !missing_fields.is_empty() {
+                                        errors.push(Error {
+                                            filepath: context.current_filepath.clone(),
+                                            error_type: ErrorType::InsertMissingColumn {
+                                                fields: missing_fields,
+                                            },
+                                            locations: vec![Location {
+                                                contexts: vec![],
+                                                primary: to_range(
+                                                    &field.start,
+                                                    &field.end,
+                                                ),
+                                            }],
+                                        });
+                                    }
+                                } else {
+                                    // No fields provided, check if variant requires any fields
+                                    let required_fields: Vec<String> = variant_fields
+                                        .iter()
+                                        .filter_map(|f| match f {
+                                            ast::Field::Column(col) if !col.nullable => {
+                                                Some(col.name.clone())
+                                            }
+                                            _ => None,
+                                        })
+                                        .collect();
+                                    
+                                    if !required_fields.is_empty() {
+                                        errors.push(Error {
+                                            filepath: context.current_filepath.clone(),
+                                            error_type: ErrorType::InsertMissingColumn {
+                                                fields: required_fields,
+                                            },
+                                            locations: vec![Location {
+                                                contexts: vec![],
+                                                primary: to_range(
+                                                    &field.start,
+                                                    &field.end,
+                                                ),
+                                            }],
+                                        });
+                                    }
+                                }
+                            }
+                            // Also handle nested fields in field.fields (for alternative syntax)
                             if let Some(variant_fields) = &variant.fields {
                                 if !field.fields.is_empty() {
                                     // Process nested fields to mark variables as used
