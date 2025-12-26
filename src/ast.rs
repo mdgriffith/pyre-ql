@@ -695,7 +695,7 @@ pub fn direction_to_string(direction: &Direction) -> String {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum WhereArg {
-    Column(String, Operator, QueryValue),
+    Column(bool, String, Operator, QueryValue), // bool indicates if column is from session, String is field name without Session. prefix
     And(Vec<WhereArg>),
     Or(Vec<WhereArg>),
 }

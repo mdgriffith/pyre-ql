@@ -339,6 +339,224 @@ impl TestDatabase {
         self.execute_query_with_params(insert_query, params).await
     }
 
+    /// Execute a query with parameters and session, returning results
+    pub async fn execute_query_with_session(
+        &self,
+        query_source: &str,
+        params: HashMap<String, libsql::Value>,
+        session: HashMap<String, libsql::Value>,
+    ) -> Result<Vec<libsql::Rows>, TestError> {
+        let query_list = parser::parse_query("query.pyre", query_source)
+            .map_err(|e| TestError::ParseError(parser::render_error(query_source, e)))?;
+
+        let query = query_list
+            .queries
+            .iter()
+            .find_map(|q| match q {
+                ast::QueryDef::Query(q) => Some(q),
+                _ => None,
+            })
+            .ok_or(TestError::NoQueryFound)?;
+
+        // Extract regular parameter names in order
+        let param_names: Vec<String> = query.args.iter().map(|arg| arg.name.clone()).collect();
+
+        // Parse and typecheck to get QueryInfo
+        let context = &self.context;
+        let query_info = typecheck::check_queries(&query_list, &context)
+            .map_err(|errors| TestError::TypecheckError(format_errors(query_source, &errors)))?;
+
+        let info = query_info
+            .get(&query.name)
+            .ok_or(TestError::NoQueryInfoFound)?;
+
+        // Get SQL statements
+        let table_field = query
+            .fields
+            .iter()
+            .find_map(|f| match f {
+                ast::TopLevelQueryField::Field(f) => Some(f),
+                _ => None,
+            })
+            .ok_or(TestError::NoQueryFound)?;
+
+        let table = context
+            .tables
+            .get(&table_field.name)
+            .ok_or(TestError::NoQueryFound)?;
+
+        let prepared_statements =
+            pyre::generate::sql::to_string(context, query, info, table, table_field);
+
+        let mut sql_statements = Vec::new();
+        for prepared in prepared_statements {
+            sql_statements.push((prepared.include, SqlAndParams::Sql(prepared.sql)));
+        }
+
+        // Extract session parameters from QueryInfo
+        let mut all_params = params.clone();
+        for (_var_name, param_info) in &info.variables {
+            if let typecheck::ParamInfo::Defined {
+                from_session,
+                used,
+                session_name,
+                ..
+            } = param_info
+            {
+                if *from_session && *used {
+                    if let Some(session_field) = session_name {
+                        // Session variables are named session_fieldName in SQL
+                        let sql_param_name = format!("session_{}", session_field);
+                        if let Some(value) = session.get(session_field) {
+                            all_params.insert(sql_param_name, value.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Collect all session param names that are used
+        let mut session_param_names = Vec::new();
+        for (_var_name, param_info) in &info.variables {
+            if let typecheck::ParamInfo::Defined {
+                from_session,
+                used,
+                session_name,
+                ..
+            } = param_info
+            {
+                if *from_session && *used {
+                    if let Some(session_field) = session_name {
+                        let sql_param_name = format!("session_{}", session_field);
+                        session_param_names.push(sql_param_name);
+                    }
+                }
+            }
+        }
+
+        // Combine all param names for replacement
+        let mut all_param_names = param_names.clone();
+        all_param_names.extend(session_param_names.clone());
+
+        // Collect parameter values in the order they appear in SQL
+        // We need to find the order parameters appear in each SQL statement
+        let mut param_values: Vec<libsql::Value> = Vec::new();
+
+        // For each SQL statement, collect parameters in the order they appear
+        for (_, sql_stmt) in &sql_statements {
+            if let SqlAndParams::Sql(sql) = sql_stmt {
+                // Find parameters in the order they appear in this SQL
+                let mut seen_in_this_sql = std::collections::HashSet::new();
+                let mut chars = sql.chars().peekable();
+                while let Some(ch) = chars.next() {
+                    if ch == '$' {
+                        let mut param_name = String::new();
+                        while let Some(&next_ch) = chars.peek() {
+                            if next_ch.is_alphanumeric() || next_ch == '_' {
+                                param_name.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                        if all_param_names.contains(&param_name)
+                            && !seen_in_this_sql.contains(&param_name)
+                        {
+                            seen_in_this_sql.insert(param_name.clone());
+                            if let Some(value) = all_params.get(&param_name) {
+                                param_values.push(value.clone());
+                            } else {
+                                param_values.push(libsql::Value::Null);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let conn = self.db.connect().map_err(TestError::Database)?;
+        let mut results = Vec::new();
+
+        // Execute statements sequentially
+        for (include, sql_stmt) in sql_statements {
+            match sql_stmt {
+                SqlAndParams::Sql(sql) => {
+                    let sql_with_params = if all_param_names.is_empty() {
+                        sql.clone()
+                    } else {
+                        replace_params_positional(&sql, &all_param_names)
+                    };
+
+                    if include {
+                        if param_values.is_empty() {
+                            let rows = conn
+                                .query(&sql_with_params, ())
+                                .await
+                                .map_err(TestError::Database)?;
+                            results.push(rows);
+                        } else {
+                            let rows = conn
+                                .query(
+                                    &sql_with_params,
+                                    libsql::params_from_iter(param_values.clone()),
+                                )
+                                .await
+                                .map_err(TestError::Database)?;
+                            results.push(rows);
+                        }
+                    } else {
+                        if param_values.is_empty() {
+                            conn.execute(&sql_with_params, ())
+                                .await
+                                .map_err(TestError::Database)?;
+                        } else {
+                            conn.execute(
+                                &sql_with_params,
+                                libsql::params_from_iter(param_values.clone()),
+                            )
+                            .await
+                            .map_err(TestError::Database)?;
+                        }
+                    }
+                }
+                SqlAndParams::SqlWithParams { sql, args } => {
+                    let mut values: Vec<libsql::Value> =
+                        args.into_iter().map(|s| libsql::Value::Text(s)).collect();
+                    values.extend(param_values.clone());
+                    let sql_with_params = if all_param_names.is_empty() {
+                        sql.clone()
+                    } else {
+                        replace_params_positional(&sql, &all_param_names)
+                    };
+
+                    if include {
+                        let rows = conn
+                            .query(&sql_with_params, libsql::params_from_iter(values))
+                            .await
+                            .map_err(TestError::Database)?;
+                        results.push(rows);
+                    } else {
+                        conn.execute(&sql_with_params, libsql::params_from_iter(values))
+                            .await
+                            .map_err(TestError::Database)?;
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Execute an insert query with parameters and session
+    pub async fn execute_insert_with_session(
+        &self,
+        insert_query: &str,
+        params: HashMap<String, libsql::Value>,
+        session: HashMap<String, libsql::Value>,
+    ) -> Result<Vec<libsql::Rows>, TestError> {
+        self.execute_query_with_session(insert_query, params, session)
+            .await
+    }
+
     /// Parse JSON results from query execution
     /// Returns a map of field names to arrays of JSON objects
     /// Queries return JSON in a column named "result" which contains an object with query field names as keys
@@ -587,10 +805,47 @@ fn format_errors(schema_source: &str, errors: &[error::Error]) -> String {
 /// Parameters are replaced in the order they appear in param_names
 fn replace_params_positional(sql: &str, param_names: &[String]) -> String {
     let mut result = sql.to_string();
-    for name in param_names {
-        // Replace $name with ? for positional parameters
-        // We need to be careful to replace whole parameter names, not substrings
+    // Replace parameters in the order they appear in the SQL, not in param_names order
+    // This ensures the positional placeholders match the parameter values order
+    let mut param_order = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // Find all parameters in the order they appear in SQL
+    let mut chars = result.chars().peekable();
+    let mut i = 0;
+    while let Some(ch) = chars.next() {
+        if ch == '$' {
+            let start = i;
+            let mut param_name = String::new();
+            i += 1; // skip $
+            while let Some(&next_ch) = chars.peek() {
+                if next_ch.is_alphanumeric() || next_ch == '_' {
+                    param_name.push(chars.next().unwrap());
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            if param_names.contains(&param_name) && !seen.contains(&param_name) {
+                param_order.push(param_name.clone());
+                seen.insert(param_name);
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    // Replace parameters in the order they appear in SQL
+    for name in &param_order {
         result = result.replace(&format!("${}", name), "?");
     }
+
+    // Replace any remaining parameters that weren't found in order
+    for name in param_names {
+        if !seen.contains(name) {
+            result = result.replace(&format!("${}", name), "?");
+        }
+    }
+
     result
 }

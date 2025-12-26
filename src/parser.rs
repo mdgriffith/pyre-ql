@@ -1214,17 +1214,17 @@ fn parse_where_arg(input: Text) -> ParseResult<ast::WhereArg> {
 fn parse_query_where(input: Text) -> ParseResult<ast::WhereArg> {
     let (input, _) = multispace0(input)?;
     // Try parsing a session variable first (e.g., Session.role), then fall back to fieldname
-    let (input, name) = alt((
+    let (input, (is_session_var, name)) = alt((
         |input| {
             // Try to parse Session.variableName as a column name
             let (input, _) = tag("Session.")(input)?;
             let (input, session_field) = parse_fieldname(input)?;
-            Ok((input, format!("Session.{}", session_field)))
+            Ok((input, (true, session_field.to_string())))
         },
         |input| {
             // Fall back to regular fieldname
             let (input, name) = parse_fieldname(input)?;
-            Ok((input, name.to_string()))
+            Ok((input, (false, name.to_string())))
         },
     ))(input)?;
     let (input, _) = multispace0(input)?;
@@ -1234,7 +1234,10 @@ fn parse_query_where(input: Text) -> ParseResult<ast::WhereArg> {
     // Consume trailing whitespace - this is needed for proper parsing
     let (input, _) = multispace0(input)?;
 
-    Ok((input, ast::WhereArg::Column(name, operator, value)))
+    Ok((
+        input,
+        ast::WhereArg::Column(is_session_var, name, operator, value),
+    ))
 }
 
 fn parse_operator(input: Text) -> ParseResult<ast::Operator> {

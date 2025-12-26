@@ -1199,52 +1199,89 @@ fn check_where_args(
                 );
             }
         }
-        ast::WhereArg::Column(field_name, operator, query_val) => {
+        ast::WhereArg::Column(is_session_var, field_name, operator, query_val) => {
+            // Check if this is a Session variable (e.g., Session.userId, Session.role)
             let mut is_known_field = false;
             let mut column_type: Option<String> = None;
             let mut is_nullable = false;
-            for col in &table.fields {
-                if is_known_field {
-                    continue;
-                }
-                match col {
-                    ast::Field::Column(column) => {
-                        if &column.name == field_name {
-                            is_known_field = true;
-                            column_type = Some(column.type_.clone());
-                            is_nullable = column.nullable;
-                        }
-                    }
-                    ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                        if &link.link_name == field_name {
-                            is_known_field = true;
-                            errors.push(Error {
-                                filepath: context.current_filepath.clone(),
-                                error_type: ErrorType::WhereOnLinkIsntAllowed {
-                                    link_name: field_name.clone(),
-                                },
-                                locations: vec![Location {
-                                    contexts: vec![],
-                                    primary: to_range(&link.start_name, &link.end_name),
-                                }],
-                            })
-                        }
-                    }
-                    _ => (),
-                }
-            }
-            if !is_known_field {
-                let known_fields = get_column_reference(&table.fields);
-                errors.push(Error {
-                    filepath: context.current_filepath.clone(),
-                    error_type: ErrorType::UnknownField {
-                        found: field_name.clone(),
 
-                        record_name: table.name.clone(),
-                        known_fields,
-                    },
-                    locations: vec![],
-                })
+            if *is_session_var {
+                // Validate against session fields
+                if let Some(session) = &context.session {
+                    for field in &session.fields {
+                        match field {
+                            ast::Field::Column(column) => {
+                                if &column.name == field_name {
+                                    is_known_field = true;
+                                    column_type = Some(column.type_.clone());
+                                    is_nullable = column.nullable;
+                                    break;
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+                if !is_known_field {
+                    let known_fields = match &context.session {
+                        Some(session) => get_column_reference(&session.fields),
+                        None => vec![],
+                    };
+                    errors.push(Error {
+                        filepath: context.current_filepath.clone(),
+                        error_type: ErrorType::UnknownField {
+                            found: format!("Session.{}", field_name),
+                            record_name: "Session".to_string(),
+                            known_fields,
+                        },
+                        locations: vec![],
+                    })
+                }
+            } else {
+                // Validate against table fields
+                for col in &table.fields {
+                    if is_known_field {
+                        continue;
+                    }
+                    match col {
+                        ast::Field::Column(column) => {
+                            if &column.name == field_name {
+                                is_known_field = true;
+                                column_type = Some(column.type_.clone());
+                                is_nullable = column.nullable;
+                            }
+                        }
+                        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                            if &link.link_name == field_name {
+                                is_known_field = true;
+                                errors.push(Error {
+                                    filepath: context.current_filepath.clone(),
+                                    error_type: ErrorType::WhereOnLinkIsntAllowed {
+                                        link_name: field_name.clone(),
+                                    },
+                                    locations: vec![Location {
+                                        contexts: vec![],
+                                        primary: to_range(&link.start_name, &link.end_name),
+                                    }],
+                                })
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+                if !is_known_field {
+                    let known_fields = get_column_reference(&table.fields);
+                    errors.push(Error {
+                        filepath: context.current_filepath.clone(),
+                        error_type: ErrorType::UnknownField {
+                            found: field_name.clone(),
+
+                            record_name: table.name.clone(),
+                            known_fields,
+                        },
+                        locations: vec![],
+                    })
+                }
             }
 
             match column_type {
@@ -1873,6 +1910,20 @@ fn check_table_query(
                 primary: wheres,
             }],
         });
+    }
+
+    // Check permissions and extract session variables from them
+    if let Some(perms) = ast::get_permissions(&table.record, operation) {
+        check_where_args(
+            context,
+            &query_context,
+            &None,
+            &None,
+            &table.record,
+            errors,
+            params,
+            &perms,
+        );
     }
 
     match operation {

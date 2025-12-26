@@ -425,6 +425,7 @@ fn to_subfrom(
                     TableAliasKind::Normal => to_sql::render_real_where_field(
                         table,
                         query_info,
+                        false,
                         &link.local_ids.join(" "),
                     ),
                     TableAliasKind::Insert => {
@@ -440,6 +441,7 @@ fn to_subfrom(
                     TableAliasKind::Normal => to_sql::render_real_where_field(
                         link_table,
                         query_info,
+                        false,
                         &link.foreign.fields.join(""),
                     ),
                     TableAliasKind::Insert => {

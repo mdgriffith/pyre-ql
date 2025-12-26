@@ -565,10 +565,15 @@ fn to_string_param(indent_size: usize, arg: &ast::Arg) -> String {
 
 fn format_where(where_arg: &ast::WhereArg) -> String {
     match where_arg {
-        ast::WhereArg::Column(column, operator, value) => {
+        ast::WhereArg::Column(is_session_var, column, operator, value) => {
+            let column_name = if *is_session_var {
+                format!("Session.{}", column)
+            } else {
+                column.clone()
+            };
             let operator = operator_to_string(&operator);
             let value = value_to_string(&value);
-            format!("{} {} {}", column, operator, value)
+            format!("{} {} {}", column_name, operator, value)
         }
         ast::WhereArg::And(and) => {
             let mut result = String::new();

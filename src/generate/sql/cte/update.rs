@@ -37,7 +37,7 @@ pub fn update_to_string(
         &mut result,
     );
 
-    statements.push(to_sql::include(result));
+    statements.push(to_sql::ignore(result));
     statements
 }
 

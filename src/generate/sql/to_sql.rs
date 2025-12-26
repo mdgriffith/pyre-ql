@@ -74,8 +74,15 @@ pub fn render_real_field(
 pub fn render_real_where_field(
     table: &typecheck::Table,
     query_info: &typecheck::QueryInfo,
+    is_session_var: bool,
     fieldname: &String,
 ) -> String {
+    // Check if this is a Session variable (e.g., Session.userId, Session.role)
+    if is_session_var {
+        // Session variables are rendered as parameters: userId -> $session_userId
+        return format!("$session_{}", fieldname);
+    }
+
     let table_name = string::quote(&ast::get_tablename(
         &table.record.name,
         &table.record.fields,
@@ -155,8 +162,14 @@ pub fn render_where(
     }
     result.push_str("where\n");
 
-    for where_arg in &wheres {
-        let where_str = render_where_arg(&where_arg, table, query_info, query_field);
+    // Combine multiple WHERE clauses with AND
+    if wheres.len() == 1 {
+        let where_str = render_where_arg(&wheres[0], table, query_info, query_field);
+        result.push_str(&format!(" {}\n", where_str));
+    } else {
+        // Multiple WHERE clauses need to be combined with AND
+        let combined = ast::WhereArg::And(wheres.clone());
+        let where_str = render_where_arg(&combined, table, query_info, query_field);
         result.push_str(&format!(" {}\n", where_str));
     }
 }
@@ -242,8 +255,9 @@ fn render_where_arg(
     query_field: &ast::QueryField,
 ) -> String {
     match arg {
-        ast::WhereArg::Column(fieldname, op, value) => {
-            let qualified_column_name = render_real_where_field(table, query_info, fieldname);
+        ast::WhereArg::Column(is_session_var, fieldname, op, value) => {
+            let qualified_column_name =
+                render_real_where_field(table, query_info, *is_session_var, fieldname);
 
             let operator = operator(op);
 
