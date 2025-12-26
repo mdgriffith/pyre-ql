@@ -90,18 +90,18 @@ pub fn select_to_string(
 
     let mut last_link_index = 0;
     for (i, query_field) in all_query_fields.iter().enumerate() {
-        let table_field = &table
+        if let Some(table_field) = table
             .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-            .unwrap();
-
-        match table_field {
-            ast::Field::FieldDirective(ast::FieldDirective::Link(_)) => {
-                last_link_index = i;
+        {
+            match table_field {
+                ast::Field::FieldDirective(ast::FieldDirective::Link(_)) => {
+                    last_link_index = i;
+                }
+                _ => (),
             }
-            _ => (),
         }
     }
 
@@ -124,50 +124,60 @@ pub fn select_to_string(
     let mut has_links = false;
 
     for query_field in all_query_fields.iter() {
-        let table_field = &table
+        match table
             .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-            .unwrap();
+        {
+            Some(table_field) => {
+                match table_field {
+                    ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                        has_links = true;
+                        // We are inserting a link, so we need to do a nested insert
+                        match typecheck::get_linked_table(context, &link) {
+                            Some(linked_table) => {
+                                if !rendered_initial {
+                                    result.push_str("with ");
+                                    result.push_str(parent_table_alias);
+                                    result.push_str(" as (\n");
+                                    result.push_str(&initial_selection);
+                                    result.push_str("\n)");
+                                    rendered_initial = true;
+                                }
 
-        match table_field {
-            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                has_links = true;
-                // We are inserting a link, so we need to do a nested insert
-                let linked_table = typecheck::get_linked_table(context, &link).unwrap();
+                                let temp_table_alias = &get_temp_table_name(&query_field);
 
-                if !rendered_initial {
-                    result.push_str("with ");
-                    result.push_str(parent_table_alias);
-                    result.push_str(" as (\n");
-                    result.push_str(&initial_selection);
-                    result.push_str("\n)");
-                    rendered_initial = true;
+                                result.push_str(",");
+                                result.push_str(" ");
+                                result.push_str(temp_table_alias);
+                                result.push_str(" as (");
+
+                                select_linked(
+                                    4,
+                                    context,
+                                    query,
+                                    query_info,
+                                    parent_table_alias,
+                                    linked_table,
+                                    query_field,
+                                    link,
+                                    &mut result,
+                                );
+
+                                result.push_str(")");
+                            }
+                            None => {
+                                eprintln!("Warning: Linked table '{}' for link '{}' was not found in typecheck context. This may happen if the linked table is in a different schema. Skipping link generation.", link.foreign.table, link.link_name);
+                            }
+                        }
+                    }
+                    _ => (),
                 }
-
-                let temp_table_alias = &get_temp_table_name(&query_field);
-
-                result.push_str(",");
-                result.push_str(" ");
-                result.push_str(temp_table_alias);
-                result.push_str(" as (");
-
-                select_linked(
-                    4,
-                    context,
-                    query,
-                    query_info,
-                    parent_table_alias,
-                    linked_table,
-                    query_field,
-                    link,
-                    &mut result,
-                );
-
-                result.push_str(")");
             }
-            _ => (),
+            None => {
+                eprintln!("Warning: Field '{}' referenced in query was not found in table '{}'. This should not happen after successful typechecking. Skipping field generation.", query_field.name, table.record.name);
+            }
         }
     }
 
@@ -371,34 +381,34 @@ fn select_linked(
     let parent_temp_table = &get_temp_table_name(&query_field);
 
     for query_field in all_query_fields {
-        let table_field = &table
+        if let Some(table_field) = table
             .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-            .unwrap();
+        {
+            let temp_table_name = &get_temp_table_name(&query_field);
 
-        let temp_table_name = &get_temp_table_name(&query_field);
-
-        match table_field {
-            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                // We are inserting a link, so we need to do a nested insert
-                let linked_table = typecheck::get_linked_table(context, &link).unwrap();
-
-                sql.push_str(&format!("), {} as (", temp_table_name));
-                select_linked(
-                    indent,
-                    context,
-                    query,
-                    query_info,
-                    parent_temp_table,
-                    linked_table,
-                    query_field,
-                    &link,
-                    sql,
-                );
+            match table_field {
+                ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                    // We are inserting a link, so we need to do a nested insert
+                    if let Some(linked_table) = typecheck::get_linked_table(context, &link) {
+                        sql.push_str(&format!("), {} as (", temp_table_name));
+                        select_linked(
+                            indent,
+                            context,
+                            query,
+                            query_info,
+                            parent_temp_table,
+                            linked_table,
+                            query_field,
+                            &link,
+                            sql,
+                        );
+                    }
+                }
+                _ => (),
             }
-            _ => (),
         }
     }
 
@@ -598,68 +608,68 @@ fn select_formatted_as_json(
     for field in &query_table_field.fields {
         match field {
             ast::ArgField::Field(query_field) => {
-                let table_field = table
+                if let Some(table_field) = table
                     .record
                     .fields
                     .iter()
                     .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-                    .unwrap();
+                {
+                    let aliased_field_name = ast::get_aliased_name(query_field);
 
-                let aliased_field_name = ast::get_aliased_name(query_field);
+                    match table_field {
+                        ast::Field::Column(table_column) => {
+                            if !first_field {
+                                sql.push_str(",\n");
+                            }
 
-                match table_field {
-                    ast::Field::Column(table_column) => {
-                        if !first_field {
-                            sql.push_str(",\n");
+                            sql.push_str(&format!("{}    '{}', ", indent_str, aliased_field_name));
+
+                            select_type(
+                                indent + 6,
+                                context,
+                                table_column,
+                                &base_table_name,
+                                &query_field.name,
+                                sql,
+                            );
+
+                            first_field = false;
                         }
+                        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                            if !first_field {
+                                sql.push_str(",\n");
+                            }
+                            let linked_to_unique = if let Some(linked_table) =
+                                typecheck::get_linked_table(context, link)
+                            {
+                                ast::linked_to_unique_field_with_record(link, &linked_table.record)
+                            } else {
+                                ast::linked_to_unique_field(link)
+                            };
+                            if linked_to_unique {
+                                // singular result, no need to coalesce
 
-                        sql.push_str(&format!("{}    '{}', ", indent_str, aliased_field_name));
-
-                        select_type(
-                            indent + 6,
-                            context,
-                            table_column,
-                            &base_table_name,
-                            &query_field.name,
-                            sql,
-                        );
-
-                        first_field = false;
+                                sql.push_str(&format!(
+                                    "{}    '{}', temp__{}.{}",
+                                    indent_str,
+                                    aliased_field_name,
+                                    query_field.name,
+                                    aliased_field_name,
+                                ));
+                            } else {
+                                // Coalesce as an empty array
+                                sql.push_str(&format!(
+                                    "{}    '{}', coalesce(temp__{}.{}, jsonb('[]'))",
+                                    indent_str,
+                                    aliased_field_name,
+                                    query_field.name,
+                                    aliased_field_name,
+                                ));
+                            }
+                            first_field = false;
+                        }
+                        _ => continue,
                     }
-                    ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                        if !first_field {
-                            sql.push_str(",\n");
-                        }
-                        let linked_to_unique = if let Some(linked_table) =
-                            typecheck::get_linked_table(context, link)
-                        {
-                            ast::linked_to_unique_field_with_record(link, &linked_table.record)
-                        } else {
-                            ast::linked_to_unique_field(link)
-                        };
-                        if linked_to_unique {
-                            // singular result, no need to coalesce
-
-                            sql.push_str(&format!(
-                                "{}    '{}', temp__{}.{}",
-                                indent_str,
-                                aliased_field_name,
-                                query_field.name,
-                                aliased_field_name,
-                            ));
-                        } else {
-                            // Coalesce as an empty array
-                            sql.push_str(&format!(
-                                "{}    '{}', coalesce(temp__{}.{}, jsonb('[]'))",
-                                indent_str,
-                                aliased_field_name,
-                                query_field.name,
-                                aliased_field_name,
-                            ));
-                        }
-                        first_field = false;
-                    }
-                    _ => continue,
                 }
             }
             ast::ArgField::Arg(_)
@@ -677,32 +687,34 @@ fn select_formatted_as_json(
     for field in &query_table_field.fields {
         match field {
             ast::ArgField::Field(query_field) => {
-                let table_field = table
+                if let Some(table_field) = table
                     .record
                     .fields
                     .iter()
                     .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-                    .unwrap();
+                {
+                    match table_field {
+                        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                            if let Some(linked_table) = typecheck::get_linked_table(context, &link)
+                            {
+                                let query_temp_table =
+                                    to_temp_table_alias(query_field, linked_table);
+                                let local_temp_alias = format!("temp__{}", link.link_name);
 
-                match table_field {
-                    ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                        let linked_table = typecheck::get_linked_table(context, &link).unwrap();
-
-                        let query_temp_table = to_temp_table_alias(query_field, linked_table);
-                        let local_temp_alias = format!("temp__{}", link.link_name);
-
-                        sql.push_str(&format!(
-                            "{}  left join {} {} on {}.{} = {}.{}\n",
-                            indent_str,
-                            query_temp_table,
-                            local_temp_alias,
-                            local_temp_alias,
-                            link.foreign.fields.join(""),
-                            base_table_name,
-                            link.local_ids.join(""),
-                        ));
+                                sql.push_str(&format!(
+                                    "{}  left join {} {} on {}.{} = {}.{}\n",
+                                    indent_str,
+                                    query_temp_table,
+                                    local_temp_alias,
+                                    local_temp_alias,
+                                    link.foreign.fields.join(""),
+                                    base_table_name,
+                                    link.local_ids.join(""),
+                                ));
+                            }
+                        }
+                        _ => continue,
                     }
-                    _ => continue,
                 }
             }
             ast::ArgField::Arg(_)
@@ -859,64 +871,64 @@ fn final_select_formatted_as_json(
     for field in &query_table_field.fields {
         match field {
             ast::ArgField::Field(query_field) => {
-                let table_field = table
+                if let Some(table_field) = table
                     .record
                     .fields
                     .iter()
                     .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-                    .unwrap();
+                {
+                    let aliased_field_name = ast::get_aliased_name(query_field);
 
-                let aliased_field_name = ast::get_aliased_name(query_field);
-
-                match table_field {
-                    ast::Field::Column(_) => {
-                        if !first_field {
-                            sql.push_str(",\n");
-                        }
-                        // sql.push_str(&format!(
-                        //     "{}    {}.{} as {}",
-                        //     indent_str, base_table_name, query_field.name, aliased_field_name
-                        // ));
-                        sql.push_str(&format!(
-                            "{}        '{}', {}.{}",
-                            indent_str, aliased_field_name, base_table_name, query_field.name
-                        ));
-                        first_field = false;
-                    }
-                    ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                        if !first_field {
-                            sql.push_str(",\n");
-                        }
-
-                        let linked_to_unique = if let Some(linked_table) =
-                            typecheck::get_linked_table(context, link)
-                        {
-                            ast::linked_to_unique_field_with_record(link, &linked_table.record)
-                        } else {
-                            ast::linked_to_unique_field(link)
-                        };
-                        if linked_to_unique {
-                            // singular result, no need to coalesce
+                    match table_field {
+                        ast::Field::Column(_) => {
+                            if !first_field {
+                                sql.push_str(",\n");
+                            }
+                            // sql.push_str(&format!(
+                            //     "{}    {}.{} as {}",
+                            //     indent_str, base_table_name, query_field.name, aliased_field_name
+                            // ));
                             sql.push_str(&format!(
-                                "{}        '{}', temp__{}.{}",
-                                indent_str,
-                                aliased_field_name,
-                                query_field.name,
-                                aliased_field_name
-                            ));
-                            first_field = false;
-                        } else {
-                            sql.push_str(&format!(
-                                "{}        '{}', coalesce(temp__{}.{}, jsonb('[]'))",
-                                indent_str,
-                                aliased_field_name,
-                                query_field.name,
-                                aliased_field_name
+                                "{}        '{}', {}.{}",
+                                indent_str, aliased_field_name, base_table_name, query_field.name
                             ));
                             first_field = false;
                         }
+                        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                            if !first_field {
+                                sql.push_str(",\n");
+                            }
+
+                            let linked_to_unique = if let Some(linked_table) =
+                                typecheck::get_linked_table(context, link)
+                            {
+                                ast::linked_to_unique_field_with_record(link, &linked_table.record)
+                            } else {
+                                ast::linked_to_unique_field(link)
+                            };
+                            if linked_to_unique {
+                                // singular result, no need to coalesce
+                                sql.push_str(&format!(
+                                    "{}        '{}', temp__{}.{}",
+                                    indent_str,
+                                    aliased_field_name,
+                                    query_field.name,
+                                    aliased_field_name
+                                ));
+                                first_field = false;
+                            } else {
+                                sql.push_str(&format!(
+                                    "{}        '{}', coalesce(temp__{}.{}, jsonb('[]'))",
+                                    indent_str,
+                                    aliased_field_name,
+                                    query_field.name,
+                                    aliased_field_name
+                                ));
+                                first_field = false;
+                            }
+                        }
+                        _ => continue,
                     }
-                    _ => continue,
                 }
             }
             ast::ArgField::Arg(_)
@@ -937,38 +949,41 @@ fn final_select_formatted_as_json(
     for field in &query_table_field.fields {
         match field {
             ast::ArgField::Field(query_field) => {
-                let table_field = table
+                if let Some(table_field) = table
                     .record
                     .fields
                     .iter()
                     .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-                    .unwrap();
+                {
+                    match table_field {
+                        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                            // let str = link.local_ids.join("");
+                            // return vec![str];
 
-                match table_field {
-                    ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                        // let str = link.local_ids.join("");
-                        // return vec![str];
+                            // let query_json_table =
+                            // format!("json__{}", ast::get_aliased_name(query_field));
 
-                        // let query_json_table =
-                        // format!("json__{}", ast::get_aliased_name(query_field));
+                            if let Some(linked_table) = typecheck::get_linked_table(context, &link)
+                            {
+                                let query_temp_table =
+                                    to_temp_table_alias(query_field, linked_table);
 
-                        let linked_table = typecheck::get_linked_table(context, &link).unwrap();
-                        let query_temp_table = to_temp_table_alias(query_field, linked_table);
+                                let local_temp_alias = format!("temp__{}", link.link_name);
 
-                        let local_temp_alias = format!("temp__{}", link.link_name);
-
-                        sql.push_str(&format!(
-                            "{}  left join {} {} on {}.{} = {}.{}\n",
-                            indent_str,
-                            query_temp_table,
-                            local_temp_alias,
-                            local_temp_alias,
-                            link.foreign.fields.join(""),
-                            base_table_name,
-                            link.local_ids.join(""),
-                        ));
+                                sql.push_str(&format!(
+                                    "{}  left join {} {} on {}.{} = {}.{}\n",
+                                    indent_str,
+                                    query_temp_table,
+                                    local_temp_alias,
+                                    local_temp_alias,
+                                    link.foreign.fields.join(""),
+                                    base_table_name,
+                                    link.local_ids.join(""),
+                                ));
+                            }
+                        }
+                        _ => continue,
                     }
-                    _ => continue,
                 }
             }
             ast::ArgField::Arg(_)
@@ -1003,14 +1018,14 @@ fn to_fieldnames(
     for field in query_fields {
         match field {
             ast::ArgField::Field(query_field) => {
-                let table_field = table
+                if let Some(table_field) = table
                     .record
                     .fields
                     .iter()
                     .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-                    .unwrap();
-
-                add_concret_fieldnames(context, table_field, query_field, &mut selected_set);
+                {
+                    add_concret_fieldnames(context, table_field, query_field, &mut selected_set);
+                }
             }
             ast::ArgField::Arg(_)
             | ast::ArgField::Lines { .. }

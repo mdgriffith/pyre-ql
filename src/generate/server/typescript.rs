@@ -272,10 +272,16 @@ pub fn generate_queries(
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
-                let query_info = all_query_info.get(&q.name).unwrap();
-                let filename = format!("{}/query/{}.ts", base_out_dir.to_string_lossy(), crate::ext::string::decapitalize(&q.name));
-                let content = to_query_file(context, query_info, q, &formatter);
-                files.push(generate_text_file(filename, content));
+                match all_query_info.get(&q.name) {
+                    Some(query_info) => {
+                        let filename = format!("{}/query/{}.ts", base_out_dir.to_string_lossy(), crate::ext::string::decapitalize(&q.name));
+                        let content = to_query_file(context, query_info, q, &formatter);
+                        files.push(generate_text_file(filename, content));
+                    }
+                    None => {
+                        eprintln!("Warning: Query '{}' was found in query list but not in typecheck results. This should not happen after successful typechecking. Skipping query file generation.", q.name);
+                    }
+                }
             }
             _ => continue,
         }
@@ -476,7 +482,8 @@ fn to_query_file(
     for field in &query.fields {
         match field {
             ast::TopLevelQueryField::Field(query_field) => {
-                let table = context.tables.get(&query_field.name).unwrap();
+                match context.tables.get(&query_field.name) {
+                    Some(table) => {
 
                 for watched_operation in ast::to_watched_operations(&table.record) {
                     let name = format!(
@@ -508,6 +515,11 @@ fn to_query_file(
                         &literal_quote(&prepped.sql)
                     ));
                     written_field = true;
+                }
+                    }
+                    None => {
+                        eprintln!("Error: Table '{}' referenced in query '{}' was not found in typecheck context. This should not happen after successful typechecking. Skipping field generation.", query_field.name, query.name);
+                    }
                 }
             }
             ast::TopLevelQueryField::Lines { .. } => {}
@@ -671,13 +683,13 @@ fn to_flat_query_decoder(
     result: &mut String,
 ) {
     for field in fields {
-        let table_field = &table
+        if let Some(table_field) = table
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
-            .unwrap();
-
-        to_table_field_flat_decoder(2, context, table_alias, table_field, field, result)
+        {
+            to_table_field_flat_decoder(2, context, table_alias, table_field, field, result);
+        }
     }
 }
 
@@ -700,15 +712,20 @@ fn to_table_field_flat_decoder(
             ));
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let table = typecheck::get_linked_table(context, &link).unwrap();
-
-            to_flat_query_decoder(
-                context,
-                &ast::get_aliased_name(&query_field),
-                &table.record,
-                &ast::collect_query_fields(&query_field.fields),
-                result,
-            )
+            match typecheck::get_linked_table(context, &link) {
+                Some(table) => {
+                    to_flat_query_decoder(
+                        context,
+                        &ast::get_aliased_name(&query_field),
+                        &table.record,
+                        &ast::collect_query_fields(&query_field.fields),
+                        result,
+                    );
+                }
+                None => {
+                    eprintln!("Error: Linked table for link '{}' was not found in typecheck context. This should not happen after successful typechecking. Skipping link generation.", link.link_name);
+                }
+            }
         }
 
         _ => (),

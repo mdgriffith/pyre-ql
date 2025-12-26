@@ -397,7 +397,10 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
                 let (input, where_) = with_comma_sep_braces(parse_where_arg)(input)?;
 
                 let where_ = if where_.len() == 1 {
-                    where_.into_iter().next().unwrap()
+                    where_
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| ast::WhereArg::And(vec![]))
                 } else {
                     ast::WhereArg::And(where_)
                 };
@@ -1140,10 +1143,12 @@ fn parse_where(input: Text) -> ParseResult<ast::Arg> {
     let (input, where_arg) = with_comma_sep_braces(parse_where_arg)(input)?;
 
     if where_arg.len() == 1 {
-        Ok((
-            input,
-            ast::Arg::Where(where_arg.into_iter().next().unwrap()),
-        ))
+        if let Some(where_val) = where_arg.into_iter().next() {
+            Ok((input, ast::Arg::Where(where_val)))
+        } else {
+            // This should never happen if len() == 1, but handle it defensively
+            Ok((input, ast::Arg::Where(ast::WhereArg::And(vec![]))))
+        }
     } else {
         Ok((input, ast::Arg::Where(ast::WhereArg::And(where_arg))))
     }
@@ -1356,12 +1361,25 @@ pub fn parse_number(input: Text) -> ParseResult<ast::QueryValue> {
 
         let value = format!("{}{}{}{}", first, rest, period, tail);
         if value.contains(".") {
-            Ok((
-                input,
-                ast::QueryValue::Float((range, value.parse().unwrap())),
-            ))
+            match value.parse::<f64>() {
+                Ok(float_val) => Ok((input, ast::QueryValue::Float((range, float_val as f32)))),
+                Err(_) => {
+                    // If parsing fails, return an error
+                    Err(nom::Err::Error(nom::error::VerboseError {
+                        errors: vec![(input, nom::error::VerboseErrorKind::Context("float"))],
+                    }))
+                }
+            }
         } else {
-            Ok((input, ast::QueryValue::Int((range, value.parse().unwrap()))))
+            match value.parse::<i64>() {
+                Ok(int_val) => Ok((input, ast::QueryValue::Int((range, int_val as i32)))),
+                Err(_) => {
+                    // If parsing fails, return an error
+                    Err(nom::Err::Error(nom::error::VerboseError {
+                        errors: vec![(input, nom::error::VerboseErrorKind::Context("int"))],
+                    }))
+                }
+            }
         }
     }
 }

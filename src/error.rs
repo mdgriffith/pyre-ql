@@ -545,15 +545,18 @@ fn format_yellow_or_list(items: &Vec<String>, in_color: bool) -> String {
             yellow_if(in_color, &items[1])
         ),
         _ => {
-            let (last, rest) = items.split_last().unwrap();
-            format!(
-                "{}, or {}",
-                rest.iter()
-                    .map(|item| yellow_if(in_color, item))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                yellow_if(in_color, last)
-            )
+            if let Some((last, rest)) = items.split_last() {
+                format!(
+                    "{}, or {}",
+                    rest.iter()
+                        .map(|item| yellow_if(in_color, item))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    yellow_if(in_color, last)
+                )
+            } else {
+                String::new()
+            }
         }
     }
 }

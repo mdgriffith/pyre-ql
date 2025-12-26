@@ -1137,10 +1137,10 @@ fn get_primary_db(namespaces: &UsedNamespaces) -> &str {
         ast::DEFAULT_SCHEMANAME
     } else if !namespaces.primary.is_empty() {
         // This gets an arbitrary value from primary if it has any elements
-        namespaces.primary.iter().min().unwrap()
+        namespaces.primary.iter().min().map(|s| s.as_str()).unwrap_or(ast::DEFAULT_SCHEMANAME)
     } else {
         // If primary is empty but secondary isn't, get an arbitrary value from secondary
-        namespaces.secondary.iter().min().unwrap()
+        namespaces.secondary.iter().min().map(|s| s.as_str()).unwrap_or(ast::DEFAULT_SCHEMANAME)
     }
 }
 

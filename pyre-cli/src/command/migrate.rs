@@ -32,15 +32,17 @@ pub async fn migrate<'a>(
     };
 
     // Get exactly one schema based on namespace or default
-    let schema = all_schemas
+    let schema = match all_schemas
         .schemas
         .iter()
         .find(|schema| schema.namespace == *real_namespace)
-        .ok_or_else(|| {
+    {
+        Some(s) => s,
+        None => {
             eprintln!("Error: No schema found for namespace '{}'", real_namespace);
             std::process::exit(1);
-        });
-    let schema = schema.unwrap(); // Safe to unwrap after error handling above
+        }
+    };
 
     // Typecheck schemas
 
@@ -97,15 +99,17 @@ pub async fn push<'a>(
     };
 
     // Get exactly one schema based on namespace or default
-    let current_schema = all_schemas
+    let current_schema = match all_schemas
         .schemas
         .iter()
         .find(|schema| schema.namespace == *real_namespace)
-        .ok_or_else(|| {
+    {
+        Some(s) => s,
+        None => {
             eprintln!("Error: No schema found for namespace '{}'", real_namespace);
             std::process::exit(1);
-        });
-    let current_schema = current_schema.unwrap(); // Safe to unwrap after error handling above
+        }
+    };
 
     // Typecheck schemas
 
@@ -149,26 +153,61 @@ pub async fn push<'a>(
                                 // Generate sql
                                 let sql = pyre::db::diff::to_sql::to_sql(&db_diff);
 
-                                let conn = conn.connect().unwrap();
-                                let tx = conn
-                                    .transaction_with_behavior(
-                                        libsql::TransactionBehavior::Immediate,
-                                    )
-                                    .await
-                                    .unwrap();
+                                match conn.connect() {
+                                    Ok(connected_conn) => {
+                                        match connected_conn
+                                            .transaction_with_behavior(
+                                                libsql::TransactionBehavior::Immediate,
+                                            )
+                                            .await
+                                        {
+                                            Ok(tx) => {
+                                                let mut has_error = false;
+                                                for sql_statement in sql {
+                                                    match sql_statement {
+                                                        pyre::generate::sql::to_sql::SqlAndParams::Sql(sql_string) => {
+                                                            if let Err(e) = tx.execute(&sql_string, libsql::params_from_iter::<Vec<libsql::Value>>(vec![])).await {
+                                                                eprintln!("Error executing SQL: {:?}", e);
+                                                                eprintln!("SQL statement: {}", sql_string);
+                                                                has_error = true;
+                                                                break;
+                                                            }
+                                                        }
+                                                        pyre::generate::sql::to_sql::SqlAndParams::SqlWithParams { sql, args } => {
+                                                            if let Err(e) = tx.execute(&sql, libsql::params_from_iter(args)).await {
+                                                                eprintln!("Error executing SQL: {:?}", e);
+                                                                eprintln!("SQL statement: {}", sql);
+                                                                has_error = true;
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
 
-                                for sql_statement in sql {
-                                    match sql_statement {
-                                        pyre::generate::sql::to_sql::SqlAndParams::Sql(sql_string) => {
-                                            tx.execute(&sql_string, libsql::params_from_iter::<Vec<libsql::Value>>(vec![])).await.unwrap();
-                                        }
-                                        pyre::generate::sql::to_sql::SqlAndParams::SqlWithParams { sql, args } => {
-                                            tx.execute(&sql, libsql::params_from_iter(args)).await.unwrap();
+                                                if has_error {
+                                                    eprintln!("Migration failed due to SQL execution errors. Database may be in an inconsistent state.");
+                                                    std::process::exit(1);
+                                                }
+
+                                                if let Err(e) = tx.commit().await {
+                                                    eprintln!("Error committing transaction: {:?}", e);
+                                                    eprintln!("Migration failed. Database may be in an inconsistent state.");
+                                                    std::process::exit(1);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                eprintln!("Error creating transaction: {:?}", e);
+                                                eprintln!("Migration failed. Database may be in an inconsistent state.");
+                                                std::process::exit(1);
+                                            }
                                         }
                                     }
+                                    Err(e) => {
+                                        eprintln!("Error connecting to database: {:?}", e);
+                                        eprintln!("Migration failed. Could not establish database connection.");
+                                        std::process::exit(1);
+                                    }
                                 }
-
-                                tx.commit().await.unwrap();
                             } else {
                                 println!(
                                     "No schema found in the databasefor namespace '{}'",

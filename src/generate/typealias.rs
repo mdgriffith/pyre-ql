@@ -51,8 +51,14 @@ pub fn return_data_aliases(
     for field in &query.fields {
         match field {
             ast::TopLevelQueryField::Field(query_field) => {
-                let table = context.tables.get(&query_field.name).unwrap();
-                to_query_type_alias(context, &table.record, "", query_field, formatter, result);
+                match context.tables.get(&query_field.name) {
+                    Some(table) => {
+                        to_query_type_alias(context, &table.record, "", query_field, formatter, result);
+                    }
+                    None => {
+                        eprintln!("Error: Table '{}' referenced in query was not found in typecheck context. This should not happen after successful typechecking. Skipping type alias generation.", query_field.name);
+                    }
+                }
             }
             ast::TopLevelQueryField::Lines { .. } => {}
             ast::TopLevelQueryField::Comment { .. } => {}
@@ -131,16 +137,16 @@ fn to_query_type_alias(
 
         match fieldname_match {
             Some(ast::Field::FieldDirective(ast::FieldDirective::Link(link))) => {
-                let link_table = typecheck::get_linked_table(context, &link).unwrap();
-
-                to_query_type_alias(
-                    context,
-                    &link_table.record,
-                    &child_alias_stack,
-                    field,
-                    formatter,
-                    result,
-                );
+                if let Some(link_table) = typecheck::get_linked_table(context, &link) {
+                    to_query_type_alias(
+                        context,
+                        &link_table.record,
+                        &child_alias_stack,
+                        field,
+                        formatter,
+                        result,
+                    );
+                }
             }
             _ => continue,
         }
@@ -172,13 +178,12 @@ fn to_query_type_alias(
     for (i, field) in fields.iter().enumerate() {
         let is_last = i == last_field_index;
 
-        let table_field = &table
+        if let Some(table_field) = table
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
-            .unwrap();
-
-        let aliased_name = ast::get_aliased_name(field);
+        {
+            let aliased_name = ast::get_aliased_name(field);
 
         match table_field {
             ast::Field::Column(col) => {
@@ -214,6 +219,7 @@ fn to_query_type_alias(
                 result.push_str(&(formatter.to_field_separator)(is_last));
             }
             _ => {}
+        }
         }
     }
 

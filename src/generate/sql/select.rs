@@ -108,22 +108,22 @@ pub fn to_selection(
     let mut result = vec![];
 
     for field in fields {
-        let table_field = &table
+        if let Some(table_field) = table
             .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
-            .unwrap();
-
-        result.append(&mut to_subselection(
-            context,
-            table,
-            table_alias,
-            &table_field,
-            query_info,
-            &field,
-            table_alias_kind,
-        ));
+        {
+            result.append(&mut to_subselection(
+                context,
+                table,
+                table_alias,
+                &table_field,
+                query_info,
+                &field,
+                table_alias_kind,
+            ));
+        }
     }
 
     result
@@ -176,15 +176,18 @@ fn to_subselection(
             }
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let link_table = typecheck::get_linked_table(context, &link).unwrap();
-            return to_selection(
-                context,
-                &ast::get_aliased_name(&query_field),
-                link_table,
-                query_info,
-                &ast::collect_query_fields(&query_field.fields),
-                table_alias_kind,
-            );
+            if let Some(link_table) = typecheck::get_linked_table(context, &link) {
+                return to_selection(
+                    context,
+                    &ast::get_aliased_name(&query_field),
+                    link_table,
+                    query_info,
+                    &ast::collect_query_fields(&query_field.fields),
+                    table_alias_kind,
+                );
+            } else {
+                return vec![];
+            }
         }
 
         _ => vec![],
@@ -209,17 +212,20 @@ fn select_type_columns(
                     // For union types, generate a CASE statement that creates JSON objects
                     // This matches the pattern used in the JSON SQL generation
                     let is_enum = variants.iter().all(|v| v.fields.is_none());
-                    
+
                     if is_enum {
                         // Simple enum - just select the discriminator
                         selection.push(format!("{} as {}", source_field, string::quote(alias)));
                     } else {
                         // Union type with fields - generate JSON object with CASE statement
                         let mut case_sql = format!("case\n");
-                        
+
                         for variant in variants {
-                            case_sql.push_str(&format!("  when {} = '{}' then", source_field, variant.name));
-                            
+                            case_sql.push_str(&format!(
+                                "  when {} = '{}' then",
+                                source_field, variant.name
+                            ));
+
                             match &variant.fields {
                                 None => {
                                     // Simple variant - just the tag
@@ -232,7 +238,7 @@ fn select_type_columns(
                                     // Variant with fields - include them in the JSON object
                                     case_sql.push_str(&format!("\n    json_object("));
                                     case_sql.push_str(&format!("\n      '$', '{}',", variant.name));
-                                    
+
                                     let mut first_field = true;
                                     for field in fields {
                                         match field {
@@ -242,33 +248,43 @@ fn select_type_columns(
                                                 }
                                                 // Variant fields are stored as {columnName}__{fieldName}
                                                 // Extract column name from source_field (everything after last dot, or whole string)
-                                                let base_column = source_field.split('.').last().unwrap_or(source_field);
+                                                let base_column = source_field
+                                                    .split('.')
+                                                    .last()
+                                                    .unwrap_or(source_field);
                                                 // Construct the variant field column name
-                                                let variant_field_name = format!("{}__{}", base_column, inner_column.name);
+                                                let variant_field_name = format!(
+                                                    "{}__{}",
+                                                    base_column, inner_column.name
+                                                );
                                                 // If source_field was qualified (e.g., "table.column"), preserve the qualification
-                                                let qualified_variant_field = if source_field.contains('.') {
-                                                    let table_part = source_field.split('.').next().unwrap();
+                                                let qualified_variant_field = if source_field
+                                                    .contains('.')
+                                                {
+                                                    let table_part = source_field
+                                                        .split('.')
+                                                        .next()
+                                                        .unwrap_or(source_field);
                                                     format!("{}.{}", table_part, variant_field_name)
                                                 } else {
                                                     variant_field_name
                                                 };
                                                 case_sql.push_str(&format!(
                                                     "\n      '{}', {}",
-                                                    inner_column.name,
-                                                    qualified_variant_field
+                                                    inner_column.name, qualified_variant_field
                                                 ));
                                                 first_field = false;
                                             }
                                             _ => {}
                                         }
                                     }
-                                    
+
                                     case_sql.push_str("\n    )");
                                 }
                             }
                             case_sql.push_str("\n");
                         }
-                        
+
                         case_sql.push_str("end");
                         selection.push(format!("{} as {}", case_sql, string::quote(alias)));
                     }
@@ -336,22 +352,22 @@ fn to_from(
     let mut result: Vec<String> = vec![];
 
     for query_field in fields {
-        let table_field = &table
+        if let Some(table_field) = table
             .record
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-            .unwrap();
-
-        result.append(&mut to_subfrom(
-            context,
-            table,
-            table_alias,
-            table_alias_kind,
-            table_field,
-            query_info,
-            query_field,
-        ));
+        {
+            result.append(&mut to_subfrom(
+                context,
+                table,
+                table_alias,
+                table_alias_kind,
+                table_field,
+                query_info,
+                query_field,
+            ));
+        }
     }
 
     result
@@ -389,61 +405,64 @@ fn to_subfrom(
                 &ast::get_aliased_name(&query_field),
             );
 
-            let link_table = typecheck::get_linked_table(context, &link).unwrap();
+            if let Some(link_table) = typecheck::get_linked_table(context, &link) {
+                let foreign_table_name = get_tablename(
+                    table_alias_kind,
+                    link_table,
+                    &ast::get_aliased_name(&query_field),
+                );
 
-            let foreign_table_name = get_tablename(
-                table_alias_kind,
-                link_table,
-                &ast::get_aliased_name(&query_field),
-            );
-
-            let mut inner_list = to_from(
-                context,
-                &table_name,
-                table_alias_kind,
-                link_table,
-                query_info,
-                &ast::collect_query_fields(&query_field.fields),
-            );
-
-            let local_table_identifier = match table_alias_kind {
-                TableAliasKind::Normal => {
-                    to_sql::render_real_where_field(table, query_info, &link.local_ids.join(" "))
-                }
-                TableAliasKind::Insert => {
-                    format!(
-                        "{}.{}",
-                        string::quote(&table_alias),
-                        string::quote(&link.local_ids.join(" "))
-                    )
-                }
-            };
-
-            let foreign_table_identifier = match table_alias_kind {
-                TableAliasKind::Normal => to_sql::render_real_where_field(
+                let mut inner_list = to_from(
+                    context,
+                    &table_name,
+                    table_alias_kind,
                     link_table,
                     query_info,
-                    &link.foreign.fields.join(""),
-                ),
-                TableAliasKind::Insert => {
-                    format!(
-                        "{}.{}",
-                        string::quote(&foreign_table_name),
-                        string::quote(&link.foreign.fields.join(""))
-                    )
-                }
-            };
+                    &ast::collect_query_fields(&query_field.fields),
+                );
 
-            let join = format!(
-                "left join {} on {} = {}",
-                string::quote(&foreign_table_name),
-                local_table_identifier,
-                foreign_table_identifier
-            );
-            inner_list.push(join);
-            return inner_list;
+                let local_table_identifier = match table_alias_kind {
+                    TableAliasKind::Normal => to_sql::render_real_where_field(
+                        table,
+                        query_info,
+                        &link.local_ids.join(" "),
+                    ),
+                    TableAliasKind::Insert => {
+                        format!(
+                            "{}.{}",
+                            string::quote(&table_alias),
+                            string::quote(&link.local_ids.join(" "))
+                        )
+                    }
+                };
+
+                let foreign_table_identifier = match table_alias_kind {
+                    TableAliasKind::Normal => to_sql::render_real_where_field(
+                        link_table,
+                        query_info,
+                        &link.foreign.fields.join(""),
+                    ),
+                    TableAliasKind::Insert => {
+                        format!(
+                            "{}.{}",
+                            string::quote(&foreign_table_name),
+                            string::quote(&link.foreign.fields.join(""))
+                        )
+                    }
+                };
+
+                let join = format!(
+                    "left join {} on {} = {}",
+                    string::quote(&foreign_table_name),
+                    local_table_identifier,
+                    foreign_table_identifier
+                );
+                inner_list.push(join);
+                inner_list
+            } else {
+                vec![]
+            }
         }
-
         _ => vec![],
     }
 }
