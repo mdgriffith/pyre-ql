@@ -356,9 +356,9 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = tag("@")(input)?;
 
     let (input, field_directive) = cut(alt((
+        parse_table_permission,
         parse_watch(),
         parse_tablename(to_location(&start_pos)),
-        parse_table_permission,
         parse_link,
     )))(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaColumn);
@@ -372,54 +372,89 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = multispace0(input)?;
 
     // Parse either a star permission or operation-specific permissions
+    // Try operation-specific first (starts with keywords), then fall back to star permission
     let (input, details) = alt((
-        // Star permission case
+        // Operation-specific permissions case (try first since it starts with keywords)
+        |input| {
+            let (input, operations) = separated_list0(
+                |input| {
+                    // After an operation's closing }, consume any spaces/tabs, then newline, then indentation
+                    let (input, _) = space0(input)?;
+                    let (input, _) = newline(input)?;
+                    let (input, _) = multispace0(input)?;
+                    Ok((input, ()))
+                },
+                |input| {
+                    let (input, _) = multispace0(input)?;
+                    let (input, ops) = separated_list1(
+                        |input| {
+                            let (input, _) = multispace0(input)?;
+                            let (input, _) = tag(",")(input)?;
+                            let (input, _) = multispace0(input)?;
+                            Ok((input, ()))
+                        },
+                        alt((
+                            value(ast::QueryOperation::Select, tag("select")),
+                            value(ast::QueryOperation::Insert, tag("insert")),
+                            value(ast::QueryOperation::Update, tag("update")),
+                            value(ast::QueryOperation::Delete, tag("delete")),
+                        )),
+                    )(input)?;
+                    let (input, _) = multispace0(input)?;
+                    // Parse where clause - must be wrapped in braces for operation-specific permissions
+                    let (input, _) = tag("{")(input)?;
+                    let (input, _) = multispace0(input)?;
+                    // Parse comma-separated list of where conditions
+                    let (input, where_args) = separated_list0(
+                        |input| {
+                            let (input, _) = multispace0(input)?;
+                            let (input, _) = char(',')(input)?;
+                            let (input, _) = multispace0(input)?;
+                            Ok((input, ()))
+                        },
+                        parse_where_arg,
+                    )(input)?;
+                    let (input, _) = multispace0(input)?;
+                    let (input, _) = tag("}")(input)?;
+                    let where_ = if where_args.len() == 1 {
+                        where_args
+                            .into_iter()
+                            .next()
+                            .unwrap_or_else(|| ast::WhereArg::And(vec![]))
+                    } else {
+                        ast::WhereArg::And(where_args)
+                    };
+                    Ok((
+                        input,
+                        ast::PermissionOnOperation {
+                            operations: ops,
+                            where_: where_,
+                        },
+                    ))
+                },
+            )(input)?;
+            // If we didn't parse any operations, this isn't operation-specific permissions
+            // Fail to allow backtracking to star permission case
+            if operations.is_empty() {
+                return Err(nom::Err::Error(VerboseError {
+                    errors: vec![(input, VerboseErrorKind::Context("no operations"))],
+                }));
+            }
+            let (input, _) = multispace0(input)?;
+            let (input, _) = tag("}")(input)?;
+            Ok((input, ast::PermissionDetails::OnOperation(operations)))
+        },
+        // Star permission case (fallback - anything that's not operation-specific)
         |input| {
             let (input, where_) = parse_where_arg(input)?;
             let (input, _) = multispace0(input)?;
             let (input, _) = tag("}")(input)?;
             Ok((input, ast::PermissionDetails::Star(where_)))
         },
-        // Operation-specific permissions case
-        |input| {
-            let (input, operations) = separated_list0(newline, |input| {
-                let (input, _) = multispace0(input)?;
-                let (input, ops) = separated_list1(
-                    tag(","),
-                    alt((
-                        value(ast::QueryOperation::Select, tag("select")),
-                        value(ast::QueryOperation::Insert, tag("insert")),
-                        value(ast::QueryOperation::Update, tag("update")),
-                        value(ast::QueryOperation::Delete, tag("delete")),
-                    )),
-                )(input)?;
-                let (input, _) = multispace0(input)?;
-                let (input, where_) = with_comma_sep_braces(parse_where_arg)(input)?;
-
-                let where_ = if where_.len() == 1 {
-                    where_
-                        .into_iter()
-                        .next()
-                        .unwrap_or_else(|| ast::WhereArg::And(vec![]))
-                } else {
-                    ast::WhereArg::And(where_)
-                };
-                Ok((
-                    input,
-                    ast::PermissionOnOperation {
-                        operations: ops,
-                        where_: where_,
-                    },
-                ))
-            })(input)?;
-            let (input, _) = multispace0(input)?;
-            let (input, _) = tag("}")(input)?;
-            Ok((input, ast::PermissionDetails::OnOperation(operations)))
-        },
     ))(input)?;
 
     let (input, _) = multispace0(input)?;
-    let (input, _) = newline(input)?;
+    let (input, _) = opt(alt((line_ending, eof)))(input)?;
 
     Ok((
         input,
@@ -1133,7 +1168,9 @@ enum AndOr {
 }
 
 fn parse_and_or(input: Text) -> ParseResult<AndOr> {
-    alt((parse_token("&&", AndOr::And), parse_token("||", AndOr::Or)))(input)
+    // Parse || before && to avoid ambiguity (though they're different so order doesn't matter)
+    // But for consistency with comparison operators, longer ones first
+    alt((parse_token("||", AndOr::Or), parse_token("&&", AndOr::And)))(input)
 }
 
 fn parse_where(input: Text) -> ParseResult<ast::Arg> {
@@ -1157,15 +1194,17 @@ fn parse_where(input: Text) -> ParseResult<ast::Arg> {
 fn parse_where_arg(input: Text) -> ParseResult<ast::WhereArg> {
     let (input, _) = multispace0(input)?;
     let (input, where_col) = parse_query_where(input)?;
-    let (input, _) = space0(input)?;
+    let (input, _) = multispace0(input)?;
     let (input, maybe_and_or) = opt(parse_and_or)(input)?;
     match maybe_and_or {
         Some(AndOr::And) => {
             let (input, where_col2) = parse_query_where(input)?;
+            let (input, _) = multispace0(input)?;
             Ok((input, ast::WhereArg::And(vec![where_col, where_col2])))
         }
         Some(AndOr::Or) => {
             let (input, where_col2) = parse_query_where(input)?;
+            let (input, _) = multispace0(input)?;
             Ok((input, ast::WhereArg::Or(vec![where_col, where_col2])))
         }
         None => Ok((input, where_col)),
@@ -1174,25 +1213,37 @@ fn parse_where_arg(input: Text) -> ParseResult<ast::WhereArg> {
 
 fn parse_query_where(input: Text) -> ParseResult<ast::WhereArg> {
     let (input, _) = multispace0(input)?;
-    let (input, name) = parse_fieldname(input)?;
+    // Try parsing a session variable first (e.g., Session.role), then fall back to fieldname
+    let (input, name) = alt((
+        |input| {
+            // Try to parse Session.variableName as a column name
+            let (input, _) = tag("Session.")(input)?;
+            let (input, session_field) = parse_fieldname(input)?;
+            Ok((input, format!("Session.{}", session_field)))
+        },
+        |input| {
+            // Fall back to regular fieldname
+            let (input, name) = parse_fieldname(input)?;
+            Ok((input, name.to_string()))
+        },
+    ))(input)?;
     let (input, _) = multispace0(input)?;
     let (input, operator) = parse_operator(input)?;
     let (input, _) = multispace0(input)?;
     let (input, value) = parse_value(input)?;
+    // Consume trailing whitespace - this is needed for proper parsing
+    let (input, _) = multispace0(input)?;
 
-    Ok((
-        input,
-        ast::WhereArg::Column(name.to_string(), operator, value),
-    ))
+    Ok((input, ast::WhereArg::Column(name, operator, value)))
 }
 
 fn parse_operator(input: Text) -> ParseResult<ast::Operator> {
     alt((
-        parse_token("=", ast::Operator::Equal),
-        parse_token("<", ast::Operator::LessThan),
-        parse_token(">", ast::Operator::GreaterThan),
-        parse_token("<=", ast::Operator::LessThanOrEqual),
         parse_token(">=", ast::Operator::GreaterThanOrEqual),
+        parse_token("<=", ast::Operator::LessThanOrEqual),
+        parse_token("=", ast::Operator::Equal),
+        parse_token(">", ast::Operator::GreaterThan),
+        parse_token("<", ast::Operator::LessThan),
         parse_token("in", ast::Operator::In),
     ))(input)
 }

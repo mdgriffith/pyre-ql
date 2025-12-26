@@ -468,10 +468,11 @@ fn render_expecting(expecting: &Expecting, in_color: bool) -> String {
             yellow_if(in_color, "@offset")
         ),
         Expecting::SchemaAtDirective => return format!(
-            "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}",
+            "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}\n        {}",
             yellow_if(in_color, "@watch"),
             yellow_if(in_color, "@tablename"),
-            yellow_if(in_color, "@link")
+            yellow_if(in_color, "@link"),
+            yellow_if(in_color, "@permissions")
         ),
         Expecting::SchemaFieldAtDirective => return format!(
             "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}",
