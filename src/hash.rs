@@ -77,8 +77,8 @@ fn hash_fields(hasher: &mut Sha256, fields: &[TopLevelQueryField]) {
 
 fn hash_arg(hasher: &mut Sha256, arg: &Arg) {
     match arg {
-        Arg::Limit(value) | Arg::Offset(value) => {
-            hasher.update("limit_or_offset");
+        Arg::Limit(value) => {
+            hasher.update("limit");
             hash_query_value(hasher, value);
         }
         Arg::OrderBy(direction, field) => {

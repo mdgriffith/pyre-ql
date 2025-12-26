@@ -281,24 +281,28 @@ fn render_where_arg(
     }
 }
 
-// OFFSET
-
-pub fn render_order_by(query_field: &ast::QueryField, result: &mut String) {
+pub fn render_order_by(
+    table: Option<&typecheck::Table>,
+    query_info: Option<&typecheck::QueryInfo>,
+    query_field: &ast::QueryField,
+    result: &mut String,
+) {
     let mut order_vals = vec![];
-
-    let table_alias = &ast::get_aliased_name(&query_field);
 
     for field in &query_field.fields {
         match field {
             ast::ArgField::Arg(located_arg) => {
                 if let ast::Arg::OrderBy(dir, col) = &located_arg.arg {
                     let order_direction = ast::direction_to_string(dir);
-                    order_vals.push(format!(
-                        "{}.{} {}",
-                        string::quote(table_alias),
-                        string::quote(col),
-                        order_direction
-                    ));
+                    let column_ref = if let (Some(table), Some(query_info)) = (table, query_info) {
+                        // Use the actual table name with proper schema qualification
+                        render_real_where_field(table, query_info, false, col)
+                    } else {
+                        // Fallback to query field alias (for backward compatibility)
+                        let table_alias = &ast::get_aliased_name(&query_field);
+                        format!("{}.{}", string::quote(table_alias), string::quote(col))
+                    };
+                    order_vals.push(format!("{} {}", column_ref, order_direction));
                 }
             }
             _ => continue,
@@ -318,6 +322,7 @@ pub fn render_order_by(query_field: &ast::QueryField, result: &mut String) {
                 result.push_str(&format!(", {}", order));
             }
         }
+        result.push_str("\n");
     }
 }
 
@@ -329,20 +334,6 @@ pub fn render_limit(query_field: &ast::QueryField, result: &mut String) {
             ast::ArgField::Arg(located_arg) => {
                 if let ast::Arg::Limit(val) = &located_arg.arg {
                     result.push_str(&format!("limit {}\n", render_value(val)));
-                    break;
-                }
-            }
-            _ => continue,
-        }
-    }
-}
-
-pub fn render_offset(query_field: &ast::QueryField, result: &mut String) {
-    for field in &query_field.fields {
-        match field {
-            ast::ArgField::Arg(located_arg) => {
-                if let ast::Arg::Offset(val) = &located_arg.arg {
-                    result.push_str(&format!("offset {}\n", render_value(val)));
                     break;
                 }
             }

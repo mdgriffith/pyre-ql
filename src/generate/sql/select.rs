@@ -17,7 +17,7 @@ So, our first approach is going to be using a CTE.
 For selects, here's how we choose what strategy to take.
 
 1. We default to using the join.
-2. If there is a limit/offset, we use the CTE form.
+2. If there is a limit, we use the CTE form.
 3. If there is a @where on anything but the top-level table, we need to use a CTE
 
 
@@ -78,13 +78,10 @@ pub fn select_to_string(
     );
 
     // Order by
-    to_sql::render_order_by(query_field, &mut selection);
+    to_sql::render_order_by(Some(table), Some(query_info), query_field, &mut selection);
 
     // LIMIT
     to_sql::render_limit(query_field, &mut selection);
-
-    // OFFSET
-    to_sql::render_offset(query_field, &mut selection);
 
     statements.push(to_sql::include(selection));
 

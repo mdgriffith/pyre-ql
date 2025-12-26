@@ -1127,8 +1127,7 @@ fn parse_query_field(input: Text) -> ParseResult<ast::QueryField> {
 fn parse_query_arg(input: Text) -> ParseResult<ast::Arg> {
     let (input, _) = tag("@")(input)?;
     let input = expecting(input, crate::error::Expecting::AtDirective);
-    // cut(alt((parse_limit, parse_offset, parse_sort, parse_where)))(input)
-    cut(alt((parse_sort, parse_where)))(input)
+    cut(alt((parse_limit, parse_sort, parse_where)))(input)
 }
 
 fn parse_limit(input: Text) -> ParseResult<ast::Arg> {
@@ -1137,14 +1136,6 @@ fn parse_limit(input: Text) -> ParseResult<ast::Arg> {
     let (input, val) = parse_value(input)?;
 
     Ok((input, ast::Arg::Limit(val)))
-}
-
-fn parse_offset(input: Text) -> ParseResult<ast::Arg> {
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag("offset")(input)?;
-    let (input, _) = multispace1(input)?;
-    let (input, val) = parse_value(input)?;
-    Ok((input, ast::Arg::Offset(val)))
 }
 
 fn parse_sort(input: Text) -> ParseResult<ast::Arg> {

@@ -119,9 +119,6 @@ pub enum ErrorType {
     MultipleLimits {
         query: String,
     },
-    MultipleOffsets {
-        query: String,
-    },
     MultipleWheres {
         query: String,
     },
@@ -464,11 +461,10 @@ fn render_expecting(expecting: &Expecting, in_color: bool) -> String {
             cyan_if(in_color, "pyre format")
         ),
         Expecting::AtDirective => return format!(
-            "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}\n        {}",
+            "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}",
             yellow_if(in_color, "@where"),
             yellow_if(in_color, "@sort"),
-            yellow_if(in_color, "@limit"),
-            yellow_if(in_color, "@offset")
+            yellow_if(in_color, "@limit")
         ),
         Expecting::SchemaAtDirective => return format!(
             "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}\n        {}",
@@ -834,17 +830,6 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
-        ErrorType::MultipleOffsets { query } => {
-            let mut result = "".to_string();
-
-            result.push_str(&format!(
-                "{} has multiple {}, let's only have one!",
-                cyan_if(in_color, query),
-                yellow_if(in_color, "@offsets")
-            ));
-
-            result
-        }
         ErrorType::MultipleWheres { query } => {
             let mut result = "".to_string();
 
@@ -984,7 +969,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             let mut result = "".to_string();
 
             result.push_str(&format!(
-                "This query has a limit/offset, but also queries nested values.\n\n{} isn't able to handle this situation yet and can only handle @limit and @offset in a query with no nested fields.",
+                "This query has a limit, but also queries nested values.\n\n{} isn't able to handle this situation yet and can only handle @limit in a query with no nested fields.",
                 yellow_if(in_color, "Pyre"),
             ));
 
@@ -1214,7 +1199,6 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::NoFieldsSelected => "No Fields Selected",
         ErrorType::UnknownField { .. } => "Unknown Field",
         ErrorType::MultipleLimits { .. } => "Multiple Limits",
-        ErrorType::MultipleOffsets { .. } => "Multiple Offsets",
         ErrorType::MultipleWheres { .. } => "Multiple Wheres",
         ErrorType::WhereOnLinkIsntAllowed { .. } => "Where On Link Not Allowed",
         ErrorType::TypeMismatch { .. } => "Type Mismatch",
@@ -1231,7 +1215,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::InsertMissingColumn { .. } => "Insert Missing Column",
         ErrorType::InsertNestedValueAutomaticallySet { .. } => "Can't set automatic field",
         ErrorType::MultipleSchemaWrites { .. } => "Multiple Schema Writes",
-        ErrorType::LimitOffsetOnlyInFlatRecord => "Limit/Offset Only In Flat Record",
+        ErrorType::LimitOffsetOnlyInFlatRecord => "Limit Only In Flat Record",
         ErrorType::VariantFieldTypeCollision { .. } => "Variant Field Type Collision",
         ErrorType::MigrationTableDropped { .. } => "Table Dropped",
         ErrorType::MigrationColumnDropped { .. } => "Column Dropped",

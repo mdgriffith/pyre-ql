@@ -242,6 +242,12 @@ pub fn initial_select(
         &mut result,
     );
 
+    // Order by
+    to_sql::render_order_by(Some(table), Some(query_info), query_field, &mut result);
+
+    // LIMIT
+    to_sql::render_limit(query_field, &mut result);
+
     result
 }
 

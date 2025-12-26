@@ -101,7 +101,7 @@ And there is also Batch form, where we execute separate sql queries.
 
 
 We generally only need to use something other than the standard join approach when there is
-a limit/offset. In that case, we need to use a CTE or a batched appraoch to get the limit and then join the other tables.
+a limit. In that case, we need to use a CTE or a batched appraoch to get the limit and then join the other tables.
 
 
 

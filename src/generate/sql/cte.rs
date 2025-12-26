@@ -13,7 +13,7 @@ So, our first approach is going to be using a CTE.
 For selects, here's how we choose what strategy to take.
 
 1. We default to using the join.
-2. If there is a limit/offset, we use the CTE form.
+2. If there is a limit, we use the CTE form.
 3. If there is a @where on anything but the top-level table, we need to use a CTE
 
 
@@ -145,7 +145,7 @@ And there is also Batch form, where we execute separate sql queries.
 
 
 We generally only need to use something other than the standard join approach when there is
-a limit/offset. In that case, we need to use a CTE or a batched appraoch to get the limit and then join the other tables.
+a limit. In that case, we need to use a CTE or a batched appraoch to get the limit and then join the other tables.
 
 */
 

@@ -675,7 +675,6 @@ pub fn collect_wheres(fields: &Vec<ArgField>) -> Vec<WhereArg> {
 #[derive(Debug, Clone)]
 pub enum Arg {
     Limit(QueryValue),
-    Offset(QueryValue),
     OrderBy(Direction, String),
     Where(WhereArg),
 }

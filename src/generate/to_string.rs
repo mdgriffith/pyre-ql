@@ -525,9 +525,6 @@ fn to_string_param(indent_size: usize, arg: &ast::Arg) -> String {
         ast::Arg::Limit(lim) => {
             format!("{}@limit {}\n", indent, value_to_string(lim))
         }
-        ast::Arg::Offset(off) => {
-            format!("{}@offset {}\n", indent, value_to_string(off))
-        }
         ast::Arg::OrderBy(direction, column) => {
             format!(
                 "{}@sort {} {}\n",

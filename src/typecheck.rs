@@ -1717,7 +1717,6 @@ fn check_table_query(
     let mut queried_fields: HashMap<String, bool> = HashMap::new();
 
     let mut limits: Vec<Range> = vec![];
-    let mut offsets: Vec<Range> = vec![];
     let mut wheres: Vec<Range> = vec![];
     let mut has_nested_selected = false;
 
@@ -1740,25 +1739,6 @@ fn check_table_query(
                             context,
                             &query_context,
                             &limit_val,
-                            &arg.start,
-                            &arg.end,
-                            errors,
-                            params,
-                            &table.record.name,
-                            "Int",
-                            false,
-                        );
-                    }
-                    ast::Arg::Offset(offset_value) => {
-                        match to_single_range(&arg.start, &arg.end) {
-                            Some(range) => offsets.push(range),
-                            None => (),
-                        }
-
-                        check_value(
-                            context,
-                            &query_context,
-                            &offset_value,
                             &arg.start,
                             &arg.end,
                             errors,
@@ -1891,28 +1871,13 @@ fn check_table_query(
         });
     }
 
-    // Only one @offset is allowed
-    let offset_len = offsets.len();
-    if offset_len > 1 {
-        errors.push(Error {
-            filepath: context.current_filepath.clone(),
-            error_type: ErrorType::MultipleOffsets {
-                query: query.name.clone(),
-            },
-            locations: vec![Location {
-                contexts: to_range(&query.start, &query.end),
-                primary: offsets.clone(),
-            }],
-        });
-    }
-
-    if (offset_len > 0 || limit_len > 0) && has_nested_selected {
+    if limit_len > 0 && has_nested_selected {
         errors.push(Error {
             filepath: context.current_filepath.clone(),
             error_type: ErrorType::LimitOffsetOnlyInFlatRecord,
             locations: vec![Location {
                 contexts: to_range(&query.start, &query.end),
-                primary: [limits, offsets].concat(),
+                primary: limits,
             }],
         });
     }
