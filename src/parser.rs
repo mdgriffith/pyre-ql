@@ -817,7 +817,7 @@ fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
     let (input, name) = cut(parse_typename)(input)?;
 
     let (input, param_defs_or_nothing) = cut(opt(parse_query_param_definitions))(input)?;
-    let (input, _) = space0(input)?;
+    let (input, _) = multispace0(input)?;
     let (input, fields) = with_braces(parse_toplevel_query_field)(input)?;
     let (input, end_pos) = position(input)?;
     let (input, _) = opt(newline)(input)?;
@@ -1251,9 +1251,33 @@ fn parse_value(input: Text) -> ParseResult<ast::QueryValue> {
     ))(input)
 }
 
+fn parse_union_variant_field_assignment(input: Text) -> ParseResult<(String, ast::QueryValue)> {
+    let (input, _) = multispace0(input)?;
+    let (input, field_name) = parse_fieldname(input)?; // field name
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("=")(input)?; // =
+    let (input, _) = multispace0(input)?;
+    let (input, value) = parse_value(input)?; // value
+    Ok((input, (field_name.to_string(), value)))
+}
+
+fn parse_union_variant_fields(input: Text) -> ParseResult<Vec<(String, ast::QueryValue)>> {
+    let (input, _) = tag("{")(input)?;
+    let (input, _) = multispace0(input)?;
+    // Parse comma-separated field assignments like "name = $name, description = $description"
+    let (input, fields) =
+        separated_list0(parse_block_separator, parse_union_variant_field_assignment)(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("}")(input)?;
+    Ok((input, fields))
+}
+
 fn parse_typed_value(input: Text) -> ParseResult<ast::QueryValue> {
     let (input, start_pos) = position(input)?;
     let (input, variant_name) = parse_typename(input)?;
+    let (input, _) = multispace0(input)?;
+    // Parse optional fields in braces (e.g., Create { name = $name, description = $description })
+    let (input, fields) = opt(parse_union_variant_fields)(input)?;
     let (input, end_pos) = position(input)?;
     let range = ast::Range {
         start: to_location(&start_pos),
@@ -1265,6 +1289,7 @@ fn parse_typed_value(input: Text) -> ParseResult<ast::QueryValue> {
             range,
             ast::LiteralTypeValueDetails {
                 name: variant_name.to_string(),
+                fields: fields.filter(|f| !f.is_empty()),
             },
         )),
     ))

@@ -685,7 +685,8 @@ pub enum QueryValue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LiteralTypeValueDetails {
     pub name: String,
-    // Eventually we want the full recursive structure here
+    // Union variant field assignments (e.g., for Create { name = $name, description = $description })
+    pub fields: Option<Vec<(String, QueryValue)>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
