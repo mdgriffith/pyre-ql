@@ -193,8 +193,14 @@ fn to_query_type_alias(
                 result.push_str(&(formatter.to_field_separator)(is_last));
             }
             ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                let linked_to_unique = ast::linked_to_unique_field(&link);
-                // If we're linked to a unqiue field
+                // Check if link points to unique fields by examining the foreign table's schema
+                let linked_to_unique = if let Some(linked_table) = typecheck::get_linked_table(context, link) {
+                    ast::linked_to_unique_field_with_record(link, &linked_table.record)
+                } else {
+                    // Fallback to simple check if table not found
+                    ast::linked_to_unique_field(link)
+                };
+                // If we're linked to a unique field
                 // Then we have either 0 or 1 of them
 
                 result.push_str(&(formatter.to_field)(

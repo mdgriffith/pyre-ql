@@ -162,9 +162,15 @@ fn to_subselection(
                     return vec![str];
                 }
                 ast::SerializationType::FromType(typename) => {
-                    // We don't know what this type is
+                    // For union types, we need to select the discriminator column and any variant-specific columns
                     let mut selected = vec![];
-                    select_type_columns(context, typename, &mut selected);
+                    select_type_columns(
+                        context,
+                        typename,
+                        &source_field,
+                        &ast::get_select_alias(table_alias, query_field),
+                        &mut selected,
+                    );
                     return selected;
                 }
             }
@@ -185,39 +191,93 @@ fn to_subselection(
     }
 }
 
-fn select_type_columns(context: &typecheck::Context, typename: &str, selection: &mut Vec<String>) {
+fn select_type_columns(
+    context: &typecheck::Context,
+    typename: &str,
+    source_field: &str,
+    alias: &str,
+    selection: &mut Vec<String>,
+) {
     match context.types.get(typename) {
-        None => return,
-        Some((definfo, type_)) => {
-            // TODO: Implement JSON version for type columns
-            // This should generate SQL like:
-            // CASE
-            //     WHEN status = 'Active' THEN
-            //         json_object(
-            //             '$', 'Active',
-            //             'activatedAt', status_active_activatedAt
-            //         )
-            //     ELSE
-            //         json_object(
-            //             '$', 'Inactive'
-            //         )
-            // END
-
+        None => {
+            // Unknown type, just select the base field
+            selection.push(format!("{} as {}", source_field, string::quote(alias)));
+        }
+        Some((_definfo, type_)) => {
             match type_ {
-                typecheck::Type::OneOf { variants } => for var in variants {},
-
-                _ => return,
+                typecheck::Type::OneOf { variants } => {
+                    // For union types, generate a CASE statement that creates JSON objects
+                    // This matches the pattern used in the JSON SQL generation
+                    let is_enum = variants.iter().all(|v| v.fields.is_none());
+                    
+                    if is_enum {
+                        // Simple enum - just select the discriminator
+                        selection.push(format!("{} as {}", source_field, string::quote(alias)));
+                    } else {
+                        // Union type with fields - generate JSON object with CASE statement
+                        let mut case_sql = format!("case\n");
+                        
+                        for variant in variants {
+                            case_sql.push_str(&format!("  when {} = '{}' then", source_field, variant.name));
+                            
+                            match &variant.fields {
+                                None => {
+                                    // Simple variant - just the tag
+                                    case_sql.push_str(&format!(
+                                        " json_object('$', '{}')",
+                                        variant.name
+                                    ));
+                                }
+                                Some(fields) => {
+                                    // Variant with fields - include them in the JSON object
+                                    case_sql.push_str(&format!("\n    json_object("));
+                                    case_sql.push_str(&format!("\n      '$', '{}',", variant.name));
+                                    
+                                    let mut first_field = true;
+                                    for field in fields {
+                                        match field {
+                                            ast::Field::Column(inner_column) => {
+                                                if !first_field {
+                                                    case_sql.push_str(",");
+                                                }
+                                                // Variant fields are stored as {columnName}__{fieldName}
+                                                // Extract column name from source_field (everything after last dot, or whole string)
+                                                let base_column = source_field.split('.').last().unwrap_or(source_field);
+                                                // Construct the variant field column name
+                                                let variant_field_name = format!("{}__{}", base_column, inner_column.name);
+                                                // If source_field was qualified (e.g., "table.column"), preserve the qualification
+                                                let qualified_variant_field = if source_field.contains('.') {
+                                                    let table_part = source_field.split('.').next().unwrap();
+                                                    format!("{}.{}", table_part, variant_field_name)
+                                                } else {
+                                                    variant_field_name
+                                                };
+                                                case_sql.push_str(&format!(
+                                                    "\n      '{}', {}",
+                                                    inner_column.name,
+                                                    qualified_variant_field
+                                                ));
+                                                first_field = false;
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    
+                                    case_sql.push_str("\n    )");
+                                }
+                            }
+                            case_sql.push_str("\n");
+                        }
+                        
+                        case_sql.push_str("end");
+                        selection.push(format!("{} as {}", case_sql, string::quote(alias)));
+                    }
+                }
+                _ => {
+                    // Other types - just select the base field
+                    selection.push(format!("{} as {}", source_field, string::quote(alias)));
+                }
             }
-            // let str = format!(
-            //     "{} as {}",
-            //     source_field,
-            //     string::quote(&ast::get_select_alias(
-            //         table_alias,
-            //         table_field,
-            //         query_field
-            //     ))
-            // );
-            // return vec![str];
         }
     }
 }

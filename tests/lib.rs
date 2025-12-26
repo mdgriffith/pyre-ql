@@ -1,3 +1,4 @@
+mod ast;
 mod commands;
 mod helpers;
 mod migrations;

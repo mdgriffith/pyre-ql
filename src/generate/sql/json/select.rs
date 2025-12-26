@@ -463,7 +463,14 @@ fn select_single_json(
 ) {
     let indent_str = " ".repeat(indent);
 
-    let aggregate_to_array = !ast::linked_to_unique_field(link);
+    // Check if link points to unique fields by examining the foreign table's schema
+    let linked_to_unique = if let Some(linked_table) = typecheck::get_linked_table(context, link) {
+        ast::linked_to_unique_field_with_record(link, &linked_table.record)
+    } else {
+        // Fallback to simple check if table not found
+        ast::linked_to_unique_field(link)
+    };
+    let aggregate_to_array = !linked_to_unique;
 
     // This is the link.foreign_id, which is the id on this table
     let mut full_foreign_id = String::new();
@@ -623,7 +630,14 @@ fn select_formatted_as_json(
                         if !first_field {
                             sql.push_str(",\n");
                         }
-                        if ast::linked_to_unique_field(link) {
+                        let linked_to_unique = if let Some(linked_table) =
+                            typecheck::get_linked_table(context, link)
+                        {
+                            ast::linked_to_unique_field_with_record(link, &linked_table.record)
+                        } else {
+                            ast::linked_to_unique_field(link)
+                        };
+                        if linked_to_unique {
                             // singular result, no need to coalesce
 
                             sql.push_str(&format!(
@@ -874,7 +888,14 @@ fn final_select_formatted_as_json(
                             sql.push_str(",\n");
                         }
 
-                        if ast::linked_to_unique_field(link) {
+                        let linked_to_unique = if let Some(linked_table) =
+                            typecheck::get_linked_table(context, link)
+                        {
+                            ast::linked_to_unique_field_with_record(link, &linked_table.record)
+                        } else {
+                            ast::linked_to_unique_field(link)
+                        };
+                        if linked_to_unique {
                             // singular result, no need to coalesce
                             sql.push_str(&format!(
                                 "{}        '{}', temp__{}.{}",

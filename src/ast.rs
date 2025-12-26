@@ -314,9 +314,39 @@ pub fn link_identity(local_table: &str, link: &LinkDetails) -> String {
 }
 
 pub fn linked_to_unique_field(link: &LinkDetails) -> bool {
-    // TODO: This should calculate uniqueness by looking at UNIQUE constraints on the schema,
-    // not just checking if the field is named "id"
+    // Fallback: check if any field is named "id" (primary keys are always unique)
+    // For proper uniqueness checking, use linked_to_unique_field_with_record
     link.foreign.fields.iter().any(|f| f == "id")
+}
+
+/// Check if a link points to unique fields by examining the foreign table's schema.
+/// This properly checks for UNIQUE constraints and PRIMARY KEY constraints.
+pub fn linked_to_unique_field_with_record(
+    link: &LinkDetails,
+    foreign_record: &RecordDetails,
+) -> bool {
+    // If linking to a single field, check if that field has UNIQUE or PRIMARY KEY constraint
+    if link.foreign.fields.len() == 1 {
+        let field_name = &link.foreign.fields[0];
+        for field in &foreign_record.fields {
+            match field {
+                Field::Column(column) => {
+                    if column.name == *field_name {
+                        // Check if this column has UNIQUE or PRIMARY KEY constraint
+                        return column.directives.iter().any(|d| {
+                            matches!(d, ColumnDirective::Unique | ColumnDirective::PrimaryKey)
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // For multi-field links, we'd need to check for composite UNIQUE constraints
+    // For now, fall back to checking if all fields are "id" (which is a common pattern)
+    // TODO: Support composite UNIQUE constraints
+    link.foreign.fields.iter().all(|f| f == "id")
 }
 
 pub fn to_reciprocal(local_namespace: &str, local_table: &str, link: &LinkDetails) -> LinkDetails {
