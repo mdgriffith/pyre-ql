@@ -10,8 +10,8 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use tempfile::TempDir;
 
-use super::SqlAndParams;
 use super::TestError;
+use pyre::generate::sql::to_sql::SqlAndParams;
 
 pub struct TestDatabase {
     pub db: Database,
@@ -155,13 +155,6 @@ impl TestDatabase {
             context,
             schema,
         })
-    }
-
-    /// Seed the database with raw SQL
-    pub async fn seed(&self, sql: &str) -> Result<(), TestError> {
-        let conn = self.db.connect().map_err(TestError::Database)?;
-        conn.execute_batch(sql).await.map_err(TestError::Database)?;
-        Ok(())
     }
 
     /// Execute a query and return the SQL that would be generated

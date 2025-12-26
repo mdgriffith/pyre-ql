@@ -1,12 +1,6 @@
-// Re-export for use in tests
-pub use pyre::generate::sql::to_sql::SqlAndParams;
-
 pub mod print;
 pub mod schema;
 pub mod test_database;
-
-// Re-export TestDatabase for convenience
-pub use test_database::TestDatabase;
 
 #[derive(Debug)]
 pub enum TestError {

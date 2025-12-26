@@ -1,7 +1,6 @@
-#[path = "../helpers/mod.rs"]
-mod helpers;
-
-use helpers::{schema, TestDatabase, TestError};
+use crate::helpers::schema;
+use crate::helpers::test_database::TestDatabase;
+use crate::helpers::TestError;
 
 #[tokio::test]
 async fn test_query_with_one_to_many() -> Result<(), TestError> {

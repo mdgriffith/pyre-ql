@@ -1137,10 +1137,20 @@ fn get_primary_db(namespaces: &UsedNamespaces) -> &str {
         ast::DEFAULT_SCHEMANAME
     } else if !namespaces.primary.is_empty() {
         // This gets an arbitrary value from primary if it has any elements
-        namespaces.primary.iter().min().map(|s| s.as_str()).unwrap_or(ast::DEFAULT_SCHEMANAME)
+        namespaces
+            .primary
+            .iter()
+            .min()
+            .map(|s| s.as_str())
+            .unwrap_or(ast::DEFAULT_SCHEMANAME)
     } else {
         // If primary is empty but secondary isn't, get an arbitrary value from secondary
-        namespaces.secondary.iter().min().map(|s| s.as_str()).unwrap_or(ast::DEFAULT_SCHEMANAME)
+        namespaces
+            .secondary
+            .iter()
+            .min()
+            .map(|s| s.as_str())
+            .unwrap_or(ast::DEFAULT_SCHEMANAME)
     }
 }
 
@@ -1971,19 +1981,15 @@ fn check_field(
                             if let Some(variant_fields) = &variant.fields {
                                 if let Some(fields) = &details.fields {
                                     // Collect the names of fields that were provided
-                                    let provided_field_names: std::collections::HashSet<String> = fields
-                                        .iter()
-                                        .map(|(name, _)| name.clone())
-                                        .collect();
-                                    
+                                    let provided_field_names: std::collections::HashSet<String> =
+                                        fields.iter().map(|(name, _)| name.clone()).collect();
+
                                     // Process each field assignment to mark variables as used
                                     for (field_name, field_value) in fields {
                                         // Find the matching variant field
                                         if let Some(variant_col) =
                                             variant_fields.iter().find(|f| match f {
-                                                ast::Field::Column(col) => {
-                                                    col.name == *field_name
-                                                }
+                                                ast::Field::Column(col) => col.name == *field_name,
                                                 _ => false,
                                             })
                                         {
@@ -2004,7 +2010,7 @@ fn check_field(
                                             }
                                         }
                                     }
-                                    
+
                                     // Check that all required (non-nullable) fields are present
                                     let missing_fields: Vec<String> = variant_fields
                                         .iter()
@@ -2019,7 +2025,7 @@ fn check_field(
                                             _ => None,
                                         })
                                         .collect();
-                                    
+
                                     if !missing_fields.is_empty() {
                                         errors.push(Error {
                                             filepath: context.current_filepath.clone(),
@@ -2028,10 +2034,7 @@ fn check_field(
                                             },
                                             locations: vec![Location {
                                                 contexts: vec![],
-                                                primary: to_range(
-                                                    &field.start,
-                                                    &field.end,
-                                                ),
+                                                primary: to_range(&field.start, &field.end),
                                             }],
                                         });
                                     }
@@ -2046,7 +2049,7 @@ fn check_field(
                                             _ => None,
                                         })
                                         .collect();
-                                    
+
                                     if !required_fields.is_empty() {
                                         errors.push(Error {
                                             filepath: context.current_filepath.clone(),
@@ -2055,10 +2058,7 @@ fn check_field(
                                             },
                                             locations: vec![Location {
                                                 contexts: vec![],
-                                                primary: to_range(
-                                                    &field.start,
-                                                    &field.end,
-                                                ),
+                                                primary: to_range(&field.start, &field.end),
                                             }],
                                         });
                                     }

@@ -1,7 +1,9 @@
 #[path = "helpers/mod.rs"]
 mod helpers;
 
-use helpers::{schema, TestDatabase, TestError};
+use helpers::schema;
+use helpers::test_database::TestDatabase;
+use helpers::TestError;
 use pyre::db::diff;
 use pyre::db::introspect;
 use pyre::parser;

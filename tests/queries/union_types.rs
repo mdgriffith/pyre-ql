@@ -6,10 +6,9 @@
 //! - When field names match across variants, they share the same database column
 //! - This column sharing enables efficient storage and querying of union types
 
-#[path = "../helpers/mod.rs"]
-mod helpers;
-
-use helpers::{schema, TestDatabase, TestError};
+use crate::helpers::schema;
+use crate::helpers::test_database::TestDatabase;
+use crate::helpers::TestError;
 
 #[tokio::test]
 async fn test_union_type_in_schema() -> Result<(), TestError> {
