@@ -145,9 +145,15 @@ fn hash_query_value(hasher: &mut Sha256, value: &QueryValue) {
         QueryValue::Null(_) => {
             hasher.update("null");
         }
-        QueryValue::LiteralTypeValue((_, LiteralTypeValueDetails { name })) => {
+        QueryValue::LiteralTypeValue((_, LiteralTypeValueDetails { name, fields })) => {
             hasher.update("literal_type");
             hasher.update(&name.to_string());
+            if let Some(fields) = fields {
+                for (field_name, field_value) in fields {
+                    hasher.update(field_name);
+                    hash_query_value(hasher, field_value);
+                }
+            }
         }
     }
 }
