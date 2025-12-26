@@ -1975,6 +1975,53 @@ fn check_field(
                 &column.type_,
                 column.nullable,
             );
+            
+            // If this is a union variant with nested fields (e.g., Success { message = $message }),
+            // we need to process the nested fields to mark variables as used
+            if let ast::QueryValue::LiteralTypeValue((_, details)) = set {
+                if let Some((_, type_)) = context.types.get(&column.type_) {
+                    if let Type::OneOf { variants } = type_ {
+                        // Find the variant that matches
+                        if let Some(variant) = variants.iter().find(|v| v.name == details.name) {
+                            // If the variant has fields and the query field has nested fields, process them
+                            if let Some(variant_fields) = &variant.fields {
+                                if !field.fields.is_empty() {
+                                    // Process nested fields to mark variables as used
+                                    for arg_field in &field.fields {
+                                        if let ast::ArgField::Field(nested_field) = arg_field {
+                                            // Find the matching variant field
+                                            if let Some(variant_col) = variant_fields.iter().find(|f| {
+                                                match f {
+                                                    ast::Field::Column(col) => col.name == nested_field.name,
+                                                    _ => false,
+                                                }
+                                            }) {
+                                                if let ast::Field::Column(variant_col) = variant_col {
+                                                    // Check the nested field's set value to mark variables as used
+                                                    if let Some(nested_set) = &nested_field.set {
+                                                        check_value(
+                                                            context,
+                                                            &query_context,
+                                                            nested_set,
+                                                            &nested_field.start,
+                                                            &nested_field.end,
+                                                            &mut errors,
+                                                            params,
+                                                            &variant_col.name,
+                                                            &variant_col.type_,
+                                                            variant_col.nullable,
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         None => {}
     }
