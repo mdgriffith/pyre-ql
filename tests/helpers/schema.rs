@@ -100,3 +100,94 @@ pub fn full_schema() -> String {
         STATUS_TYPE.trim()
     )
 }
+
+/// Union type for testing column reuse: multiple variants with same field name and type
+pub const UNION_COLUMN_REUSE_TYPE: &str = r#"
+    type Result
+       = Success {
+            message String
+         }
+       | Warning {
+            message String
+         }
+       | Error {
+            code Int
+         }
+"#;
+
+/// Schema for testing column reuse
+pub fn union_column_reuse_schema() -> String {
+    format!(
+        r#"
+    record TestRecord {{
+        id Int @id
+        result Result
+    }}
+
+    {}
+"#,
+        UNION_COLUMN_REUSE_TYPE.trim()
+    )
+}
+
+/// Union type for testing separate columns: same field name but different types
+pub const UNION_SEPARATE_COLUMNS_TYPE: &str = r#"
+    type MixedResult
+       = TextResult {
+            value String
+         }
+       | NumberResult {
+            value Int
+         }
+       | FloatResult {
+            value Float
+         }
+"#;
+
+/// Schema for testing separate columns
+pub fn union_separate_columns_schema() -> String {
+    format!(
+        r#"
+    record TestRecord {{
+        id Int @id
+        result MixedResult
+    }}
+
+    {}
+"#,
+        UNION_SEPARATE_COLUMNS_TYPE.trim()
+    )
+}
+
+/// Union type for testing required sub-records
+pub const UNION_REQUIRED_FIELDS_TYPE: &str = r#"
+    type Action
+       = Create {
+            name String
+            description String
+         }
+       | Update {
+            id Int
+            changes String
+         }
+       | Delete {
+            id Int
+            reason String
+         }
+       | Simple
+"#;
+
+/// Schema for testing required sub-records
+pub fn union_required_fields_schema() -> String {
+    format!(
+        r#"
+    record TestRecord {{
+        id Int @id
+        action Action
+    }}
+
+    {}
+"#,
+        UNION_REQUIRED_FIELDS_TYPE.trim()
+    )
+}
