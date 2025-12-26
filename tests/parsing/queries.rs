@@ -10,7 +10,7 @@ fn strip_ansi_codes(s: &str) -> String {
     // Remove ANSI escape sequences (CSI sequences)
     let mut result = String::new();
     let mut chars = s.chars().peekable();
-    
+
     while let Some(ch) = chars.next() {
         if ch == '\x1b' && chars.peek() == Some(&'[') {
             // Skip the escape sequence
@@ -57,7 +57,10 @@ fn test_valid_query_with_params() {
     "#;
 
     let result = parser::parse_query("query.pyre", query_source);
-    assert!(result.is_ok(), "Valid query with params should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid query with params should parse successfully"
+    );
 }
 
 #[test]
@@ -76,7 +79,10 @@ fn test_valid_query_with_nested_fields() {
     "#;
 
     let result = parser::parse_query("query.pyre", query_source);
-    assert!(result.is_ok(), "Valid query with nested fields should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid query with nested fields should parse successfully"
+    );
 }
 
 #[test]
@@ -92,7 +98,10 @@ fn test_valid_query_with_where() {
     "#;
 
     let result = parser::parse_query("query.pyre", query_source);
-    assert!(result.is_ok(), "Valid query with where should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid query with where should parse successfully"
+    );
 }
 
 #[test]
@@ -108,7 +117,10 @@ fn test_valid_query_with_sort() {
     "#;
 
     let result = parser::parse_query("query.pyre", query_source);
-    assert!(result.is_ok(), "Valid query with sort should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid query with sort should parse successfully"
+    );
 }
 
 #[test]
@@ -124,7 +136,10 @@ fn test_valid_query_with_sort_desc() {
     "#;
 
     let result = parser::parse_query("query.pyre", query_source);
-    assert!(result.is_ok(), "Valid query with sort desc should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid query with sort desc should parse successfully"
+    );
 }
 
 #[test]
@@ -139,7 +154,10 @@ fn test_valid_query_with_field_alias() {
     "#;
 
     let result = parser::parse_query("query.pyre", query_source);
-    assert!(result.is_ok(), "Valid query with field alias should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid query with field alias should parse successfully"
+    );
 }
 
 #[test]
@@ -181,7 +199,7 @@ fn test_missing_query_name() {
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(query_source, &error);
-            
+
             // The parser gives a generic error message for this case
             assert!(
                 formatted.contains("query.pyre") && formatted.contains("query {"),
@@ -209,10 +227,13 @@ fn test_missing_query_brace() {
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(query_source, &error);
-            
+
             // The parser may give generic errors, so just verify it's an error message
             assert!(
-                formatted.contains("query.pyre") || formatted.contains("expecting") || formatted.contains("parameter") || formatted.contains("issue"),
+                formatted.contains("query.pyre")
+                    || formatted.contains("expecting")
+                    || formatted.contains("parameter")
+                    || formatted.contains("issue"),
                 "Error message should indicate a parsing error. Got:\n{}",
                 formatted
             );
@@ -260,11 +281,11 @@ fn test_invalid_directive() {
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(query_source, &error);
-            
+
             // Check that the error mentions the unknown directive and suggests alternatives
             assert!(
-                formatted.contains("@unknown") && 
-                (formatted.contains("@where") || formatted.contains("did you mean")),
+                formatted.contains("@unknown")
+                    && (formatted.contains("@where") || formatted.contains("did you mean")),
                 "Error message should mention @unknown and suggest alternatives. Got:\n{}",
                 formatted
             );
@@ -287,10 +308,14 @@ fn test_missing_closing_brace() {
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(query_source, &error);
-            
+
             // The parser may give generic errors, so just verify it's an error message
             assert!(
-                formatted.contains("query.pyre") || formatted.contains("expecting") || formatted.contains("parameter") || formatted.contains("issue") || formatted.contains("Incomplete"),
+                formatted.contains("query.pyre")
+                    || formatted.contains("expecting")
+                    || formatted.contains("parameter")
+                    || formatted.contains("issue")
+                    || formatted.contains("Incomplete"),
                 "Error message should indicate a parsing error. Got:\n{}",
                 formatted
             );
@@ -342,15 +367,21 @@ fn test_invalid_where_syntax() {
     "#;
 
     let result = parser::parse_query("query.pyre", query_source);
-    assert!(result.is_err(), "Invalid where syntax (missing braces) should fail");
+    assert!(
+        result.is_err(),
+        "Invalid where syntax (missing braces) should fail"
+    );
 
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(query_source, &error);
-            
+
             // The parser may give generic errors, so just verify it's an error message
             assert!(
-                formatted.contains("query.pyre") || formatted.contains("expecting") || formatted.contains("parameter") || formatted.contains("issue"),
+                formatted.contains("query.pyre")
+                    || formatted.contains("expecting")
+                    || formatted.contains("parameter")
+                    || formatted.contains("issue"),
                 "Error message should indicate a parsing error. Got:\n{}",
                 formatted
             );
@@ -362,3 +393,174 @@ fn test_invalid_where_syntax() {
     }
 }
 
+#[test]
+fn test_query_with_union_field() {
+    // This test captures the query from test_union_required_fields_validation
+    // which is failing with a parsing error at line 3, column 24 (around "testRecord {")
+    let query_source = r#"
+        query GetTests {
+            testRecord {
+                id
+                action
+            }
+        }
+    "#;
+
+    let result = parser::parse_query("query.pyre", query_source);
+
+    match result {
+        Ok(_) => {
+            // Parsing succeeded - this is the expected behavior
+            println!("Query with union field parsed successfully");
+        }
+        Err(err) => {
+            // Parsing failed - this documents the bug we're trying to fix
+            let rendered = parser::render_error(query_source, err);
+            let formatted = strip_ansi_codes(&rendered);
+            println!("Parsing error for union field query:\n{}", formatted);
+            panic!(
+                "Query with union field should parse successfully but failed:\n{}",
+                formatted
+            );
+        }
+    }
+}
+
+#[test]
+fn test_insert_simple_union_variant() {
+    // Test 1 from test_union_required_fields_validation
+    let insert_source = r#"
+        insert CreateTestRecord {
+            testRecord {
+                id = 1
+                action = Simple
+            }
+        }
+    "#;
+
+    let result = parser::parse_query("query.pyre", insert_source);
+    assert!(
+        result.is_ok(),
+        "Insert with Simple variant should parse successfully"
+    );
+}
+
+#[test]
+fn test_insert_create_union_variant_with_fields() {
+    // Test 2 from test_union_required_fields_validation
+    // This insert fails with a parsing error - union variants with multiple fields aren't parsed correctly
+    let insert_source = r#"
+        insert CreateTestRecord($name: String, $description: String) {
+            testRecord {
+                id = 2
+                action = Create { name = $name, description = $description }
+            }
+        }
+    "#;
+
+    let result = parser::parse_query("query.pyre", insert_source);
+    match result {
+        Ok(_) => {
+            // Parsing succeeded - this is the expected behavior
+            println!("Insert with Create variant (all fields) parsed successfully");
+        }
+        Err(err) => {
+            // Parsing failed - this documents the bug we're trying to fix
+            let rendered = parser::render_error(insert_source, err);
+            let formatted = strip_ansi_codes(&rendered);
+            println!("Parsing error for Create variant insert:\n{}", formatted);
+            panic!(
+                "Insert with Create variant (multiple fields) should parse successfully but failed:\n{}",
+                formatted
+            );
+        }
+    }
+}
+
+#[test]
+fn test_insert_create_incomplete_union_variant() {
+    // Test 3 from test_union_required_fields_validation
+    let insert_source = r#"
+        insert CreateTestRecord($name: String) {
+            testRecord {
+                id = 3
+                action = Create { name = $name }
+                // Missing description field - should fail
+            }
+        }
+    "#;
+
+    let result = parser::parse_query("query.pyre", insert_source);
+    match result {
+        Ok(_) => println!("Insert with Create variant (incomplete) parsed successfully"),
+        Err(err) => {
+            let rendered = parser::render_error(insert_source, err);
+            let formatted = strip_ansi_codes(&rendered);
+            println!(
+                "Parsing error for incomplete Create variant insert:\n{}",
+                formatted
+            );
+            // This might fail parsing or might pass parsing but fail typechecking
+        }
+    }
+}
+
+#[test]
+fn test_insert_update_union_variant_with_fields() {
+    // Test 4 from test_union_required_fields_validation
+    // This insert fails with a parsing error - union variants with multiple fields aren't parsed correctly
+    let insert_source = r#"
+        insert CreateTestRecord($id: Int, $changes: String) {
+            testRecord {
+                id = 4
+                action = Update { id = $id, changes = $changes }
+            }
+        }
+    "#;
+
+    let result = parser::parse_query("query.pyre", insert_source);
+    match result {
+        Ok(_) => {
+            // Parsing succeeded - this is the expected behavior
+            println!("Insert with Update variant parsed successfully");
+        }
+        Err(err) => {
+            // Parsing failed - this documents the bug we're trying to fix
+            let rendered = parser::render_error(insert_source, err);
+            let formatted = strip_ansi_codes(&rendered);
+            println!("Parsing error for Update variant insert:\n{}", formatted);
+            panic!(
+                "Insert with Update variant (multiple fields) should parse successfully but failed:\n{}",
+                formatted
+            );
+        }
+    }
+}
+
+#[test]
+fn test_insert_delete_incomplete_union_variant() {
+    // Test 5 from test_union_required_fields_validation
+    let insert_source = r#"
+        insert CreateTestRecord($id: Int) {
+            testRecord {
+                id = 5
+                action = Delete { id = $id }
+                // Missing reason field - should fail
+            }
+        }
+    "#;
+
+    let result = parser::parse_query("query.pyre", insert_source);
+    match result {
+        Ok(_) => println!("Insert with Delete variant (incomplete) parsed successfully"),
+        Err(err) => {
+            let rendered = parser::render_error(insert_source, err);
+            let formatted = strip_ansi_codes(&rendered);
+            println!(
+                "Parsing error for incomplete Delete variant insert:\n{}",
+                formatted
+            );
+            // This might fail parsing or might pass parsing but fail typechecking
+        }
+    }
+}
