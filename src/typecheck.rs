@@ -1975,7 +1975,7 @@ fn check_field(
                 &column.type_,
                 column.nullable,
             );
-            
+
             // If this is a union variant with nested fields (e.g., Success { message = $message }),
             // we need to process the nested fields to mark variables as used
             if let ast::QueryValue::LiteralTypeValue((_, details)) = set {
@@ -1990,13 +1990,16 @@ fn check_field(
                                     for arg_field in &field.fields {
                                         if let ast::ArgField::Field(nested_field) = arg_field {
                                             // Find the matching variant field
-                                            if let Some(variant_col) = variant_fields.iter().find(|f| {
-                                                match f {
-                                                    ast::Field::Column(col) => col.name == nested_field.name,
+                                            if let Some(variant_col) =
+                                                variant_fields.iter().find(|f| match f {
+                                                    ast::Field::Column(col) => {
+                                                        col.name == nested_field.name
+                                                    }
                                                     _ => false,
-                                                }
-                                            }) {
-                                                if let ast::Field::Column(variant_col) = variant_col {
+                                                })
+                                            {
+                                                if let ast::Field::Column(variant_col) = variant_col
+                                                {
                                                     // Check the nested field's set value to mark variables as used
                                                     if let Some(nested_set) = &nested_field.set {
                                                         check_value(
