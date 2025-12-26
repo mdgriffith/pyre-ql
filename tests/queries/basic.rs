@@ -72,3 +72,4 @@ async fn test_query_with_fields() -> Result<(), TestError> {
 
     Ok(())
 }
+

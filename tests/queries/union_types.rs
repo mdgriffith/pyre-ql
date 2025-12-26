@@ -1,4 +1,4 @@
-#[path = "helpers/mod.rs"]
+#[path = "../helpers/mod.rs"]
 mod helpers;
 
 use helpers::{TestDatabase, TestError};

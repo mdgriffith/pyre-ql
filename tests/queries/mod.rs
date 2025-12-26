@@ -1,3 +1,4 @@
-mod basic_queries;
-mod relationship_queries;
-mod where_queries;
+mod basic;
+mod relationship;
+mod union_types;
+mod r#where;
