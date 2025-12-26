@@ -1,4 +1,3 @@
-mod basic;
 mod commands;
 mod helpers;
 mod migrations;
