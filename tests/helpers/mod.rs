@@ -13,6 +13,7 @@ use tempfile::TempDir;
 // Re-export for use in tests
 pub use pyre::generate::sql::to_sql::SqlAndParams;
 
+pub mod print;
 pub mod schema;
 
 pub struct TestDatabase {
@@ -446,6 +447,17 @@ impl TestDatabase {
                 params.insert(
                     "status".to_string(),
                     libsql::Value::Text("Inactive".to_string()),
+                );
+                self.execute_insert_with_params(insert_user, params).await?;
+
+                let mut params = HashMap::new();
+                params.insert(
+                    "name".to_string(),
+                    libsql::Value::Text("Charlie".to_string()),
+                );
+                params.insert(
+                    "status".to_string(),
+                    libsql::Value::Text("Special".to_string()),
                 );
                 self.execute_insert_with_params(insert_user, params).await?;
             } else {

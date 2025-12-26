@@ -1,64 +1,12 @@
 #[path = "../helpers/mod.rs"]
 mod helpers;
 
-use helpers::{TestDatabase, TestError};
-use std::collections::HashMap;
+use helpers::{schema, TestDatabase, TestError};
 
 #[tokio::test]
 async fn test_union_type_in_schema() -> Result<(), TestError> {
-    let schema = r#"
-        record User {
-            id     Int    @id
-            name   String
-            status Status
-        }
-
-        type Status
-           = Active
-           | Inactive
-           | Special {
-                reason String
-             }
-    "#;
-
-    let db = TestDatabase::new(schema).await?;
-
-    // Seed data using pyre insert queries with different status values
-    let insert_alice = r#"
-        insert CreateUser($name: String, $status: Status) {
-            user {
-                name = $name
-                status = $status
-            }
-        }
-    "#;
-
-    let mut params = HashMap::new();
-    params.insert("name".to_string(), libsql::Value::Text("Alice".to_string()));
-    params.insert(
-        "status".to_string(),
-        libsql::Value::Text("Active".to_string()),
-    );
-    db.execute_insert_with_params(insert_alice, params).await?;
-
-    let mut params = HashMap::new();
-    params.insert("name".to_string(), libsql::Value::Text("Bob".to_string()));
-    params.insert(
-        "status".to_string(),
-        libsql::Value::Text("Inactive".to_string()),
-    );
-    db.execute_insert_with_params(insert_alice, params).await?;
-
-    let mut params = HashMap::new();
-    params.insert(
-        "name".to_string(),
-        libsql::Value::Text("Charlie".to_string()),
-    );
-    params.insert(
-        "status".to_string(),
-        libsql::Value::Text("Special".to_string()),
-    );
-    db.execute_insert_with_params(insert_alice, params).await?;
+    let db = TestDatabase::new(&schema::full_schema()).await?;
+    db.seed_standard_data().await?;
 
     // Query users with status
     let query = r#"

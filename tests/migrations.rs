@@ -1,7 +1,7 @@
 #[path = "helpers/mod.rs"]
 mod helpers;
 
-use helpers::{schema, TestDatabase, TestError};
+use helpers::{print, schema, TestDatabase, TestError};
 use pyre::db::diff;
 use pyre::db::introspect;
 use pyre::parser;
@@ -10,7 +10,8 @@ use pyre::typecheck;
 #[tokio::test]
 async fn test_migration_from_v1_to_v2() -> Result<(), TestError> {
     // Start with schema v1
-    let db = TestDatabase::new(schema::SCHEMA_V1).await?;
+    let schema_v1 = schema::schema_v1_complete();
+    let db = TestDatabase::new(&schema_v1).await?;
 
     // Introspect the database to get actual tables
     let conn = db.db.connect().map_err(TestError::Database)?;
@@ -51,9 +52,10 @@ async fn test_migration_from_v1_to_v2() -> Result<(), TestError> {
     };
 
     // Parse schema v2
+    let schema_v2 = schema::schema_v2_complete();
     let mut new_schema = pyre::ast::Schema::default();
-    parser::run("schema.pyre", schema::SCHEMA_V2, &mut new_schema)
-        .map_err(|e| TestError::ParseError(pyre::parser::render_error(schema::SCHEMA_V2, e)))?;
+    parser::run("schema.pyre", &schema_v2, &mut new_schema)
+        .map_err(|e| TestError::ParseError(pyre::parser::render_error(&schema_v2, e)))?;
 
     // Typecheck new schema
     let database = pyre::ast::Database {
@@ -66,33 +68,7 @@ async fn test_migration_from_v1_to_v2() -> Result<(), TestError> {
     let db_diff = diff::diff(&new_context, &new_schema, &introspection);
 
     // Log the diff structure
-    eprintln!("=== DB DIFF ===");
-    eprintln!(
-        "Added tables: {:?}",
-        db_diff.added.iter().map(|t| &t.name).collect::<Vec<_>>()
-    );
-    eprintln!(
-        "Removed tables: {:?}",
-        db_diff.removed.iter().map(|t| &t.name).collect::<Vec<_>>()
-    );
-    eprintln!(
-        "Modified records: {:?}",
-        db_diff
-            .modified_records
-            .iter()
-            .map(|r| &r.name)
-            .collect::<Vec<_>>()
-    );
-    for record_diff in &db_diff.modified_records {
-        eprintln!(
-            "  {} changes: {:?}",
-            record_diff.name,
-            record_diff.changes.len()
-        );
-        for change in &record_diff.changes {
-            eprintln!("    {:?}", change);
-        }
-    }
+    print::print_db_diff(&db_diff);
 
     // Generate and log SQL
     let migration_sql = diff::to_sql::to_sql(&db_diff);
@@ -109,50 +85,13 @@ async fn test_migration_from_v1_to_v2() -> Result<(), TestError> {
     }
 
     // Log what's in the introspection
-    eprintln!("\n=== INTROSPECTION ===");
-    eprintln!(
-        "Introspection tables: {:?}",
-        introspection
-            .tables
-            .iter()
-            .map(|t| &t.name)
-            .collect::<Vec<_>>()
-    );
-    for table in &introspection.tables {
-        eprintln!("  Table {}:", table.name);
-        for col in &table.columns {
-            eprintln!("    Column: {} ({})", col.name, col.column_type);
-        }
-    }
+    print::print_introspection(&introspection);
 
     // Log what's actually in the database
-    eprintln!("\n=== DATABASE CONTENTS ===");
     let conn = db.db.connect().map_err(TestError::Database)?;
-    let mut rows = conn.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_pyre_%'", ()).await.map_err(TestError::Database)?;
-    let mut table_names = Vec::new();
-    while let Some(row) = rows.next().await.map_err(TestError::Database)? {
-        let name: String = row.get(0).map_err(TestError::Database)?;
-        table_names.push(name);
-    }
-    eprintln!("Tables in database: {:?}", table_names);
-    for table_name in &table_names {
-        let mut col_rows = conn
-            .query(&format!("PRAGMA table_info(\"{}\")", table_name), ())
-            .await
-            .map_err(TestError::Database)?;
-        eprintln!("  Table {} columns:", table_name);
-        while let Some(col_row) = col_rows.next().await.map_err(TestError::Database)? {
-            let _cid: i32 = col_row.get(0).map_err(TestError::Database)?;
-            let name: String = col_row.get(1).map_err(TestError::Database)?;
-            let col_type: String = col_row.get(2).map_err(TestError::Database)?;
-            let notnull: i32 = col_row.get(3).map_err(TestError::Database)?;
-            let pk: i32 = col_row.get(5).map_err(TestError::Database)?;
-            eprintln!(
-                "    {}: {} (notnull: {}, pk: {})",
-                name, col_type, notnull, pk
-            );
-        }
-    }
+    print::print_database_contents(&conn)
+        .await
+        .map_err(TestError::Database)?;
 
     // Verify that the diff includes adding the Post table (table name is pluralized: "posts")
     let has_post_table = db_diff.added.iter().any(|t| t.name == "posts");
@@ -174,7 +113,8 @@ async fn test_migration_from_v1_to_v2() -> Result<(), TestError> {
 #[tokio::test]
 async fn test_migration_from_v2_to_v3() -> Result<(), TestError> {
     // Start with schema v2
-    let db = TestDatabase::new(schema::SCHEMA_V2).await?;
+    let schema_v2 = schema::schema_v2_complete();
+    let db = TestDatabase::new(&schema_v2).await?;
 
     // Introspect the database to get actual tables
     let conn = db.db.connect().map_err(TestError::Database)?;
@@ -215,9 +155,10 @@ async fn test_migration_from_v2_to_v3() -> Result<(), TestError> {
     };
 
     // Parse schema v3
+    let schema_v3 = schema::schema_v3_complete();
     let mut new_schema = pyre::ast::Schema::default();
-    parser::run("schema.pyre", schema::SCHEMA_V3, &mut new_schema)
-        .map_err(|e| TestError::ParseError(pyre::parser::render_error(schema::SCHEMA_V3, e)))?;
+    parser::run("schema.pyre", &schema_v3, &mut new_schema)
+        .map_err(|e| TestError::ParseError(pyre::parser::render_error(&schema_v3, e)))?;
 
     // Typecheck new schema
     let database = pyre::ast::Database {
@@ -249,7 +190,8 @@ async fn test_migration_from_v2_to_v3() -> Result<(), TestError> {
 #[tokio::test]
 async fn test_migration_from_v1_to_v3() -> Result<(), TestError> {
     // Start with schema v1
-    let db = TestDatabase::new(schema::SCHEMA_V1).await?;
+    let schema_v1 = schema::schema_v1_complete();
+    let db = TestDatabase::new(&schema_v1).await?;
 
     // Create introspection from current database state
     // Recreate the context from the schema since Context doesn't implement Clone
@@ -269,9 +211,10 @@ async fn test_migration_from_v1_to_v3() -> Result<(), TestError> {
     };
 
     // Parse schema v3
+    let schema_v3 = schema::schema_v3_complete();
     let mut new_schema = pyre::ast::Schema::default();
-    parser::run("schema.pyre", schema::SCHEMA_V3, &mut new_schema)
-        .map_err(|e| TestError::ParseError(pyre::parser::render_error(schema::SCHEMA_V3, e)))?;
+    parser::run("schema.pyre", &schema_v3, &mut new_schema)
+        .map_err(|e| TestError::ParseError(pyre::parser::render_error(&schema_v3, e)))?;
 
     // Typecheck new schema
     let database = pyre::ast::Database {
