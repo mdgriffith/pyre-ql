@@ -314,7 +314,8 @@ pub fn link_identity(local_table: &str, link: &LinkDetails) -> String {
 }
 
 pub fn linked_to_unique_field(link: &LinkDetails) -> bool {
-    // TODO: This should calculate this by looking at constraints on the schema.
+    // TODO: This should calculate uniqueness by looking at UNIQUE constraints on the schema,
+    // not just checking if the field is named "id"
     link.foreign.fields.iter().any(|f| f == "id")
 }
 

@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { exec } from "child_process";
 const path = require('path');
 
-const pyreCommand = "/Users/mattgriffith/projects/vendr/pyre-ql/target/debug/pyre" // "pyre"
+const pyreCommand = "pyre"
 
 // Run the `pyre check` command and update diagnostics
 export function checkErrors(document: vscode.TextDocument, diagnostics: vscode.DiagnosticCollection): void {

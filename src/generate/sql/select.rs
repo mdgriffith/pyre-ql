@@ -189,9 +189,8 @@ fn select_type_columns(context: &typecheck::Context, typename: &str, selection: 
     match context.types.get(typename) {
         None => return,
         Some((definfo, type_)) => {
-            // TODOOOOO
-            //  LEAVING THIS TO START ON THE JSON VERSION
-            // Trying to recreate this form:
+            // TODO: Implement JSON version for type columns
+            // This should generate SQL like:
             // CASE
             //     WHEN status = 'Active' THEN
             //         json_object(

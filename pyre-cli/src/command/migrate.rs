@@ -169,8 +169,6 @@ pub async fn push<'a>(
                                 }
 
                                 tx.commit().await.unwrap();
-
-                                std::process::exit(1);
                             } else {
                                 println!(
                                     "No schema found in the databasefor namespace '{}'",

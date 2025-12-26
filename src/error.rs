@@ -40,7 +40,7 @@ pub enum ErrorType {
         found: String,
         known_functions: Vec<String>,
     },
-    MultipleSessionDeinitions,
+    MultipleSessionDefinitions,
     MissingType,
     DuplicateDefinition(String),
     DefinitionIsBuiltIn(String),
@@ -570,7 +570,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result
         }
 
-        ErrorType::MultipleSessionDeinitions => {
+        ErrorType::MultipleSessionDefinitions => {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "I found multiple {} definitions, but there should only be one!",
@@ -1175,7 +1175,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
     match error_type {
         ErrorType::ParsingError(_) => "Parsing Error",
         ErrorType::UnknownFunction { .. } => "Unknown Function",
-        ErrorType::MultipleSessionDeinitions => "Multiple Session Definitions",
+        ErrorType::MultipleSessionDefinitions => "Multiple Session Definitions",
         ErrorType::MissingType => "Missing Type",
         ErrorType::DuplicateDefinition(_) => "Duplicate Definition",
         ErrorType::DefinitionIsBuiltIn(_) => "Definition Is Built-in",

@@ -589,7 +589,7 @@ type Input = typeof Input.infer
     //     ));
     // }
 
-    // TODO:: HTTP Sender
+    // TODO: Implement HTTP Sender for remote database connections
 
     // Nested Return data decoders
     // result.push_str("\n\n");

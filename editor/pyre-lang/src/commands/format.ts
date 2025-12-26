@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 
-const pyreCommand = "/Users/griff/projects/pyre/target/debug/pyre" // "pyre"
+const pyreCommand = "pyre"
 
 export async function format(input: string, filepath: string): Promise<string> {
   return new Promise((resolve, reject) => {

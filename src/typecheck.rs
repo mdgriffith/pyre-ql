@@ -667,7 +667,7 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                         if session_found {
                             errors.push(Error {
                                 filepath: file.path.clone(),
-                                error_type: ErrorType::MultipleSessionDeinitions,
+                                error_type: ErrorType::MultipleSessionDefinitions,
                                 locations: vec![Location {
                                     contexts: to_range(&session.start, &session.end),
                                     primary: vec![],
@@ -1945,22 +1945,6 @@ fn check_field(
     column: &ast::Column,
     field: &ast::QueryField,
 ) {
-    // TODO::I think the below is if you're selecting a field like a link
-    // if (!field.fields.is_empty()) {
-    //     let mut known_fields: Vec<(String, String)> = vec![];
-    //     for col in &field.fields {}
-    //     errors.push(Error {
-    //         error_type: ErrorType::UnknownField {
-    //             found: field.name.clone(),
-    //             record_name: field.name,
-    //             known_fields,
-    //         },
-    //         location: Location {
-    //             contexts: vec![],
-    //             primary: to_range(&field.start, &field.end),
-    //         },
-    //     })
-    // }
     match &field.set {
         Some(set) => {
             check_value(
