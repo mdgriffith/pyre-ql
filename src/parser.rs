@@ -264,7 +264,9 @@ fn parse_record(input: Text) -> ParseResult<ast::Definition> {
         return Err(nom::Err::Error(VerboseError {
             errors: vec![(
                 start_pos,
-                VerboseErrorKind::Context("record definitions must start at the beginning of a line (column 1)"),
+                VerboseErrorKind::Context(
+                    "record definitions must start at the beginning of a line (column 1)",
+                ),
             )],
         }));
     }
@@ -298,7 +300,9 @@ fn parse_session(input: Text) -> ParseResult<ast::Definition> {
         return Err(nom::Err::Error(VerboseError {
             errors: vec![(
                 start_pos,
-                VerboseErrorKind::Context("session definitions must start at the beginning of a line (column 1)"),
+                VerboseErrorKind::Context(
+                    "session definitions must start at the beginning of a line (column 1)",
+                ),
             )],
         }));
     }
@@ -728,7 +732,9 @@ fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
         return Err(nom::Err::Error(VerboseError {
             errors: vec![(
                 start_pos,
-                VerboseErrorKind::Context("type definitions must start at the beginning of a line (column 1)"),
+                VerboseErrorKind::Context(
+                    "type definitions must start at the beginning of a line (column 1)",
+                ),
             )],
         }));
     }
