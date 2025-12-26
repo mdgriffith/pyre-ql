@@ -259,6 +259,15 @@ fn parse_qualified(input: Text) -> ParseResult<ast::Qualified> {
 
 fn parse_record(input: Text) -> ParseResult<ast::Definition> {
     let (input, start_pos) = position(input)?;
+    // Enforce that record definitions must start at column 1 (beginning of line)
+    if start_pos.get_column() != 1 {
+        return Err(nom::Err::Error(VerboseError {
+            errors: vec![(
+                start_pos,
+                VerboseErrorKind::Context("record definitions must start at the beginning of a line (column 1)"),
+            )],
+        }));
+    }
     let (input, _) = tag("record")(input)?;
     let (input, _) = cut(space1)(input)?;
     let (input, start_name_pos) = position(input)?;
@@ -284,6 +293,15 @@ fn parse_record(input: Text) -> ParseResult<ast::Definition> {
 
 fn parse_session(input: Text) -> ParseResult<ast::Definition> {
     let (input, start_pos) = position(input)?;
+    // Enforce that session definitions must start at column 1 (beginning of line)
+    if start_pos.get_column() != 1 {
+        return Err(nom::Err::Error(VerboseError {
+            errors: vec![(
+                start_pos,
+                VerboseErrorKind::Context("session definitions must start at the beginning of a line (column 1)"),
+            )],
+        }));
+    }
     let (input, _) = tag("session")(input)?;
     let (input, _) = cut(multispace1)(input)?;
     let (input, fields) = cut(with_braces(parse_field))(input)?;
@@ -705,6 +723,15 @@ fn parse_type_separator(input: Text) -> ParseResult<char> {
 
 fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
     let (input, start_pos) = position(input)?;
+    // Enforce that type definitions must start at column 1 (beginning of line)
+    if start_pos.get_column() != 1 {
+        return Err(nom::Err::Error(VerboseError {
+            errors: vec![(
+                start_pos,
+                VerboseErrorKind::Context("type definitions must start at the beginning of a line (column 1)"),
+            )],
+        }));
+    }
     let (input, _) = tag("type")(input)?;
     let (input, _) = multispace1(input)?;
     let (input, name) = cut(parse_typename)(input)?;

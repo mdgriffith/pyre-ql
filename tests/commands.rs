@@ -37,10 +37,10 @@ fn test_generate_command() {
     std::fs::write(
         ctx.workspace_path.join("pyre/schema.pyre"),
         r#"
-        record User {
-            id   Int    @id
-            name String
-        }
+record User {
+    id   Int    @id
+    name String
+}
         "#,
     )
     .unwrap();
@@ -64,10 +64,10 @@ fn test_format_command() {
     std::fs::write(
         ctx.workspace_path.join("pyre/schema.pyre"),
         r#"
-        record User {
-            id   Int    @id
-            name String
-        }
+record User {
+    id   Int    @id
+    name String
+}
         "#,
     )
     .unwrap();
