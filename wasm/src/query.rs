@@ -129,7 +129,7 @@ pub fn query_to_sql_wasm(query_source: String) -> Result<Vec<SqlAndParams>, Vec<
                 Err(errors) => {
                     let mut formatted_errors = Vec::new();
                     for error in errors {
-                        formatted_errors.push(error::format_error(&query_source, &error));
+                        formatted_errors.push(error::format_error(&query_source, &error, false));
                     }
                     Err(formatted_errors)
                 }

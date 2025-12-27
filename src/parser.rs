@@ -62,14 +62,14 @@ pub fn run<'a>(
     }
 }
 
-pub fn render_error(input: &str, err: nom::Err<VerboseError<Text>>) -> String {
+pub fn render_error(input: &str, err: nom::Err<VerboseError<Text>>, enable_color: bool) -> String {
     match err {
         nom::Err::Incomplete(_) => {
             return "Incomplete".to_string();
         }
         nom::Err::Error(error) => {
             // println!("PARSER ERROR {:#?}", &error);
-            let err_text: String = convert_error(input, error);
+            let err_text: String = convert_error(input, error, enable_color);
 
             // println!("PARSER ERROR, formatted {:#?}", &err_text);
             // return err_text;
@@ -77,7 +77,7 @@ pub fn render_error(input: &str, err: nom::Err<VerboseError<Text>>) -> String {
         }
         nom::Err::Failure(error) => {
             // println!("PARSER ERROR {:#?}", &error);
-            let err_text: String = convert_error(input, error);
+            let err_text: String = convert_error(input, error, enable_color);
 
             // println!("PARSER ERROR, formatted {:#?}", &err_text);
             return err_text;
@@ -108,7 +108,7 @@ pub fn convert_parsing_error(err: nom::Err<VerboseError<Text>>) -> Option<crate:
     }
 }
 
-fn convert_error(input: &str, err: VerboseError<Text>) -> String {
+fn convert_error(input: &str, err: VerboseError<Text>, enable_color: bool) -> String {
     if let Some((text, _error_kind)) = err.errors.get(0) {
         let error = crate::error::Error {
             filepath: text.extra.file.to_string(),
@@ -124,7 +124,7 @@ fn convert_error(input: &str, err: VerboseError<Text>) -> String {
             }],
         };
 
-        crate::error::format_error(input, &error)
+        crate::error::format_error(input, &error, enable_color)
     } else {
         "No errors".to_string()
     }

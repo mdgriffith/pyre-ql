@@ -17,7 +17,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
         0 => match get_stdin()? {
             Some(stdin) => {
                 let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                let schema = parse_database_schemas(&paths)?;
+                let schema = parse_database_schemas(&paths, options.enable_color)?;
 
                 // We're assuming this file is a query because we don't have a filepath
                 format_query_to_std_out(&options, &schema, &stdin)?;
@@ -33,25 +33,29 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
             match get_stdin()? {
                 Some(stdin) => {
                     if pyre::filesystem::is_schema_file(file_path) {
-                        let mut schema = parse_single_schema_from_source(file_path, &stdin)?;
+                        let mut schema = parse_single_schema_from_source(
+                            file_path,
+                            &stdin,
+                            options.enable_color,
+                        )?;
                         format::schema(&mut schema);
                         // Always write to stdout if stdin is provided
                         write_schema(&options, &true, &schema)?;
                     } else {
                         let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                        let schema = parse_database_schemas(&paths)?;
+                        let schema = parse_database_schemas(&paths, options.enable_color)?;
 
                         format_query_to_std_out(&options, &schema, &stdin)?;
                     }
                 }
                 None => {
                     if pyre::filesystem::is_schema_file(file_path) {
-                        let mut schema = parse_single_schema(file_path)?;
+                        let mut schema = parse_single_schema(file_path, options.enable_color)?;
                         format::schema(&mut schema);
                         write_schema(&options, &to_stdout, &schema)?;
                     } else {
                         let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                        let database = parse_database_schemas(&paths)?;
+                        let database = parse_database_schemas(&paths, options.enable_color)?;
 
                         format_query(&options, &database, &to_stdout, file_path)?;
                     }
@@ -66,12 +70,12 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                 }
 
                 if pyre::filesystem::is_schema_file(&file_path) {
-                    let mut schema = parse_single_schema(&file_path)?;
+                    let mut schema = parse_single_schema(&file_path, options.enable_color)?;
                     format::schema(&mut schema);
                     write_schema(&options, &to_stdout, &schema)?;
                 } else {
                     let paths = filesystem::collect_filepaths(&options.in_dir)?;
-                    let database = parse_database_schemas(&paths)?;
+                    let database = parse_database_schemas(&paths, options.enable_color)?;
 
                     format_query(&options, &database, &to_stdout, &file_path)?;
                 }
@@ -85,7 +89,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
 }
 
 fn format_all(options: &Options, paths: pyre::filesystem::Found) -> io::Result<()> {
-    let mut database = parse_database_schemas(&paths)?;
+    let mut database = parse_database_schemas(&paths, options.enable_color)?;
 
     format::database(&mut database);
     write_db_schema(options, &database)?;
@@ -122,7 +126,7 @@ fn format_query_to_std_out(
 }
 
 fn format_query(
-    _options: &Options,
+    options: &Options,
     database: &ast::Database,
     to_stdout: &bool,
     query_file_path: &str,
@@ -148,7 +152,10 @@ fn format_query(
                 .write_all(formatted.as_bytes())
                 .expect("Failed to write to file");
         }
-        Err(err) => eprintln!("{}", parser::render_error(&query_source_str, err)),
+        Err(err) => eprintln!(
+            "{}",
+            parser::render_error(&query_source_str, err, options.enable_color)
+        ),
     }
 
     Ok(())

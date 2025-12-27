@@ -1,5 +1,4 @@
 use chrono;
-use colored::*;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -51,7 +50,7 @@ pub async fn generate_migration<'a>(
                                 !migrations.iter().any(|m| m.name == **migration)
                             }
                         })
-                        .map(|m| m.yellow().to_string())
+                        .map(|m| m.to_string())
                         .collect();
 
                     if !not_applied.is_empty() {
@@ -64,7 +63,7 @@ pub async fn generate_migration<'a>(
                     }
 
                     let paths = crate::filesystem::collect_filepaths(&options.in_dir)?;
-                    let current_db = parse_database_schemas(&paths)?;
+                    let current_db = parse_database_schemas(&paths, options.enable_color)?;
 
                     match typecheck::check_schema(&current_db) {
                         Ok(context) => {
@@ -120,7 +119,8 @@ pub async fn generate_migration<'a>(
                                     filesystem::get_schema_source(&err.filepath, &paths)
                                         .unwrap_or("");
 
-                                let formatted_error = error::format_error(&schema_source, &err);
+                                let formatted_error =
+                                    error::format_error(&schema_source, &err, options.enable_color);
                                 eprintln!("{}", &formatted_error);
                             }
                             std::process::exit(1);

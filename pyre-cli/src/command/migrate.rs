@@ -24,7 +24,7 @@ pub async fn migrate<'a>(
 
     // Get schema
     let paths = crate::filesystem::collect_filepaths(&options.in_dir)?;
-    let all_schemas = parse_database_schemas(&paths)?;
+    let all_schemas = parse_database_schemas(&paths, options.enable_color)?;
 
     let real_namespace = match namespace {
         Some(ns) => ns,
@@ -48,7 +48,7 @@ pub async fn migrate<'a>(
 
     match typecheck::check_schema(&all_schemas) {
         Err(error_list) => {
-            error::report_and_exit(error_list, &paths);
+            error::report_and_exit(error_list, &paths, options.enable_color);
         }
         Ok(_context) => {
             let connection_result = db::connect(&database.to_string(), auth).await;
@@ -91,7 +91,7 @@ pub async fn push<'a>(
 
     // Get schema
     let paths = crate::filesystem::collect_filepaths(&options.in_dir)?;
-    let all_schemas = parse_database_schemas(&paths)?;
+    let all_schemas = parse_database_schemas(&paths, options.enable_color)?;
 
     let real_namespace = match namespace {
         Some(ns) => ns,
@@ -115,7 +115,7 @@ pub async fn push<'a>(
 
     match typecheck::check_schema(&all_schemas) {
         Err(error_list) => {
-            error::report_and_exit(error_list, &paths);
+            error::report_and_exit(error_list, &paths, options.enable_color);
         }
         Ok(context) => {
             let connection_result = db::connect(&database.to_string(), auth).await;
@@ -139,7 +139,7 @@ pub async fn push<'a>(
 
                                 let errors = diff::to_errors(schema_diff);
                                 if !errors.is_empty() {
-                                    error::report_and_exit(errors, &paths);
+                                    error::report_and_exit(errors, &paths, options.enable_color);
                                 }
 
                                 // If there are no errors, we can now generate sql.
@@ -190,7 +190,10 @@ pub async fn push<'a>(
                                                 }
 
                                                 if let Err(e) = tx.commit().await {
-                                                    eprintln!("Error committing transaction: {:?}", e);
+                                                    eprintln!(
+                                                        "Error committing transaction: {:?}",
+                                                        e
+                                                    );
                                                     eprintln!("Migration failed. Database may be in an inconsistent state.");
                                                     std::process::exit(1);
                                                 }

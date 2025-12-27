@@ -59,7 +59,7 @@ async fn create_migration_diff(
     // Parse new schema
     let mut new_schema = pyre::ast::Schema::default();
     parser::run("schema.pyre", new_schema_source, &mut new_schema)
-        .map_err(|e| TestError::ParseError(pyre::parser::render_error(new_schema_source, e)))?;
+        .map_err(|e| TestError::ParseError(pyre::parser::render_error(new_schema_source, e, false)))?;
 
     // Typecheck new schema
     let database = pyre::ast::Database {

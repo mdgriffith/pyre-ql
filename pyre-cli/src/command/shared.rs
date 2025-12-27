@@ -9,6 +9,7 @@ use std::path::Path;
 
 pub struct Options<'a> {
     pub in_dir: &'a Path,
+    pub enable_color: bool,
 }
 
 pub fn id_column() -> ast::Column {
@@ -90,7 +91,10 @@ pub fn check_namespace_requirements(namespace: &Option<String>, options: &Option
     }
 }
 
-pub fn parse_single_schema(schema_file_path: &String) -> io::Result<ast::Schema> {
+pub fn parse_single_schema(
+    schema_file_path: &String,
+    enable_color: bool,
+) -> io::Result<ast::Schema> {
     let mut schema = ast::Schema {
         namespace: ast::DEFAULT_SCHEMANAME.to_string(),
         files: vec![],
@@ -104,7 +108,10 @@ pub fn parse_single_schema(schema_file_path: &String) -> io::Result<ast::Schema>
     match parser::run(&schema_file_path, &schema_source, &mut schema) {
         Ok(()) => {}
         Err(err) => {
-            eprintln!("{}", parser::render_error(&schema_source, err));
+            eprintln!(
+                "{}",
+                parser::render_error(&schema_source, err, enable_color)
+            );
         }
     }
 
@@ -114,6 +121,7 @@ pub fn parse_single_schema(schema_file_path: &String) -> io::Result<ast::Schema>
 pub fn parse_single_schema_from_source(
     schema_file_path: &str,
     schema_source: &str,
+    enable_color: bool,
 ) -> io::Result<ast::Schema> {
     let mut schema = ast::Schema {
         namespace: ast::DEFAULT_SCHEMANAME.to_string(),
@@ -124,14 +132,20 @@ pub fn parse_single_schema_from_source(
     match parser::run(&schema_file_path, &schema_source, &mut schema) {
         Ok(()) => {}
         Err(err) => {
-            eprintln!("{}", parser::render_error(&schema_source, err));
+            eprintln!(
+                "{}",
+                parser::render_error(&schema_source, err, enable_color)
+            );
         }
     }
 
     Ok(schema)
 }
 
-pub fn parse_database_schemas(paths: &filesystem::Found) -> io::Result<ast::Database> {
+pub fn parse_database_schemas(
+    paths: &filesystem::Found,
+    enable_color: bool,
+) -> io::Result<ast::Database> {
     let mut database = ast::Database {
         schemas: Vec::new(),
     };
@@ -147,7 +161,10 @@ pub fn parse_database_schemas(paths: &filesystem::Found) -> io::Result<ast::Data
             match parser::run(&source.path, &source.content, &mut schema) {
                 Ok(()) => {}
                 Err(err) => {
-                    eprintln!("{}", parser::render_error(&source.content, err));
+                    eprintln!(
+                        "{}",
+                        parser::render_error(&source.content, err, enable_color)
+                    );
                     std::process::exit(1);
                 }
             }

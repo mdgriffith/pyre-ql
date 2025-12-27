@@ -1,4 +1,3 @@
-use colored::*;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -34,7 +33,7 @@ pub async fn introspect<'a>(
                     if path.exists() {
                         println!(
                             "\nSchema already exists\n\n   {}",
-                            path.display().to_string().yellow()
+                            pyre::color::yellow(options.enable_color, &path.display().to_string())
                         );
                         println!("\nRemove it if you want to generate a new one!");
                     } else {

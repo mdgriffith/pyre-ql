@@ -24,12 +24,12 @@ fn clear(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn execute(_options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::Result<()> {
-    let schema = parse_database_schemas(&paths)?;
+fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::Result<()> {
+    let schema = parse_database_schemas(&paths, options.enable_color)?;
 
     match typecheck::check_schema(&schema) {
         Err(error_list) => {
-            error::report_and_exit(error_list, &paths);
+            error::report_and_exit(error_list, &paths, options.enable_color);
         }
         Ok(mut context) => {
             // Clear the generated folder
@@ -68,8 +68,11 @@ fn execute(_options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::
                             Err(error_list) => {
                                 let mut errors = "".to_string();
                                 for err in error_list {
-                                    let formatted_error =
-                                        error::format_error(&query_source_str, &err);
+                                    let formatted_error = error::format_error(
+                                        &query_source_str,
+                                        &err,
+                                        options.enable_color,
+                                    );
                                     errors.push_str(&formatted_error);
                                 }
 
@@ -79,7 +82,10 @@ fn execute(_options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::
                         }
                     }
                     Err(err) => {
-                        eprintln!("{}", parser::render_error(&query_source_str, err));
+                        eprintln!(
+                            "{}",
+                            parser::render_error(&query_source_str, err, options.enable_color)
+                        );
                         std::process::exit(1);
                     }
                 }

@@ -2,7 +2,7 @@ use pyre::parser;
 
 /// Helper function to format errors without color for testing
 fn format_error_no_color(file_contents: &str, error: &pyre::error::Error) -> String {
-    let formatted = pyre::error::format_error(file_contents, error);
+    let formatted = pyre::error::format_error(file_contents, error, false);
     strip_ansi_codes(&formatted)
 }
 
@@ -415,7 +415,7 @@ fn test_query_with_union_field() {
         }
         Err(err) => {
             // Parsing failed - this documents the bug we're trying to fix
-            let rendered = parser::render_error(query_source, err);
+            let rendered = parser::render_error(query_source, err, false);
             let formatted = strip_ansi_codes(&rendered);
             println!("Parsing error for union field query:\n{}", formatted);
             panic!(
@@ -466,7 +466,7 @@ fn test_insert_create_union_variant_with_fields() {
         }
         Err(err) => {
             // Parsing failed - this documents the bug we're trying to fix
-            let rendered = parser::render_error(insert_source, err);
+            let rendered = parser::render_error(insert_source, err, false);
             let formatted = strip_ansi_codes(&rendered);
             println!("Parsing error for Create variant insert:\n{}", formatted);
             panic!(
@@ -494,7 +494,7 @@ fn test_insert_create_incomplete_union_variant() {
     match result {
         Ok(_) => println!("Insert with Create variant (incomplete) parsed successfully"),
         Err(err) => {
-            let rendered = parser::render_error(insert_source, err);
+            let rendered = parser::render_error(insert_source, err, false);
             let formatted = strip_ansi_codes(&rendered);
             println!(
                 "Parsing error for incomplete Create variant insert:\n{}",
@@ -526,7 +526,7 @@ fn test_insert_update_union_variant_with_fields() {
         }
         Err(err) => {
             // Parsing failed - this documents the bug we're trying to fix
-            let rendered = parser::render_error(insert_source, err);
+            let rendered = parser::render_error(insert_source, err, false);
             let formatted = strip_ansi_codes(&rendered);
             println!("Parsing error for Update variant insert:\n{}", formatted);
             panic!(
@@ -554,7 +554,7 @@ fn test_insert_delete_incomplete_union_variant() {
     match result {
         Ok(_) => println!("Insert with Delete variant (incomplete) parsed successfully"),
         Err(err) => {
-            let rendered = parser::render_error(insert_source, err);
+            let rendered = parser::render_error(insert_source, err, false);
             let formatted = strip_ansi_codes(&rendered);
             println!(
                 "Parsing error for incomplete Delete variant insert:\n{}",

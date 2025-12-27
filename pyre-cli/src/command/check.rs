@@ -8,7 +8,7 @@ use pyre::parser;
 use pyre::typecheck;
 
 pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()> {
-    match run_check(crate::filesystem::collect_filepaths(&options.in_dir)?) {
+    match run_check(crate::filesystem::collect_filepaths(&options.in_dir)?, options.enable_color) {
         Ok(errors) => {
             let has_errors = !errors.is_empty();
             if json {
@@ -25,7 +25,7 @@ pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()
             } else {
                 for file_error in errors {
                     for err in &file_error.errors {
-                        let formatted_error = error::format_error(&file_error.source, err);
+                        let formatted_error = error::format_error(&file_error.source, err, options.enable_color);
                         eprintln!("{}", formatted_error);
                     }
                 }
@@ -42,8 +42,8 @@ pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()
     Ok(())
 }
 
-fn run_check(paths: filesystem::Found) -> io::Result<Vec<FileError>> {
-    let schema = parse_database_schemas(&paths)?;
+fn run_check(paths: filesystem::Found, enable_color: bool) -> io::Result<Vec<FileError>> {
+    let schema = parse_database_schemas(&paths, enable_color)?;
     let mut all_file_errors = Vec::new();
 
     match typecheck::check_schema(&schema) {

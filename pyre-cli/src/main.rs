@@ -131,8 +131,13 @@ async fn main() -> io::Result<()> {
         return Ok(());
     }
 
+    // Check if stderr is a TTY to determine if we should enable color output.
+    // Disable color when output is redirected (e.g., `pyre check 2> errors.txt`)
+    // or piped (e.g., `pyre check 2>&1 | grep error`) to avoid ANSI codes in files/pipes.
+    let enable_color = atty::is(atty::Stream::Stderr);
     let options = command::Options {
         in_dir: Path::new(&cli.r#in),
+        enable_color,
     };
 
     match &cli.command {

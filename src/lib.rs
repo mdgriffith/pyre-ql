@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod color;
 pub mod db;
 pub mod error;
 pub mod ext;

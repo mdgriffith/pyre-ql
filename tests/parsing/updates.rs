@@ -2,31 +2,7 @@ use pyre::parser;
 
 /// Helper function to format errors without color for testing
 fn format_error_no_color(file_contents: &str, error: &pyre::error::Error) -> String {
-    let formatted = pyre::error::format_error(file_contents, error);
-    strip_ansi_codes(&formatted)
-}
-
-fn strip_ansi_codes(s: &str) -> String {
-    // Remove ANSI escape sequences (CSI sequences)
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-    
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && chars.peek() == Some(&'[') {
-            // Skip the escape sequence
-            chars.next(); // skip '['
-            while let Some(&c) = chars.peek() {
-                if c == 'm' {
-                    chars.next(); // skip 'm'
-                    break;
-                }
-                chars.next();
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-    result
+    return pyre::error::format_error(file_contents, error, false);
 }
 
 #[test]
@@ -55,7 +31,10 @@ fn test_valid_update_with_params() {
     "#;
 
     let result = parser::parse_query("query.pyre", update_source);
-    assert!(result.is_ok(), "Valid update with params should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid update with params should parse successfully"
+    );
 }
 
 #[test]
@@ -70,7 +49,10 @@ fn test_valid_update_with_where() {
     "#;
 
     let result = parser::parse_query("query.pyre", update_source);
-    assert!(result.is_ok(), "Valid update with where should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid update with where should parse successfully"
+    );
 }
 
 #[test]
@@ -86,7 +68,10 @@ fn test_valid_update_multiple_fields() {
     "#;
 
     let result = parser::parse_query("query.pyre", update_source);
-    assert!(result.is_ok(), "Valid update with multiple fields should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid update with multiple fields should parse successfully"
+    );
 }
 
 #[test]
@@ -105,7 +90,7 @@ fn test_missing_update_name() {
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(update_source, &error);
-            
+
             // The parser gives a generic error message for this case
             assert!(
                 formatted.contains("query.pyre") && formatted.contains("update {"),
@@ -132,10 +117,13 @@ fn test_missing_update_brace() {
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(update_source, &error);
-            
+
             // The parser may give generic errors, so just verify it's an error message
             assert!(
-                formatted.contains("query.pyre") || formatted.contains("expecting") || formatted.contains("parameter") || formatted.contains("issue"),
+                formatted.contains("query.pyre")
+                    || formatted.contains("expecting")
+                    || formatted.contains("parameter")
+                    || formatted.contains("issue"),
                 "Error message should indicate a parsing error. Got:\n{}",
                 formatted
             );
@@ -170,15 +158,21 @@ fn test_invalid_assignment_syntax() {
     "#;
 
     let result = parser::parse_query("query.pyre", update_source);
-    assert!(result.is_err(), "Invalid assignment syntax (using colon instead of equals) should fail");
+    assert!(
+        result.is_err(),
+        "Invalid assignment syntax (using colon instead of equals) should fail"
+    );
 
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(update_source, &error);
-            
+
             // The parser may give generic errors, so just verify it's an error message
             assert!(
-                formatted.contains("query.pyre") || formatted.contains("expecting") || formatted.contains("parameter") || formatted.contains("issue"),
+                formatted.contains("query.pyre")
+                    || formatted.contains("expecting")
+                    || formatted.contains("parameter")
+                    || formatted.contains("issue"),
                 "Error message should indicate a parsing error. Got:\n{}",
                 formatted
             );
@@ -200,10 +194,14 @@ fn test_missing_closing_brace() {
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(update_source, &error);
-            
+
             // The parser may give generic errors, so just verify it's an error message
             assert!(
-                formatted.contains("query.pyre") || formatted.contains("expecting") || formatted.contains("parameter") || formatted.contains("issue") || formatted.contains("Incomplete"),
+                formatted.contains("query.pyre")
+                    || formatted.contains("expecting")
+                    || formatted.contains("parameter")
+                    || formatted.contains("issue")
+                    || formatted.contains("Incomplete"),
                 "Error message should indicate a parsing error. Got:\n{}",
                 formatted
             );
@@ -240,19 +238,24 @@ fn test_invalid_where_syntax() {
     "#;
 
     let result = parser::parse_query("query.pyre", update_source);
-    assert!(result.is_err(), "Invalid where syntax (missing braces) should fail");
+    assert!(
+        result.is_err(),
+        "Invalid where syntax (missing braces) should fail"
+    );
 
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(update_source, &error);
-            
+
             // The parser may give generic errors, so just verify it's an error message
             assert!(
-                formatted.contains("query.pyre") || formatted.contains("expecting") || formatted.contains("parameter") || formatted.contains("issue"),
+                formatted.contains("query.pyre")
+                    || formatted.contains("expecting")
+                    || formatted.contains("parameter")
+                    || formatted.contains("issue"),
                 "Error message should indicate a parsing error. Got:\n{}",
                 formatted
             );
         }
     }
 }
-

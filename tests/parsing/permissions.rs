@@ -5,7 +5,7 @@ use pyre::typecheck;
 
 /// Helper function to format errors without color for testing
 fn format_error_no_color(file_contents: &str, error: &pyre::error::Error) -> String {
-    let formatted = pyre::error::format_error(file_contents, error);
+    let formatted = pyre::error::format_error(file_contents, error, false);
     strip_ansi_codes(&formatted)
 }
 
@@ -45,7 +45,10 @@ record Post {
     let mut schema = ast::Schema::default();
     let result = parser::run("schema.pyre", schema_source, &mut schema);
     if let Err(e) = result {
-        println!("Parse error: {}", parser::render_error(schema_source, e));
+        println!(
+            "Parse error: {}",
+            parser::render_error(schema_source, e, false)
+        );
         panic!("Parse failed");
     }
 }
@@ -206,7 +209,7 @@ record Post {
     let mut schema = ast::Schema::default();
     let result = parser::run("schema.pyre", schema_source, &mut schema);
     if let Err(e) = &result {
-        let error_msg = parser::render_error(schema_source, e.clone());
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
         println!("Parse error:\n{}", error_msg);
     }
     assert!(
@@ -231,7 +234,7 @@ record Post {
     let mut schema = ast::Schema::default();
     let result = parser::run("schema.pyre", schema_source, &mut schema);
     if let Err(e) = &result {
-        let error_msg = parser::render_error(schema_source, e.clone());
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
         println!("Parse error:\n{}", error_msg);
     }
     assert!(
@@ -255,7 +258,7 @@ record Post {
     let mut schema = ast::Schema::default();
     let result = parser::run("schema.pyre", schema_source, &mut schema);
     if let Err(e) = &result {
-        let error_msg = parser::render_error(schema_source, e.clone());
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
         println!("Parse error:\n{}", error_msg);
     }
     assert!(

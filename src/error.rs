@@ -1,5 +1,5 @@
 use crate::ast;
-use colored::Colorize;
+use crate::color;
 use nom::ToUsize;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "json")]
@@ -276,47 +276,45 @@ I don't recognize this type. Is it one of these?
 
 */
 
-pub fn format_error(file_contents: &str, error: &Error) -> String {
+pub fn format_error(file_contents: &str, error: &Error, enable_color: bool) -> String {
     let filepath = &error.filepath;
     let path_length = filepath.len();
     let separator = "-".repeat(50 - path_length);
 
-    let highlight = prepare_highlight(file_contents, &error);
-    let description = to_error_description(&error, true);
+    let highlight = prepare_highlight(file_contents, &error, enable_color);
+    let description = to_error_description(&error, enable_color);
 
     format!(
         "{} {}\n\n{}\n    {}\n",
-        filepath.cyan(),
-        separator.cyan(),
+        color::cyan(enable_color, filepath),
+        color::cyan(enable_color, &separator),
         highlight,
         description
     )
 }
 
-fn prepare_highlight(file_contents: &str, error: &Error) -> String {
+fn prepare_highlight(file_contents: &str, error: &Error, enable_color: bool) -> String {
     let mut rendered = "".to_string();
     let mut has_rendered = false;
     for location in &error.locations {
         if has_rendered {
             rendered.push_str("\n\n");
         }
-        render_highlight_location(file_contents, &mut rendered, &location);
+        render_highlight_location(file_contents, &mut rendered, &location, enable_color);
         has_rendered = true;
     }
     rendered
 }
 
-fn divider(indent: usize) -> String {
-    format!("    | {}...\n", " ".repeat(indent * 4))
-        .truecolor(120, 120, 120)
-        .to_string()
+fn divider(indent: usize, enable_color: bool) -> String {
+    color::gray(enable_color, &format!("    | {}...\n", " ".repeat(indent * 4)))
 }
 
 fn join_hashset(set: &HashSet<String>, sep: &str) -> String {
     set.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(sep)
 }
 
-fn render_highlight_location(file_contents: &str, rendered: &mut String, location: &Location) {
+fn render_highlight_location(file_contents: &str, rendered: &mut String, location: &Location, enable_color: bool) {
     let mut indent: usize = 0;
 
     let mut last_line_index: usize = 0;
@@ -324,9 +322,9 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
 
     for context in &location.contexts {
         if first_rendered && context.start.line.to_usize() > last_line_index + 1 {
-            rendered.push_str(&divider(indent))
+            rendered.push_str(&divider(indent, enable_color))
         }
-        rendered.push_str(&get_line(&file_contents, false, context.start.line));
+        rendered.push_str(&get_line(&file_contents, false, context.start.line, enable_color));
         rendered.push_str("\n");
 
         first_rendered = true;
@@ -338,13 +336,13 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
         if primary.start.line.to_usize() > last_line_index + 1
             && (first_rendered || first_primary_rendered)
         {
-            rendered.push_str(&divider(indent))
+            rendered.push_str(&divider(indent, enable_color))
         }
 
         if primary.start.line == primary.end.line {
-            rendered.push_str(&get_line(file_contents, true, primary.start.line));
+            rendered.push_str(&get_line(file_contents, true, primary.start.line, enable_color));
             rendered.push_str("\n");
-            rendered.push_str(&highlight_line(&primary));
+            rendered.push_str(&highlight_line(&primary, enable_color));
             rendered.push_str("\n");
         } else {
             rendered.push_str(&get_lines(
@@ -352,6 +350,7 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
                 true,
                 primary.start.line,
                 primary.end.line,
+                enable_color,
             ));
             rendered.push_str("\n");
         }
@@ -365,10 +364,10 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
             continue;
         }
         if context.end.line.to_usize() > last_line_index + 1 {
-            rendered.push_str(&divider(indent))
+            rendered.push_str(&divider(indent, enable_color))
         }
 
-        rendered.push_str(&get_line(&file_contents, false, context.end.line));
+        rendered.push_str(&get_line(&file_contents, false, context.end.line, enable_color));
         rendered.push_str("\n");
 
         last_line_index = context.end.line.to_usize();
@@ -393,36 +392,36 @@ fn line_number_prefix(show_line_number: bool, number: usize) -> String {
     }
 }
 
-fn highlight_line(range: &Range) -> String {
+fn highlight_line(range: &Range, enable_color: bool) -> String {
     if range.start.column < range.end.column && range.start.line == range.end.line {
         let indent = " ".repeat(range.start.column);
         let highlight = "^".repeat(range.end.column - range.start.column);
         format!(
             "    {}{}{}",
-            "|".truecolor(120, 120, 120),
+            color::gray(enable_color, "|"),
             indent,
-            highlight.red()
+            color::red(enable_color, &highlight)
         )
     } else if range.start.column == range.end.column && range.start.line == range.end.line {
         let indent = " ".repeat(range.start.column);
         let highlight = "^";
         format!(
             "    {}{}{}",
-            "|".truecolor(120, 120, 120),
+            color::gray(enable_color, "|"),
             indent,
-            highlight.red()
+            color::red(enable_color, &highlight)
         )
     } else {
         println!("CROSSED RANGE {:#?}", range);
-        "    ^^".red().to_string()
+        color::red(enable_color, "    ^^")
     }
 }
 
-fn get_line(file_contents: &str, show_line_number: bool, line_index: u32) -> String {
+fn get_line(file_contents: &str, show_line_number: bool, line_index: u32, enable_color: bool) -> String {
     let line_number = line_index.to_usize() - 1;
 
     let prefix =
-        line_number_prefix(show_line_number, line_index.to_usize()).truecolor(120, 120, 120);
+        color::gray(enable_color, &line_number_prefix(show_line_number, line_index.to_usize()));
 
     for (index, line) in file_contents.to_string().lines().enumerate() {
         if line_number == index {
@@ -432,7 +431,7 @@ fn get_line(file_contents: &str, show_line_number: bool, line_index: u32) -> Str
     prefix.to_string()
 }
 
-fn get_lines(file_contents: &str, show_line_number: bool, start: u32, end: u32) -> String {
+fn get_lines(file_contents: &str, show_line_number: bool, start: u32, end: u32, enable_color: bool) -> String {
     let start_line_number = start.to_usize() - 1;
     let end_line_number = end.to_usize() - 1;
 
@@ -441,7 +440,7 @@ fn get_lines(file_contents: &str, show_line_number: bool, start: u32, end: u32) 
     for (index, line) in file_contents.to_string().lines().enumerate() {
         if start_line_number <= index && end_line_number >= index {
             let prefix =
-                line_number_prefix(show_line_number, index.to_usize() + 1).truecolor(120, 120, 120);
+                color::gray(enable_color, &line_number_prefix(show_line_number, index.to_usize() + 1));
             result.push_str(&format!("{}{}", prefix, line.to_string()));
             result.push_str("\n");
         }
@@ -514,19 +513,11 @@ fn render_expecting(expecting: &Expecting, in_color: bool) -> String {
 }
 
 pub fn cyan_if(in_color: bool, text: &str) -> String {
-    if in_color {
-        text.cyan().to_string()
-    } else {
-        text.to_string()
-    }
+    color::cyan_if(in_color, text)
 }
 
 pub fn yellow_if(in_color: bool, text: &str) -> String {
-    if in_color {
-        text.yellow().to_string()
-    } else {
-        text.to_string()
-    }
+    color::yellow_if(in_color, text)
 }
 
 pub fn format_yellow_list(in_color: bool, items: Vec<String>) -> String {
@@ -1333,10 +1324,10 @@ pub fn format_json(error: &Error) -> serde_json::Value {
 }
 
 
-pub fn report_and_exit(error_list: Vec<Error>, paths: &crate::filesystem::Found) -> ! {
+pub fn report_and_exit(error_list: Vec<Error>, paths: &crate::filesystem::Found, enable_color: bool) -> ! {
     for err in error_list {
         let schema_source = crate::filesystem::get_schema_source(&err.filepath, paths).unwrap_or("");
-        let formatted_error = format_error(&schema_source, &err);
+        let formatted_error = format_error(&schema_source, &err, enable_color);
         eprintln!("{}", &formatted_error);
     }
     std::process::exit(1);

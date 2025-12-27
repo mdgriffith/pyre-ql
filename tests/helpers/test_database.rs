@@ -36,7 +36,7 @@ impl TestDatabase {
         // Parse schema
         let mut schema = ast::Schema::default();
         parser::run("schema.pyre", schema_source, &mut schema)
-            .map_err(|e| TestError::ParseError(parser::render_error(schema_source, e)))?;
+            .map_err(|e| TestError::ParseError(parser::render_error(schema_source, e, false)))?;
 
         // Typecheck schema
         let database = ast::Database {
@@ -164,7 +164,7 @@ impl TestDatabase {
         query_source: &str,
     ) -> Result<Vec<(bool, SqlAndParams)>, TestError> {
         let query_list = parser::parse_query("query.pyre", query_source)
-            .map_err(|e| TestError::ParseError(parser::render_error(query_source, e)))?;
+            .map_err(|e| TestError::ParseError(parser::render_error(query_source, e, false)))?;
 
         // Use the existing context, but update the filepath
         // Note: We can't clone Context because Table and Type don't implement Clone
@@ -227,7 +227,7 @@ impl TestDatabase {
     ) -> Result<Vec<libsql::Rows>, TestError> {
         // Parse query to get parameter names in order
         let query_list = parser::parse_query("query.pyre", query_source)
-            .map_err(|e| TestError::ParseError(parser::render_error(query_source, e)))?;
+            .map_err(|e| TestError::ParseError(parser::render_error(query_source, e, false)))?;
 
         let query = query_list
             .queries
@@ -347,7 +347,7 @@ impl TestDatabase {
         session: HashMap<String, libsql::Value>,
     ) -> Result<Vec<libsql::Rows>, TestError> {
         let query_list = parser::parse_query("query.pyre", query_source)
-            .map_err(|e| TestError::ParseError(parser::render_error(query_source, e)))?;
+            .map_err(|e| TestError::ParseError(parser::render_error(query_source, e, false)))?;
 
         let query = query_list
             .queries
@@ -796,7 +796,7 @@ impl TestDatabase {
 fn format_errors(schema_source: &str, errors: &[error::Error]) -> String {
     errors
         .iter()
-        .map(|e| error::format_error(schema_source, e))
+        .map(|e| error::format_error(schema_source, e, false))
         .collect::<Vec<_>>()
         .join("\n")
 }
