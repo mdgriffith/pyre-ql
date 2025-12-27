@@ -46,4 +46,3 @@ pub fn cyan_if(enabled: bool, text: &str) -> String {
 pub fn yellow_if(enabled: bool, text: &str) -> String {
     yellow(enabled, text)
 }
-

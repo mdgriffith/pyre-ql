@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-pyre = { path = "../", default-features = false, features = ["wasm"] }
+pyre = { path = "../", default-features = false, features = ["wasm", "json"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

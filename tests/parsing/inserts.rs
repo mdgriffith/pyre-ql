@@ -10,7 +10,7 @@ fn strip_ansi_codes(s: &str) -> String {
     // Remove ANSI escape sequences (CSI sequences)
     let mut result = String::new();
     let mut chars = s.chars().peekable();
-    
+
     while let Some(ch) = chars.next() {
         if ch == '\x1b' && chars.peek() == Some(&'[') {
             // Skip the escape sequence
@@ -55,7 +55,10 @@ fn test_valid_insert_with_params() {
     "#;
 
     let result = parser::parse_query("query.pyre", insert_source);
-    assert!(result.is_ok(), "Valid insert with params should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid insert with params should parse successfully"
+    );
 }
 
 #[test]
@@ -70,7 +73,10 @@ fn test_valid_insert_with_multiple_params() {
     "#;
 
     let result = parser::parse_query("query.pyre", insert_source);
-    assert!(result.is_ok(), "Valid insert with multiple params should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid insert with multiple params should parse successfully"
+    );
 }
 
 #[test]
@@ -88,7 +94,10 @@ fn test_valid_insert_with_nested_inserts() {
     "#;
 
     let result = parser::parse_query("query.pyre", insert_source);
-    assert!(result.is_ok(), "Valid insert with nested inserts should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid insert with nested inserts should parse successfully"
+    );
 }
 
 #[test]
@@ -103,7 +112,10 @@ fn test_valid_insert_with_union_variant() {
     "#;
 
     let result = parser::parse_query("query.pyre", insert_source);
-    assert!(result.is_ok(), "Valid insert with union variant should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid insert with union variant should parse successfully"
+    );
 }
 
 #[test]
@@ -118,7 +130,10 @@ fn test_valid_insert_with_union_variant_fields() {
     "#;
 
     let result = parser::parse_query("query.pyre", insert_source);
-    assert!(result.is_ok(), "Valid insert with union variant fields should parse successfully");
+    assert!(
+        result.is_ok(),
+        "Valid insert with union variant fields should parse successfully"
+    );
 }
 
 #[test]
@@ -137,7 +152,7 @@ fn test_missing_insert_name() {
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(insert_source, &error);
-            
+
             // The parser gives a generic error message for this case
             assert!(
                 formatted.contains("query.pyre") && formatted.contains("insert {"),
@@ -164,9 +179,12 @@ fn test_missing_insert_brace() {
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(insert_source, &error);
-            
+
             assert!(
-                formatted.contains("query.pyre") || formatted.contains("expecting") || formatted.contains("parameter") || formatted.contains("issue"),
+                formatted.contains("query.pyre")
+                    || formatted.contains("expecting")
+                    || formatted.contains("parameter")
+                    || formatted.contains("issue"),
                 "Error message should indicate what was expected. Got:\n{}",
                 formatted
             );
@@ -185,15 +203,21 @@ fn test_invalid_assignment_syntax() {
     "#;
 
     let result = parser::parse_query("query.pyre", insert_source);
-    assert!(result.is_err(), "Invalid assignment syntax (using colon instead of equals) should fail");
+    assert!(
+        result.is_err(),
+        "Invalid assignment syntax (using colon instead of equals) should fail"
+    );
 
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(insert_source, &error);
-            
+
             // The parser may give generic errors, so just verify it's an error message
             assert!(
-                formatted.contains("query.pyre") || formatted.contains("expecting") || formatted.contains("parameter") || formatted.contains("issue"),
+                formatted.contains("query.pyre")
+                    || formatted.contains("expecting")
+                    || formatted.contains("parameter")
+                    || formatted.contains("issue"),
                 "Error message should indicate a parsing error. Got:\n{}",
                 formatted
             );
@@ -221,10 +245,14 @@ fn test_missing_value_in_assignment() {
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(insert_source, &error);
-            
+
             // The parser may give generic errors, so just verify it's an error message
             assert!(
-                formatted.contains("query.pyre") || formatted.contains("expecting") || formatted.contains("parameter") || formatted.contains("issue") || formatted.contains("Incomplete"),
+                formatted.contains("query.pyre")
+                    || formatted.contains("expecting")
+                    || formatted.contains("parameter")
+                    || formatted.contains("issue")
+                    || formatted.contains("Incomplete"),
                 "Error message should indicate a parsing error. Got:\n{}",
                 formatted
             );
@@ -266,10 +294,14 @@ fn test_missing_closing_brace() {
     if let Err(err) = result {
         if let Some(error) = parser::convert_parsing_error(err) {
             let formatted = format_error_no_color(insert_source, &error);
-            
+
             // The parser may give generic errors, so just verify it's an error message
             assert!(
-                formatted.contains("query.pyre") || formatted.contains("expecting") || formatted.contains("parameter") || formatted.contains("issue") || formatted.contains("Incomplete"),
+                formatted.contains("query.pyre")
+                    || formatted.contains("expecting")
+                    || formatted.contains("parameter")
+                    || formatted.contains("issue")
+                    || formatted.contains("Incomplete"),
                 "Error message should indicate a parsing error. Got:\n{}",
                 formatted
             );
@@ -312,4 +344,3 @@ fn test_invalid_union_variant_syntax() {
     // This test documents the current parsing behavior
     let _ = result;
 }
-

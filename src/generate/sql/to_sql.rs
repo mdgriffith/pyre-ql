@@ -113,12 +113,20 @@ pub fn render_value(value: &ast::QueryValue) -> String {
         ast::QueryValue::Variable((_, var)) => {
             format!("${}", var.name)
         }
-        ast::QueryValue::String((_, s)) => format!("'{}'", s),
+        ast::QueryValue::String((_, s)) => {
+            // Escape single quotes by doubling them (SQL standard)
+            let escaped = s.replace("'", "''");
+            format!("'{}'", escaped)
+        }
         ast::QueryValue::Int((_, i)) => i.to_string(),
         ast::QueryValue::Float((_, f)) => f.to_string(),
         ast::QueryValue::Bool((_, b)) => b.to_string(),
         ast::QueryValue::Null(_) => "null".to_string(),
-        ast::QueryValue::LiteralTypeValue((_, details)) => format!("'{}'", details.name),
+        ast::QueryValue::LiteralTypeValue((_, details)) => {
+            // Escape single quotes by doubling them (SQL standard)
+            let escaped = details.name.replace("'", "''");
+            format!("'{}'", escaped)
+        }
     }
 }
 
@@ -248,7 +256,7 @@ fn to_subwhere(
     }
 }
 
-fn render_where_arg(
+pub fn render_where_arg(
     arg: &ast::WhereArg,
     table: &typecheck::Table,
     query_info: &typecheck::QueryInfo,

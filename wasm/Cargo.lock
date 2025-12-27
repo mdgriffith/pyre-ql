@@ -389,6 +389,7 @@ dependencies = [
  "nom",
  "nom_locate",
  "serde",
+ "serde_json",
  "sha2",
 ]
 
