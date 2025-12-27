@@ -2,6 +2,8 @@ use crate::ast;
 use colored::Colorize;
 use nom::ToUsize;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "json")]
+use serde_json;
 use std::collections::HashSet;
 
 #[derive(Debug, Clone,Deserialize, Serialize)]
@@ -1227,6 +1229,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
     .to_string()
 }
 
+#[cfg(feature = "json")]
 pub fn format_json(error: &Error) -> serde_json::Value {
     let mut error_json = serde_json::Map::new();
 
