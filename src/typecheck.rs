@@ -123,6 +123,9 @@ pub struct Context {
 pub struct Table {
     pub schema: String,
     pub record: ast::RecordDetails,
+    /// Topological layer for sync ordering. Lower numbers sync first.
+    /// Tables in cycles get the same layer number.
+    pub sync_layer: usize,
 }
 
 fn convert_range(range: &ast::Range) -> Range {
@@ -185,7 +188,7 @@ fn is_capitalized(s: &str) -> bool {
 }
 
 pub fn check_schema(db: &ast::Database) -> Result<Context, Vec<Error>> {
-    let context = populate_context(db)?;
+    let mut context = populate_context(db)?;
 
     let mut errors: Vec<Error> = Vec::new();
 
@@ -210,7 +213,239 @@ pub fn check_schema(db: &ast::Database) -> Result<Context, Vec<Error>> {
         return Err(errors);
     }
 
+    // Compute topological layers for sync ordering
+    compute_sync_layers(&mut context);
+
     Ok(context)
+}
+
+/// Compute topological layers for sync ordering.
+/// Tables with lower layer numbers should be synced first.
+/// Tables in cycles get the same layer number.
+fn compute_sync_layers(context: &mut Context) {
+    use crate::ast;
+
+    // Build dependency graph: child -> [parent1, parent2, ...]
+    // A table depends on (must sync after) tables it references via @link
+    let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
+    let mut all_tables = HashSet::new();
+
+    // Collect all table names and their dependencies
+    for (_record_name, table) in &context.tables {
+        let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+        all_tables.insert(table_name.clone());
+
+        // Get all links from this table
+        let links = ast::collect_links(&table.record.fields);
+        let mut parents = Vec::new();
+
+        for link in links {
+            // Get the foreign table name
+            if let Some(foreign_table) = get_linked_table(context, &link) {
+                let foreign_table_name =
+                    ast::get_tablename(&foreign_table.record.name, &foreign_table.record.fields);
+                parents.push(foreign_table_name);
+            }
+        }
+
+        if !parents.is_empty() {
+            dependencies.insert(table_name, parents);
+        }
+    }
+
+    // Find strongly connected components (cycles) using Tarjan's algorithm
+    let sccs = find_strongly_connected_components(&all_tables, &dependencies);
+
+    // Build a map from table name to its SCC ID
+    let mut table_to_scc: HashMap<String, usize> = HashMap::new();
+    for (scc_id, scc) in sccs.iter().enumerate() {
+        for table in scc {
+            table_to_scc.insert(table.clone(), scc_id);
+        }
+    }
+
+    // Build dependency graph of SCCs (DAG)
+    let mut scc_dependencies: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (child_table, parent_tables) in &dependencies {
+        let child_scc = table_to_scc.get(child_table).copied();
+        if let Some(child_scc_id) = child_scc {
+            for parent_table in parent_tables {
+                if let Some(parent_scc_id) = table_to_scc.get(parent_table).copied() {
+                    if child_scc_id != parent_scc_id {
+                        // Different SCCs, add dependency
+                        scc_dependencies
+                            .entry(child_scc_id)
+                            .or_insert_with(Vec::new)
+                            .push(parent_scc_id);
+                    }
+                }
+            }
+        }
+    }
+
+    // Topological sort of SCCs (Kahn's algorithm)
+    let scc_layers = topological_sort_sccs(&sccs, &scc_dependencies);
+
+    // Assign layer numbers to tables based on their SCC's layer
+    for (_record_name, table) in context.tables.iter_mut() {
+        let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+        if let Some(scc_id) = table_to_scc.get(&table_name) {
+            if let Some(layer) = scc_layers.get(scc_id) {
+                table.sync_layer = *layer;
+            }
+        }
+    }
+}
+
+/// Find strongly connected components using Tarjan's algorithm
+fn find_strongly_connected_components(
+    all_tables: &HashSet<String>,
+    dependencies: &HashMap<String, Vec<String>>,
+) -> Vec<Vec<String>> {
+    let mut index = 0;
+    let mut indices: HashMap<String, usize> = HashMap::new();
+    let mut lowlinks: HashMap<String, usize> = HashMap::new();
+    let mut stack: Vec<String> = Vec::new();
+    let mut on_stack: HashSet<String> = HashSet::new();
+    let mut sccs: Vec<Vec<String>> = Vec::new();
+
+    fn strong_connect(
+        table: &String,
+        dependencies: &HashMap<String, Vec<String>>,
+        index: &mut usize,
+        indices: &mut HashMap<String, usize>,
+        lowlinks: &mut HashMap<String, usize>,
+        stack: &mut Vec<String>,
+        on_stack: &mut HashSet<String>,
+        sccs: &mut Vec<Vec<String>>,
+    ) {
+        indices.insert(table.clone(), *index);
+        lowlinks.insert(table.clone(), *index);
+        *index += 1;
+        stack.push(table.clone());
+        on_stack.insert(table.clone());
+
+        // Consider successors
+        if let Some(parents) = dependencies.get(table) {
+            for parent in parents {
+                if !indices.contains_key(parent) {
+                    strong_connect(
+                        parent,
+                        dependencies,
+                        index,
+                        indices,
+                        lowlinks,
+                        stack,
+                        on_stack,
+                        sccs,
+                    );
+                    let lowlink = *lowlinks.get(table).unwrap();
+                    let parent_lowlink = *lowlinks.get(parent).unwrap();
+                    lowlinks.insert(table.clone(), lowlink.min(parent_lowlink));
+                } else if on_stack.contains(parent) {
+                    let lowlink = *lowlinks.get(table).unwrap();
+                    let parent_index = *indices.get(parent).unwrap();
+                    lowlinks.insert(table.clone(), lowlink.min(parent_index));
+                }
+            }
+        }
+
+        // If table is a root node, pop the stack and form an SCC
+        if lowlinks.get(table) == indices.get(table) {
+            let mut scc = Vec::new();
+            loop {
+                let w = stack.pop().unwrap();
+                on_stack.remove(&w);
+                scc.push(w.clone());
+                if w == *table {
+                    break;
+                }
+            }
+            sccs.push(scc);
+        }
+    }
+
+    for table in all_tables {
+        if !indices.contains_key(table) {
+            strong_connect(
+                table,
+                dependencies,
+                &mut index,
+                &mut indices,
+                &mut lowlinks,
+                &mut stack,
+                &mut on_stack,
+                &mut sccs,
+            );
+        }
+    }
+
+    sccs
+}
+
+/// Topological sort of SCCs using Kahn's algorithm
+/// Returns a map from SCC ID to layer number
+fn topological_sort_sccs(
+    sccs: &[Vec<String>],
+    scc_dependencies: &HashMap<usize, Vec<usize>>,
+) -> HashMap<usize, usize> {
+    let mut layers: HashMap<usize, usize> = HashMap::new();
+    let mut in_degree: HashMap<usize, usize> = HashMap::new();
+
+    // Initialize in-degrees for all SCCs
+    for scc_id in 0..sccs.len() {
+        in_degree.insert(scc_id, 0);
+    }
+
+    // Calculate in-degrees (count how many dependencies each SCC has)
+    // If child_scc depends on parent_sccs, increment in-degree of child_scc
+    for (child_scc_id, parent_sccs) in scc_dependencies {
+        // Each parent dependency increases the child's in-degree
+        *in_degree.get_mut(child_scc_id).unwrap() += parent_sccs.len();
+    }
+
+    // Find all SCCs with no incoming edges (layer 0)
+    let mut queue: Vec<usize> = Vec::new();
+    for scc_id in 0..sccs.len() {
+        let degree = in_degree.get(&scc_id).copied().unwrap_or(0);
+        if degree == 0 {
+            queue.push(scc_id);
+            layers.insert(scc_id, 0);
+        }
+    }
+
+    // Process queue
+    let mut current_layer = 0;
+    while !queue.is_empty() {
+        let mut next_queue = Vec::new();
+        current_layer += 1;
+
+        for scc_id in queue.drain(..) {
+            // Process all SCCs that depend on this one (scc_id)
+            // Find all child SCCs that have scc_id as a parent
+            for (child_scc_id, parent_sccs) in scc_dependencies {
+                if parent_sccs.contains(&scc_id) {
+                    let degree = in_degree.get_mut(child_scc_id).unwrap();
+                    *degree -= 1;
+                    if *degree == 0 {
+                        next_queue.push(*child_scc_id);
+                        layers.insert(*child_scc_id, current_layer);
+                    }
+                }
+            }
+        }
+
+        queue = next_queue;
+    }
+
+    // Handle any remaining SCCs (shouldn't happen in a DAG, but handle gracefully)
+    for scc_id in 0..sccs.len() {
+        if !layers.contains_key(&scc_id) {
+            layers.insert(scc_id, current_layer);
+        }
+    }
+
+    layers
 }
 
 fn to_range(start: &Option<ast::Location>, end: &Option<ast::Location>) -> Vec<Range> {
@@ -329,6 +564,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                     start_name: start_name.clone(),
                                     end_name: end_name.clone(),
                                 },
+                                sync_layer: 0, // Will be computed later
                             },
                         );
                     }
