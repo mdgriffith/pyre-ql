@@ -543,3 +543,167 @@ record Post {
         "Operation-specific permission with multiple where conditions should parse successfully"
     );
 }
+
+#[test]
+fn test_public_directive_parses() {
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    @public
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema with @public should parse successfully");
+
+    // Typecheck should succeed with @public directive
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_ok(),
+        "Typecheck should succeed with @public directive. Errors: {:?}",
+        typecheck_result.err()
+    );
+}
+
+#[test]
+fn test_public_directive_allows_everything() {
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    @public
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).unwrap();
+
+    // Extract the record
+    let record = schema.files[0]
+        .definitions
+        .iter()
+        .find_map(|def| match def {
+            ast::Definition::Record { name, fields, .. } if name == "Post" => {
+                Some(ast::RecordDetails {
+                    name: name.clone(),
+                    fields: fields.clone(),
+                    start: None,
+                    end: None,
+                    start_name: None,
+                    end_name: None,
+                })
+            }
+            _ => None,
+        })
+        .expect("Post record should exist");
+
+    // get_permissions should return None for @public (allows everything)
+    let perms = ast::get_permissions(&record, &ast::QueryOperation::Select);
+    assert_eq!(perms, None, "@public should return None (no restrictions)");
+}
+
+#[test]
+fn test_missing_permissions_error() {
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema should parse successfully");
+
+    // Typecheck should fail with MissingPermissions error
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_err(),
+        "Typecheck should fail with missing permissions directive"
+    );
+
+    let errors = typecheck_result.unwrap_err();
+    assert!(
+        errors.iter().any(|e| matches!(&e.error_type, ErrorType::MissingPermissions { record } if record == "Post")),
+        "Should have MissingPermissions error for Post record. Errors: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_public_and_permissions_together_fails() {
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    @public
+    @permissions { authorId = Session.userId }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema should parse successfully");
+
+    // Typecheck should fail with MultiplePermissions error
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_err(),
+        "Typecheck should fail with multiple permissions directives"
+    );
+
+    let errors = typecheck_result.unwrap_err();
+    assert!(
+        errors.iter().any(|e| matches!(&e.error_type, ErrorType::MultiplePermissions { record } if record == "Post")),
+        "Should have MultiplePermissions error for Post record. Errors: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_public_directive_counts_as_permissions() {
+    // Test that @public counts as a permissions directive for validation
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    @public
+}
+
+record Comment {
+    id Int @id
+    content String
+    @permissions { authorId = Session.userId }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema should parse successfully");
+
+    // Typecheck should succeed - both records have exactly one permissions directive
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_ok(),
+        "Typecheck should succeed when all records have exactly one permissions directive. Errors: {:?}",
+        typecheck_result.err()
+    );
+}

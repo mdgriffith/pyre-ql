@@ -357,6 +357,7 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
 
     let (input, field_directive) = cut(alt((
         parse_table_permission,
+        parse_public,
         parse_watch(),
         parse_tablename(to_location(&start_pos)),
         parse_link,
@@ -459,6 +460,17 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
     Ok((
         input,
         ast::Field::FieldDirective(ast::FieldDirective::Permissions(details)),
+    ))
+}
+
+fn parse_public(input: Text) -> ParseResult<ast::Field> {
+    let (input, _) = tag("public")(input)?;
+    let (input, _) = multispace0(input)?;
+    Ok((
+        input,
+        ast::Field::FieldDirective(ast::FieldDirective::Permissions(
+            ast::PermissionDetails::Public,
+        )),
     ))
 }
 

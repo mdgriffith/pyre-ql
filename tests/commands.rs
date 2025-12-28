@@ -40,6 +40,7 @@ fn test_generate_command() {
 record User {
     id   Int    @id
     name String
+    @public
 }
         "#,
     )
@@ -67,6 +68,7 @@ fn test_format_command() {
 record User {
     id   Int    @id
     name String
+    @public
 }
         "#,
     )

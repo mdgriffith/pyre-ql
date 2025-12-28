@@ -31,6 +31,7 @@ fn test_simple_linear_dependency() {
 record A {
     @tablename "a"
     id Int @id
+    @public
 }
 
 record B {
@@ -38,6 +39,7 @@ record B {
     id Int @id
     aId Int
     a @link(aId, A.id)
+    @public
 }
 
 record C {
@@ -45,6 +47,7 @@ record C {
     id Int @id
     bId Int
     b @link(bId, B.id)
+    @public
 }
 "#;
 
@@ -63,6 +66,7 @@ fn test_multiple_dependencies() {
 record A {
     @tablename "a"
     id Int @id
+    @public
 }
 
 record B {
@@ -70,6 +74,7 @@ record B {
     id Int @id
     aId Int
     a @link(aId, A.id)
+    @public
 }
 
 record C {
@@ -77,6 +82,7 @@ record C {
     id Int @id
     aId Int
     a @link(aId, A.id)
+    @public
 }
 "#;
 
@@ -97,6 +103,7 @@ record A {
     id Int @id
     bId Int?
     b @link(bId, B.id)
+    @public
 }
 
 record B {
@@ -104,6 +111,7 @@ record B {
     id Int @id
     aId Int?
     a @link(aId, A.id)
+    @public
 }
 "#;
 
@@ -124,16 +132,19 @@ fn test_independent_tables() {
 record A {
     @tablename "a"
     id Int @id
+    @public
 }
 
 record B {
     @tablename "b"
     id Int @id
+    @public
 }
 
 record C {
     @tablename "c"
     id Int @id
+    @public
 }
 "#;
 
@@ -153,6 +164,7 @@ fn test_complex_graph() {
 record A {
     @tablename "a"
     id Int @id
+    @public
 }
 
 record B {
@@ -160,6 +172,7 @@ record B {
     id Int @id
     aId Int
     a @link(aId, A.id)
+    @public
 }
 
 record C {
@@ -167,6 +180,7 @@ record C {
     id Int @id
     aId Int
     a @link(aId, A.id)
+    @public
 }
 
 record D {
@@ -176,6 +190,7 @@ record D {
     b @link(bId, B.id)
     cId Int?
     c @link(cId, C.id)
+    @public
 }
 "#;
 
@@ -197,6 +212,7 @@ record A {
     id Int @id
     bId Int?
     b @link(bId, B.id)
+    @public
 }
 
 record B {
@@ -204,6 +220,7 @@ record B {
     id Int @id
     cId Int?
     c @link(cId, C.id)
+    @public
 }
 
 record C {
@@ -211,6 +228,7 @@ record C {
     id Int @id
     aId Int?
     a @link(aId, A.id)
+    @public
 }
 "#;
 
@@ -234,6 +252,7 @@ fn test_cycle_with_external_dependency() {
 record A {
     @tablename "a"
     id Int @id
+    @public
 }
 
 record B {
@@ -241,6 +260,7 @@ record B {
     id Int @id
     cId Int?
     c @link(cId, C.id)
+    @public
 }
 
 record C {
@@ -248,6 +268,7 @@ record C {
     id Int @id
     bId Int?
     b @link(bId, B.id)
+    @public
 }
 
 record D {
@@ -255,6 +276,7 @@ record D {
     id Int @id
     bId Int
     b @link(bId, B.id)
+    @public
 }
 "#;
 
@@ -278,6 +300,7 @@ fn test_deep_nested_dependencies() {
 record A {
     @tablename "a"
     id Int @id
+    @public
 }
 
 record B {
@@ -285,6 +308,7 @@ record B {
     id Int @id
     aId Int
     a @link(aId, A.id)
+    @public
 }
 
 record C {
@@ -292,6 +316,7 @@ record C {
     id Int @id
     bId Int
     b @link(bId, B.id)
+    @public
 }
 
 record D {
@@ -299,6 +324,7 @@ record D {
     id Int @id
     cId Int
     c @link(cId, C.id)
+    @public
 }
 
 record E {
@@ -306,6 +332,7 @@ record E {
     id Int @id
     dId Int
     d @link(dId, D.id)
+    @public
 }
 "#;
 
@@ -327,6 +354,7 @@ fn test_multiple_links_same_table() {
 record A {
     @tablename "a"
     id Int @id
+    @public
 }
 
 record B {
@@ -336,6 +364,7 @@ record B {
     a1 @link(aId1, A.id)
     aId2 Int
     a2 @link(aId2, A.id)
+    @public
 }
 "#;
 
@@ -353,6 +382,7 @@ fn test_table_with_no_links() {
 record A {
     @tablename "a"
     id Int @id
+    @public
 }
 
 record B {
@@ -360,12 +390,14 @@ record B {
     id Int @id
     aId Int
     a @link(aId, A.id)
+    @public
 }
 
 record C {
     @tablename "c"
     id Int @id
     name String
+    @public
 }
 "#;
 
@@ -388,6 +420,7 @@ fn test_diamond_pattern() {
 record A {
     @tablename "a"
     id Int @id
+    @public
 }
 
 record B {
@@ -395,6 +428,7 @@ record B {
     id Int @id
     aId Int
     a @link(aId, A.id)
+    @public
 }
 
 record C {
@@ -402,6 +436,7 @@ record C {
     id Int @id
     aId Int
     a @link(aId, A.id)
+    @public
 }
 
 record D {
@@ -411,6 +446,7 @@ record D {
     b @link(bId, B.id)
     cId Int?
     c @link(cId, C.id)
+    @public
 }
 "#;
 
@@ -432,6 +468,7 @@ record A {
     id Int @id
     parentId Int?
     parent @link(parentId, A.id)
+    @public
 }
 "#;
 

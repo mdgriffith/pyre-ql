@@ -83,11 +83,13 @@ async fn test_migration_add_table() -> Result<(), TestError> {
     let old_schema = r#"record User {
     id   Int    @id
     name String
+    @public
 }"#;
 
     let new_schema = r#"record User {
     id   Int    @id
     name String
+    @public
 }
 
 record Post {
@@ -96,6 +98,7 @@ record Post {
     content   String
     authorId  Int
     author    @link(authorId, User.id)
+    @public
 }"#;
 
     let db_diff = create_migration_diff(old_schema, new_schema).await?;
@@ -122,12 +125,14 @@ async fn test_migration_add_column() -> Result<(), TestError> {
     let old_schema = r#"record User {
     id   Int    @id
     name String
+    @public
 }"#;
 
     let new_schema = r#"record User {
     id    Int    @id
     name  String
     email String
+    @public
 }"#;
 
     let db_diff = create_migration_diff(old_schema, new_schema).await?;
@@ -159,11 +164,13 @@ async fn test_migration_remove_column() -> Result<(), TestError> {
     id    Int    @id
     name  String
     email String
+    @public
 }"#;
 
     let new_schema = r#"record User {
     id   Int    @id
     name String
+    @public
 }"#;
 
     let db_diff = create_migration_diff(old_schema, new_schema).await?;
@@ -193,11 +200,13 @@ async fn test_migration_change_column_type() -> Result<(), TestError> {
     let old_schema = r#"record User {
     id   Int    @id
     age  Int
+    @public
 }"#;
 
     let new_schema = r#"record User {
     id   Int     @id
     age  String
+    @public
 }"#;
 
     let db_diff = create_migration_diff(old_schema, new_schema).await?;

@@ -833,7 +833,18 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                             });
                         }
 
-                        if permissions_count > 1 {
+                        if permissions_count == 0 {
+                            errors.push(Error {
+                                filepath: file.path.clone(),
+                                error_type: ErrorType::MissingPermissions {
+                                    record: name.clone(),
+                                },
+                                locations: vec![Location {
+                                    contexts: to_range(&start, &end),
+                                    primary: to_range(&start_name, &end_name),
+                                }],
+                            });
+                        } else if permissions_count > 1 {
                             errors.push(Error {
                                 filepath: file.path.clone(),
                                 error_type: ErrorType::MultiplePermissions {

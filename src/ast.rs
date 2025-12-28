@@ -88,6 +88,7 @@ pub fn get_permissions(record: &RecordDetails, operation: &QueryOperation) -> Op
         if let Field::FieldDirective(directive) = field {
             match directive {
                 FieldDirective::Permissions(perm) => match perm {
+                    PermissionDetails::Public => return None, // Public allows everything (no restrictions)
                     PermissionDetails::Star(where_arg) => return Some(where_arg.clone()),
                     PermissionDetails::OnOperation(ops) => {
                         let mut matching_wheres = Vec::new();
@@ -312,6 +313,7 @@ pub enum FieldDirective {
 pub enum PermissionDetails {
     Star(WhereArg),
     OnOperation(Vec<PermissionOnOperation>),
+    Public,
 }
 
 #[derive(Debug, Clone, PartialEq)]

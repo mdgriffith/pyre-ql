@@ -78,6 +78,9 @@ pub enum ErrorType {
     MultiplePermissions {
         record: String,
     },
+    MissingPermissions {
+        record: String,
+    },
     // Schema Link errors
     LinkToUnknownTable {
         link_name: String,
@@ -811,6 +814,18 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
+        ErrorType::MissingPermissions { record } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} must have exactly one permissions directive. Add either {} or {}.",
+                cyan_if(in_color, record),
+                yellow_if(in_color, "@permissions"),
+                yellow_if(in_color, "@public")
+            ));
+
+            result
+        }
 
         ErrorType::MultipleLimits { query } => {
             let mut result = "".to_string();
@@ -1182,6 +1197,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::MultiplePrimaryKeys { .. } => "Multiple Primary Keys",
         ErrorType::MultipleTableNames { .. } => "Multiple table names",
         ErrorType::MultiplePermissions { .. } => "Multiple Permissions",
+        ErrorType::MissingPermissions { .. } => "Missing Permissions",
         ErrorType::LinkToUnknownTable { .. } => "Link to unknown table",
         ErrorType::LinkToUnknownField { .. } => "Link to unknown field",
         ErrorType::LinkToUnknownForeignField { .. } => "Link to Unknown Foreign Field",

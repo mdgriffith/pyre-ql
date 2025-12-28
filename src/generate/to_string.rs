@@ -283,6 +283,9 @@ fn to_string_permissions_details(
 ) -> String {
     let spaces = " ".repeat(indentation.minimum);
     match details {
+        ast::PermissionDetails::Public => {
+            format!("{}@public\n", spaces)
+        }
         ast::PermissionDetails::Star(where_) => {
             format!("{}@permissions {{{}}}\n", spaces, format_where(where_))
         }

@@ -14,6 +14,7 @@ record User {
     id   Int    @id
     name String
     status Status
+    @public
 }
 "#;
 
@@ -25,6 +26,7 @@ record Post {
     content   String
     authorId  Int
     author    @link(authorId, User.id)
+    @public
 }
 "#;
 
@@ -36,6 +38,7 @@ record Account {
     name   String
     status String
     user   @link(userId, User.id)
+    @public
 }
 "#;
 
@@ -61,6 +64,7 @@ record User {{
     name String
     status Status
     posts @link(Post.authorId)
+    @public
 }}
 
 {}
@@ -87,6 +91,7 @@ record User {{
     status Status
     posts @link(Post.authorId)
     accounts @link(Account.userId)
+    @public
 }}
 
 {}
@@ -122,6 +127,7 @@ pub fn union_column_reuse_schema() -> String {
 record TestRecord {{
     id Int @id
     result Result
+    @public
 }}
 
 {}
@@ -151,6 +157,7 @@ pub fn union_separate_columns_schema() -> String {
 record TestRecord {{
     id Int @id
     result MixedResult
+    @public
 }}
 
 {}
@@ -184,6 +191,7 @@ pub fn union_required_fields_schema() -> String {
 record TestRecord {{
     id Int @id
     action Action
+    @public
 }}
 
 {}

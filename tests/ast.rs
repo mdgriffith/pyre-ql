@@ -326,6 +326,7 @@ fn test_select_type_columns_unknown_type() {
 record User {
     id Int @id
     name String
+    @public
 }
 "#;
 
