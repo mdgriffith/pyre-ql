@@ -74,8 +74,35 @@ pub fn get_sync_page_info(sync_cursor: JsValue, session: JsValue, page_size: usi
 }
 
 #[wasm_bindgen]
-pub fn get_sync_sql(sync_cursor: JsValue, session: JsValue, page_size: usize) -> JsValue {
-    let result = sync::get_sync_sql_wasm(sync_cursor, session, page_size);
+pub fn get_sync_status_sql(sync_cursor: JsValue, session: JsValue) -> JsValue {
+    let result = sync::get_sync_status_sql_wasm(sync_cursor, session);
+    match result {
+        Ok(sql) => serde_wasm_bindgen::to_value(&sql).unwrap(),
+        Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
+    }
+}
+
+#[wasm_bindgen]
+pub fn parse_sync_status(sync_cursor: JsValue, session: JsValue, rows: JsValue) -> JsValue {
+    let result = sync::parse_sync_status_wasm(sync_cursor, session, rows);
+    match result {
+        Ok(status) => {
+            // Serialize to JSON string first, then parse it back to JsValue
+            let json_str = serde_json::to_string(&status).unwrap();
+            js_sys::JSON::parse(&json_str).unwrap()
+        }
+        Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
+    }
+}
+
+#[wasm_bindgen]
+pub fn get_sync_sql(
+    status_rows: JsValue,
+    sync_cursor: JsValue,
+    session: JsValue,
+    page_size: usize,
+) -> JsValue {
+    let result = sync::get_sync_sql_wasm(status_rows, sync_cursor, session, page_size);
     match result {
         Ok(sql_result) => {
             // Serialize to JSON string first, then parse it back to JsValue

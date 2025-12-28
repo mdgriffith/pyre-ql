@@ -1,7 +1,6 @@
 use crate::cache;
 use pyre::db::introspect;
 use pyre::sync;
-use pyre::typecheck;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen;
 use std::collections::HashMap;
@@ -206,7 +205,96 @@ pub struct TableSyncSqlWasm {
     pub headers: Vec<String>,
 }
 
+/// Generate sync status SQL - returns a single SQL query that checks which tables need syncing
+pub fn get_sync_status_sql_wasm(sync_cursor: JsValue, session: JsValue) -> Result<String, String> {
+    let introspection = match cache::get() {
+        Some(introspection) => introspection,
+        None => return Err("No schema found".to_string()),
+    };
+
+    let cursor_wasm: SyncCursorWasm = serde_wasm_bindgen::from_value(sync_cursor)
+        .map_err(|e| format!("Failed to parse sync cursor: {}", e))?;
+
+    let session_wasm: SessionWasm = serde_wasm_bindgen::from_value(session)
+        .map_err(|e| format!("Failed to parse session: {}", e))?;
+
+    let session_rust = convert_session_wasm_to_rust(&session_wasm);
+    let cursor_rust = convert_cursor_wasm_to_rust(&cursor_wasm);
+
+    match &introspection.schema {
+        introspect::SchemaResult::Success { context, .. } => {
+            sync::get_sync_status_sql(&cursor_rust, context, &session_rust)
+                .map_err(|e| format!("{}", e))
+        }
+        _ => Err("No schema found".to_string()),
+    }
+}
+
+/// Parse sync status results from SQL query execution
+#[derive(Serialize, Deserialize)]
+pub struct SyncStatusResultWasm {
+    pub tables: Vec<TableSyncStatusWasm>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TableSyncStatusWasm {
+    pub table_name: String,
+    pub sync_layer: usize,
+    pub needs_sync: bool,
+    pub max_updated_at: Option<i64>,
+    pub permission_hash: String,
+}
+
+pub fn parse_sync_status_wasm(
+    sync_cursor: JsValue,
+    session: JsValue,
+    rows: JsValue,
+) -> Result<SyncStatusResultWasm, String> {
+    let introspection = match cache::get() {
+        Some(introspection) => introspection,
+        None => return Err("No schema found".to_string()),
+    };
+
+    let cursor_wasm: SyncCursorWasm = serde_wasm_bindgen::from_value(sync_cursor)
+        .map_err(|e| format!("Failed to parse sync cursor: {}", e))?;
+
+    let session_wasm: SessionWasm = serde_wasm_bindgen::from_value(session)
+        .map_err(|e| format!("Failed to parse session: {}", e))?;
+
+    let session_rust = convert_session_wasm_to_rust(&session_wasm);
+    let cursor_rust = convert_cursor_wasm_to_rust(&cursor_wasm);
+
+    // Parse rows from JS - expect array of objects
+    let rows_vec: Vec<std::collections::HashMap<String, serde_json::Value>> =
+        serde_wasm_bindgen::from_value(rows).map_err(|e| format!("Failed to parse rows: {}", e))?;
+
+    match &introspection.schema {
+        introspect::SchemaResult::Success { context, .. } => {
+            let result = sync::parse_sync_status(&cursor_rust, context, &session_rust, &rows_vec)
+                .map_err(|e| format!("{}", e))?;
+
+            Ok(SyncStatusResultWasm {
+                tables: result
+                    .tables
+                    .into_iter()
+                    .map(|t| TableSyncStatusWasm {
+                        table_name: t.table_name,
+                        sync_layer: t.sync_layer,
+                        needs_sync: t.needs_sync,
+                        max_updated_at: t.max_updated_at,
+                        permission_hash: t.permission_hash,
+                    })
+                    .collect(),
+            })
+        }
+        _ => Err("No schema found".to_string()),
+    }
+}
+
+/// Generate sync SQL for tables that need syncing
+/// Takes raw sync status rows from SQL query execution and parses them internally
 pub fn get_sync_sql_wasm(
+    status_rows: JsValue,
     sync_cursor: JsValue,
     session: JsValue,
     page_size: usize,
@@ -225,10 +313,27 @@ pub fn get_sync_sql_wasm(
     let session_rust = convert_session_wasm_to_rust(&session_wasm);
     let cursor_rust = convert_cursor_wasm_to_rust(&cursor_wasm);
 
+    // Parse rows from JS - expect array of objects
+    let rows_vec: Vec<std::collections::HashMap<String, serde_json::Value>> =
+        serde_wasm_bindgen::from_value(status_rows)
+            .map_err(|e| format!("Failed to parse status rows: {}", e))?;
+
     match &introspection.schema {
         introspect::SchemaResult::Success { context, .. } => {
-            let result = sync::get_sync_sql(&cursor_rust, context, &session_rust, page_size)
-                .map_err(|e| format!("{}", e))?;
+            // Parse sync status internally
+            let status_rust =
+                sync::parse_sync_status(&cursor_rust, context, &session_rust, &rows_vec)
+                    .map_err(|e| format!("{}", e))?;
+
+            // Generate sync SQL
+            let result = sync::get_sync_sql(
+                &status_rust,
+                &cursor_rust,
+                context,
+                &session_rust,
+                page_size,
+            )
+            .map_err(|e| format!("{}", e))?;
 
             Ok(SyncSqlResultWasm {
                 tables: result

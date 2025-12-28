@@ -9,6 +9,7 @@ import init, {
     sql_introspect,
     sql_introspect_uninitialized,
     set_schema,
+    get_sync_status_sql,
     get_sync_sql
 } from '../../wasm/pkg/pyre_wasm.js';
 
@@ -133,8 +134,28 @@ async function getSyncPage(
     session: Session,
     pageSize: number = 10
 ): Promise<SyncPageResult> {
-    // Get sync SQL from WASM - single call that returns SQL for all tables
-    const syncSqlResult = get_sync_sql(syncCursor, session, pageSize);
+    // Step 1: Get sync status SQL
+    const statusSql = get_sync_status_sql(syncCursor, session);
+
+    if (typeof statusSql === 'string' && statusSql.startsWith('Error:')) {
+        throw new Error(statusSql);
+    }
+
+    console.log("=== Sync Status SQL ===");
+    console.log(statusSql);
+    console.log("=====================\n");
+
+    // Step 2: Execute sync status SQL
+    const statusResult = await db.execute(statusSql as string);
+
+    console.log("=== Sync Status Rows ===");
+    console.log(JSON.stringify(statusResult.rows, null, 2));
+    console.log("=======================\n");
+
+    // Step 3: Get sync SQL for tables that need syncing
+    // Parsing happens internally within get_sync_sql
+    // libsql rows are already objects with column names as keys, so we can pass them directly
+    const syncSqlResult = get_sync_sql(statusResult.rows, syncCursor, session, pageSize);
 
     if (typeof syncSqlResult === 'string' && syncSqlResult.startsWith('Error:')) {
         throw new Error(syncSqlResult);

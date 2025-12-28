@@ -69,6 +69,22 @@ pub struct SyncSqlResult {
     pub tables: Vec<TableSyncSql>,
 }
 
+/// Status information for a single table's sync state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableSyncStatus {
+    pub table_name: String,
+    pub sync_layer: usize,
+    pub needs_sync: bool,
+    pub max_updated_at: Option<i64>,
+    pub permission_hash: String,
+}
+
+/// Result of sync status check
+#[derive(Debug)]
+pub struct SyncStatusResult {
+    pub tables: Vec<TableSyncStatus>,
+}
+
 /// Extract all session field names referenced in a permission WhereArg
 pub fn extract_session_fields_from_permission(where_arg: &WhereArg) -> Vec<String> {
     let mut fields = Vec::new();
@@ -259,9 +275,194 @@ fn replace_session_variables(
     }
 }
 
-/// Get sync SQL for all tables
+/// Get sync status SQL - generates a single SQL query that checks which tables need syncing
+/// Returns SQL that can be executed to get sync status for all tables
+pub fn get_sync_status_sql(
+    sync_cursor: &SyncCursor,
+    context: &typecheck::Context,
+    session: &HashMap<String, SessionValue>,
+) -> Result<String, SyncError> {
+    use crate::ext::string;
+    use crate::generate::sql::to_sql;
+
+    // Create a dummy QueryField for rendering WHERE clauses
+    let dummy_query_field = ast::QueryField {
+        name: String::new(),
+        alias: None,
+        set: None,
+        directives: Vec::new(),
+        fields: Vec::new(),
+        start_fieldname: None,
+        end_fieldname: None,
+        start: None,
+        end: None,
+    };
+
+    let mut union_parts = Vec::new();
+
+    // Iterate through all tables in the context
+    for (_record_name, table) in &context.tables {
+        // Create QueryInfo with primary_db matching this table's schema
+        let query_info = typecheck::QueryInfo {
+            primary_db: table.schema.clone(),
+            attached_dbs: std::collections::HashSet::new(),
+            variables: std::collections::HashMap::new(),
+        };
+
+        // Get the actual table name from @tablename directive
+        let actual_table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+        let quoted_table_name = string::quote(&actual_table_name);
+
+        // Get permission for select operation
+        let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Select);
+
+        // Calculate current permission hash
+        let current_permission_hash = calculate_permission_hash(&permission, session);
+
+        // Get cursor state for this table
+        let table_cursor = sync_cursor.get(&actual_table_name);
+        let last_seen_updated_at = table_cursor.and_then(|c| c.last_seen_updated_at);
+
+        // Build WHERE clause for permissions (with session vars replaced as literals)
+        let permission_where = if let Some(perm) = &permission {
+            let perm_with_literals = replace_session_variables(perm, session);
+            format!(
+                " WHERE {}",
+                to_sql::render_where_arg(
+                    &perm_with_literals,
+                    table,
+                    &query_info,
+                    &dummy_query_field
+                )
+            )
+        } else {
+            String::new()
+        };
+
+        // Build the subquery for this table
+        // We compute MAX(updatedAt) with permissions applied
+        // Also include the sync_layer, table_name, permission_hash, and last_seen_updated_at
+        let sync_layer_value = table.sync_layer;
+        let table_name_literal = string::single_quote(&actual_table_name);
+        let permission_hash_literal = string::single_quote(&current_permission_hash);
+        let last_seen_literal = match last_seen_updated_at {
+            Some(ts) => ts.to_string(),
+            None => "NULL".to_string(),
+        };
+
+        let subquery = format!(
+            "SELECT {} AS table_name, {} AS sync_layer, {} AS permission_hash, {} AS last_seen_updated_at, MAX({}.updatedAt) AS max_updated_at FROM {}{}",
+            table_name_literal,
+            sync_layer_value,
+            permission_hash_literal,
+            last_seen_literal,
+            quoted_table_name,
+            quoted_table_name,
+            permission_where
+        );
+
+        union_parts.push(subquery);
+    }
+
+    if union_parts.is_empty() {
+        return Err(SyncError::SqlGenerationError(
+            "No tables found in context".to_string(),
+        ));
+    }
+
+    // Combine all subqueries with UNION ALL
+    let sql = union_parts.join(" UNION ALL ");
+    Ok(sql)
+}
+
+/// Parse sync status results from SQL query execution
+/// The SQL should return rows with: table_name, sync_layer, permission_hash, last_seen_updated_at, max_updated_at
+pub fn parse_sync_status(
+    sync_cursor: &SyncCursor,
+    _context: &typecheck::Context,
+    _session: &HashMap<String, SessionValue>,
+    rows: &[std::collections::HashMap<String, serde_json::Value>],
+) -> Result<SyncStatusResult, SyncError> {
+    let mut result = SyncStatusResult { tables: Vec::new() };
+
+    for row in rows {
+        let table_name = row
+            .get("table_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                SyncError::SqlGenerationError("Missing table_name in sync status row".to_string())
+            })?
+            .to_string();
+
+        let sync_layer = row
+            .get("sync_layer")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| {
+                SyncError::SqlGenerationError("Missing sync_layer in sync status row".to_string())
+            })? as usize;
+
+        let permission_hash = row
+            .get("permission_hash")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                SyncError::SqlGenerationError(
+                    "Missing permission_hash in sync status row".to_string(),
+                )
+            })?
+            .to_string();
+
+        let max_updated_at = row.get("max_updated_at").and_then(|v| {
+            if v.is_null() {
+                None
+            } else {
+                v.as_i64().or_else(|| v.as_u64().map(|u| u as i64))
+            }
+        });
+
+        let last_seen_updated_at = row.get("last_seen_updated_at").and_then(|v| {
+            if v.is_null() {
+                None
+            } else {
+                v.as_i64().or_else(|| v.as_u64().map(|u| u as i64))
+            }
+        });
+
+        // Check if permission hash changed
+        let table_cursor = sync_cursor.get(&table_name);
+        let permission_hash_changed = match table_cursor {
+            Some(cursor) => cursor.permission_hash != permission_hash,
+            None => true, // No cursor means first sync
+        };
+
+        // Check if max_updated_at > last_seen_updated_at
+        let has_new_data = match (max_updated_at, last_seen_updated_at) {
+            (Some(max), Some(last)) => max > last,
+            (Some(_), None) => true, // Has data but no cursor
+            (None, _) => false,      // No data
+        };
+
+        let needs_sync = permission_hash_changed || has_new_data;
+
+        result.tables.push(TableSyncStatus {
+            table_name,
+            sync_layer,
+            needs_sync,
+            max_updated_at,
+            permission_hash,
+        });
+    }
+
+    // Sort by sync_layer (lower numbers first)
+    result.tables.sort_by_key(|t| t.sync_layer);
+
+    Ok(result)
+}
+
+/// Get sync SQL for all tables that need syncing
 /// Generates SQL directly (most efficient) with permissions baked in as literals
+/// Only syncs tables that need syncing, ordered by sync_layer
 pub fn get_sync_sql(
+    sync_status: &SyncStatusResult,
     sync_cursor: &SyncCursor,
     context: &typecheck::Context,
     session: &HashMap<String, SessionValue>,
@@ -285,30 +486,47 @@ pub fn get_sync_sql(
         end: None,
     };
 
-    // Iterate through all tables in the context
-    for (_record_name, table) in &context.tables {
+    // Iterate through tables that need syncing, ordered by sync_layer
+    // sync_status.tables is already sorted by sync_layer
+    for status in &sync_status.tables {
+        if !status.needs_sync {
+            continue;
+        }
+
+        // Find the table in context by table name
+        let table = context
+            .tables
+            .values()
+            .find(|t| {
+                let actual_table_name = ast::get_tablename(&t.record.name, &t.record.fields);
+                actual_table_name == status.table_name
+            })
+            .ok_or_else(|| {
+                SyncError::SqlGenerationError(format!(
+                    "Table {} not found in context",
+                    status.table_name
+                ))
+            })?;
+
         // Create QueryInfo with primary_db matching this table's schema
-        // This prevents adding schema prefixes in WHERE clauses
         let query_info = typecheck::QueryInfo {
             primary_db: table.schema.clone(),
             attached_dbs: std::collections::HashSet::new(),
             variables: std::collections::HashMap::new(),
         };
-        // Get the actual table name from @tablename directive
-        let actual_table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+
+        let actual_table_name = &status.table_name;
 
         // Get permission for select operation
         let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Select);
 
-        // Calculate current permission hash
-        let current_permission_hash = calculate_permission_hash(&permission, session);
+        // Use permission hash from status (already calculated)
+        let current_permission_hash = &status.permission_hash;
 
-        // Get cursor state for this table
-        let table_cursor = sync_cursor.get(&actual_table_name);
-
-        // Check if permission hash matches
+        // Check if permission hash changed to determine if we need full resync
+        let table_cursor = sync_cursor.get(actual_table_name);
         let needs_full_resync = match table_cursor {
-            Some(cursor) => cursor.permission_hash != current_permission_hash,
+            Some(cursor) => cursor.permission_hash != *current_permission_hash,
             None => true, // No cursor means first sync
         };
 
@@ -316,6 +534,7 @@ pub fn get_sync_sql(
         let last_seen_updated_at = if needs_full_resync {
             None // Full resync - start from beginning
         } else {
+            // Use the last_seen_updated_at from cursor (not max_updated_at from status)
             table_cursor.and_then(|c| c.last_seen_updated_at)
         };
 
@@ -396,8 +615,8 @@ pub fn get_sync_sql(
         );
 
         result.tables.push(TableSyncSql {
-            table_name: actual_table_name,
-            permission_hash: current_permission_hash,
+            table_name: actual_table_name.clone(),
+            permission_hash: current_permission_hash.clone(),
             sql: vec![sql], // Single SQL statement
             headers,
         });
