@@ -25,11 +25,15 @@ pub fn update_to_string(
     let all_query_fields = ast::collect_query_fields(&query_field.fields);
     let new_values = &to_field_set_values(table, &all_query_fields);
     values.append(&mut new_values.clone());
-    
+
     // Check if updatedAt field exists in table and is not explicitly set
-    let has_updated_at_field = table.record.fields.iter().any(|f| ast::has_fieldname(f, "updatedAt"));
+    let has_updated_at_field = table
+        .record
+        .fields
+        .iter()
+        .any(|f| ast::has_fieldname(f, "updatedAt"));
     let updated_at_explicitly_set = all_query_fields.iter().any(|f| f.name == "updatedAt");
-    
+
     if has_updated_at_field && !updated_at_explicitly_set {
         values.push("updatedAt = unixepoch()".to_string());
     }

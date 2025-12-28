@@ -171,11 +171,15 @@ pub fn initial_select(
     field_names.append(&mut new_fieldnames.clone());
 
     let all_query_fields = ast::collect_query_fields(&query_table_field.fields);
-    
+
     // Check if updatedAt field exists in table and is not explicitly set
-    let has_updated_at_field = table.record.fields.iter().any(|f| ast::has_fieldname(f, "updatedAt"));
+    let has_updated_at_field = table
+        .record
+        .fields
+        .iter()
+        .any(|f| ast::has_fieldname(f, "updatedAt"));
     let updated_at_explicitly_set = all_query_fields.iter().any(|f| f.name == "updatedAt");
-    
+
     if has_updated_at_field && !updated_at_explicitly_set {
         field_names.push("updatedAt".to_string());
     }
@@ -193,13 +197,17 @@ pub fn initial_select(
         table,
         &all_query_fields,
     );
-    
+
     let mut final_values = values.clone();
     if has_updated_at_field && !updated_at_explicitly_set {
         final_values.push("unixepoch()".to_string());
     }
 
-    result.push_str(&format!("{}values ({})", indent_str, final_values.join(", ")));
+    result.push_str(&format!(
+        "{}values ({})",
+        indent_str,
+        final_values.join(", ")
+    ));
     result
 }
 
@@ -227,11 +235,15 @@ pub fn insert_linked(
     field_names.append(&mut new_fieldnames.clone());
 
     let all_query_fields = ast::collect_query_fields(&query_table_field.fields);
-    
+
     // Check if updatedAt field exists in table and is not explicitly set
-    let has_updated_at_field = table.record.fields.iter().any(|f| ast::has_fieldname(f, "updatedAt"));
+    let has_updated_at_field = table
+        .record
+        .fields
+        .iter()
+        .any(|f| ast::has_fieldname(f, "updatedAt"));
     let updated_at_explicitly_set = all_query_fields.iter().any(|f| f.name == "updatedAt");
-    
+
     if has_updated_at_field && !updated_at_explicitly_set {
         field_names.push("updatedAt".to_string());
     }
@@ -254,7 +266,7 @@ pub fn insert_linked(
             }
         }
     }
-    
+
     if has_updated_at_field && !updated_at_explicitly_set {
         insert_values.push("unixepoch()".to_string());
     }
