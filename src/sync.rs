@@ -235,43 +235,77 @@ fn session_value_to_query_value(value: &SessionValue) -> ast::QueryValue {
     }
 }
 
-/// Replace session variables in a WhereArg with their literal values
-fn replace_session_variables(
+/// Render a permission WHERE clause to SQL
+/// This is a custom renderer for sync operations that doesn't require QueryField or QueryInfo
+/// Handles session variable replacement internally
+fn render_permission_where(
     where_arg: &WhereArg,
+    table: &typecheck::Table,
     session: &HashMap<String, SessionValue>,
-) -> WhereArg {
+) -> String {
     match where_arg {
-        WhereArg::Column(is_session, fieldname, op, value) => {
-            if *is_session {
-                // Replace session variable with literal value
+        WhereArg::Column(is_session_var, fieldname, op, value) => {
+            // Handle session variable column references by replacing with literal
+            let (qualified_column_name, final_value) = if *is_session_var {
+                // Session variable column - replace with literal value
+                // When is_session_var is true, fieldname is the session var name
+                // We replace it: Session.userId = table.userId becomes table.userId = <literal>
                 if let Some(session_value) = session.get(fieldname) {
                     let literal_value = session_value_to_query_value(session_value);
-                    WhereArg::Column(false, fieldname.clone(), op.clone(), literal_value)
+                    // The fieldname becomes a table column (same name, but now it's a table column)
+                    let table_name = crate::ext::string::quote(&ast::get_tablename(
+                        &table.record.name,
+                        &table.record.fields,
+                    ));
+                    let column_name =
+                        format!("{}.{}", table_name, crate::ext::string::quote(fieldname));
+                    (column_name, literal_value)
                 } else {
-                    // Session variable not found, keep as is (will fail typecheck)
-                    where_arg.clone()
+                    // Session variable not found - fallback to parameter
+                    return format!(
+                        "$session_{} {} {}",
+                        fieldname,
+                        crate::generate::sql::to_sql::operator(op),
+                        crate::generate::sql::to_sql::render_value(value)
+                    );
                 }
             } else {
-                // Not a session variable, recurse into value if it's a variable
-                let new_value = match value {
+                // Regular table column
+                let table_name = crate::ext::string::quote(&ast::get_tablename(
+                    &table.record.name,
+                    &table.record.fields,
+                ));
+                let column_name =
+                    format!("{}.{}", table_name, crate::ext::string::quote(fieldname));
+
+                // Replace session variables in the value if present
+                let replaced_value = match value {
                     ast::QueryValue::Variable((_, var)) if session.contains_key(&var.name) => {
                         session_value_to_query_value(session.get(&var.name).unwrap())
                     }
                     _ => value.clone(),
                 };
-                WhereArg::Column(*is_session, fieldname.clone(), op.clone(), new_value)
-            }
+                (column_name, replaced_value)
+            };
+
+            let operator_str = crate::generate::sql::to_sql::operator(op);
+            let value_str = crate::generate::sql::to_sql::render_value(&final_value);
+            format!("{} {} {}", qualified_column_name, operator_str, value_str)
         }
-        WhereArg::And(args) => WhereArg::And(
-            args.iter()
-                .map(|arg| replace_session_variables(arg, session))
-                .collect(),
-        ),
-        WhereArg::Or(args) => WhereArg::Or(
-            args.iter()
-                .map(|arg| replace_session_variables(arg, session))
-                .collect(),
-        ),
+        WhereArg::And(args) => {
+            let inner_list: Vec<String> = args
+                .iter()
+                .map(|arg| render_permission_where(arg, table, session))
+                .collect();
+            format!("({})", inner_list.join(" and "))
+        }
+        WhereArg::Or(args) => {
+            let inner_list: Vec<String> = args
+                .iter()
+                .map(|arg| render_permission_where(arg, table, session))
+                .collect();
+            format!("({})", inner_list.join(" or "))
+        }
     }
 }
 
@@ -283,32 +317,11 @@ pub fn get_sync_status_sql(
     session: &HashMap<String, SessionValue>,
 ) -> Result<String, SyncError> {
     use crate::ext::string;
-    use crate::generate::sql::to_sql;
-
-    // Create a dummy QueryField for rendering WHERE clauses
-    let dummy_query_field = ast::QueryField {
-        name: String::new(),
-        alias: None,
-        set: None,
-        directives: Vec::new(),
-        fields: Vec::new(),
-        start_fieldname: None,
-        end_fieldname: None,
-        start: None,
-        end: None,
-    };
 
     let mut union_parts = Vec::new();
 
     // Iterate through all tables in the context
     for (_record_name, table) in &context.tables {
-        // Create QueryInfo with primary_db matching this table's schema
-        let query_info = typecheck::QueryInfo {
-            primary_db: table.schema.clone(),
-            attached_dbs: std::collections::HashSet::new(),
-            variables: std::collections::HashMap::new(),
-        };
-
         // Get the actual table name from @tablename directive
         let actual_table_name = ast::get_tablename(&table.record.name, &table.record.fields);
         let quoted_table_name = string::quote(&actual_table_name);
@@ -323,18 +336,9 @@ pub fn get_sync_status_sql(
         let table_cursor = sync_cursor.get(&actual_table_name);
         let last_seen_updated_at = table_cursor.and_then(|c| c.last_seen_updated_at);
 
-        // Build WHERE clause for permissions (with session vars replaced as literals)
+        // Build WHERE clause for permissions (session vars replaced as literals during rendering)
         let permission_where = if let Some(perm) = &permission {
-            let perm_with_literals = replace_session_variables(perm, session);
-            format!(
-                " WHERE {}",
-                to_sql::render_where_arg(
-                    &perm_with_literals,
-                    table,
-                    &query_info,
-                    &dummy_query_field
-                )
-            )
+            format!(" WHERE {}", render_permission_where(perm, table, session))
         } else {
             String::new()
         };
@@ -469,22 +473,8 @@ pub fn get_sync_sql(
     page_size: usize,
 ) -> Result<SyncSqlResult, SyncError> {
     use crate::ext::string;
-    use crate::generate::sql::to_sql;
 
     let mut result = SyncSqlResult { tables: Vec::new() };
-
-    // Create a dummy QueryField for rendering WHERE clauses
-    let dummy_query_field = ast::QueryField {
-        name: String::new(),
-        alias: None,
-        set: None,
-        directives: Vec::new(),
-        fields: Vec::new(),
-        start_fieldname: None,
-        end_fieldname: None,
-        start: None,
-        end: None,
-    };
 
     // Iterate through tables that need syncing, ordered by sync_layer
     // sync_status.tables is already sorted by sync_layer
@@ -507,13 +497,6 @@ pub fn get_sync_sql(
                     status.table_name
                 ))
             })?;
-
-        // Create QueryInfo with primary_db matching this table's schema
-        let query_info = typecheck::QueryInfo {
-            primary_db: table.schema.clone(),
-            attached_dbs: std::collections::HashSet::new(),
-            variables: std::collections::HashMap::new(),
-        };
 
         let actual_table_name = &status.table_name;
 
@@ -539,49 +522,35 @@ pub fn get_sync_sql(
         };
 
         // Build WHERE clause combining permissions and updatedAt filter
-        let mut where_args = Vec::new();
+        let mut where_parts = Vec::new();
 
-        // Add permission WHERE clause (with session vars replaced as literals)
+        // Add permission WHERE clause (session vars replaced during rendering)
         if let Some(perm) = &permission {
-            let perm_with_literals = replace_session_variables(perm, session);
-            where_args.push(perm_with_literals);
+            where_parts.push(render_permission_where(perm, table, session));
         }
 
         // Add updatedAt filter if provided
         if let Some(updated_at) = last_seen_updated_at {
             use crate::ast::empty_range;
-            let updated_at_value = ast::QueryValue::Int((empty_range(), updated_at as i32));
-            where_args.push(WhereArg::Column(
-                false,
-                "updatedAt".to_string(),
-                ast::Operator::GreaterThan,
-                updated_at_value,
+            let table_name = crate::ext::string::quote(&ast::get_tablename(
+                &table.record.name,
+                &table.record.fields,
             ));
+            let updated_at_value = ast::QueryValue::Int((empty_range(), updated_at as i32));
+            let updated_at_where = format!(
+                "{}.{} > {}",
+                table_name,
+                crate::ext::string::quote("updatedAt"),
+                crate::generate::sql::to_sql::render_value(&updated_at_value)
+            );
+            where_parts.push(updated_at_where);
         }
 
         // Build WHERE clause SQL
-        let where_clause = if where_args.is_empty() {
+        let where_clause = if where_parts.is_empty() {
             String::new()
         } else {
-            let combined_where = if where_args.len() == 1 {
-                where_args.into_iter().next().unwrap()
-            } else {
-                WhereArg::And(where_args)
-            };
-
-            // Replace session variables with literals before rendering
-            let where_with_literals = replace_session_variables(&combined_where, session);
-
-            // Render WHERE clause to SQL
-            format!(
-                " WHERE {}",
-                to_sql::render_where_arg(
-                    &where_with_literals,
-                    table,
-                    &query_info,
-                    &dummy_query_field
-                )
-            )
+            format!(" WHERE {}", where_parts.join(" AND "))
         };
 
         // Build column list and headers
