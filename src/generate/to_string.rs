@@ -394,6 +394,7 @@ fn to_string_directive(directive: &ast::ColumnDirective) -> String {
     match directive {
         ast::ColumnDirective::PrimaryKey => "@id".to_string(),
         ast::ColumnDirective::Unique => "@unique".to_string(),
+        ast::ColumnDirective::Index => "@index".to_string(),
         ast::ColumnDirective::Default { id, value } => match value {
             ast::DefaultValue::Now => "@default(now)".to_string(),
             ast::DefaultValue::Value(value) => {

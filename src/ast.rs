@@ -234,6 +234,39 @@ pub fn has_fieldname(field: &Field, desired_name: &str) -> bool {
     }
 }
 
+/// Ensure that a record has an `updatedAt` DateTime field with a default value of `now` and an index.
+/// If the field already exists, it's left unchanged. Otherwise, it's added to the fields.
+pub fn ensure_updated_at_field(fields: &mut Vec<Field>) {
+    // Check if updatedAt field already exists
+    if fields.iter().any(|f| has_fieldname(f, "updatedAt")) {
+        return;
+    }
+
+    // Create the updatedAt field with @index directive
+    let updated_at_field = Field::Column(Column {
+        name: "updatedAt".to_string(),
+        type_: "DateTime".to_string(),
+        serialization_type: SerializationType::Concrete(ConcreteSerializationType::DateTime),
+        nullable: false,
+        directives: vec![
+            ColumnDirective::Default {
+                id: "now".to_string(),
+                value: DefaultValue::Now,
+            },
+            ColumnDirective::Index,
+        ],
+        start: None,
+        end: None,
+        start_name: None,
+        end_name: None,
+        start_typename: None,
+        end_typename: None,
+    });
+
+    // Add it to the fields
+    fields.push(updated_at_field);
+}
+
 pub fn has_field_or_linkname(field: &Field, desired_name: &str) -> bool {
     match field {
         Field::Column(Column { name, .. }) => name == desired_name,
@@ -470,6 +503,7 @@ pub fn empty_range() -> Range {
 pub enum ColumnDirective {
     PrimaryKey,
     Unique,
+    Index,
     Default { id: String, value: DefaultValue },
     // Check(String),
 }

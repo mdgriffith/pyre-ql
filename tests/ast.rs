@@ -33,6 +33,7 @@ record TestRecord {{
         match directive {
             ast::ColumnDirective::PrimaryKey => "@id",
             ast::ColumnDirective::Unique => "@unique",
+            ast::ColumnDirective::Index => "@index",
             ast::ColumnDirective::Default { .. } => "",
         }
     );

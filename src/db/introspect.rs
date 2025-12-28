@@ -390,6 +390,9 @@ pub struct ColumnInfo {
 
     #[serde(deserialize_with = "deserialize_notnull")]
     pub pk: bool,
+
+    #[serde(default)]
+    pub indexed: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

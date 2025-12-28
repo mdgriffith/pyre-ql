@@ -83,19 +83,6 @@ pub fn get_sync_status_sql(sync_cursor: JsValue, session: JsValue) -> JsValue {
 }
 
 #[wasm_bindgen]
-pub fn parse_sync_status(sync_cursor: JsValue, session: JsValue, rows: JsValue) -> JsValue {
-    let result = sync::parse_sync_status_wasm(sync_cursor, session, rows);
-    match result {
-        Ok(status) => {
-            // Serialize to JSON string first, then parse it back to JsValue
-            let json_str = serde_json::to_string(&status).unwrap();
-            js_sys::JSON::parse(&json_str).unwrap()
-        }
-        Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
-    }
-}
-
-#[wasm_bindgen]
 pub fn get_sync_sql(
     status_rows: JsValue,
     sync_cursor: JsValue,

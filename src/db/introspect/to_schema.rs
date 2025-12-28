@@ -37,6 +37,11 @@ fn column_info_to_column(info: &ColumnInfo) -> Column {
         directives.push(ColumnDirective::PrimaryKey);
     }
 
+    // Handle index directive
+    if info.indexed {
+        directives.push(ColumnDirective::Index);
+    }
+
     // Handle not null constraint
     let nullable = !info.notnull;
 

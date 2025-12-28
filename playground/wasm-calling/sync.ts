@@ -271,14 +271,12 @@ record User {
     name      String?
     status    String
     createdAt DateTime @default(now)
-    updatedAt DateTime @default(now)
 }
 
 record Post {
     @tablename "posts"
     id           Int     @id
     createdAt    DateTime @default(now)
-    updatedAt    DateTime @default(now)
     authorUserId Int
     title        String
     content      String

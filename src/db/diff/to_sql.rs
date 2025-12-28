@@ -34,6 +34,16 @@ pub fn to_sql(diff: &Diff) -> Vec<SqlAndParams> {
         }
 
         sql_statements.push(SqlAndParams::Sql(create_stmt));
+
+        // Add indexes for columns with @index directive
+        for column in &table.columns {
+            if column.indexed {
+                sql_statements.push(SqlAndParams::Sql(format!(
+                    "create index if not exists \"idx_{}_{}\" on \"{}\" (\"{}\")",
+                    table.name, column.name, table.name, column.name
+                )));
+            }
+        }
     }
 
     // Handle modified tables
@@ -46,6 +56,14 @@ pub fn to_sql(diff: &Diff) -> Vec<SqlAndParams> {
                         record_diff.name,
                         column_definition(column)
                     )));
+
+                    // Add index if the column has @index directive
+                    if column.indexed {
+                        sql_statements.push(SqlAndParams::Sql(format!(
+                            "create index if not exists \"idx_{}_{}\" on \"{}\" (\"{}\")",
+                            record_diff.name, column.name, record_diff.name, column.name
+                        )));
+                    }
                 }
                 RecordChange::RemovedField(column) => {
                     sql_statements.push(SqlAndParams::Sql(format!(

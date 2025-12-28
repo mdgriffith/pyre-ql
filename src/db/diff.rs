@@ -56,20 +56,41 @@ pub fn diff(
     let intro_tables: std::collections::HashMap<_, _> =
         introspection.tables.iter().map(|t| (&t.name, t)).collect();
 
+    // Helper function to get table info from context (which includes updatedAt if needed)
+    let get_table_info_from_context =
+        |table_name: &str| -> Option<(&str, &Vec<crate::ast::Field>)> {
+            // Find the table in context.tables by matching table name
+            for (_, table) in &context.tables {
+                let context_table_name =
+                    crate::ast::get_tablename(&table.record.name, &table.record.fields);
+                if context_table_name == table_name {
+                    return Some((table.record.name.as_str(), &table.record.fields));
+                }
+            }
+            None
+        };
+
     // Find added and modified tables
-    for (table_name, (_record_name, schema_fields)) in &schema_tables {
+    for (table_name, (record_name, schema_fields)) in &schema_tables {
+        // Use fields from context if available (includes updatedAt), otherwise fall back to schema fields
+        let (record_name_to_use, fields_to_use) = match get_table_info_from_context(table_name) {
+            Some((ctx_record_name, ctx_fields)) => (ctx_record_name, ctx_fields),
+            None => (record_name.as_str(), *schema_fields),
+        };
+
         match intro_tables.get(table_name) {
             None => {
-                let table = create_table_from_fields(context, table_name, schema_fields);
+                let table = create_table_from_fields(context, record_name_to_use, fields_to_use);
                 added.push(table);
             }
             Some(intro_table) => {
-                let schema_table = create_table_from_fields(context, table_name, schema_fields);
+                let schema_table =
+                    create_table_from_fields(context, record_name_to_use, fields_to_use);
                 if let Some(record_diff) = compare_record(
                     context,
                     &schema_table,
                     intro_table,
-                    schema_fields,
+                    fields_to_use,
                     introspection,
                 ) {
                     modified_records.push(record_diff);
@@ -146,6 +167,10 @@ fn add_fields(
                             .directives
                             .iter()
                             .any(|d| matches!(d, crate::ast::ColumnDirective::PrimaryKey)),
+                        indexed: col
+                            .directives
+                            .iter()
+                            .any(|d| matches!(d, crate::ast::ColumnDirective::Index)),
                     });
                 }
                 crate::ast::SerializationType::FromType(typename) => {
@@ -160,6 +185,10 @@ fn add_fields(
                                     notnull: !force_nullable && !col.nullable,
                                     default_value: None,
                                     pk: false,
+                                    indexed: col
+                                        .directives
+                                        .iter()
+                                        .any(|d| matches!(d, crate::ast::ColumnDirective::Index)),
                                 });
 
                                 for variant in variants {
@@ -186,6 +215,10 @@ fn add_fields(
                                     pk: col.directives.iter().any(|d| {
                                         matches!(d, crate::ast::ColumnDirective::PrimaryKey)
                                     }),
+                                    indexed: col
+                                        .directives
+                                        .iter()
+                                        .any(|d| matches!(d, crate::ast::ColumnDirective::Index)),
                                 });
                             }
                         }
@@ -344,6 +377,7 @@ fn compare_record(
                     notnull: false,
                     default_value: None,
                     pk: false,
+                    indexed: false,
                 },
             ));
         }

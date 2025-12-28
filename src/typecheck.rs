@@ -538,13 +538,17 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                 });
                             }
                         }
+                        // Ensure updatedAt field exists
+                        let mut fields_with_updated_at = fields.clone();
+                        ast::ensure_updated_at_field(&mut fields_with_updated_at);
+
                         context.types.insert(
                             name.clone(),
                             (
                                 DefInfo::Def(to_single_range(start_name, end_name)),
                                 Type::Record(ast::RecordDetails {
                                     name: name.clone(),
-                                    fields: fields.clone(),
+                                    fields: fields_with_updated_at.clone(),
                                     start: start.clone(),
                                     end: end.clone(),
                                     start_name: start_name.clone(),
@@ -558,7 +562,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                 schema: schema.namespace.clone(),
                                 record: ast::RecordDetails {
                                     name: name.clone(),
-                                    fields: fields.clone(),
+                                    fields: fields_with_updated_at,
                                     start: start.clone(),
                                     end: end.clone(),
                                     start_name: start_name.clone(),

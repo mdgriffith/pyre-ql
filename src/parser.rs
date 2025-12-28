@@ -716,6 +716,7 @@ fn parse_column_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
     cut(alt((
         parse_directive_named("id", ast::ColumnDirective::PrimaryKey),
         parse_directive_named("unique", ast::ColumnDirective::Unique),
+        parse_directive_named("index", ast::ColumnDirective::Index),
         parse_default_directive,
     )))(input)
 }
