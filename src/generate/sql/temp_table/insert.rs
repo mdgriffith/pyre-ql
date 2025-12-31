@@ -21,12 +21,20 @@ The general algorithm.
 
 */
 
+// Structure to track affected tables during inserts
+struct AffectedTable {
+    table_name: String,
+    column_names: Vec<String>,
+    temp_table_name: String,
+}
+
 pub fn insert_to_string(
     context: &typecheck::Context,
     query: &ast::Query,
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     query_table_field: &ast::QueryField,
+    include_affected_rows: bool,
 ) -> Vec<to_sql::Prepared> {
     let all_query_fields = ast::collect_query_fields(&query_table_field.fields);
 
@@ -42,6 +50,25 @@ pub fn insert_to_string(
     let parent_temp_table_name = &get_temp_table_name(&query_table_field);
     let mut temp_table_created = false;
     let mut multiple_table_inserts = false;
+    let mut affected_tables: Vec<AffectedTable> = Vec::new();
+
+    // Track parent table
+    if include_affected_rows {
+        let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+        let column_names = collect_all_column_names(context, &table.record.fields);
+        affected_tables.push(AffectedTable {
+            table_name,
+            column_names,
+            temp_table_name: parent_temp_table_name.clone(),
+        });
+
+        // Create temp table for single-table inserts to track affected rows
+        statements.push(to_sql::ignore(format!(
+            "create temp table {} as\n  select last_insert_rowid() as id",
+            parent_temp_table_name
+        )));
+        temp_table_created = true;
+    }
 
     for query_field in all_query_fields.iter() {
         let table_field = &table
@@ -66,6 +93,20 @@ pub fn insert_to_string(
                     temp_table_created = true;
                 }
 
+                // Track nested table
+                if include_affected_rows {
+                    let nested_temp_table_name = get_temp_table_name(query_field);
+                    let linked_table_name =
+                        ast::get_tablename(&linked_table.record.name, &linked_table.record.fields);
+                    let linked_column_names =
+                        collect_all_column_names(context, &linked_table.record.fields);
+                    affected_tables.push(AffectedTable {
+                        table_name: linked_table_name,
+                        column_names: linked_column_names,
+                        temp_table_name: nested_temp_table_name.clone(),
+                    });
+                }
+
                 insert_linked(
                     0,
                     context,
@@ -75,6 +116,8 @@ pub fn insert_to_string(
                     query_field,
                     link,
                     &mut statements,
+                    include_affected_rows,
+                    &mut affected_tables,
                 );
             }
             _ => (),
@@ -120,7 +163,27 @@ pub fn insert_to_string(
         statements.push(to_sql::include(final_statement));
     }
 
-    if multiple_table_inserts {
+    // Generate affected rows query if requested
+    // Execute this BEFORE the final selection to avoid lock conflicts
+    if include_affected_rows && !affected_tables.is_empty() {
+        let affected_rows_sql =
+            generate_affected_rows_query_for_inserts(context, query_info, &affected_tables);
+        // Insert before the final selection if it exists
+        if multiple_table_inserts {
+            // Insert before the final selection (which is the last statement before this)
+            let final_idx = statements.len() - 1;
+            statements.insert(final_idx, to_sql::include(affected_rows_sql));
+        } else {
+            statements.push(to_sql::include(affected_rows_sql));
+        }
+    }
+
+    // Drop temp tables at the end to ensure they're cleaned up for this query.
+    // Temp tables are session-scoped, so they'll persist across queries if not dropped.
+    // However, when tracking affected rows, we can't drop them immediately because the affected rows
+    // query's Rows object holds locks until consumed. In that case, temp tables will be cleaned up
+    // when the connection closes. The application layer could drop them after consuming rows if needed.
+    if multiple_table_inserts && !include_affected_rows {
         drop_temp_tables(query_table_field, &mut statements);
     }
 
@@ -220,6 +283,8 @@ pub fn insert_linked(
     query_table_field: &ast::QueryField,
     link: &ast::LinkDetails,
     statements: &mut Vec<to_sql::Prepared>,
+    include_affected_rows: bool,
+    affected_tables: &mut Vec<AffectedTable>,
 ) {
     // INSERT INTO users (username, credit) VALUES ('john_doe', 100);
     let mut field_names: Vec<String> = Vec::new();
@@ -281,11 +346,25 @@ pub fn insert_linked(
 
     let temp_table_name = &get_temp_table_name(&query_table_field);
 
-    // We could save the inserted id here, but I don't think we need to?
-    // statements.push(to_sql::ignore(format!(
-    //     "create temp table {} as\n  select last_insert_rowid() as id",
-    //     temp_table_name
-    // )));
+    // Create temp table for nested inserts if tracking affected rows
+    // This must happen AFTER the insert to capture the inserted rowids
+    if include_affected_rows {
+        // Create temp table with rowids of inserted rows by joining on foreign key
+        let foreign_key = &link.foreign.fields[0];
+        let local_key = &link.local_ids[0];
+        let quoted_foreign_key = string::quote(foreign_key);
+        let quoted_local_key = string::quote(local_key);
+        let quoted_table_name_for_temp = string::quote(&table_name);
+        let quoted_parent_table = string::quote(parent_table_name);
+        statements.push(to_sql::ignore(format!(
+            "create temp table {} as\n  select t.rowid as id\n  from {} t\n  join {} p on t.{} = p.{}",
+            temp_table_name,
+            quoted_table_name_for_temp,
+            quoted_parent_table,
+            quoted_foreign_key,
+            quoted_local_key
+        )));
+    }
 
     for query_field in all_query_fields {
         let table_field = &table
@@ -300,6 +379,20 @@ pub fn insert_linked(
                 // We are inserting a link, so we need to do a nested insert
                 let linked_table = typecheck::get_linked_table(context, &link).unwrap();
 
+                // Track nested table
+                if include_affected_rows {
+                    let nested_temp_table_name = get_temp_table_name(query_field);
+                    let linked_table_name =
+                        ast::get_tablename(&linked_table.record.name, &linked_table.record.fields);
+                    let linked_column_names =
+                        collect_all_column_names(context, &linked_table.record.fields);
+                    affected_tables.push(AffectedTable {
+                        table_name: linked_table_name,
+                        column_names: linked_column_names,
+                        temp_table_name: nested_temp_table_name.clone(),
+                    });
+                }
+
                 insert_linked(
                     indent + 2,
                     context,
@@ -309,9 +402,129 @@ pub fn insert_linked(
                     query_field,
                     &link,
                     statements,
+                    include_affected_rows,
+                    affected_tables,
                 );
             }
             _ => (),
+        }
+    }
+}
+
+fn generate_affected_rows_query_for_inserts(
+    _context: &typecheck::Context,
+    _query_info: &typecheck::QueryInfo,
+    affected_tables: &Vec<AffectedTable>,
+) -> String {
+    let mut union_parts = Vec::new();
+
+    for affected_table in affected_tables {
+        let quoted_table_name = string::quote(&affected_table.table_name);
+
+        // Build json_object call for row data
+        let mut row_parts = Vec::new();
+        for col in &affected_table.column_names {
+            // For JSON key, use the column name as-is (will be in single quotes for JSON string)
+            // For table reference, quote both table and column to handle special characters like __
+            // Column names with __ are valid unquoted identifiers in SQLite, but we quote them for safety
+            row_parts.push(format!(
+                "'{}', {}.{}",
+                col,
+                quoted_table_name,
+                string::quote(col)
+            ));
+        }
+
+        // Build json_array call for headers
+        // Headers should just be column names in single quotes (for JSON strings), not double-quoted
+        let mut header_parts = Vec::new();
+        for col in &affected_table.column_names {
+            header_parts.push(format!("'{}'", col));
+        }
+        // Build the join condition - all tables use their temp table
+        // Use table name directly instead of alias to avoid issues with quoted column names
+        let join_condition = format!(
+            "join {} temp_table on {}.rowid = temp_table.id",
+            affected_table.temp_table_name, quoted_table_name
+        );
+
+        let select_part = format!(
+            "select json_object(\n    'table_name', '{}',\n    'row', json_object({}),\n    'headers', json_array({})\n  ) as affected_row\n  from {}\n  {}",
+            affected_table.table_name,
+            row_parts.join(", "),
+            header_parts.join(", "),
+            quoted_table_name,
+            join_condition
+        );
+
+        union_parts.push(select_part);
+    }
+
+    // Use json() to parse the JSON string before grouping, so we get an array of objects, not an array of strings
+    format!(
+        "select json_group_array(json(affected_row)) as _affectedRows\nfrom (\n  {}\n)",
+        union_parts.join("\n  union all\n  ")
+    )
+}
+
+// Collect all column names including union type variant columns
+fn collect_all_column_names(context: &typecheck::Context, fields: &Vec<ast::Field>) -> Vec<String> {
+    let mut column_names = Vec::new();
+    collect_column_names_recursive(context, fields, None, &mut column_names);
+    column_names
+}
+
+fn collect_column_names_recursive(
+    context: &typecheck::Context,
+    fields: &Vec<ast::Field>,
+    parent_name: Option<&str>,
+    column_names: &mut Vec<String>,
+) {
+    for field in fields {
+        match field {
+            ast::Field::Column(column) => {
+                match &column.serialization_type {
+                    ast::SerializationType::Concrete(_) => {
+                        // Regular column
+                        // If parent_name is Some, it already includes trailing __ (e.g., "status__")
+                        // So we just concatenate, not add another __
+                        let column_name = match parent_name {
+                            None => column.name.clone(),
+                            Some(parent) => format!("{}{}", parent, column.name),
+                        };
+                        column_names.push(column_name);
+                    }
+                    ast::SerializationType::FromType(typename) => {
+                        // Union type column
+                        let base_name = match parent_name {
+                            None => column.name.clone(),
+                            Some(parent) => format!("{}__{}", parent, column.name),
+                        };
+                        // Add the discriminator column
+                        column_names.push(base_name.clone());
+
+                        // Add variant field columns
+                        if let Some((_, type_)) = context.types.get(typename) {
+                            if let typecheck::Type::OneOf { variants } = type_ {
+                                // Variant fields are stored as {columnName}__{fieldName}
+                                // So if base_name is "status", variant fields become "status__reason"
+                                let variant_base_name = format!("{}__", base_name);
+                                for variant in variants {
+                                    if let Some(var_fields) = &variant.fields {
+                                        collect_column_names_recursive(
+                                            context,
+                                            var_fields,
+                                            Some(&variant_base_name),
+                                            column_names,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }

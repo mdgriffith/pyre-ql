@@ -1,3 +1,4 @@
+mod affected_rows;
 mod basic;
 mod limit;
 mod permissions;

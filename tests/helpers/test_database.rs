@@ -264,6 +264,8 @@ impl TestDatabase {
 
                     if include {
                         // This statement returns results - use query()
+                        // Note: Rows objects may hold locks until consumed, but we need to return them
+                        // The caller is responsible for consuming rows before executing more statements
                         if param_values.is_empty() {
                             let rows = conn
                                 .query(&sql_with_params, ())
@@ -282,17 +284,43 @@ impl TestDatabase {
                         }
                     } else {
                         // This statement doesn't return results - use execute()
-                        if param_values.is_empty() {
-                            conn.execute(&sql_with_params, ())
+                        // However, if the SQL contains RETURNING, we must use query() instead
+                        // and consume the rows (they won't be added to results)
+                        let has_returning = sql_with_params.to_uppercase().contains("RETURNING");
+                        if has_returning {
+                            // Statement has RETURNING, so it returns rows - use query() but don't add to results
+                            if param_values.is_empty() {
+                                let mut rows = conn
+                                    .query(&sql_with_params, ())
+                                    .await
+                                    .map_err(TestError::Database)?;
+                                // Consume all rows to avoid holding locks
+                                while rows.next().await.map_err(TestError::Database)?.is_some() {}
+                            } else {
+                                let mut rows = conn
+                                    .query(
+                                        &sql_with_params,
+                                        libsql::params_from_iter(param_values.clone()),
+                                    )
+                                    .await
+                                    .map_err(TestError::Database)?;
+                                // Consume all rows to avoid holding locks
+                                while rows.next().await.map_err(TestError::Database)?.is_some() {}
+                            }
+                        } else {
+                            // No RETURNING, safe to use execute()
+                            if param_values.is_empty() {
+                                conn.execute(&sql_with_params, ())
+                                    .await
+                                    .map_err(TestError::Database)?;
+                            } else {
+                                conn.execute(
+                                    &sql_with_params,
+                                    libsql::params_from_iter(param_values.clone()),
+                                )
                                 .await
                                 .map_err(TestError::Database)?;
-                        } else {
-                            conn.execute(
-                                &sql_with_params,
-                                libsql::params_from_iter(param_values.clone()),
-                            )
-                            .await
-                            .map_err(TestError::Database)?;
+                            }
                         }
                     }
                 }
@@ -486,6 +514,7 @@ impl TestDatabase {
                         replace_params_positional(&sql, &all_param_names)
                     };
 
+
                     if include {
                         if param_values.is_empty() {
                             let rows = conn
@@ -504,17 +533,44 @@ impl TestDatabase {
                             results.push(rows);
                         }
                     } else {
-                        if param_values.is_empty() {
-                            conn.execute(&sql_with_params, ())
+                        // This statement doesn't return results - use execute()
+                        // However, if the SQL contains RETURNING, we must use query() instead
+                        // and consume the rows (they won't be added to results)
+                        let has_returning = sql_with_params.to_uppercase().contains("RETURNING");
+                        if has_returning {
+                            // Statement has RETURNING, so it returns rows - use query() but don't add to results
+                            if param_values.is_empty() {
+                                let mut rows = conn
+                                    .query(&sql_with_params, ())
+                                    .await
+                                    .map_err(TestError::Database)?;
+                                // Consume all rows to avoid holding locks
+                                while rows.next().await.map_err(TestError::Database)?.is_some() {}
+                            } else {
+                                let mut rows = conn
+                                    .query(
+                                        &sql_with_params,
+                                        libsql::params_from_iter(param_values.clone()),
+                                    )
+                                    .await
+                                    .map_err(TestError::Database)?;
+                                // Consume all rows to avoid holding locks
+                                while rows.next().await.map_err(TestError::Database)?.is_some() {}
+                            }
+                        } else {
+                            // No RETURNING, safe to use execute()
+                            if param_values.is_empty() {
+                                conn.execute(&sql_with_params, ())
+                                    .await
+                                    .map_err(TestError::Database)?;
+                            } else {
+                                conn.execute(
+                                    &sql_with_params,
+                                    libsql::params_from_iter(param_values.clone()),
+                                )
                                 .await
                                 .map_err(TestError::Database)?;
-                        } else {
-                            conn.execute(
-                                &sql_with_params,
-                                libsql::params_from_iter(param_values.clone()),
-                            )
-                            .await
-                            .map_err(TestError::Database)?;
+                            }
                         }
                     }
                 }
@@ -535,9 +591,24 @@ impl TestDatabase {
                             .map_err(TestError::Database)?;
                         results.push(rows);
                     } else {
-                        conn.execute(&sql_with_params, libsql::params_from_iter(values))
-                            .await
-                            .map_err(TestError::Database)?;
+                        // This statement doesn't return results - use execute()
+                        // However, if the SQL contains RETURNING, we must use query() instead
+                        // and consume the rows (they won't be added to results)
+                        let has_returning = sql_with_params.to_uppercase().contains("RETURNING");
+                        if has_returning {
+                            // Statement has RETURNING, so it returns rows - use query() but don't add to results
+                            let mut rows = conn
+                                .query(&sql_with_params, libsql::params_from_iter(values))
+                                .await
+                                .map_err(TestError::Database)?;
+                            // Consume all rows to avoid holding locks
+                            while rows.next().await.map_err(TestError::Database)?.is_some() {}
+                        } else {
+                            // No RETURNING, safe to use execute()
+                            conn.execute(&sql_with_params, libsql::params_from_iter(values))
+                                .await
+                                .map_err(TestError::Database)?;
+                        }
                     }
                 }
             }

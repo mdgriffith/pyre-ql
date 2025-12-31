@@ -245,27 +245,42 @@ fn select_type_columns(
                                                 }
                                                 // Variant fields are stored as {columnName}__{fieldName}
                                                 // Extract column name from source_field (everything after last dot, or whole string)
-                                                let base_column = source_field
-                                                    .split('.')
-                                                    .last()
-                                                    .unwrap_or(source_field);
-                                                // Construct the variant field column name
+                                                // Handle quoted identifiers like "users"."status" by extracting the unquoted column name
+                                                let base_column_unquoted =
+                                                    if source_field.contains('.') {
+                                                        // Split on "." and get the last part, which is the column name
+                                                        // For "users"."status", this gives us "status" (with quotes), so strip them
+                                                        let parts: Vec<&str> =
+                                                            source_field.split('.').collect();
+                                                        parts
+                                                            .last()
+                                                            .unwrap_or(&source_field)
+                                                            .trim_matches('"')
+                                                    } else {
+                                                        source_field.trim_matches('"')
+                                                    };
+                                                // Construct the variant field column name (unquoted)
                                                 let variant_field_name = format!(
                                                     "{}__{}",
-                                                    base_column, inner_column.name
+                                                    base_column_unquoted, inner_column.name
                                                 );
                                                 // If source_field was qualified (e.g., "table.column"), preserve the qualification
-                                                let qualified_variant_field = if source_field
-                                                    .contains('.')
-                                                {
-                                                    let table_part = source_field
-                                                        .split('.')
-                                                        .next()
-                                                        .unwrap_or(source_field);
-                                                    format!("{}.{}", table_part, variant_field_name)
-                                                } else {
-                                                    variant_field_name
-                                                };
+                                                let qualified_variant_field =
+                                                    if source_field.contains('.') {
+                                                        // Extract table name (first part before the dot)
+                                                        let table_part = source_field
+                                                            .split('.')
+                                                            .next()
+                                                            .unwrap_or(source_field);
+                                                        // Construct "table"."column__field" format with proper quoting
+                                                        format!(
+                                                            "{}.{}",
+                                                            table_part,
+                                                            string::quote(&variant_field_name)
+                                                        )
+                                                    } else {
+                                                        string::quote(&variant_field_name)
+                                                    };
                                                 case_sql.push_str(&format!(
                                                     "\n      '{}', {}",
                                                     inner_column.name, qualified_variant_field
