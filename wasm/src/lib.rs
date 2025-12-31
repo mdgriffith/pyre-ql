@@ -7,6 +7,7 @@ mod cache;
 mod migrate;
 mod query;
 mod sync;
+mod sync_deltas;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -95,6 +96,22 @@ pub fn get_sync_sql(
             // Serialize to JSON string first, then parse it back to JsValue
             // This works around serde_wasm_bindgen HashMap serialization issues
             let json_str = serde_json::to_string(&sql_result).unwrap();
+            js_sys::JSON::parse(&json_str).unwrap()
+        }
+        Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
+    }
+}
+
+#[wasm_bindgen]
+pub fn calculate_sync_deltas(
+    affected_rows: JsValue,
+    connected_sessions: JsValue,
+) -> JsValue {
+    let result = sync_deltas::calculate_sync_deltas_wasm(affected_rows, connected_sessions);
+    match result {
+        Ok(deltas_result) => {
+            // Serialize to JSON string first, then parse it back to JsValue
+            let json_str = serde_json::to_string(&deltas_result).unwrap();
             js_sys::JSON::parse(&json_str).unwrap()
         }
         Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
