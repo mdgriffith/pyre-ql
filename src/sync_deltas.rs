@@ -2,7 +2,7 @@ use crate::ast::{self, WhereArg};
 use crate::sync::SessionValue;
 use crate::typecheck;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // Sync deltas module requires json feature for JSON value handling
 #[cfg(feature = "json")]
@@ -27,17 +27,20 @@ pub struct ConnectedSession {
     pub session: HashMap<String, SessionValue>,
 }
 
-/// Delta for a single session - list of affected rows that session should receive
+/// A group of sessions that share the same affected row indices
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SessionDelta {
-    pub session_id: String,
-    pub affected_rows: Vec<AffectedRow>,
+pub struct AffectedRowGroup {
+    pub session_ids: HashSet<String>,
+    pub affected_row_indices: Vec<usize>, // indices into all_affected_rows
 }
 
-/// Result containing deltas for all sessions that should receive updates
+/// Result containing deltas with deduplicated affected rows
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncDeltasResult {
-    pub deltas: Vec<SessionDelta>,
+    /// Shared pool of all unique affected rows
+    pub all_affected_rows: Vec<AffectedRow>,
+    /// Groups of sessions, each referencing rows by index
+    pub groups: Vec<AffectedRowGroup>,
 }
 
 /// Evaluate a permission WhereArg against row data and session values
@@ -54,8 +57,7 @@ fn evaluate_permission(
                 // Session variable - get from session
                 session
                     .get(fieldname)
-                    .map(|v| session_value_to_json(v))
-                    .unwrap_or(JsonValue::Null)
+                    .map_or(JsonValue::Null, |v| session_value_to_json(v))
             } else {
                 // Table column - get from row data
                 row_data.get(fieldname).cloned().unwrap_or(JsonValue::Null)
@@ -68,12 +70,12 @@ fn evaluate_permission(
             evaluate_operator(op, &lhs_value, &rhs_value)
         }
         WhereArg::And(args) => {
-            // All conditions must be true
+            // All conditions must be true - short-circuit on first false
             args.iter()
                 .all(|arg| evaluate_permission(arg, row_data, session))
         }
         WhereArg::Or(args) => {
-            // At least one condition must be true
+            // At least one condition must be true - short-circuit on first true
             args.iter()
                 .any(|arg| evaluate_permission(arg, row_data, session))
         }
@@ -182,39 +184,83 @@ fn json_compare(a: &JsonValue, b: &JsonValue) -> Option<std::cmp::Ordering> {
     }
 }
 
-/// Simple LIKE pattern matching (SQL LIKE semantics: % matches any sequence, _ matches any single character)
-/// Uses a simple recursive approach
+/// Optimized LIKE pattern matching using byte slices (no allocations)
+/// SQL LIKE semantics: % matches any sequence, _ matches any single character
 fn like_pattern_match(text: &str, pattern: &str) -> bool {
-    like_pattern_match_recursive(
-        text.chars().collect::<Vec<_>>().as_slice(),
-        pattern.chars().collect::<Vec<_>>().as_slice(),
-    )
+    like_pattern_match_bytes(text.as_bytes(), pattern.as_bytes(), 0, 0)
 }
 
-/// Recursive helper for LIKE pattern matching
-fn like_pattern_match_recursive(text: &[char], pattern: &[char]) -> bool {
-    match (text.first(), pattern.first()) {
-        (None, None) => true,     // Both exhausted - match
-        (Some(_), None) => false, // Pattern exhausted but text remains - no match
-        (None, Some(&'%')) => {
-            // Text exhausted, pattern is % - check if rest of pattern matches empty string
-            like_pattern_match_recursive(&[], &pattern[1..])
+/// Iterative LIKE pattern matching using byte indices (no allocations)
+fn like_pattern_match_bytes(
+    text: &[u8],
+    pattern: &[u8],
+    mut text_idx: usize,
+    mut pattern_idx: usize,
+) -> bool {
+    // Use a stack to handle backtracking for % wildcards
+    // Stack stores (text_idx, pattern_idx) pairs
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+
+    loop {
+        // Check if we've exhausted both text and pattern
+        if pattern_idx >= pattern.len() {
+            if text_idx >= text.len() {
+                return true; // Both exhausted - match
+            }
+            // Pattern exhausted but text remains - try backtracking
+            if let Some((t_idx, p_idx)) = stack.pop() {
+                text_idx = t_idx;
+                pattern_idx = p_idx;
+                continue;
+            }
+            return false; // No more backtracking options
         }
-        (None, Some(_)) => false, // Text exhausted but pattern has non-% - no match
-        (Some(_), Some(&'%')) => {
-            // Try matching % to zero characters, or one+ characters
-            like_pattern_match_recursive(text, &pattern[1..])
-                || like_pattern_match_recursive(&text[1..], pattern)
+
+        if text_idx >= text.len() {
+            // Text exhausted
+            if pattern[pattern_idx] == b'%' {
+                // % can match zero characters
+                pattern_idx += 1;
+                continue;
+            }
+            // Try backtracking
+            if let Some((t_idx, p_idx)) = stack.pop() {
+                text_idx = t_idx;
+                pattern_idx = p_idx;
+                continue;
+            }
+            return false;
         }
-        (Some(_), Some(&'_')) => {
-            // _ matches any single character
-            like_pattern_match_recursive(&text[1..], &pattern[1..])
+
+        match pattern[pattern_idx] {
+            b'%' => {
+                // % matches zero or more characters
+                // Try matching zero characters first (greedy)
+                pattern_idx += 1;
+                // Also push backtrack point: try matching one+ characters
+                stack.push((text_idx + 1, pattern_idx - 1));
+            }
+            b'_' => {
+                // _ matches any single character
+                text_idx += 1;
+                pattern_idx += 1;
+            }
+            c => {
+                if text[text_idx] == c {
+                    // Characters match
+                    text_idx += 1;
+                    pattern_idx += 1;
+                } else {
+                    // Characters don't match - try backtracking
+                    if let Some((t_idx, p_idx)) = stack.pop() {
+                        text_idx = t_idx;
+                        pattern_idx = p_idx;
+                        continue;
+                    }
+                    return false; // No match and no backtracking
+                }
+            }
         }
-        (Some(&t), Some(&p)) if t == p => {
-            // Characters match
-            like_pattern_match_recursive(&text[1..], &pattern[1..])
-        }
-        (Some(_), Some(_)) => false, // Characters don't match
     }
 }
 
@@ -236,8 +282,7 @@ fn query_value_to_json(
             if let Some(session_field) = &var.session_field {
                 session
                     .get(session_field)
-                    .map(|v| session_value_to_json(v))
-                    .unwrap_or(JsonValue::Null)
+                    .map_or(JsonValue::Null, |v| session_value_to_json(v))
             } else {
                 // Regular variable - not supported in permission evaluation
                 JsonValue::Null
@@ -272,64 +317,90 @@ fn session_value_to_json(value: &SessionValue) -> JsonValue {
 }
 
 /// Calculate which sessions should receive which affected rows based on permissions
+/// Optimized with:
+/// - Table lookup map (O(1) instead of O(n) per lookup)
+/// - Pre-processed row data (convert JSON once)
+/// - Grouped sessions by shared affected rows (deduplication)
 pub fn calculate_sync_deltas(
     affected_rows: &[AffectedRow],
     connected_sessions: &[ConnectedSession],
     context: &typecheck::Context,
 ) -> Result<SyncDeltasResult, SyncDeltasError> {
-    let mut result = SyncDeltasResult { deltas: Vec::new() };
+    // OPTIMIZATION 1: Build table lookup map once (O(k) instead of O(n*m*k))
+    let mut table_map: HashMap<String, Option<WhereArg>> = HashMap::new();
+    for table in context.tables.values() {
+        let actual_table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+        let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Select);
+        table_map.insert(actual_table_name, permission);
+    }
 
-    // For each connected session, collect affected rows they should receive
+    // OPTIMIZATION 2: Pre-process affected rows (convert JSON to HashMap once)
+    let processed_rows: Vec<(HashMap<String, JsonValue>, &AffectedRow)> = affected_rows
+        .iter()
+        .map(|row| {
+            let row_data = if let JsonValue::Object(obj) = &row.row {
+                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            } else {
+                return Err(SyncDeltasError::InvalidRowData(
+                    "Row data must be a JSON object".to_string(),
+                ));
+            };
+            Ok((row_data, row))
+        })
+        .collect::<Result<_, _>>()?;
+
+    // OPTIMIZATION 3: Group sessions by shared affected row sets
+    // Map: (sorted row indices) -> set of session IDs
+    let mut row_set_to_sessions: HashMap<Vec<usize>, HashSet<String>> = HashMap::new();
+
     for session in connected_sessions {
-        let mut session_affected_rows = Vec::new();
+        let mut session_row_indices = Vec::new();
 
-        for affected_row in affected_rows {
-            // Find the table in context
-            let table = context
-                .tables
-                .values()
-                .find(|t| {
-                    let actual_table_name = ast::get_tablename(&t.record.name, &t.record.fields);
-                    actual_table_name == affected_row.table_name
-                })
-                .ok_or_else(|| SyncDeltasError::TableNotFound(affected_row.table_name.clone()))?;
-
-            // Get select permission for this table
-            let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Select);
+        for (idx, (row_data, affected_row)) in processed_rows.iter().enumerate() {
+            // OPTIMIZATION: Use hash map lookup instead of linear search
+            let permission = table_map
+                .get(&affected_row.table_name)
+                .ok_or_else(|| SyncDeltasError::TableNotFound(affected_row.table_name.clone()))?
+                .as_ref();
 
             // If no permission (public), all sessions can see it
             let should_receive = if let Some(perm) = permission {
-                // Convert row JSON to HashMap for easier access
-                let row_data = if let JsonValue::Object(obj) = &affected_row.row {
-                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-                } else {
-                    return Err(SyncDeltasError::InvalidRowData(
-                        "Row data must be a JSON object".to_string(),
-                    ));
-                };
-
-                // Evaluate permission
-                evaluate_permission(&perm, &row_data, &session.session)
+                evaluate_permission(perm, row_data, &session.session)
             } else {
-                // No permission means public - all sessions can see it
-                true
+                true // Public - all sessions can see it
             };
 
             if should_receive {
-                session_affected_rows.push(affected_row.clone());
+                session_row_indices.push(idx);
             }
         }
 
-        // Only add delta if there are affected rows for this session
-        if !session_affected_rows.is_empty() {
-            result.deltas.push(SessionDelta {
-                session_id: session.session_id.clone(),
-                affected_rows: session_affected_rows,
-            });
+        if !session_row_indices.is_empty() {
+            // Sort to ensure consistent key for grouping
+            session_row_indices.sort_unstable();
+            row_set_to_sessions
+                .entry(session_row_indices)
+                .or_insert_with(HashSet::new)
+                .insert(session.session_id.clone());
         }
     }
 
-    Ok(result)
+    // Convert to result structure
+    // All affected rows are stored once in the shared pool
+    let all_affected_rows = affected_rows.to_vec();
+
+    let groups: Vec<AffectedRowGroup> = row_set_to_sessions
+        .into_iter()
+        .map(|(row_indices, session_ids)| AffectedRowGroup {
+            session_ids,
+            affected_row_indices: row_indices,
+        })
+        .collect();
+
+    Ok(SyncDeltasResult {
+        all_affected_rows,
+        groups,
+    })
 }
 
 #[derive(Debug)]

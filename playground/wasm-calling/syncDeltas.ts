@@ -51,13 +51,14 @@ interface ConnectedSession {
 
 type SessionValue = null | number | string | Uint8Array;
 
-interface SessionDelta {
-    session_id: string;
-    affected_rows: AffectedRow[];
+interface AffectedRowGroup {
+    session_ids: string[]; // HashSet serializes as array in JSON
+    affected_row_indices: number[];
 }
 
 interface SyncDeltasResult {
-    deltas: SessionDelta[];
+    all_affected_rows: AffectedRow[];
+    groups: AffectedRowGroup[];
 }
 
 interface Session {
@@ -414,12 +415,14 @@ update PublishDraft {
     console.log("==========================\n");
 
     console.log("=== Summary ===");
-    console.log(`Total sessions with deltas: ${result.deltas.length}`);
+    console.log(`Total groups: ${result.groups.length}`);
+    console.log(`Total unique affected rows: ${result.all_affected_rows.length}`);
 
-    for (const delta of result.deltas) {
-        console.log(`\nSession: ${delta.session_id}`);
-        console.log(`  Affected rows: ${delta.affected_rows.length}`);
-        for (const affectedRow of delta.affected_rows) {
+    for (const group of result.groups) {
+        console.log(`\nSessions: ${group.session_ids.join(', ')}`);
+        console.log(`  Affected row indices: ${group.affected_row_indices.join(', ')}`);
+        for (const idx of group.affected_row_indices) {
+            const affectedRow = result.all_affected_rows[idx];
             console.log(`    - Table: ${affectedRow.table_name}`);
             console.log(`      Row data:`, JSON.stringify(affectedRow.row, null, 6));
         }

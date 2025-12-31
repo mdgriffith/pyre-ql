@@ -4,7 +4,7 @@ use pyre::sync::SessionValue as RustSessionValue;
 use pyre::sync_deltas;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use wasm_bindgen::prelude::*;
 
 // WASM-compatible types for sync deltas
@@ -44,14 +44,15 @@ impl From<SessionValueWasm> for RustSessionValue {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SessionDeltaWasm {
-    pub session_id: String,
-    pub affected_rows: Vec<AffectedRowWasm>,
+pub struct AffectedRowGroupWasm {
+    pub session_ids: HashSet<String>,
+    pub affected_row_indices: Vec<usize>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SyncDeltasResultWasm {
-    pub deltas: Vec<SessionDeltaWasm>,
+    pub all_affected_rows: Vec<AffectedRowWasm>,
+    pub groups: Vec<AffectedRowGroupWasm>,
 }
 
 fn convert_session_wasm_to_rust(
@@ -75,20 +76,21 @@ fn convert_affected_row_wasm_to_rust(row: &AffectedRowWasm) -> sync_deltas::Affe
 
 fn convert_result_rust_to_wasm(result: sync_deltas::SyncDeltasResult) -> SyncDeltasResultWasm {
     SyncDeltasResultWasm {
-        deltas: result
-            .deltas
+        all_affected_rows: result
+            .all_affected_rows
             .into_iter()
-            .map(|delta| SessionDeltaWasm {
-                session_id: delta.session_id,
-                affected_rows: delta
-                    .affected_rows
-                    .into_iter()
-                    .map(|row| AffectedRowWasm {
-                        table_name: row.table_name,
-                        row: row.row,
-                        headers: row.headers,
-                    })
-                    .collect(),
+            .map(|row| AffectedRowWasm {
+                table_name: row.table_name,
+                row: row.row,
+                headers: row.headers,
+            })
+            .collect(),
+        groups: result
+            .groups
+            .into_iter()
+            .map(|group| AffectedRowGroupWasm {
+                session_ids: group.session_ids,
+                affected_row_indices: group.affected_row_indices,
             })
             .collect(),
     }
