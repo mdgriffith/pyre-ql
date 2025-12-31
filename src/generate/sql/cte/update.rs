@@ -58,16 +58,11 @@ pub fn update_to_string(
         // Execute UPDATE with RETURNING
         result.push_str(" returning *");
         statements.push(to_sql::ignore(result.clone()));
-        
+
         // Generate the affected rows query - select rows matching the WHERE conditions
         // Note: For UPDATE, this selects the updated rows (after update)
-        let affected_rows_sql = generate_affected_rows_query(
-            context,
-            query_info,
-            table,
-            query_field,
-            &where_clause,
-        );
+        let affected_rows_sql =
+            generate_affected_rows_query(context, query_info, table, query_field, &where_clause);
         statements.push(to_sql::include(affected_rows_sql));
     } else {
         statements.push(to_sql::ignore(result));
@@ -85,23 +80,23 @@ fn generate_affected_rows_query(
 ) -> String {
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
     let columns = ast::collect_columns(&table.record.fields);
-    
+
     // Generate column names and json_object keys
     let column_names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
-    
+
     // Build json_object call for row data
     let mut row_parts = Vec::new();
     for col in &column_names {
         let quoted_col = string::quote(col);
         row_parts.push(format!("'{}', t.{}", quoted_col, quoted_col));
     }
-    
+
     // Build json_array call for headers
     let mut header_parts = Vec::new();
     for col in &column_names {
         header_parts.push(format!("'{}'", string::quote(col)));
     }
-    
+
     // Select affected rows using the same WHERE conditions
     // Note: For UPDATE, this selects rows after the update, so the WHERE conditions
     // should still match the updated rows

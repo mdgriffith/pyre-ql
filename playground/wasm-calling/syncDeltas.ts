@@ -281,7 +281,7 @@ function extractAffectedRowsFromBatch(batchResults: any[]): AffectedRow[] {
     // Look through all result sets for _affectedRows
     for (const resultSet of batchResults) {
         if (!resultSet.columns || !resultSet.rows) continue;
-        
+
         const affectedRowsColIndex = resultSet.columns.indexOf('_affectedRows');
         if (affectedRowsColIndex === -1) continue;
 
@@ -362,7 +362,7 @@ update PublishDraft {
 
     // Execute the mutation
     const updateResults = await db.batch(updateSql.Ok.sql);
-    
+
     // Extract affected rows from the result
     const affectedRows = extractAffectedRowsFromBatch(updateResults);
 
@@ -415,7 +415,7 @@ update PublishDraft {
 
     console.log("=== Summary ===");
     console.log(`Total sessions with deltas: ${result.deltas.length}`);
-    
+
     for (const delta of result.deltas) {
         console.log(`\nSession: ${delta.session_id}`);
         console.log(`  Affected rows: ${delta.affected_rows.length}`);

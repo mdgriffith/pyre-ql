@@ -16,7 +16,7 @@ compile_error!("sync_deltas module requires the 'json' feature to be enabled");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AffectedRow {
     pub table_name: String,
-    pub row: JsonValue,      // Object with column names as keys
+    pub row: JsonValue,       // Object with column names as keys
     pub headers: Vec<String>, // Column names in order
 }
 
@@ -58,10 +58,7 @@ fn evaluate_permission(
                     .unwrap_or(JsonValue::Null)
             } else {
                 // Table column - get from row data
-                row_data
-                    .get(fieldname)
-                    .cloned()
-                    .unwrap_or(JsonValue::Null)
+                row_data.get(fieldname).cloned().unwrap_or(JsonValue::Null)
             };
 
             // Get the right-hand side value
@@ -158,7 +155,8 @@ fn json_values_equal(a: &JsonValue, b: &JsonValue) -> bool {
         }
         (JsonValue::Object(a), JsonValue::Object(b)) => {
             a.len() == b.len()
-                && a.iter().all(|(k, v)| b.get(k).map_or(false, |w| json_values_equal(v, w)))
+                && a.iter()
+                    .all(|(k, v)| b.get(k).map_or(false, |w| json_values_equal(v, w)))
         }
         _ => false,
     }
@@ -196,7 +194,7 @@ fn like_pattern_match(text: &str, pattern: &str) -> bool {
 /// Recursive helper for LIKE pattern matching
 fn like_pattern_match_recursive(text: &[char], pattern: &[char]) -> bool {
     match (text.first(), pattern.first()) {
-        (None, None) => true, // Both exhausted - match
+        (None, None) => true,     // Both exhausted - match
         (Some(_), None) => false, // Pattern exhausted but text remains - no match
         (None, Some(&'%')) => {
             // Text exhausted, pattern is % - check if rest of pattern matches empty string
@@ -268,11 +266,7 @@ fn session_value_to_json(value: &SessionValue) -> JsonValue {
         SessionValue::Text(s) => JsonValue::String(s.clone()),
         SessionValue::Blob(b) => {
             // Convert blob to hex string for JSON
-            JsonValue::String(
-                b.iter()
-                    .map(|x| format!("{:02x}", x))
-                    .collect::<String>(),
-            )
+            JsonValue::String(b.iter().map(|x| format!("{:02x}", x)).collect::<String>())
         }
     }
 }
@@ -283,9 +277,7 @@ pub fn calculate_sync_deltas(
     connected_sessions: &[ConnectedSession],
     context: &typecheck::Context,
 ) -> Result<SyncDeltasResult, SyncDeltasError> {
-    let mut result = SyncDeltasResult {
-        deltas: Vec::new(),
-    };
+    let mut result = SyncDeltasResult { deltas: Vec::new() };
 
     // For each connected session, collect affected rows they should receive
     for session in connected_sessions {
@@ -297,25 +289,19 @@ pub fn calculate_sync_deltas(
                 .tables
                 .values()
                 .find(|t| {
-                    let actual_table_name =
-                        ast::get_tablename(&t.record.name, &t.record.fields);
+                    let actual_table_name = ast::get_tablename(&t.record.name, &t.record.fields);
                     actual_table_name == affected_row.table_name
                 })
-                .ok_or_else(|| {
-                    SyncDeltasError::TableNotFound(affected_row.table_name.clone())
-                })?;
+                .ok_or_else(|| SyncDeltasError::TableNotFound(affected_row.table_name.clone()))?;
 
             // Get select permission for this table
-            let permission =
-                ast::get_permissions(&table.record, &ast::QueryOperation::Select);
+            let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Select);
 
             // If no permission (public), all sessions can see it
             let should_receive = if let Some(perm) = permission {
                 // Convert row JSON to HashMap for easier access
                 let row_data = if let JsonValue::Object(obj) = &affected_row.row {
-                    obj.iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect()
+                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
                 } else {
                     return Err(SyncDeltasError::InvalidRowData(
                         "Row data must be a JSON object".to_string(),
@@ -366,4 +352,3 @@ impl std::fmt::Display for SyncDeltasError {
 }
 
 impl std::error::Error for SyncDeltasError {}
-
