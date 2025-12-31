@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 // Sync deltas module requires json feature for JSON value handling
 #[cfg(feature = "json")]
-use serde_json::Value as JsonValue;
+use serde_json::{Map, Value as JsonValue};
 
 // When json feature is not enabled, sync deltas functionality is not available
 #[cfg(not(feature = "json"))]
@@ -45,29 +45,33 @@ pub struct SyncDeltasResult {
 
 /// Evaluate a permission WhereArg against row data and session values
 /// Returns true if the permission condition is satisfied
+///
+/// Optimized to work directly with JsonValue::Object references, avoiding HashMap conversion
 fn evaluate_permission(
     where_arg: &WhereArg,
-    row_data: &HashMap<String, JsonValue>,
+    row_data: &Map<String, JsonValue>,
     session: &HashMap<String, SessionValue>,
 ) -> bool {
     match where_arg {
         WhereArg::Column(is_session_var, fieldname, op, value) => {
-            // Get the left-hand side value
-            let lhs_value = if *is_session_var {
-                // Session variable - get from session
-                session
-                    .get(fieldname)
-                    .map_or(JsonValue::Null, |v| session_value_to_json(v))
-            } else {
-                // Table column - get from row data
-                row_data.get(fieldname).cloned().unwrap_or(JsonValue::Null)
-            };
-
-            // Get the right-hand side value
+            // Get the right-hand side value first (needed for both paths)
             let rhs_value = query_value_to_json(value, session);
 
-            // Evaluate the operator
-            evaluate_operator(op, &lhs_value, &rhs_value)
+            // Get the left-hand side value
+            // Optimized: for row columns, use reference directly (no clone!)
+            // For session variables, conversion to JsonValue is unavoidable but less frequent
+            if *is_session_var {
+                // Session variable - convert to JsonValue (unavoidable conversion)
+                let lhs_value = session
+                    .get(fieldname)
+                    .map_or(JsonValue::Null, |v| session_value_to_json(v));
+                evaluate_operator(op, &lhs_value, &rhs_value)
+            } else {
+                // Table column - use reference directly from Map (no clone!)
+                // This is the hot path - most permission checks are on row columns
+                let lhs_value_ref = row_data.get(fieldname).unwrap_or(&JsonValue::Null);
+                evaluate_operator(op, lhs_value_ref, &rhs_value)
+            }
         }
         WhereArg::And(args) => {
             // All conditions must be true - short-circuit on first false
@@ -334,18 +338,18 @@ pub fn calculate_sync_deltas(
         table_map.insert(actual_table_name, permission);
     }
 
-    // OPTIMIZATION 2: Pre-process affected rows (convert JSON to HashMap once)
-    let processed_rows: Vec<(HashMap<String, JsonValue>, &AffectedRow)> = affected_rows
+    // OPTIMIZATION 2: Extract references to JSON objects (avoid HashMap conversion)
+    // Store references to the Map directly - serde_json::Map already supports O(1) lookups
+    let processed_rows: Vec<(&Map<String, JsonValue>, &AffectedRow)> = affected_rows
         .iter()
         .map(|row| {
-            let row_data = if let JsonValue::Object(obj) = &row.row {
-                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            if let JsonValue::Object(obj) = &row.row {
+                Ok((obj, row))
             } else {
-                return Err(SyncDeltasError::InvalidRowData(
+                Err(SyncDeltasError::InvalidRowData(
                     "Row data must be a JSON object".to_string(),
-                ));
-            };
-            Ok((row_data, row))
+                ))
+            }
         })
         .collect::<Result<_, _>>()?;
 
