@@ -4,4 +4,5 @@ pub mod helpers;
 mod migrations;
 mod parsing;
 mod queries;
+mod seed;
 mod typecheck;
