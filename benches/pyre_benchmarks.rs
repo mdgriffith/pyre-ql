@@ -16,6 +16,7 @@ record User {
     name      String?
     status    Status
     createdAt DateTime @default(now)
+    @public
 }
 
 record DatabaseUser {
@@ -24,6 +25,7 @@ record DatabaseUser {
 
     userId Int
     users  @link(userId, User.id)
+    @public
 }
 
 record Account {
@@ -34,6 +36,7 @@ record Account {
     userId Int
     name   String
     status String
+    @public
 }
 
 record Post {
@@ -45,6 +48,7 @@ record Post {
     title        String
     content      String
     status       Status
+    @public
 }
 
 type Status
@@ -69,14 +73,16 @@ fn parser_benchmark(c: &mut Criterion) {
 }
 
 fn typecheck_benchmark(c: &mut Criterion) {
+    // Setup: parse once
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", TEST_SCHEMA, &mut schema).unwrap();
+
     c.bench_function("typecheck::check_schema", |b| {
         b.iter(|| {
-            let mut schema = ast::Schema::default();
-            parser::run("schema.pyre", TEST_SCHEMA, &mut schema).unwrap();
             let database = ast::Database {
-                schemas: vec![schema],
+                schemas: vec![schema.clone()],
             };
-            typecheck::check_schema(&database).unwrap();
+            typecheck::check_schema(black_box(&database)).unwrap();
         })
     });
 }
@@ -93,52 +99,59 @@ fn diff_schema_benchmark(c: &mut Criterion) {
 }
 
 fn db_diff_benchmark(c: &mut Criterion) {
+    // Setup: parse and typecheck once
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", TEST_SCHEMA, &mut schema).unwrap();
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let context = typecheck::check_schema(&database).unwrap();
+
+    // Create a minimal introspection for testing
+    let introspection = introspect::Introspection {
+        tables: vec![],
+        migration_state: introspect::MigrationState::NoMigrationTable,
+        schema: introspect::SchemaResult::Success {
+            schema: ast::Schema::default(),
+            context: typecheck::empty_context(),
+        },
+    };
+
     c.bench_function("db::diff::diff", |b| {
         b.iter(|| {
-            let mut schema = ast::Schema::default();
-            parser::run("schema.pyre", TEST_SCHEMA, &mut schema).unwrap();
-            let database = ast::Database {
-                schemas: vec![schema],
-            };
-            let context = typecheck::check_schema(&database).unwrap();
-
-            // Create a minimal introspection for testing
-            let introspection = introspect::Introspection {
-                tables: vec![],
-                migration_state: introspect::MigrationState::NoMigrationTable,
-                schema: introspect::SchemaResult::Success {
-                    schema: ast::Schema::default(),
-                    context: typecheck::empty_context(),
-                },
-            };
-
-            pyre::db::diff::diff(&context, &database.schemas[0], &introspection);
+            pyre::db::diff::diff(
+                black_box(&context),
+                black_box(&database.schemas[0]),
+                black_box(&introspection),
+            );
         })
     });
 }
 
 fn to_sql_benchmark(c: &mut Criterion) {
+    // Setup: parse and typecheck once
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", TEST_SCHEMA, &mut schema).unwrap();
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let context = typecheck::check_schema(&database).unwrap();
+
+    // Create a minimal introspection for testing
+    let introspection = introspect::Introspection {
+        tables: vec![],
+        migration_state: introspect::MigrationState::NoMigrationTable,
+        schema: introspect::SchemaResult::Success {
+            schema: ast::Schema::default(),
+            context: typecheck::empty_context(),
+        },
+    };
+
+    let diff = pyre::db::diff::diff(&context, &database.schemas[0], &introspection);
+
     c.bench_function("db::diff::to_sql::to_sql", |b| {
         b.iter(|| {
-            let mut schema = ast::Schema::default();
-            parser::run("schema.pyre", TEST_SCHEMA, &mut schema).unwrap();
-            let database = ast::Database {
-                schemas: vec![schema],
-            };
-            let context = typecheck::check_schema(&database).unwrap();
-
-            // Create a minimal introspection for testing
-            let introspection = introspect::Introspection {
-                tables: vec![],
-                migration_state: introspect::MigrationState::NoMigrationTable,
-                schema: introspect::SchemaResult::Success {
-                    schema: ast::Schema::default(),
-                    context: typecheck::empty_context(),
-                },
-            };
-
-            let diff = pyre::db::diff::diff(&context, &database.schemas[0], &introspection);
-            to_sql::to_sql(&diff);
+            to_sql::to_sql(black_box(&diff));
         })
     });
 }
