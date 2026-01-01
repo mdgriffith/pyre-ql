@@ -520,6 +520,201 @@ fn query_execution_nested_join_compose_json_benchmark(c: &mut Criterion) {
     );
 }
 
+// Benchmark SQL execution with JSON processing (deeply nested query)
+fn query_execution_deeply_nested_json_benchmark(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (db, mut context, _temp_dir) = rt.block_on(setup_database());
+
+    let query_list = parser::parse_query("query.pyre", DEEPLY_NESTED_QUERY).unwrap();
+    let query_info_map = typecheck::check_queries(&query_list, &mut context).unwrap();
+
+    let query = query_list
+        .queries
+        .iter()
+        .find_map(|q| match q {
+            ast::QueryDef::Query(q) => Some(q),
+            _ => None,
+        })
+        .unwrap();
+
+    let table_field = query
+        .fields
+        .iter()
+        .find_map(|f| match f {
+            ast::TopLevelQueryField::Field(qf) => Some(qf),
+            _ => None,
+        })
+        .unwrap();
+
+    let table = context.tables.get(&table_field.name).unwrap();
+    let query_info = query_info_map.get(&query.name).unwrap();
+
+    let sql_statements =
+        pyre::generate::sql::to_string(&context, query, query_info, table, table_field);
+    let sql = sql_statements[0].sql.clone();
+
+    c.bench_function("query::execute_sql_deeply_nested_json", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let conn = db.connect().unwrap();
+                let mut rows = conn.query(&sql, ()).await.unwrap();
+                while let Some(_row) = rows.next().await.unwrap() {
+                    // Consume all rows
+                }
+            });
+        });
+    });
+}
+
+// NOTE: These benchmarks hand forever, even with the LIMIT added.  THis is why they're commented out.
+// // Benchmark SQL execution with equivalent JOIN query (deeply nested query)
+// // This simulates what a traditional join-based query would look like
+// fn query_execution_deeply_nested_join_benchmark(c: &mut Criterion) {
+//     let rt = tokio::runtime::Runtime::new().unwrap();
+//     let (db, _context, _temp_dir) = rt.block_on(setup_database());
+
+//     // Equivalent JOIN-based SQL (without JSON processing)
+//     // This creates duplication but avoids JSON processing overhead
+//     // Note: Column names are camelCase and quoted in SQLite
+//     // LIMIT added to prevent Cartesian product explosion (1000 users × 5 posts × 5 accounts = 25k rows)
+//     let join_sql = r#"
+//         SELECT
+//             "u"."id",
+//             "u"."name",
+//             "u"."status",
+//             "p"."id" AS "post_id",
+//             "p"."title" AS "post_title",
+//             "p"."content" AS "post_content",
+//             "p"."status" AS "post_status",
+//             "a"."id" AS "account_id",
+//             "a"."name" AS "account_name",
+//             "a"."status" AS "account_status"
+//         FROM "users" "u"
+//         LEFT JOIN "posts" "p" ON "u"."id" = "p"."authorUserId"
+//         LEFT JOIN "accounts" "a" ON "u"."id" = "a"."userId"
+//         ORDER BY "u"."id", "p"."id", "a"."id"
+//         LIMIT 10000
+//     "#;
+
+//     c.bench_function("query::execute_sql_deeply_nested_join", |b| {
+//         b.iter(|| {
+//             rt.block_on(async {
+//                 let conn = db.connect().unwrap();
+//                 let mut rows = conn.query(join_sql, ()).await.unwrap();
+//                 while let Some(_row) = rows.next().await.unwrap() {
+//                     // Consume all rows (with duplication)
+//                 }
+//             });
+//         });
+//     });
+// }
+
+// // Benchmark SQL execution with JOIN query + application-side JSON composition (deeply nested)
+// // This simulates composing nested JSON in application code instead of SQL
+// fn query_execution_deeply_nested_join_compose_json_benchmark(c: &mut Criterion) {
+//     let rt = tokio::runtime::Runtime::new().unwrap();
+//     let (db, _context, _temp_dir) = rt.block_on(setup_database());
+
+//     // Equivalent JOIN-based SQL (without JSON processing)
+//     // LIMIT added to prevent Cartesian product explosion (1000 users × 5 posts × 5 accounts = 25k rows)
+// let join_sql = r#"
+//     SELECT
+//         "u"."id",
+//         "u"."name",
+//         "u"."status",
+//         "p"."id" AS "post_id",
+//         "p"."title" AS "post_title",
+//         "p"."content" AS "post_content",
+//         "p"."status" AS "post_status",
+//         "a"."id" AS "account_id",
+//         "a"."name" AS "account_name",
+//         "a"."status" AS "account_status"
+//     FROM "users" "u"
+//     LEFT JOIN "posts" "p" ON "u"."id" = "p"."authorUserId"
+//     LEFT JOIN "accounts" "a" ON "u"."id" = "a"."userId"
+//     ORDER BY "u"."id", "p"."id", "a"."id"
+//     LIMIT 10000
+// "#;
+
+//     c.bench_function(
+//         "query::execute_sql_deeply_nested_join_application_composition_of_json",
+//         |b| {
+//             b.iter(|| {
+//                 rt.block_on(async {
+//                     let conn = db.connect().unwrap();
+//                     let mut rows = conn.query(join_sql, ()).await.unwrap();
+
+//                     // Compose nested JSON in application code
+//                     let mut users: HashMap<i64, Value> = HashMap::new();
+
+//                     while let Some(row) = rows.next().await.unwrap() {
+//                         let user_id: i64 = row.get(0).unwrap();
+
+//                         // Get or create user object
+//                         let user = users.entry(user_id).or_insert_with(|| {
+//                             json!({
+//                                 "id": user_id,
+//                                 "name": row.get::<Option<String>>(1).unwrap(),
+//                                 "status": row.get::<String>(2).unwrap(),
+//                                 "posts": json!([]),
+//                                 "accounts": json!([])
+//                             })
+//                         });
+
+//                         // Add post if present
+//                         if let Ok(Some(post_id)) = row.get::<Option<i64>>(3) {
+//                             let posts = user.get_mut("posts").unwrap().as_array_mut().unwrap();
+//                             // Check if this post was already added
+//                             let post_exists = posts.iter().any(|p| {
+//                                 p.get("id")
+//                                     .and_then(|id| id.as_i64())
+//                                     .map(|id| id == post_id)
+//                                     .unwrap_or(false)
+//                             });
+//                             if !post_exists {
+//                                 posts.push(json!({
+//                                     "id": post_id,
+//                                     "title": row.get::<Option<String>>(4).unwrap(),
+//                                     "content": row.get::<Option<String>>(5).unwrap(),
+//                                     "status": row.get::<Option<String>>(6).unwrap(),
+//                                 }));
+//                             }
+//                         }
+
+//                         // Add account if present
+//                         if let Ok(Some(account_id)) = row.get::<Option<i64>>(7) {
+//                             let accounts =
+//                                 user.get_mut("accounts").unwrap().as_array_mut().unwrap();
+//                             // Check if this account was already added
+//                             let account_exists = accounts.iter().any(|a| {
+//                                 a.get("id")
+//                                     .and_then(|id| id.as_i64())
+//                                     .map(|id| id == account_id)
+//                                     .unwrap_or(false)
+//                             });
+//                             if !account_exists {
+//                                 accounts.push(json!({
+//                                     "id": account_id,
+//                                     "name": row.get::<Option<String>>(8).unwrap(),
+//                                     "status": row.get::<Option<String>>(9).unwrap(),
+//                                 }));
+//                             }
+//                         }
+//                     }
+
+//                     // Convert to final JSON structure
+//                     let result = json!({
+//                         "user": users.values().collect::<Vec<_>>()
+//                     });
+
+//                     // Serialize to JSON string (simulating what would be sent over network)
+//                     black_box(serde_json::to_string(&result).unwrap());
+//                 });
+//             });
+//         },
+//     );
+// }
+
 criterion_group!(
     benches,
     query_parse_benchmark,
@@ -530,5 +725,8 @@ criterion_group!(
     query_execution_nested_json_benchmark,
     query_execution_nested_join_benchmark,
     query_execution_nested_join_compose_json_benchmark,
+    query_execution_deeply_nested_json_benchmark,
+    // query_execution_deeply_nested_join_benchmark,
+    // query_execution_deeply_nested_join_compose_json_benchmark,
 );
 criterion_main!(benches);

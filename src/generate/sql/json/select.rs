@@ -345,22 +345,20 @@ fn select_linked(
     // field_names.push
 
     // initial selection
+    // Use table alias for JOIN
+    let table_alias = "t";
     sql.push_str(&format!(
-        "\n{}select {}\n{}from {}\n",
+        "\n{}select {}\n{}from {} {}\n",
         indent_str,
-        field_names.join(", "),
+        field_names
+            .iter()
+            .map(|f| format!("{}.{}", table_alias, f))
+            .collect::<Vec<_>>()
+            .join(", "),
         indent_str,
         table_name,
+        table_alias,
     ));
-
-    to_sql::render_where(
-        context,
-        table,
-        query_info,
-        query_field,
-        &ast::QueryOperation::Select,
-        sql,
-    );
 
     let all_query_fields = ast::collect_query_fields(&query_field.fields);
 
@@ -375,10 +373,40 @@ fn select_linked(
         full_foreign_id.push_str(foreign_id);
     }
 
-    sql.push_str(&format!(
-        "{}where {} in (select {} from {})\n",
-        indent_str, full_foreign_id, full_local_id, parent_table_name
-    ));
+    // Check if render_where will add a WHERE clause
+    let mut has_where = false;
+    let mut where_check = String::new();
+    to_sql::render_where(
+        context,
+        table,
+        query_info,
+        query_field,
+        &ast::QueryOperation::Select,
+        &mut where_check,
+    );
+    has_where = where_check.contains("where");
+
+    to_sql::render_where(
+        context,
+        table,
+        query_info,
+        query_field,
+        &ast::QueryOperation::Select,
+        sql,
+    );
+
+    // Use WHERE ... IN (SELECT ...) - JOIN optimization causes memory issues in some cases
+    if has_where {
+        sql.push_str(&format!(
+            "{}and {}.{} in (select {} from {})\n",
+            indent_str, table_alias, full_foreign_id, full_local_id, parent_table_name
+        ));
+    } else {
+        sql.push_str(&format!(
+            "{}where {}.{} in (select {} from {})\n",
+            indent_str, table_alias, full_foreign_id, full_local_id, parent_table_name
+        ));
+    }
     // result.push_str(&format!("{}from {}", indent_str, parent_table_name));
 
     // result.push_str(&format!("{}group by {}", indent_str, full_foreign_id));
@@ -495,6 +523,7 @@ fn select_single_json(
     }
 
     let query_aliased_as = &ast::get_aliased_name(&query_table_field);
+    let table_alias = "t";
 
     // Compose main json payload
     let mut json_object = String::new();
@@ -505,7 +534,10 @@ fn select_single_json(
         if !first_field {
             json_object.push_str(",\n");
         }
-        json_object.push_str(&format!("{}    '{}', {}", indent_str, field, field));
+        json_object.push_str(&format!(
+            "{}    '{}', {}.{}",
+            indent_str, field, table_alias, field
+        ));
         first_field = false;
     }
 
@@ -515,10 +547,13 @@ fn select_single_json(
     #[rustfmt::skip]
     let array_agg_end = if aggregate_to_array { ")" } else { "" };
 
+    let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+
     sql.push_str(&format!(
-        "\n{}select\n  {}{},\n{}  {}jsonb_object(\n{}\n{}  ){} as {}\n{}from {}\n",
+        "\n{}select\n  {}{}.{},\n{}  {}jsonb_object(\n{}\n{}  ){} as {}\n{}from {} {}\n",
         indent_str,
         indent_str,
+        table_alias,
         full_foreign_id,
         indent_str,
         array_agg_start,
@@ -527,7 +562,8 @@ fn select_single_json(
         array_agg_end,
         query_aliased_as,
         indent_str,
-        ast::get_tablename(&table.record.name, &table.record.fields),
+        table_name,
+        table_alias,
     ));
 
     let mut full_local_id = String::new();
@@ -535,13 +571,22 @@ fn select_single_json(
         full_local_id.push_str(local_id);
     }
 
+    // Use WHERE ... IN (SELECT ...) - JOIN optimization causes memory issues in some cases
     sql.push_str(&format!(
-        "{}where {} in (select {} from {})\n",
-        indent_str, full_foreign_id, full_local_id, parent_table_name
+        "{}where {}.{} in (select {} from {})\n",
+        indent_str, table_alias, full_foreign_id, full_local_id, parent_table_name
     ));
 
     if aggregate_to_array {
-        sql.push_str(&format!("{}group by {}\n", indent_str, full_foreign_id));
+        sql.push_str(&format!(
+            "{}group by {}.{}\n",
+            indent_str, table_alias, full_foreign_id
+        ));
+        // Add ORDER BY after GROUP BY to ensure deterministic ordering
+        sql.push_str(&format!(
+            "{}order by {}.{}\n",
+            indent_str, table_alias, full_foreign_id
+        ));
     }
 }
 
@@ -664,6 +709,7 @@ fn select_formatted_as_json(
                                 ));
                             } else {
                                 // Coalesce as an empty array
+                                // Use jsonb() to ensure type compatibility with jsonb_group_array result
                                 sql.push_str(&format!(
                                     "{}    '{}', coalesce(temp__{}.{}, jsonb('[]'))",
                                     indent_str,
@@ -729,7 +775,15 @@ fn select_formatted_as_json(
         }
     }
 
-    sql.push_str(&format!("{}group by {}\n", indent_str, full_foreign_id));
+    sql.push_str(&format!(
+        "{}group by {}.{}\n",
+        indent_str, base_table_name, full_foreign_id
+    ));
+    // Add ORDER BY after GROUP BY to ensure deterministic ordering
+    sql.push_str(&format!(
+        "{}order by {}.{}\n",
+        indent_str, base_table_name, full_foreign_id
+    ));
 }
 
 fn select_type(
@@ -923,6 +977,8 @@ fn final_select_formatted_as_json(
                                 ));
                                 first_field = false;
                             } else {
+                                // Coalesce as an empty array
+                                // Use jsonb() to ensure type compatibility with jsonb_group_array result from temp tables
                                 sql.push_str(&format!(
                                     "{}        '{}', coalesce(temp__{}.{}, jsonb('[]'))",
                                     indent_str,
@@ -945,9 +1001,9 @@ fn final_select_formatted_as_json(
 
     // Close inner json_object and json_group_array, then wrap in outer json_object
     // Use COALESCE to handle empty results - json_group_array returns NULL when no rows
-    // Match the example SQL pattern: COALESCE(p.players_json, '[]')
+    // Use json() to ensure type compatibility with json_group_array result (not jsonb)
     sql.push_str(&format!(
-        "\n{}      )\n{}    ), '[]')\n{}  ) as result\n{}from {}\n",
+        "\n{}      )\n{}    ), json('[]'))\n{}  ) as result\n{}from {}\n",
         indent_str, indent_str, indent_str, indent_str, base_table_name
     ));
 
