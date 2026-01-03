@@ -2215,9 +2215,11 @@ fn check_table_query(
             }
 
             if !missing_fields.is_empty() {
+                let query_field_name = ast::get_aliased_name(query);
                 errors.push(Error {
                     filepath: context.current_filepath.clone(),
                     error_type: ErrorType::InsertMissingColumn {
+                        table_name: query_field_name,
                         fields: missing_fields.clone(),
                     },
                     locations: vec![Location {
@@ -2312,9 +2314,11 @@ fn check_field(
                                         .collect();
 
                                     if !missing_fields.is_empty() {
+                                        let variant_name = format!("{} variant", details.name);
                                         errors.push(Error {
                                             filepath: context.current_filepath.clone(),
                                             error_type: ErrorType::InsertMissingColumn {
+                                                table_name: variant_name,
                                                 fields: missing_fields,
                                             },
                                             locations: vec![Location {
@@ -2336,9 +2340,11 @@ fn check_field(
                                         .collect();
 
                                     if !required_fields.is_empty() {
+                                        let variant_name = format!("{} variant", details.name);
                                         errors.push(Error {
                                             filepath: context.current_filepath.clone(),
                                             error_type: ErrorType::InsertMissingColumn {
+                                                table_name: variant_name,
                                                 fields: required_fields,
                                             },
                                             locations: vec![Location {

@@ -174,6 +174,7 @@ pub enum ErrorType {
         field: String,
     },
     InsertMissingColumn {
+        table_name: String,
         fields: Vec<String>,
     },
     InsertNestedValueAutomaticallySet {
@@ -1007,11 +1008,12 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result
         }
 
-        ErrorType::InsertMissingColumn { fields } => {
+        ErrorType::InsertMissingColumn { table_name, fields } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
-                "This insert is missing {}",
+                "{} is missing {}",
+                yellow_if(in_color, &table_name),
                 yellow_if(in_color, &fields.join(", "))
             ));
 
