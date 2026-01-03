@@ -187,9 +187,28 @@ pub async fn migrate(
                     return Err(MigrationError::SqlError(err));
                 }
                 Ok(conn) => {
-                    create_migration_table_if_not_exists(&conn).await.unwrap();
+                    // Create migration tables using centralized constants
+                    // Format table names with quotes for safety
+                    let migration_table_sql = pyre::db::migrate::CREATE_MIGRATION_TABLE.replace(
+                        pyre::db::migrate::MIGRATION_TABLE,
+                        &pyre::ext::string::quote(pyre::db::migrate::MIGRATION_TABLE),
+                    );
+                    let schema_table_sql = pyre::db::migrate::CREATE_SCHEMA_TABLE.replace(
+                        pyre::db::migrate::SCHEMA_TABLE,
+                        &pyre::ext::string::quote(pyre::db::migrate::SCHEMA_TABLE),
+                    );
+                    conn.execute_batch(&format!("{}\n\n{}", migration_table_sql, schema_table_sql))
+                        .await
+                        .unwrap();
 
                     let migration_state = introspect::get_migration_state(&conn).await.unwrap();
+
+                    // Use centralized migration planning logic
+                    let migration_plan = pyre::db::migrate::plan_file_based_migrations(
+                        &migration_files.file_contents,
+                        &migration_state,
+                        schema,
+                    );
 
                     // Run migration
                     let tx = conn
@@ -197,24 +216,33 @@ pub async fn migrate(
                         .await
                         .unwrap();
 
-                    for (migration_filename, migration_contents) in migration_files.file_contents {
-                        // Check if migration has been run
-                        let should_skip = match &migration_state {
-                            pyre::db::introspect::MigrationState::NoMigrationTable => false,
-                            pyre::db::introspect::MigrationState::MigrationTable { migrations } => {
-                                migrations.iter().any(|m| m.name == migration_filename)
-                            }
-                        };
-
-                        if should_skip {
-                            continue;
-                        }
-
+                    // Execute migrations that need to be run
+                    for (migration_filename, migration_contents) in migration_plan.migrations_to_run
+                    {
                         tx.execute_batch(&migration_contents).await.unwrap();
-                        record_migration(&tx, &migration_filename).await.unwrap();
+
+                        // Record migration using centralized constant
+                        // INSERT_MIGRATION_SUCCESS requires (name, sql, finished_at)
+                        // where finished_at is set to unixepoch() automatically
+                        let insert_sql = pyre::db::migrate::INSERT_MIGRATION_SUCCESS.replace(
+                            pyre::db::migrate::MIGRATION_TABLE,
+                            &pyre::ext::string::quote(pyre::db::migrate::MIGRATION_TABLE),
+                        );
+                        tx.execute(
+                            &insert_sql,
+                            libsql::params![migration_filename, migration_contents],
+                        )
+                        .await
+                        .unwrap();
                     }
 
-                    insert_schema(&tx, schema).await.unwrap();
+                    // Insert schema using centralized SQL generation
+                    tx.execute(
+                        &migration_plan.insert_schema_sql,
+                        libsql::params![migration_plan.schema_string],
+                    )
+                    .await
+                    .unwrap();
 
                     tx.commit().await.unwrap();
                 }
@@ -223,53 +251,6 @@ pub async fn migrate(
     }
 
     Ok(())
-}
-
-async fn insert_schema(
-    tx: &libsql::Transaction,
-    schema: &ast::Schema,
-) -> Result<(), libsql::Error> {
-    let schema_string = pyre::generate::to_string::schema_to_string("", schema);
-    let insert_schema = &format!(
-        r#"INSERT INTO {} (schema) VALUES (?);"#,
-        pyre::ext::string::quote(pyre::db::introspect::SCHEMA_TABLE)
-    );
-    tx.execute(insert_schema, libsql::params![schema_string])
-        .await?;
-    Ok(())
-}
-
-async fn create_migration_table_if_not_exists(
-    conn: &libsql::Connection,
-) -> Result<(), libsql::Error> {
-    let create_migration_table = &format!(
-        r#"
-create table if not exists {} (
-    id integer primary key,
-    name TEXT NOT NULL
-);
-
-create table if not exists {} (
-    id integer primary key,
-    schema blob not null check (jsonb_valid(schema))
-);
-"#,
-        pyre::ext::string::quote(pyre::db::introspect::MIGRATION_TABLE),
-        pyre::ext::string::quote(pyre::db::introspect::SCHEMA_TABLE)
-    );
-    conn.execute_batch(create_migration_table).await.map(|_| ())
-}
-
-async fn record_migration(
-    conn: &libsql::Connection,
-    migration_name: &str,
-) -> Result<u64, libsql::Error> {
-    let insert_migration = &format!(
-        r#"INSERT INTO {} (name) VALUES (?);"#,
-        pyre::ext::string::quote(pyre::db::introspect::MIGRATION_TABLE)
-    );
-    conn.execute(insert_migration, libsql::params![migration_name])
-        .await
 }
 
 pub fn read_migration_items(migration_folder: &Path) -> Result<Vec<String>, std::io::Error> {

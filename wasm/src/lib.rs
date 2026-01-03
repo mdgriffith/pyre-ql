@@ -6,6 +6,7 @@ use wasm_bindgen::prelude::*;
 mod cache;
 mod migrate;
 mod query;
+mod seed;
 mod sync;
 mod sync_deltas;
 
@@ -103,15 +104,40 @@ pub fn get_sync_sql(
 }
 
 #[wasm_bindgen]
-pub fn calculate_sync_deltas(
-    affected_rows: JsValue,
-    connected_sessions: JsValue,
-) -> JsValue {
+pub fn calculate_sync_deltas(affected_rows: JsValue, connected_sessions: JsValue) -> JsValue {
     let result = sync_deltas::calculate_sync_deltas_wasm(affected_rows, connected_sessions);
     match result {
         Ok(deltas_result) => {
             // Serialize to JSON string first, then parse it back to JsValue
             let json_str = serde_json::to_string(&deltas_result).unwrap();
+            js_sys::JSON::parse(&json_str).unwrap()
+        }
+        Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
+    }
+}
+
+#[wasm_bindgen]
+pub fn seed_database(schema_source: String, options: JsValue) -> JsValue {
+    let options: Option<seed::SeedOptions> = if options.is_undefined() || options.is_null() {
+        None
+    } else {
+        match serde_wasm_bindgen::from_value(options) {
+            Ok(opts) => Some(opts),
+            Err(e) => {
+                return serde_wasm_bindgen::to_value(&format!(
+                    "Error: Failed to parse options: {}",
+                    e
+                ))
+                .unwrap();
+            }
+        }
+    };
+
+    let result = seed::seed_wasm(schema_source, options);
+    match result {
+        Ok(seed_sql) => {
+            // Serialize to JSON string first, then parse it back to JsValue
+            let json_str = serde_json::to_string(&seed_sql).unwrap();
             js_sys::JSON::parse(&json_str).unwrap()
         }
         Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
