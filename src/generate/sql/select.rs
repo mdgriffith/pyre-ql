@@ -52,6 +52,7 @@ pub fn select_to_string(
         query_info,
         &ast::collect_query_fields(&query_field.fields),
         &TableAliasKind::Normal,
+        true, // is_top_level
     );
     selection.push_str("  ");
     selection.push_str(&selected.join(",\n  "));
@@ -101,6 +102,7 @@ pub fn to_selection(
     query_info: &typecheck::QueryInfo,
     fields: &Vec<&ast::QueryField>,
     table_alias_kind: &TableAliasKind,
+    is_top_level: bool,
 ) -> Vec<String> {
     let mut result = vec![];
 
@@ -119,6 +121,7 @@ pub fn to_selection(
                 query_info,
                 &field,
                 table_alias_kind,
+                is_top_level,
             ));
         }
     }
@@ -134,11 +137,25 @@ fn to_subselection(
     query_info: &typecheck::QueryInfo,
     query_field: &ast::QueryField,
     table_alias_kind: &TableAliasKind,
+    is_top_level: bool,
 ) -> Vec<String> {
     match table_field {
         ast::Field::Column(table_column) => {
             let source_field = match table_alias_kind {
-                TableAliasKind::Normal => to_sql::render_real_field(table, query_info, query_field),
+                TableAliasKind::Normal => {
+                    if is_top_level {
+                        // Top-level table - use render_real_field for schema qualification
+                        // The FROM clause doesn't use an alias, so we use the actual table name
+                        to_sql::render_real_field(table, query_info, query_field)
+                    } else {
+                        // Linked table - use the alias to avoid collisions when multiple fields point to the same table
+                        format!(
+                            "{}.{}",
+                            string::quote(table_alias),
+                            string::quote(&query_field.name),
+                        )
+                    }
+                },
                 TableAliasKind::Insert => {
                     let table_name = get_tablename(table_alias_kind, table, table_alias);
                     format!(
@@ -181,6 +198,7 @@ fn to_subselection(
                     query_info,
                     &ast::collect_query_fields(&query_field.fields),
                     table_alias_kind,
+                    false, // Not top-level - this is a linked table
                 );
             } else {
                 return vec![];
@@ -449,25 +467,31 @@ fn to_subfrom(
                     }
                 };
 
+                // Use the query field's aliased name as a table alias to avoid collisions
+                // when multiple fields point to the same table
+                let table_alias = ast::get_aliased_name(query_field);
                 let foreign_table_identifier = match table_alias_kind {
-                    TableAliasKind::Normal => to_sql::render_real_where_field(
-                        link_table,
-                        query_info,
-                        false,
-                        &link.foreign.fields.join(""),
-                    ),
+                    TableAliasKind::Normal => {
+                        // For normal queries, use the table alias in the identifier
+                        format!(
+                            "{}.{}",
+                            string::quote(&table_alias),
+                            string::quote(&link.foreign.fields.join(""))
+                        )
+                    },
                     TableAliasKind::Insert => {
                         format!(
                             "{}.{}",
-                            string::quote(&foreign_table_name),
+                            string::quote(&table_alias),
                             string::quote(&link.foreign.fields.join(""))
                         )
                     }
                 };
 
                 let join = format!(
-                    "left join {} on {} = {}",
+                    "left join {} {} on {} = {}",
                     string::quote(&foreign_table_name),
+                    string::quote(&table_alias),
                     local_table_identifier,
                     foreign_table_identifier
                 );

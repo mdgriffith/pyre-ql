@@ -129,6 +129,7 @@ pub fn insert_to_string(
             query_info,
             &ast::collect_query_fields(&query_table_field.fields),
             &select::TableAliasKind::Insert,
+            true, // is_top_level
         );
         result.push_str("  ");
         result.push_str(&selected.join(",\n  "));

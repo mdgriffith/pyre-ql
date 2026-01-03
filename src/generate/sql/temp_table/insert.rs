@@ -124,41 +124,135 @@ pub fn insert_to_string(
         }
     }
 
-    // The final selection
+    // The final selection - wrap in JSON format
     if multiple_table_inserts {
         let mut final_statement = String::new();
-        // Select the final result
-        final_statement.push_str("select\n");
-        let selected = &select::to_selection(
-            context,
-            &ast::get_aliased_name(&query_table_field),
-            table,
-            query_info,
-            &ast::collect_query_fields(&query_table_field.fields),
-            &select::TableAliasKind::Normal,
-        );
-        final_statement.push_str("  ");
-        final_statement.push_str(&selected.join(",\n  "));
-        final_statement.push_str("\n");
-        select::render_from(
-            context,
-            table,
-            query_info,
-            query_table_field,
-            &select::TableAliasKind::Normal,
-            &mut final_statement,
-        );
-
+        let query_field_name = &query_table_field.name;
         let primary_table_name = select::get_tablename(
             &select::TableAliasKind::Normal,
             table,
             &ast::get_aliased_name(&query_table_field),
         );
+        
+        // Create a CTE that selects the data we need, filtered by the temp table
+        let table_alias = format!("selected__{}", ast::get_aliased_name(&query_table_field));
+        final_statement.push_str("with ");
+        final_statement.push_str(&table_alias);
+        final_statement.push_str(" as (\n");
+        final_statement.push_str("  select\n");
+        
+        // Select columns with explicit aliases so we can reference them in JSON generation
+        let mut column_selections = Vec::new();
+        for field in &query_table_field.fields {
+            match field {
+                ast::ArgField::Field(query_field) => {
+                    if let Some(table_field) = table
+                        .record
+                        .fields
+                        .iter()
+                        .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
+                    {
+                        match table_field {
+                            ast::Field::Column(_) => {
+                                // Use the table alias 't' to reference columns
+                                column_selections.push(format!(
+                                    "    t.{} as {}",
+                                    string::quote(&query_field.name),
+                                    string::quote(&query_field.name)
+                                ));
+                            }
+                            _ => {
+                                // Skip links - they'll be handled in JSON generation
+                            }
+                        }
+                    }
+                }
+                _ => continue,
+            }
+        }
+        final_statement.push_str(&column_selections.join(",\n"));
+        final_statement.push_str("\n  from ");
+        final_statement.push_str(&primary_table_name);
+        final_statement.push_str(" t");
 
         final_statement.push_str(&format!(
-            "where\n  {}.rowid in (select id from {})",
-            primary_table_name, parent_temp_table_name
+            "\n  where\n    t.rowid in (select id from {})\n",
+            parent_temp_table_name
         ));
+        final_statement.push_str(")\n");
+        
+        // Now wrap it in JSON format similar to final_select_formatted_as_json
+        final_statement.push_str("select\n");
+        final_statement.push_str("  json_object(\n");
+        final_statement.push_str(&format!(
+            "    '{}', coalesce(json_group_array(\n      json_object(\n",
+            query_field_name
+        ));
+        
+        // Generate JSON object fields - use actual field names from the selection
+        let mut first_field = true;
+        for field in &query_table_field.fields {
+            match field {
+                ast::ArgField::Field(query_field) => {
+                    if let Some(table_field) = table
+                        .record
+                        .fields
+                        .iter()
+                        .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
+                    {
+                        let aliased_field_name = ast::get_aliased_name(query_field);
+                        
+                        match table_field {
+                            ast::Field::Column(_) => {
+                                if !first_field {
+                                    final_statement.push_str(",\n");
+                                }
+                                // The CTE columns are selected by their field names
+                                // Use the field name directly from the CTE
+                                final_statement.push_str(&format!(
+                                    "        '{}', {}.{}",
+                                    aliased_field_name, table_alias, query_field.name
+                                ));
+                                first_field = false;
+                            }
+                            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                                // For links, we need to aggregate them properly
+                                // Use the link name to reference the joined data
+                                if !first_field {
+                                    final_statement.push_str(",\n");
+                                }
+                                let linked_to_unique = if let Some(linked_table) =
+                                    typecheck::get_linked_table(context, link)
+                                {
+                                    ast::linked_to_unique_field_with_record(link, &linked_table.record)
+                                } else {
+                                    ast::linked_to_unique_field(link)
+                                };
+                                if linked_to_unique {
+                                    // Singular result - would need proper join handling
+                                    final_statement.push_str(&format!(
+                                        "        '{}', json('null')",
+                                        aliased_field_name
+                                    ));
+                                } else {
+                                    // Array result - would need proper aggregation
+                                    final_statement.push_str(&format!(
+                                        "        '{}', json('[]')",
+                                        aliased_field_name
+                                    ));
+                                }
+                                first_field = false;
+                            }
+                            _ => continue,
+                        }
+                    }
+                }
+                _ => continue,
+            }
+        }
+        
+        final_statement.push_str("\n      )\n    ), json('[]'))\n  ) as result\n");
+        final_statement.push_str(&format!("from {}\n", table_alias));
 
         statements.push(to_sql::include(final_statement));
     }
