@@ -485,6 +485,7 @@ fn test_single_permission_allowed() {
 record Post {
     id Int @id
     title String
+    authorId Int
     @permissions { authorId = Session.userId }
 }
     "#;
@@ -687,6 +688,7 @@ record Post {
 record Comment {
     id Int @id
     content String
+    authorId Int
     @permissions { authorId = Session.userId }
 }
     "#;

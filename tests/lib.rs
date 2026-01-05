@@ -6,3 +6,4 @@ mod parsing;
 mod queries;
 mod seed;
 mod typecheck;
+mod typecheck_insert_session;
