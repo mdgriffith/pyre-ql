@@ -126,6 +126,8 @@ pub struct Table {
     /// Topological layer for sync ordering. Lower numbers sync first.
     /// Tables in cycles get the same layer number.
     pub sync_layer: usize,
+    /// Filepath of the schema file where this record is defined
+    pub filepath: String,
 }
 
 fn convert_range(range: &ast::Range) -> Range {
@@ -569,6 +571,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                     end_name: end_name.clone(),
                                 },
                                 sync_layer: 0, // Will be computed later
+                                filepath: file.path.clone(),
                             },
                         );
                     }
@@ -1009,6 +1012,18 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                                 to_single_range(&column.start_name, &column.end_name),
                             );
                         }
+
+                        // Validate permissions for this record
+                        if let Some(record_details) =
+                            context.tables.get(&crate::ext::string::decapitalize(name))
+                        {
+                            check_record_permissions(
+                                context,
+                                &record_details.record,
+                                &file.path,
+                                errors,
+                            );
+                        }
                     }
                     ast::Definition::Tagged {
                         name,
@@ -1439,6 +1454,7 @@ fn check_where_args(
     params: &mut HashMap<String, ParamInfo>,
     where_args: &ast::WhereArg,
 ) {
+    let error_filepath = context.current_filepath.clone();
     match where_args {
         ast::WhereArg::And(ands) => {
             for and in ands {
@@ -1497,7 +1513,7 @@ fn check_where_args(
                         None => vec![],
                     };
                     errors.push(Error {
-                        filepath: context.current_filepath.clone(),
+                        filepath: error_filepath.clone(),
                         error_type: ErrorType::UnknownField {
                             found: format!("Session.{}", field_name),
                             record_name: "Session".to_string(),
@@ -1524,7 +1540,7 @@ fn check_where_args(
                             if &link.link_name == field_name {
                                 is_known_field = true;
                                 errors.push(Error {
-                                    filepath: context.current_filepath.clone(),
+                                    filepath: error_filepath.clone(),
                                     error_type: ErrorType::WhereOnLinkIsntAllowed {
                                         link_name: field_name.clone(),
                                     },
@@ -1540,11 +1556,12 @@ fn check_where_args(
                 }
                 if !is_known_field {
                     let known_fields = get_column_reference(&table.fields);
-                    errors.push(Error {
-                        filepath: context.current_filepath.clone(),
-                        error_type: ErrorType::UnknownField {
-                            found: field_name.clone(),
+                    let error_found = field_name.clone();
 
+                    errors.push(Error {
+                        filepath: error_filepath.clone(),
+                        error_type: ErrorType::UnknownField {
+                            found: error_found,
                             record_name: table.name.clone(),
                             known_fields,
                         },
@@ -1573,6 +1590,168 @@ fn check_where_args(
 
             // Check if the field exists
             // Get field type
+        }
+    }
+}
+
+/// Validate permissions WHERE clauses during schema checking.
+/// This validates that fields exist and session variables are valid,
+/// but doesn't track params (that's done during query checking).
+fn check_permissions_where_args(
+    context: &Context,
+    table: &ast::RecordDetails,
+    where_args: &ast::WhereArg,
+    filepath: &String,
+    errors: &mut Vec<Error>,
+) {
+    match where_args {
+        ast::WhereArg::And(ands) => {
+            for and in ands {
+                check_permissions_where_args(context, table, and, filepath, errors);
+            }
+        }
+        ast::WhereArg::Or(ors) => {
+            for or in ors {
+                check_permissions_where_args(context, table, or, filepath, errors);
+            }
+        }
+        ast::WhereArg::Column(is_session_var, field_name, _operator, query_val) => {
+            if *is_session_var {
+                // Validate session variable exists
+                if let Some(session) = &context.session {
+                    let mut is_known_field = false;
+                    for field in &session.fields {
+                        match field {
+                            ast::Field::Column(column) => {
+                                if &column.name == field_name {
+                                    is_known_field = true;
+                                    break;
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                    if !is_known_field {
+                        let known_fields = get_column_reference(&session.fields);
+                        errors.push(Error {
+                            filepath: filepath.clone(),
+                            error_type: ErrorType::UnknownField {
+                                found: format!("Session.{}", field_name),
+                                record_name: "Session".to_string(),
+                                known_fields,
+                            },
+                            locations: vec![],
+                        });
+                    }
+                } else {
+                    errors.push(Error {
+                        filepath: filepath.clone(),
+                        error_type: ErrorType::UnknownField {
+                            found: format!("Session.{}", field_name),
+                            record_name: "Session".to_string(),
+                            known_fields: vec![],
+                        },
+                        locations: vec![],
+                    });
+                }
+            } else {
+                // Validate table field exists
+                let mut is_known_field = false;
+                for col in &table.fields {
+                    match col {
+                        ast::Field::Column(column) => {
+                            if &column.name == field_name {
+                                is_known_field = true;
+                                break;
+                            }
+                        }
+                        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                            if &link.link_name == field_name {
+                                is_known_field = true;
+                                errors.push(Error {
+                                    filepath: filepath.clone(),
+                                    error_type: ErrorType::WhereOnLinkIsntAllowed {
+                                        link_name: field_name.clone(),
+                                    },
+                                    locations: vec![Location {
+                                        contexts: vec![],
+                                        primary: to_range(&link.start_name, &link.end_name),
+                                    }],
+                                });
+                                break;
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+                if !is_known_field {
+                    let known_fields = get_column_reference(&table.fields);
+                    // Try to find the field name location for better error highlighting
+                    let permission_location =
+                        if let ast::QueryValue::Variable((var_range, _)) = query_val {
+                            let field_name_start_col =
+                                if var_range.start.column > field_name.len() + 2 {
+                                    var_range.start.column.saturating_sub(field_name.len() + 3)
+                                } else {
+                                    0
+                                };
+
+                            Location {
+                                contexts: vec![],
+                                primary: vec![Range {
+                                    start: ast::Location {
+                                        offset: var_range
+                                            .start
+                                            .offset
+                                            .saturating_sub(field_name.len() + 3),
+                                        line: var_range.start.line,
+                                        column: field_name_start_col,
+                                    },
+                                    end: ast::Location {
+                                        offset: var_range.start.offset.saturating_sub(3),
+                                        line: var_range.start.line,
+                                        column: field_name_start_col + field_name.len(),
+                                    },
+                                }],
+                            }
+                        } else {
+                            Location {
+                                contexts: vec![],
+                                primary: to_range(&table.start, &table.end),
+                            }
+                        };
+
+                    errors.push(Error {
+                        filepath: filepath.clone(),
+                        error_type: ErrorType::UnknownField {
+                            found: field_name.clone(),
+                            record_name: table.name.clone(),
+                            known_fields,
+                        },
+                        locations: vec![permission_location],
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Validate all permissions for a record during schema checking.
+fn check_record_permissions(
+    context: &Context,
+    record: &ast::RecordDetails,
+    filepath: &String,
+    errors: &mut Vec<Error>,
+) {
+    // Check permissions for all operations
+    for operation in &[
+        ast::QueryOperation::Select,
+        ast::QueryOperation::Insert,
+        ast::QueryOperation::Update,
+        ast::QueryOperation::Delete,
+    ] {
+        if let Some(perms) = ast::get_permissions(record, operation) {
+            check_permissions_where_args(context, record, &perms, filepath, errors);
         }
     }
 }
@@ -2144,20 +2323,6 @@ fn check_table_query(
                 primary: wheres,
             }],
         });
-    }
-
-    // Check permissions and extract session variables from them
-    if let Some(perms) = ast::get_permissions(&table.record, operation) {
-        check_where_args(
-            context,
-            &query_context,
-            &None,
-            &None,
-            &table.record,
-            errors,
-            params,
-            &perms,
-        );
     }
 
     match operation {
