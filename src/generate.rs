@@ -119,6 +119,7 @@ pub fn write_queries(
         query_list,
         all_query_info,
         database,
+        base_out_dir,
         files,
     );
     ()
@@ -157,10 +158,11 @@ fn write_server_queries(
     query_list: &ast::QueryList,
     all_query_info: &HashMap<String, typecheck::QueryInfo>,
     database: &ast::Database,
+    base_out_dir: &Path,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
+    // Create relative path: server/typescript (relative to base_out_dir)
     let server_dir = Path::new("server");
-    // filesystem::create_dir_if_not_exists(&server_dir)?;
     let out_dir = to_server_dir_path(lang, &server_dir);
     match lang {
         Server::Typescript => {

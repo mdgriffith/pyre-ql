@@ -274,7 +274,7 @@ pub fn generate_queries(
             ast::QueryDef::Query(q) => {
                 match all_query_info.get(&q.name) {
                     Some(query_info) => {
-                        let filename = format!("{}/query/{}.ts", base_out_dir.to_string_lossy(), crate::ext::string::decapitalize(&q.name));
+                        let filename = base_out_dir.join("query").join(format!("{}.ts", crate::ext::string::decapitalize(&q.name)));
                         let content = to_query_file(context, query_info, q, &formatter);
                         files.push(generate_text_file(filename, content));
                     }
@@ -340,7 +340,7 @@ fn generate_runner(_context: &typecheck::Context, base_out_dir: &Path, query_lis
     content.push_str("};\n");
 
     generate_text_file(
-        format!("{}/query.ts", base_out_dir.to_string_lossy()),
+        base_out_dir.join("query.ts"),
         content
     )
 }
