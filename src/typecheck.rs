@@ -1500,6 +1500,23 @@ fn check_where_args(
                                     is_known_field = true;
                                     column_type = Some(column.type_.clone());
                                     is_nullable = column.nullable;
+                                    // Mark the session variable as used
+                                    let session_param_name = ast::session_field_name(column);
+                                    if let Some(param_info) = params.get_mut(&session_param_name) {
+                                        match param_info {
+                                            ParamInfo::Defined {
+                                                ref mut used,
+                                                ref mut used_by_top_level_field_alias,
+                                                ..
+                                            } => {
+                                                *used = true;
+                                                used_by_top_level_field_alias.insert(
+                                                    query_context.top_level_field_alias.clone(),
+                                                );
+                                            }
+                                            _ => {}
+                                        }
+                                    }
                                     break;
                                 }
                             }
@@ -1752,6 +1769,108 @@ fn check_record_permissions(
     ] {
         if let Some(perms) = ast::get_permissions(record, operation) {
             check_permissions_where_args(context, record, &perms, filepath, errors);
+        }
+    }
+}
+
+/// Mark session variables found in WHERE clauses as used.
+///
+/// This is necessary because session variables that appear in permissions WHERE clauses
+/// (e.g., `delete { authorId = Session.userId }`) are automatically included in the
+/// generated SQL, but they aren't explicitly referenced in the query itself.
+///
+/// If session variables aren't marked as used:
+/// 1. They won't be added to `session_param_names` during query execution
+/// 2. They won't be replaced in the SQL (e.g., `$session_userId` remains as-is instead of becoming `?`)
+/// 3. The SQL will fail to execute because the parameter placeholder isn't bound
+///
+/// This function handles both cases:
+/// - When the column is a session variable: `Session.userId = ...`
+/// - When the value is a session variable: `authorId = Session.userId`
+fn mark_session_vars_in_where_as_used(
+    query_context: &QueryContext,
+    context: &Context,
+    where_args: &ast::WhereArg,
+    params: &mut HashMap<String, ParamInfo>,
+) {
+    match where_args {
+        ast::WhereArg::And(ands) => {
+            for and in ands {
+                mark_session_vars_in_where_as_used(query_context, context, and, params);
+            }
+        }
+        ast::WhereArg::Or(ors) => {
+            for or in ors {
+                mark_session_vars_in_where_as_used(query_context, context, or, params);
+            }
+        }
+        ast::WhereArg::Column(is_session_var, field_name, _operator, query_val) => {
+            // Check if the column itself is a session variable (e.g., Session.userId = ...)
+            if *is_session_var {
+                if let Some(session) = &context.session {
+                    for field in &session.fields {
+                        match field {
+                            ast::Field::Column(column) => {
+                                if &column.name == field_name {
+                                    let session_param_name = ast::session_field_name(column);
+                                    if let Some(param_info) = params.get_mut(&session_param_name) {
+                                        match param_info {
+                                            ParamInfo::Defined {
+                                                ref mut used,
+                                                ref mut used_by_top_level_field_alias,
+                                                ..
+                                            } => {
+                                                *used = true;
+                                                used_by_top_level_field_alias.insert(
+                                                    query_context.top_level_field_alias.clone(),
+                                                );
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+            }
+            // Also check if the value is a session variable (e.g., authorId = Session.userId)
+            if let ast::QueryValue::Variable((_, var_details)) = query_val {
+                if let Some(session_field) = &var_details.session_field {
+                    if let Some(session) = &context.session {
+                        for field in &session.fields {
+                            match field {
+                                ast::Field::Column(column) => {
+                                    if &column.name == session_field {
+                                        let session_param_name = ast::session_field_name(column);
+                                        if let Some(param_info) =
+                                            params.get_mut(&session_param_name)
+                                        {
+                                            match param_info {
+                                                ParamInfo::Defined {
+                                                    ref mut used,
+                                                    ref mut used_by_top_level_field_alias,
+                                                    ..
+                                                } => {
+                                                    *used = true;
+                                                    used_by_top_level_field_alias.insert(
+                                                        query_context.top_level_field_alias.clone(),
+                                                    );
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                                _ => (),
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -2133,6 +2252,11 @@ fn check_table_query(
     params: &mut HashMap<String, ParamInfo>,
     used_namespaces: &mut UsedNamespaces,
 ) {
+    // Mark session variables in permissions as used
+    if let Some(perms) = ast::get_permissions(&table.record, operation) {
+        mark_session_vars_in_where_as_used(query_context, context, &perms, params);
+    }
+
     if query.fields.is_empty() {
         errors.push(Error {
             filepath: context.current_filepath.clone(),
