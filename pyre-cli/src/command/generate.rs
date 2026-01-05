@@ -27,6 +27,15 @@ fn clear(path: &Path) -> io::Result<()> {
 fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::Result<()> {
     let schema = parse_database_schemas(&paths, options.enable_color)?;
 
+    // Build a map of schema filepaths to their contents for error formatting
+    let mut schema_file_contents: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for (_, schema_files) in paths.schema_files.iter() {
+        for schema_file in schema_files.iter() {
+            schema_file_contents.insert(schema_file.path.clone(), schema_file.content.clone());
+        }
+    }
+
     match typecheck::check_schema(&schema) {
         Err(error_list) => {
             error::report_and_exit(error_list, &paths, options.enable_color);
@@ -68,11 +77,13 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
                             Err(error_list) => {
                                 let mut errors = "".to_string();
                                 for err in error_list {
-                                    let formatted_error = error::format_error(
-                                        &query_source_str,
-                                        &err,
-                                        options.enable_color,
-                                    );
+                                    // Use schema file contents if error is from a schema file, otherwise use query file contents
+                                    let source = schema_file_contents
+                                        .get(&err.filepath)
+                                        .map(|s| s.as_str())
+                                        .unwrap_or(&query_source_str);
+                                    let formatted_error =
+                                        error::format_error(source, &err, options.enable_color);
                                     errors.push_str(&formatted_error);
                                 }
 

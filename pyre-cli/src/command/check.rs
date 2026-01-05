@@ -8,10 +8,18 @@ use pyre::parser;
 use pyre::typecheck;
 
 pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()> {
-    match run_check(
-        crate::filesystem::collect_filepaths(&options.in_dir)?,
-        options.enable_color,
-    ) {
+    let paths = crate::filesystem::collect_filepaths(&options.in_dir)?;
+
+    // Build a map of schema filepaths to their contents for error formatting
+    let mut schema_file_contents: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for (_, schema_files) in paths.schema_files.iter() {
+        for schema_file in schema_files.iter() {
+            schema_file_contents.insert(schema_file.path.clone(), schema_file.content.clone());
+        }
+    }
+
+    match run_check(paths, options.enable_color) {
         Ok(errors) => {
             let has_errors = !errors.is_empty();
             if json {
@@ -28,8 +36,13 @@ pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()
             } else {
                 for file_error in errors {
                     for err in &file_error.errors {
+                        // Use schema file contents if error is from a schema file, otherwise use query file contents
+                        let source = schema_file_contents
+                            .get(&err.filepath)
+                            .map(|s| s.as_str())
+                            .unwrap_or(&file_error.source);
                         let formatted_error =
-                            error::format_error(&file_error.source, err, options.enable_color);
+                            error::format_error(source, err, options.enable_color);
                         eprintln!("{}", formatted_error);
                     }
                 }
