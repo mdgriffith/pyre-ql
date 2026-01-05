@@ -155,7 +155,7 @@ fn to_subselection(
                             string::quote(&query_field.name),
                         )
                     }
-                },
+                }
                 TableAliasKind::Insert => {
                     let table_name = get_tablename(table_alias_kind, table, table_alias);
                     format!(
@@ -478,7 +478,7 @@ fn to_subfrom(
                             string::quote(&table_alias),
                             string::quote(&link.foreign.fields.join(""))
                         )
-                    },
+                    }
                     TableAliasKind::Insert => {
                         format!(
                             "{}.{}",
