@@ -229,7 +229,7 @@ async fn test_limit_with_session_variable() -> Result<(), TestError> {
     // So we'll just test that limit works independently
 
     let rows = db
-        .execute_query_with_session(query, std::collections::HashMap::new(), session)
+        .execute_query_with_session(query, std::collections::HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
 

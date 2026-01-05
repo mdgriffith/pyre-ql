@@ -373,6 +373,7 @@ impl TestDatabase {
         query_source: &str,
         params: HashMap<String, libsql::Value>,
         session: HashMap<String, libsql::Value>,
+        log_sql: bool,
     ) -> Result<Vec<libsql::Rows>, TestError> {
         let query_list = parser::parse_query("query.pyre", query_source)
             .map_err(|e| TestError::ParseError(parser::render_error(query_source, e, false)))?;
@@ -514,6 +515,12 @@ impl TestDatabase {
                         replace_params_positional(&sql, &all_param_names)
                     };
 
+                    if log_sql {
+                        eprintln!("[SQL] {}", sql_with_params);
+                        if !param_values.is_empty() {
+                            eprintln!("[SQL Params] {:?}", param_values);
+                        }
+                    }
 
                     if include {
                         if param_values.is_empty() {
@@ -624,7 +631,7 @@ impl TestDatabase {
         params: HashMap<String, libsql::Value>,
         session: HashMap<String, libsql::Value>,
     ) -> Result<Vec<libsql::Rows>, TestError> {
-        self.execute_query_with_session(insert_query, params, session)
+        self.execute_query_with_session(insert_query, params, session, false)
             .await
     }
 
@@ -897,9 +904,11 @@ fn replace_params_positional(sql: &str, param_names: &[String]) -> String {
                     break;
                 }
             }
-            if param_names.contains(&param_name) && !seen.contains(&param_name) {
-                param_order.push(param_name.clone());
-                seen.insert(param_name);
+            if param_names.contains(&param_name) {
+                if !seen.contains(&param_name) {
+                    param_order.push(param_name.clone());
+                    seen.insert(param_name);
+                }
             }
         } else {
             i += 1;

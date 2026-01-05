@@ -237,7 +237,7 @@ async fn test_select_permissions_filter_by_author() -> Result<(), TestError> {
     session.insert("userId".to_string(), libsql::Value::Integer(1));
 
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session)
+        .execute_query_with_session(query, HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
 
@@ -257,7 +257,7 @@ async fn test_select_permissions_filter_by_author() -> Result<(), TestError> {
     session.insert("userId".to_string(), libsql::Value::Integer(2));
 
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session)
+        .execute_query_with_session(query, HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
 
@@ -292,7 +292,7 @@ async fn test_select_permissions_with_or_condition() -> Result<(), TestError> {
     session.insert("userId".to_string(), libsql::Value::Integer(1));
 
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session)
+        .execute_query_with_session(query, HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
 
@@ -313,7 +313,7 @@ async fn test_select_permissions_with_or_condition() -> Result<(), TestError> {
     session.insert("userId".to_string(), libsql::Value::Integer(3));
 
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session)
+        .execute_query_with_session(query, HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
 
@@ -385,7 +385,7 @@ async fn test_insert_permissions() -> Result<(), TestError> {
     "#;
 
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session)
+        .execute_query_with_session(query, HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
     let posts = results.get("post").unwrap();
@@ -418,7 +418,7 @@ async fn test_insert_permissions() -> Result<(), TestError> {
         .await
         .ok(); // Ignore result, we verify by checking count
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session)
+        .execute_query_with_session(query, HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
     let posts_after = results.get("post").unwrap();
@@ -456,7 +456,7 @@ async fn test_update_permissions() -> Result<(), TestError> {
     let mut session = HashMap::new();
     session.insert("userId".to_string(), libsql::Value::Integer(1));
 
-    db.execute_query_with_session(update_query, params, session.clone())
+    db.execute_query_with_session(update_query, params, session.clone(), false)
         .await
         .expect("Update should succeed when user owns the post");
 
@@ -473,7 +473,7 @@ async fn test_update_permissions() -> Result<(), TestError> {
     "#;
 
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session.clone())
+        .execute_query_with_session(query, HashMap::new(), session.clone(), false)
         .await?;
     let results = db.parse_query_results(rows).await?;
     let posts = results.get("post").unwrap();
@@ -494,7 +494,7 @@ async fn test_update_permissions() -> Result<(), TestError> {
 
     // Update query should execute (but won't update due to permissions)
     let _ = db
-        .execute_query_with_session(update_query, params, session.clone())
+        .execute_query_with_session(update_query, params, session.clone(), false)
         .await;
 
     // Verify post 2 was NOT updated
@@ -510,7 +510,7 @@ async fn test_update_permissions() -> Result<(), TestError> {
     "#;
 
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session)
+        .execute_query_with_session(query, HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
     let posts = results.get("post").unwrap();
@@ -544,11 +544,59 @@ delete DeletePost($id: Int) {
     let mut session = HashMap::new();
     session.insert("userId".to_string(), libsql::Value::Integer(1));
 
-    db.execute_query_with_session(delete_query, params, session.clone())
+    db.execute_query_with_session(delete_query, params, session.clone(), true)
         .await
         .expect("Delete should succeed when user owns the post");
 
-    // Verify the post was deleted
+    // Verify post 1 was deleted (should return 0 results)
+    let check_deleted_query = r#"
+query CheckDeletedPost {
+    post {
+        @where { id = 1 }
+        id
+        title
+        authorId
+    }
+}
+    "#;
+
+    let rows = db
+        .execute_query_with_session(check_deleted_query, HashMap::new(), session.clone(), false)
+        .await?;
+    let results = db.parse_query_results(rows).await?;
+    let posts = results.get("post").unwrap();
+    assert_eq!(posts.len(), 0, "Post 1 should be deleted and not visible");
+
+    // Verify post 3 still exists (should return 1 result)
+    let check_remaining_query = r#"
+query CheckRemainingPost {
+    post {
+        @where { id = 3 }
+        id
+        title
+        authorId
+    }
+}
+    "#;
+
+    let rows = db
+        .execute_query_with_session(
+            check_remaining_query,
+            HashMap::new(),
+            session.clone(),
+            false,
+        )
+        .await?;
+    let results = db.parse_query_results(rows).await?;
+    let posts = results.get("post").unwrap();
+    assert_eq!(posts.len(), 1, "Post 3 should still exist");
+    assert_eq!(
+        posts[0].get("id").and_then(|v| v.as_i64()),
+        Some(3),
+        "Remaining post should be Post 3"
+    );
+
+    // Verify user 1 can see 1 post total (post 3)
     let query = r#"
 query GetPosts {
     post {
@@ -560,14 +608,14 @@ query GetPosts {
     "#;
 
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session)
+        .execute_query_with_session(query, HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
     let posts = results.get("post").unwrap();
     assert_eq!(
         posts.len(),
         1,
-        "User 1 should now see 1 post (post 1 was deleted)"
+        "User 1 should now see 1 post (post 1 was deleted, post 3 remains)"
     );
 
     Ok(())
@@ -596,7 +644,7 @@ delete DeleteDocument($id: Int) {
 
     // Delete query should execute (but won't delete due to permissions)
     let _ = db
-        .execute_query_with_session(delete_query, params.clone(), session.clone())
+        .execute_query_with_session(delete_query, params.clone(), session.clone(), false)
         .await;
 
     // Verify document still exists
@@ -611,7 +659,7 @@ query GetDocuments {
     "#;
 
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session)
+        .execute_query_with_session(query, HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
     let documents = results.get("document").unwrap();
@@ -628,7 +676,7 @@ query GetDocuments {
     session.insert("userId".to_string(), libsql::Value::Integer(1));
     session.insert("role".to_string(), libsql::Value::Text("admin".to_string()));
 
-    db.execute_query_with_session(delete_query, params, session.clone())
+    db.execute_query_with_session(delete_query, params, session.clone(), false)
         .await
         .expect("Delete should succeed when user is admin");
 
@@ -637,7 +685,7 @@ query GetDocuments {
     // After deleting Doc 1, user 1 should still see Doc 2 (public document)
     // because the select permission is: ownerId = Session.userId || visibility = "public"
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session)
+        .execute_query_with_session(query, HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
     let documents = results.get("document").unwrap();
@@ -674,7 +722,7 @@ query GetDocuments {
     session.insert("userId".to_string(), libsql::Value::Integer(3));
 
     let rows = db
-        .execute_query_with_session(query, HashMap::new(), session)
+        .execute_query_with_session(query, HashMap::new(), session, false)
         .await?;
     let results = db.parse_query_results(rows).await?;
 
