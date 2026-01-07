@@ -12,7 +12,7 @@ session {
 }
 
 record Post {
-    @permissions {userId = Session.userId}
+    @allow(*) {userId = Session.userId}
     id           Int     @id
     createdAt    DateTime @default(now)
     authorUserId Int

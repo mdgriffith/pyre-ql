@@ -2,31 +2,7 @@ use pyre::parser;
 
 /// Helper function to format errors without color for testing
 fn format_error_no_color(file_contents: &str, error: &pyre::error::Error) -> String {
-    let formatted = pyre::error::format_error(file_contents, error, false);
-    strip_ansi_codes(&formatted)
-}
-
-fn strip_ansi_codes(s: &str) -> String {
-    // Remove ANSI escape sequences (CSI sequences)
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && chars.peek() == Some(&'[') {
-            // Skip the escape sequence
-            chars.next(); // skip '['
-            while let Some(&c) = chars.peek() {
-                if c == 'm' {
-                    chars.next(); // skip 'm'
-                    break;
-                }
-                chars.next();
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-    result
+    return pyre::error::format_error(file_contents, error, false);
 }
 
 #[test]

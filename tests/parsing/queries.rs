@@ -2,8 +2,7 @@ use pyre::parser;
 
 /// Helper function to format errors without color for testing
 fn format_error_no_color(file_contents: &str, error: &pyre::error::Error) -> String {
-    let formatted = pyre::error::format_error(file_contents, error, false);
-    strip_ansi_codes(&formatted)
+    return pyre::error::format_error(file_contents, error, false);
 }
 
 fn strip_ansi_codes(s: &str) -> String {

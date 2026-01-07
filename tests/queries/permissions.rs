@@ -16,7 +16,7 @@ record Post {
     content String
     authorId Int
     published Bool
-    @permissions { authorId = Session.userId }
+    @allow(*) { authorId = Session.userId }
 }
 
 record Comment {
@@ -25,7 +25,7 @@ record Comment {
     postId Int
     authorId Int
     post @link(postId, Post.id)
-    @permissions { authorId = Session.userId }
+    @allow(*) { authorId = Session.userId }
 }
 
 record Article {
@@ -34,8 +34,8 @@ record Article {
     content String
     authorId Int
     status String
-    @permissions(select) { authorId = Session.userId || status = "published" }
-    @permissions(insert, update, delete) { authorId = Session.userId }
+    @allow(select) { authorId = Session.userId || status = "published" }
+    @allow(insert, update, delete) { authorId = Session.userId }
 }
 
 record Document {
@@ -44,9 +44,9 @@ record Document {
     content String
     ownerId Int
     visibility String
-    @permissions(select) { ownerId = Session.userId || visibility = "public" }
-    @permissions(insert, update) { ownerId = Session.userId }
-    @permissions(delete) { ownerId = Session.userId && Session.role = "admin" }
+    @allow(select) { ownerId = Session.userId || visibility = "public" }
+    @allow(insert, update) { ownerId = Session.userId }
+    @allow(delete) { ownerId = Session.userId && Session.role = "admin" }
 }
 "#
     .to_string()

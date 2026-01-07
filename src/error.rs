@@ -476,7 +476,7 @@ fn render_expecting(expecting: &Expecting, in_color: bool) -> String {
             yellow_if(in_color, "@watch"),
             yellow_if(in_color, "@tablename"),
             yellow_if(in_color, "@link"),
-            yellow_if(in_color, "@permissions")
+            yellow_if(in_color, "@allow")
         ),
         Expecting::SchemaFieldAtDirective => return format!(
             "I don't recognize this, did you mean one of these:\n\n        {}\n        {}\n        {}",
@@ -810,7 +810,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result.push_str(&format!(
                 "{} has multiple {} definitions, let's only have one!",
                 cyan_if(in_color, record),
-                yellow_if(in_color, "@permissions")
+                yellow_if(in_color, "@allow")
             ));
 
             result
@@ -821,7 +821,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result.push_str(&format!(
                 "{} must have exactly one permissions directive. Add either {} or {}.",
                 cyan_if(in_color, record),
-                yellow_if(in_color, "@permissions"),
+                yellow_if(in_color, "@allow"),
                 yellow_if(in_color, "@public")
             ));
 

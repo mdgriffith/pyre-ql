@@ -288,24 +288,19 @@ fn to_string_permissions_details(
         }
         ast::PermissionDetails::Star(where_) => format_permissions_where(spaces, where_),
         ast::PermissionDetails::OnOperation(operations) => {
-            let mut result = format!("{}@permissions {{\n", spaces);
+            let mut result = String::new();
 
-            // For each operation, outputs a line like:
-            //   "    select, update {column = value}"
-            // where the operations are lowercase and comma-separated,
-            // followed by the where clause
+            // For each operation group, output a separate @allow(select, update) { ... } directive
             for op in operations {
-                let op_spaces = " ".repeat(indentation.minimum + 4);
                 let ops = op
                     .operations
                     .iter()
                     .map(|o| format!("{:?}", o).to_lowercase())
                     .collect::<Vec<_>>()
                     .join(", ");
-                let where_content = format_where_content(&op.where_, indentation.minimum + 4);
-                result.push_str(&format!("{}{} {{{}}}\n", op_spaces, ops, where_content));
+                let where_content = format_where_for_braces(&op.where_, indentation.minimum);
+                result.push_str(&format!("{}@allow({}) {}\n", spaces, ops, where_content));
             }
-            result.push_str(&format!("{}}}\n", spaces));
             result
         }
     }
@@ -313,7 +308,7 @@ fn to_string_permissions_details(
 
 fn format_permissions_where(indent: String, where_arg: &ast::WhereArg) -> String {
     let content = format_where_for_braces(where_arg, indent.len());
-    format!("{}@permissions {}\n", indent, content)
+    format!("{}@allow(*) {}\n", indent, content)
 }
 
 fn format_where_for_braces(where_arg: &ast::WhereArg, base_indent: usize) -> String {

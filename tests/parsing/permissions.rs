@@ -3,42 +3,13 @@ use pyre::error::ErrorType;
 use pyre::parser;
 use pyre::typecheck;
 
-/// Helper function to format errors without color for testing
-fn format_error_no_color(file_contents: &str, error: &pyre::error::Error) -> String {
-    let formatted = pyre::error::format_error(file_contents, error, false);
-    strip_ansi_codes(&formatted)
-}
-
-fn strip_ansi_codes(s: &str) -> String {
-    // Remove ANSI escape sequences (CSI sequences)
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && chars.peek() == Some(&'[') {
-            // Skip the escape sequence
-            chars.next(); // skip '['
-            while let Some(&c) = chars.peek() {
-                if c == 'm' {
-                    chars.next(); // skip 'm'
-                    break;
-                }
-                chars.next();
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
-
 #[test]
 fn test_star_permission_simple() {
     let schema_source = r#"
 record Post {
     id Int @id
     title String
-    @permissions { authorId = Session.userId }
+    @allow(*) { authorId = Session.userId }
 }
     "#;
 
@@ -59,7 +30,7 @@ fn test_star_permission_with_and() {
 record Post {
     id Int @id
     title String
-    @permissions { authorId = Session.userId && published = True }
+    @allow(*) { authorId = Session.userId && published = True }
 }
     "#;
 
@@ -77,7 +48,7 @@ fn test_star_permission_with_or() {
 record Post {
     id Int @id
     title String
-    @permissions { authorId = Session.userId || status = "published" }
+    @allow(*) { authorId = Session.userId || status = "published" }
 }
     "#;
 
@@ -95,7 +66,7 @@ fn test_operation_specific_single_operation() {
 record Post {
     id Int @id
     title String
-    @permissions(select) { authorId = Session.userId }
+    @allow(select) { authorId = Session.userId }
 }
     "#;
 
@@ -113,7 +84,7 @@ fn test_operation_specific_multiple_operations_same_line() {
 record Post {
     id Int @id
     title String
-    @permissions(select, update) { authorId = Session.userId }
+    @allow(select, update) { authorId = Session.userId }
 }
     "#;
 
@@ -131,7 +102,7 @@ fn test_operation_specific_all_operations() {
 record Post {
     id Int @id
     title String
-    @permissions(select, insert, update, delete) { authorId = Session.userId }
+    @allow(select, insert, update, delete) { authorId = Session.userId }
 }
     "#;
 
@@ -149,10 +120,10 @@ fn test_operation_specific_multiple_lines() {
 record Post {
     id Int @id
     title String
-    @permissions(select) { authorId = Session.userId }
-    @permissions(insert) { authorId = Session.userId }
-    @permissions(update) { authorId = Session.userId }
-    @permissions(delete) { authorId = Session.userId }
+    @allow(select) { authorId = Session.userId }
+    @allow(insert) { authorId = Session.userId }
+    @allow(update) { authorId = Session.userId }
+    @allow(delete) { authorId = Session.userId }
 }
     "#;
 
@@ -170,8 +141,8 @@ fn test_operation_specific_mixed_lines() {
 record Post {
     id Int @id
     title String
-    @permissions(select, update) { authorId = Session.userId }
-    @permissions(insert, delete) { authorId = Session.userId }
+    @allow(select, update) { authorId = Session.userId }
+    @allow(insert, delete) { authorId = Session.userId }
 }
     "#;
 
@@ -189,8 +160,8 @@ fn test_operation_specific_with_complex_where() {
 record Post {
     id Int @id
     title String
-    @permissions(select) { authorId = Session.userId || status = "published" }
-    @permissions(delete) { authorId = Session.userId && Session.role = "admin" }
+    @allow(select) { authorId = Session.userId || status = "published" }
+    @allow(delete) { authorId = Session.userId && Session.role = "admin" }
 }
     "#;
 
@@ -212,8 +183,8 @@ fn test_operation_specific_with_separate_permissions() {
 record Post {
     id Int @id
     title String
-    @permissions(select) { authorId = Session.userId || status = "published" }
-    @permissions(delete) { authorId = Session.userId }
+    @allow(select) { authorId = Session.userId || status = "published" }
+    @allow(delete) { authorId = Session.userId }
 }
     "#;
 
@@ -235,7 +206,7 @@ fn test_operation_specific_with_role_admin() {
 record Post {
     id Int @id
     title String
-    @permissions(delete) { Session.role = "admin" }
+    @allow(delete) { Session.role = "admin" }
 }
     "#;
 
@@ -262,7 +233,7 @@ session {
 record Post {
     id Int @id
     title String
-    @permissions { authorId = Session.userId }
+    @allow(*) { authorId = Session.userId }
 }
     "#;
 
@@ -280,7 +251,7 @@ fn test_permission_with_string_literal() {
 record Post {
     id Int @id
     title String
-    @permissions { status = "published" }
+    @allow(*) { status = "published" }
 }
     "#;
 
@@ -298,7 +269,7 @@ fn test_permission_with_integer_literal() {
 record Post {
     id Int @id
     title String
-    @permissions { authorId = 1 }
+    @allow(*) { authorId = 1 }
 }
     "#;
 
@@ -316,7 +287,7 @@ fn test_permission_with_boolean_literal() {
 record Post {
     id Int @id
     published Bool
-    @permissions { published = True }
+    @allow(*) { published = True }
 }
     "#;
 
@@ -334,7 +305,7 @@ fn test_permission_with_comparison_operators() {
 record Post {
     id Int @id
     score Int
-    @permissions { score >= 10 }
+    @allow(*) { score >= 10 }
 }
     "#;
 
@@ -354,7 +325,7 @@ record Post {
     authorId Int
     status String
     published Bool
-    @permissions { 
+    @allow(*) { 
         (authorId = Session.userId || status = "published") && published = True 
     }
 }
@@ -376,7 +347,7 @@ fn test_permission_missing_closing_brace() {
 record Post {
     id Int @id
     title String
-    @permissions { authorId = Session.userId
+    @allow(*) { authorId = Session.userId
 }
     "#;
 
@@ -394,7 +365,7 @@ fn test_permission_missing_where_clause() {
 record Post {
     id Int @id
     title String
-    @permissions {
+    @allow(*) {
     }
 }
     "#;
@@ -413,7 +384,7 @@ fn test_permission_invalid_operation() {
 record Post {
     id Int @id
     title String
-    @permissions(invalid) { authorId = Session.userId }
+    @allow(invalid) { authorId = Session.userId }
 }
     "#;
 
@@ -432,8 +403,8 @@ fn test_multiple_star_permissions_fails() {
 record Post {
     id Int @id
     title String
-    @permissions { authorId = Session.userId }
-    @permissions { status = "published" }
+    @allow(*) { authorId = Session.userId }
+    @allow(*) { status = "published" }
 }
     "#;
 
@@ -449,7 +420,7 @@ record Post {
 
     assert!(
         typecheck_result.is_err(),
-        "Typecheck should fail with multiple star @permissions directives"
+        "Typecheck should fail with multiple star @allow directives"
     );
 
     let errors = typecheck_result.unwrap_err();
@@ -462,13 +433,13 @@ record Post {
 
 #[test]
 fn test_single_permission_allowed() {
-    // A single @permissions directive should be allowed
+    // A single @allow directive should be allowed
     let schema_source = r#"
 record Post {
     id Int @id
     title String
     authorId Int
-    @permissions { authorId = Session.userId }
+    @allow(*) { authorId = Session.userId }
 }
     "#;
 
@@ -476,7 +447,7 @@ record Post {
     let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
     assert!(parse_result.is_ok(), "Schema should parse successfully");
 
-    // Typecheck should succeed with a single @permissions directive
+    // Typecheck should succeed with a single @allow directive
     let database = ast::Database {
         schemas: vec![schema],
     };
@@ -484,7 +455,7 @@ record Post {
 
     assert!(
         typecheck_result.is_ok(),
-        "Typecheck should succeed with a single @permissions directive. Errors: {:?}",
+        "Typecheck should succeed with a single @allow directive. Errors: {:?}",
         typecheck_result.err()
     );
 }
@@ -495,7 +466,7 @@ fn test_permission_with_variable() {
 record Post {
     id Int @id
     title String
-    @permissions { authorId = $userId }
+    @allow(*) { authorId = $userId }
 }
     "#;
 
@@ -513,7 +484,7 @@ fn test_permission_operation_specific_with_multiple_where_conditions() {
 record Post {
     id Int @id
     title String
-    @permissions(select) { authorId = Session.userId, status = "published" }
+    @allow(select) { authorId = Session.userId, status = "published" }
 }
     "#;
 
@@ -631,7 +602,7 @@ record Post {
     id Int @id
     title String
     @public
-    @permissions { authorId = Session.userId }
+    @allow(*) { authorId = Session.userId }
 }
     "#;
 
@@ -667,8 +638,8 @@ record Post {
     title String
     authorUserId Int
     published Bool
-    @permissions(select, update) { authorUserId = Session.userId }
-    @permissions(insert, delete) { authorUserId = Session.userId, published = True }
+    @allow(select, update) { authorUserId = Session.userId }
+    @allow(insert, delete) { authorUserId = Session.userId, published = True }
 }
     "#;
 
@@ -692,8 +663,8 @@ record Post {
     id Int @id
     title String
     published Bool
-    @permissions(select) { published = true }
-    @permissions(insert) { published = false }
+    @allow(select) { published = true }
+    @allow(insert) { published = false }
 }
     "#;
 
@@ -717,8 +688,8 @@ record Post {
     id Int @id
     title String
     published Bool
-    @permissions(select) { published = True }
-    @permissions(insert) { published = False }
+    @allow(select) { published = True }
+    @allow(insert) { published = False }
 }
     "#;
 
@@ -736,13 +707,13 @@ record Post {
 
 #[test]
 fn test_permissions_error_message_commits_to_permissions() {
-    // Test that when we see @permissions, we commit to that branch and give a proper error
+    // Test that when we see @allow, we commit to that branch and give a proper error
     // if there's a parsing issue inside, rather than suggesting other directives
     let schema_source = r#"
 record Post {
     id Int @id
     title String
-    @permissions(invalid syntax here) { authorId = Session.userId }
+    @allow(invalid syntax here) { authorId = Session.userId }
 }
     "#;
 
@@ -750,7 +721,7 @@ record Post {
     let result = parser::run("schema.pyre", schema_source, &mut schema);
     assert!(
         result.is_err(),
-        "Should fail to parse invalid syntax inside @permissions"
+        "Should fail to parse invalid syntax inside @allow"
     );
 
     if let Err(e) = &result {
@@ -759,7 +730,7 @@ record Post {
         // It should be a parsing error within the permissions block
         assert!(
             !error_msg.contains("@watch") && !error_msg.contains("@tablename"),
-            "Error message should not suggest other directives when @permissions is recognized. Error: {}",
+            "Error message should not suggest other directives when @allow is recognized. Error: {}",
             error_msg
         );
     }
@@ -779,7 +750,7 @@ record Comment {
     id Int @id
     content String
     authorId Int
-    @permissions { authorId = Session.userId }
+    @allow(*) { authorId = Session.userId }
 }
     "#;
 
@@ -808,10 +779,10 @@ record Post {
     id Int @id
     title String
     authorId Int
-    @permissions(select) { authorId = Session.userId }
-    @permissions(insert) { authorId = Session.userId }
-    @permissions(update) { authorId = Session.userId }
-    @permissions(delete) { authorId = Session.userId }
+    @allow(select) { authorId = Session.userId }
+    @allow(insert) { authorId = Session.userId }
+    @allow(update) { authorId = Session.userId }
+    @allow(delete) { authorId = Session.userId }
 }
     "#;
 
@@ -838,8 +809,8 @@ fn test_star_permission_with_fine_grained_fails() {
 record Post {
     id Int @id
     title String
-    @permissions { authorId = Session.userId }
-    @permissions(select) { authorId = Session.userId }
+    @allow(*) { authorId = Session.userId }
+    @allow(select) { authorId = Session.userId }
 }
     "#;
 
@@ -873,7 +844,7 @@ record Post {
     id Int @id
     title String
     @public
-    @permissions { authorId = Session.userId }
+    @allow(*) { authorId = Session.userId }
 }
     "#;
 
@@ -907,7 +878,7 @@ record Post {
     id Int @id
     title String
     @public
-    @permissions(select) { authorId = Session.userId }
+    @allow(select) { authorId = Session.userId }
 }
     "#;
 
@@ -940,8 +911,8 @@ fn test_overlapping_fine_grained_permissions_fails() {
 record Post {
     id Int @id
     title String
-    @permissions(select, update) { authorId = Session.userId }
-    @permissions(select) { status = "published" }
+    @allow(select, update) { authorId = Session.userId }
+    @allow(select) { status = "published" }
 }
     "#;
 
@@ -975,7 +946,7 @@ record Post {
     id Int @id
     title String
     authorId Int
-    @permissions(select) { authorId = Session.userId }
+    @allow(select) { authorId = Session.userId }
     // insert, update, delete are implicitly denied
 }
     "#;

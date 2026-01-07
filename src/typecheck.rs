@@ -1862,7 +1862,7 @@ fn check_record_permissions(
     errors: &mut Vec<Error>,
 ) {
     // Collect unique permissions to avoid checking the same permission expression multiple times.
-    // When a single @permissions directive is used (PermissionDetails::Star), it applies to all
+    // When a single @allow(*) directive is used (PermissionDetails::Star), it applies to all
     // operations, so we'd otherwise check and report the same errors 4 times (once per operation).
     let mut checked_permissions: Vec<ast::WhereArg> = Vec::new();
 

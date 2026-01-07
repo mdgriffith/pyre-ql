@@ -367,18 +367,53 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
 }
 
 fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
-    let (input, _) = tag("permissions")(input)?;
-    // Commit to this branch once we've recognized @permissions
-    // This ensures that if parsing fails inside the permissions block,
+    let (input, _) = tag("allow")(input)?;
+    // Commit to this branch once we've recognized @allow
+    // This ensures that if parsing fails inside the allow block,
     // we don't backtrack and suggest other directives
     // Also update the expecting context so errors are reported appropriately
     let input = expecting(input, crate::error::Expecting::SchemaFieldAtDirective);
     let (input, _) = multispace0(input)?;
 
-    // Parse either fine-grained permissions @permissions(select, update) { ... }
-    // or star permission @permissions { ... }
+    // Parse either fine-grained permissions @allow(select, update) { ... }
+    // or star permission @allow(*) { ... }
     let (input, details) = alt((
-        // Fine-grained permissions: @permissions(select, update) { ... }
+        // Star permission: @allow(*) { ... } - try this first to avoid conflicts
+        |input| {
+            let (input, _) = tag("(")(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = tag("*")(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = cut(tag(")"))(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = cut(tag("{"))(input)?;
+            let (input, _) = multispace0(input)?;
+
+            // Parse comma or newline-separated list of where conditions (or single condition)
+            let (input, where_args) = separated_list0(
+                |input| {
+                    let (input, _) = multispace0(input)?;
+                    let (input, _) = parse_block_separator(input)?;
+                    let (input, _) = multispace0(input)?;
+                    Ok((input, ()))
+                },
+                parse_where_arg,
+            )(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = tag("}")(input)?;
+
+            let where_ = if where_args.len() == 1 {
+                where_args
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| ast::WhereArg::And(vec![]))
+            } else {
+                ast::WhereArg::And(where_args)
+            };
+
+            Ok((input, ast::PermissionDetails::Star(where_)))
+        },
+        // Fine-grained permissions: @allow(select, update) { ... }
         |input| {
             let (input, _) = tag("(")(input)?;
             let (input, ops) = cut(separated_list1(
@@ -430,35 +465,6 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
                     where_: where_,
                 }]),
             ))
-        },
-        // Star permission: @permissions { ... }
-        |input| {
-            let (input, _) = cut(tag("{"))(input)?;
-            let (input, _) = multispace0(input)?;
-
-            // Parse comma or newline-separated list of where conditions (or single condition)
-            let (input, where_args) = separated_list0(
-                |input| {
-                    let (input, _) = multispace0(input)?;
-                    let (input, _) = parse_block_separator(input)?;
-                    let (input, _) = multispace0(input)?;
-                    Ok((input, ()))
-                },
-                parse_where_arg,
-            )(input)?;
-            let (input, _) = multispace0(input)?;
-            let (input, _) = tag("}")(input)?;
-
-            let where_ = if where_args.len() == 1 {
-                where_args
-                    .into_iter()
-                    .next()
-                    .unwrap_or_else(|| ast::WhereArg::And(vec![]))
-            } else {
-                ast::WhereArg::And(where_args)
-            };
-
-            Ok((input, ast::PermissionDetails::Star(where_)))
         },
     ))(input)?;
 

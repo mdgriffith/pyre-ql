@@ -281,12 +281,10 @@ record Post {
     title        String
     content      String
     published    Bool
-    @permissions {
-        select { authorUserId = Session.userId || published = true }
-        insert { authorUserId = Session.userId }
-        update { authorUserId = Session.userId }
-        delete { authorUserId = Session.userId }
-    }
+    @allow(select) { authorUserId = Session.userId || published = true }
+    @allow(insert) { authorUserId = Session.userId }
+    @allow(update) { authorUserId = Session.userId }
+    @allow(delete) { authorUserId = Session.userId }
 }
 `;
 
