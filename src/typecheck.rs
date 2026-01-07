@@ -664,7 +664,8 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                         let mut tablenames: Vec<Range> = Vec::new();
                         let mut has_primary_id = false;
                         let mut field_names = HashSet::new();
-                        let mut permissions_count = 0;
+                        let mut permission_directives: Vec<(ast::PermissionDetails, Range)> =
+                            Vec::new();
 
                         for field in fields {
                             match field {
@@ -714,8 +715,25 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                     tablename,
                                 ))) => tablenames.push(convert_range(tablename_range)),
 
-                                ast::Field::FieldDirective(ast::FieldDirective::Permissions(_)) => {
-                                    permissions_count += 1;
+                                ast::Field::FieldDirective(ast::FieldDirective::Permissions(
+                                    perm,
+                                )) => {
+                                    // Use record range for permission directives since Field doesn't store individual ranges
+                                    // Extract first range from Vec<Range> returned by to_range
+                                    let perm_ranges = to_range(&start, &end);
+                                    let perm_range =
+                                        perm_ranges.first().cloned().unwrap_or_else(|| {
+                                            let default_loc = ast::Location {
+                                                line: 0,
+                                                column: 0,
+                                                offset: 0,
+                                            };
+                                            Range {
+                                                start: start.clone().unwrap_or(default_loc.clone()),
+                                                end: end.clone().unwrap_or(default_loc),
+                                            }
+                                        });
+                                    permission_directives.push((perm.clone(), perm_range));
                                 }
 
                                 ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
@@ -836,7 +854,8 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                             });
                         }
 
-                        if permissions_count == 0 {
+                        // Validate permissions according to new rules
+                        if permission_directives.is_empty() {
                             errors.push(Error {
                                 filepath: file.path.clone(),
                                 error_type: ErrorType::MissingPermissions {
@@ -847,17 +866,99 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                     primary: to_range(&start_name, &end_name),
                                 }],
                             });
-                        } else if permissions_count > 1 {
-                            errors.push(Error {
-                                filepath: file.path.clone(),
-                                error_type: ErrorType::MultiplePermissions {
-                                    record: name.clone(),
-                                },
-                                locations: vec![Location {
-                                    contexts: to_range(&start, &end),
-                                    primary: to_range(&start_name, &end_name),
-                                }],
-                            });
+                        } else {
+                            // Check for star permission or @public
+                            let mut has_star = false;
+                            let mut has_public = false;
+                            let mut fine_grained_permissions: Vec<(
+                                Vec<ast::QueryOperation>,
+                                Range,
+                            )> = Vec::new();
+
+                            for (perm, perm_range) in &permission_directives {
+                                match perm {
+                                    ast::PermissionDetails::Star(_) => {
+                                        has_star = true;
+                                    }
+                                    ast::PermissionDetails::Public => {
+                                        has_public = true;
+                                    }
+                                    ast::PermissionDetails::OnOperation(ops) => {
+                                        for op in ops {
+                                            fine_grained_permissions
+                                                .push((op.operations.clone(), perm_range.clone()));
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Rule 1: Star permission can't coexist with other permissions
+                            if has_star && permission_directives.len() > 1 {
+                                errors.push(Error {
+                                    filepath: file.path.clone(),
+                                    error_type: ErrorType::MultiplePermissions {
+                                        record: name.clone(),
+                                    },
+                                    locations: vec![Location {
+                                        contexts: to_range(&start, &end),
+                                        primary: permission_directives
+                                            .iter()
+                                            .map(|(_, r)| r.clone())
+                                            .collect(),
+                                    }],
+                                });
+                            }
+
+                            // Rule 2: @public can't coexist with other permissions
+                            if has_public && permission_directives.len() > 1 {
+                                errors.push(Error {
+                                    filepath: file.path.clone(),
+                                    error_type: ErrorType::MultiplePermissions {
+                                        record: name.clone(),
+                                    },
+                                    locations: vec![Location {
+                                        contexts: to_range(&start, &end),
+                                        primary: permission_directives
+                                            .iter()
+                                            .map(|(_, r)| r.clone())
+                                            .collect(),
+                                    }],
+                                });
+                            }
+
+                            // Rule 3: Multiple fine-grained permissions can't overlap operations
+                            if !has_star && !has_public && fine_grained_permissions.len() > 1 {
+                                let mut operation_coverage: std::collections::HashMap<
+                                    ast::QueryOperation,
+                                    Vec<Range>,
+                                > = std::collections::HashMap::new();
+
+                                for (ops, perm_range) in &fine_grained_permissions {
+                                    for op in ops {
+                                        operation_coverage
+                                            .entry(op.clone())
+                                            .or_insert_with(Vec::new)
+                                            .push(perm_range.clone());
+                                    }
+                                }
+
+                                // Check for overlaps
+                                for (op, ranges) in operation_coverage {
+                                    if ranges.len() > 1 {
+                                        errors.push(Error {
+                                            filepath: file.path.clone(),
+                                            error_type: ErrorType::MultiplePermissions {
+                                                record: name.clone(),
+                                            },
+                                            locations: vec![Location {
+                                                contexts: to_range(&start, &end),
+                                                primary: ranges,
+                                            }],
+                                        });
+                                        break; // Only report one error per record
+                                    }
+                                }
+                            }
                         }
 
                         if !has_primary_id {

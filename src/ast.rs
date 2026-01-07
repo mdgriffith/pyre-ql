@@ -84,6 +84,8 @@ pub enum Definition {
     },
 }
 pub fn get_permissions(record: &RecordDetails, operation: &QueryOperation) -> Option<WhereArg> {
+    let mut all_matching_wheres = Vec::new();
+
     for field in &record.fields {
         if let Field::FieldDirective(directive) = field {
             match directive {
@@ -91,22 +93,14 @@ pub fn get_permissions(record: &RecordDetails, operation: &QueryOperation) -> Op
                     PermissionDetails::Public => return None, // Public allows everything (no restrictions)
                     PermissionDetails::Star(where_arg) => return Some(where_arg.clone()),
                     PermissionDetails::OnOperation(ops) => {
-                        let mut matching_wheres = Vec::new();
                         for op in ops {
                             for op_type in &op.operations {
                                 if *op_type == *operation {
-                                    matching_wheres.push(op.where_.clone());
+                                    all_matching_wheres.push(op.where_.clone());
                                 }
                             }
                         }
-
-                        if matching_wheres.is_empty() {
-                            return None;
-                        } else if matching_wheres.len() == 1 {
-                            return Some(matching_wheres.remove(0));
-                        } else {
-                            return Some(WhereArg::And(matching_wheres));
-                        }
+                        // Continue checking other permission directives instead of returning None
                     }
                 },
                 _ => {}
@@ -114,7 +108,11 @@ pub fn get_permissions(record: &RecordDetails, operation: &QueryOperation) -> Op
         }
     }
 
-    None
+    match all_matching_wheres.as_slice() {
+        [] => None,
+        [single] => Some(single.clone()),
+        _ => Some(WhereArg::And(all_matching_wheres)),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -608,7 +606,7 @@ pub enum TopLevelQueryField {
     Comment { text: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum QueryOperation {
     Select,
     Insert,

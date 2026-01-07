@@ -368,87 +368,40 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
 
 fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = tag("permissions")(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag("{")(input)?;
+    // Commit to this branch once we've recognized @permissions
+    // This ensures that if parsing fails inside the permissions block,
+    // we don't backtrack and suggest other directives
+    // Also update the expecting context so errors are reported appropriately
+    let input = expecting(input, crate::error::Expecting::SchemaFieldAtDirective);
     let (input, _) = multispace0(input)?;
 
-    // Parse either a star permission or operation-specific permissions
-    // Try operation-specific first (starts with keywords), then fall back to star permission
+    // Parse either fine-grained permissions @permissions(select, update) { ... }
+    // or star permission @permissions { ... }
     let (input, details) = alt((
-        // Operation-specific permissions case (try first since it starts with keywords)
+        // Fine-grained permissions: @permissions(select, update) { ... }
         |input| {
-            let (input, operations) = separated_list0(
+            let (input, _) = tag("(")(input)?;
+            let (input, ops) = cut(separated_list1(
                 |input| {
-                    // After an operation's closing }, consume any spaces/tabs, then newline, then indentation
-                    let (input, _) = space0(input)?;
-                    let (input, _) = newline(input)?;
+                    let (input, _) = multispace0(input)?;
+                    let (input, _) = tag(",")(input)?;
                     let (input, _) = multispace0(input)?;
                     Ok((input, ()))
                 },
-                |input| {
-                    let (input, _) = multispace0(input)?;
-                    let (input, ops) = separated_list1(
-                        |input| {
-                            let (input, _) = multispace0(input)?;
-                            let (input, _) = tag(",")(input)?;
-                            let (input, _) = multispace0(input)?;
-                            Ok((input, ()))
-                        },
-                        alt((
-                            value(ast::QueryOperation::Select, tag("select")),
-                            value(ast::QueryOperation::Insert, tag("insert")),
-                            value(ast::QueryOperation::Update, tag("update")),
-                            value(ast::QueryOperation::Delete, tag("delete")),
-                        )),
-                    )(input)?;
-                    let (input, _) = multispace0(input)?;
-                    // Parse where clause - must be wrapped in braces for operation-specific permissions
-                    let (input, _) = tag("{")(input)?;
-                    let (input, _) = multispace0(input)?;
-                    // Parse comma or newline-separated list of where conditions
-                    let (input, where_args) = separated_list0(
-                        |input| {
-                            let (input, _) = multispace0(input)?;
-                            let (input, _) = parse_block_separator(input)?;
-                            let (input, _) = multispace0(input)?;
-                            Ok((input, ()))
-                        },
-                        parse_where_arg,
-                    )(input)?;
-                    let (input, _) = multispace0(input)?;
-                    let (input, _) = tag("}")(input)?;
-                    let where_ = if where_args.len() == 1 {
-                        where_args
-                            .into_iter()
-                            .next()
-                            .unwrap_or_else(|| ast::WhereArg::And(vec![]))
-                    } else {
-                        ast::WhereArg::And(where_args)
-                    };
-                    Ok((
-                        input,
-                        ast::PermissionOnOperation {
-                            operations: ops,
-                            where_: where_,
-                        },
-                    ))
-                },
-            )(input)?;
-            // If we didn't parse any operations, this isn't operation-specific permissions
-            // Fail to allow backtracking to star permission case
-            if operations.is_empty() {
-                return Err(nom::Err::Error(VerboseError {
-                    errors: vec![(input, VerboseErrorKind::Context("no operations"))],
-                }));
-            }
+                alt((
+                    value(ast::QueryOperation::Select, tag("select")),
+                    value(ast::QueryOperation::Insert, tag("insert")),
+                    value(ast::QueryOperation::Update, tag("update")),
+                    value(ast::QueryOperation::Delete, tag("delete")),
+                )),
+            ))(input)?;
             let (input, _) = multispace0(input)?;
-            let (input, _) = tag("}")(input)?;
-            Ok((input, ast::PermissionDetails::OnOperation(operations)))
-        },
-        // Star permission case (fallback - anything that's not operation-specific)
-        |input| {
-            // Parse comma or newline-separated list of where conditions (or single condition)
-            // separated_list0 handles both single expressions and comma/newline-separated lists
+            let (input, _) = cut(tag(")"))(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = cut(tag("{"))(input)?;
+            let (input, _) = multispace0(input)?;
+
+            // Parse where clause - can be multiline
             let (input, where_args) = separated_list0(
                 |input| {
                     let (input, _) = multispace0(input)?;
@@ -460,6 +413,7 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
             )(input)?;
             let (input, _) = multispace0(input)?;
             let (input, _) = tag("}")(input)?;
+
             let where_ = if where_args.len() == 1 {
                 where_args
                     .into_iter()
@@ -468,6 +422,42 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
             } else {
                 ast::WhereArg::And(where_args)
             };
+
+            Ok((
+                input,
+                ast::PermissionDetails::OnOperation(vec![ast::PermissionOnOperation {
+                    operations: ops,
+                    where_: where_,
+                }]),
+            ))
+        },
+        // Star permission: @permissions { ... }
+        |input| {
+            let (input, _) = cut(tag("{"))(input)?;
+            let (input, _) = multispace0(input)?;
+
+            // Parse comma or newline-separated list of where conditions (or single condition)
+            let (input, where_args) = separated_list0(
+                |input| {
+                    let (input, _) = multispace0(input)?;
+                    let (input, _) = parse_block_separator(input)?;
+                    let (input, _) = multispace0(input)?;
+                    Ok((input, ()))
+                },
+                parse_where_arg,
+            )(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = tag("}")(input)?;
+
+            let where_ = if where_args.len() == 1 {
+                where_args
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| ast::WhereArg::And(vec![]))
+            } else {
+                ast::WhereArg::And(where_args)
+            };
+
             Ok((input, ast::PermissionDetails::Star(where_)))
         },
     ))(input)?;

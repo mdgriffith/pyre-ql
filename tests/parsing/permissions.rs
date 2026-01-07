@@ -95,9 +95,7 @@ fn test_operation_specific_single_operation() {
 record Post {
     id Int @id
     title String
-    @permissions {
-        select { authorId = Session.userId }
-    }
+    @permissions(select) { authorId = Session.userId }
 }
     "#;
 
@@ -115,9 +113,7 @@ fn test_operation_specific_multiple_operations_same_line() {
 record Post {
     id Int @id
     title String
-    @permissions {
-        select, update { authorId = Session.userId }
-    }
+    @permissions(select, update) { authorId = Session.userId }
 }
     "#;
 
@@ -135,9 +131,7 @@ fn test_operation_specific_all_operations() {
 record Post {
     id Int @id
     title String
-    @permissions {
-        select, insert, update, delete { authorId = Session.userId }
-    }
+    @permissions(select, insert, update, delete) { authorId = Session.userId }
 }
     "#;
 
@@ -155,12 +149,10 @@ fn test_operation_specific_multiple_lines() {
 record Post {
     id Int @id
     title String
-    @permissions {
-        select { authorId = Session.userId }
-        insert { authorId = Session.userId }
-        update { authorId = Session.userId }
-        delete { authorId = Session.userId }
-    }
+    @permissions(select) { authorId = Session.userId }
+    @permissions(insert) { authorId = Session.userId }
+    @permissions(update) { authorId = Session.userId }
+    @permissions(delete) { authorId = Session.userId }
 }
     "#;
 
@@ -178,10 +170,8 @@ fn test_operation_specific_mixed_lines() {
 record Post {
     id Int @id
     title String
-    @permissions {
-        select, update { authorId = Session.userId }
-        insert, delete { authorId = Session.userId }
-    }
+    @permissions(select, update) { authorId = Session.userId }
+    @permissions(insert, delete) { authorId = Session.userId }
 }
     "#;
 
@@ -199,10 +189,8 @@ fn test_operation_specific_with_complex_where() {
 record Post {
     id Int @id
     title String
-    @permissions {
-        select { authorId = Session.userId || status = "published" }
-        delete { authorId = Session.userId && Session.role = "admin" }
-    }
+    @permissions(select) { authorId = Session.userId || status = "published" }
+    @permissions(delete) { authorId = Session.userId && Session.role = "admin" }
 }
     "#;
 
@@ -224,10 +212,8 @@ fn test_operation_specific_with_separate_permissions() {
 record Post {
     id Int @id
     title String
-    @permissions {
-        select { authorId = Session.userId || status = "published" }
-        delete { authorId = Session.userId }
-    }
+    @permissions(select) { authorId = Session.userId || status = "published" }
+    @permissions(delete) { authorId = Session.userId }
 }
     "#;
 
@@ -249,9 +235,7 @@ fn test_operation_specific_with_role_admin() {
 record Post {
     id Int @id
     title String
-    @permissions {
-        delete { Session.role = "admin" }
-    }
+    @permissions(delete) { Session.role = "admin" }
 }
     "#;
 
@@ -429,9 +413,7 @@ fn test_permission_invalid_operation() {
 record Post {
     id Int @id
     title String
-    @permissions {
-        invalid { authorId = Session.userId }
-    }
+    @permissions(invalid) { authorId = Session.userId }
 }
     "#;
 
@@ -444,8 +426,8 @@ record Post {
 }
 
 #[test]
-fn test_multiple_permissions_on_same_record() {
-    // This should fail - only one @permissions directive per record
+fn test_multiple_star_permissions_fails() {
+    // This should fail - star permissions can't coexist
     let schema_source = r#"
 record Post {
     id Int @id
@@ -459,7 +441,7 @@ record Post {
     let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
     assert!(parse_result.is_ok(), "Schema should parse successfully");
 
-    // Typecheck should fail with MultiplePermissions error
+    // Typecheck should fail - can't have multiple star permissions
     let database = ast::Database {
         schemas: vec![schema],
     };
@@ -467,7 +449,7 @@ record Post {
 
     assert!(
         typecheck_result.is_err(),
-        "Typecheck should fail with multiple @permissions directives"
+        "Typecheck should fail with multiple star @permissions directives"
     );
 
     let errors = typecheck_result.unwrap_err();
@@ -531,9 +513,7 @@ fn test_permission_operation_specific_with_multiple_where_conditions() {
 record Post {
     id Int @id
     title String
-    @permissions {
-        select { authorId = Session.userId, status = "published" }
-    }
+    @permissions(select) { authorId = Session.userId, status = "published" }
 }
     "#;
 
@@ -557,7 +537,10 @@ record Post {
 
     let mut schema = ast::Schema::default();
     let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
-    assert!(parse_result.is_ok(), "Schema with @public should parse successfully");
+    assert!(
+        parse_result.is_ok(),
+        "Schema with @public should parse successfully"
+    );
 
     // Typecheck should succeed with @public directive
     let database = ast::Database {
@@ -676,6 +659,113 @@ record Post {
 }
 
 #[test]
+fn test_operation_specific_multiple_conditions_separate_lines() {
+    // Test the case where multiple conditions are on separate lines within an operation block
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorUserId Int
+    published Bool
+    @permissions(select, update) { authorUserId = Session.userId }
+    @permissions(insert, delete) { authorUserId = Session.userId, published = True }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Operation-specific permission with multiple conditions on separate lines should parse successfully"
+    );
+}
+
+#[test]
+fn test_operation_specific_boolean_lowercase() {
+    // Test that lowercase boolean values are accepted
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    published Bool
+    @permissions(select) { published = true }
+    @permissions(insert) { published = false }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Operation-specific permission with lowercase boolean should parse successfully"
+    );
+}
+
+#[test]
+fn test_operation_specific_boolean_capitalized() {
+    // Test that capitalized boolean values are accepted
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    published Bool
+    @permissions(select) { published = True }
+    @permissions(insert) { published = False }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Operation-specific permission with capitalized boolean should parse successfully"
+    );
+}
+
+#[test]
+fn test_permissions_error_message_commits_to_permissions() {
+    // Test that when we see @permissions, we commit to that branch and give a proper error
+    // if there's a parsing issue inside, rather than suggesting other directives
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    @permissions(invalid syntax here) { authorId = Session.userId }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(
+        result.is_err(),
+        "Should fail to parse invalid syntax inside @permissions"
+    );
+
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        // The error should NOT suggest other directives like @watch, @tablename, etc.
+        // It should be a parsing error within the permissions block
+        assert!(
+            !error_msg.contains("@watch") && !error_msg.contains("@tablename"),
+            "Error message should not suggest other directives when @permissions is recognized. Error: {}",
+            error_msg
+        );
+    }
+}
+
+#[test]
 fn test_public_directive_counts_as_permissions() {
     // Test that @public counts as a permissions directive for validation
     let schema_source = r#"
@@ -706,6 +796,202 @@ record Comment {
     assert!(
         typecheck_result.is_ok(),
         "Typecheck should succeed when all records have exactly one permissions directive. Errors: {:?}",
+        typecheck_result.err()
+    );
+}
+
+#[test]
+fn test_multiple_fine_grained_permissions_allowed() {
+    // Multiple fine-grained permissions should be allowed if they don't overlap
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    @permissions(select) { authorId = Session.userId }
+    @permissions(insert) { authorId = Session.userId }
+    @permissions(update) { authorId = Session.userId }
+    @permissions(delete) { authorId = Session.userId }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema should parse successfully");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_ok(),
+        "Typecheck should succeed with multiple non-overlapping fine-grained permissions. Errors: {:?}",
+        typecheck_result.err()
+    );
+}
+
+#[test]
+fn test_star_permission_with_fine_grained_fails() {
+    // Star permission can't coexist with fine-grained permissions
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    @permissions { authorId = Session.userId }
+    @permissions(select) { authorId = Session.userId }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema should parse successfully");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_err(),
+        "Typecheck should fail when star permission coexists with fine-grained permissions"
+    );
+
+    let errors = typecheck_result.unwrap_err();
+    assert!(
+        errors.iter().any(|e| matches!(&e.error_type, ErrorType::MultiplePermissions { record } if record == "Post")),
+        "Should have MultiplePermissions error for Post record. Errors: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_public_with_star_permission_fails() {
+    // @public can't coexist with star permission
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    @public
+    @permissions { authorId = Session.userId }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema should parse successfully");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_err(),
+        "Typecheck should fail when @public coexists with star permission"
+    );
+
+    let errors = typecheck_result.unwrap_err();
+    assert!(
+        errors.iter().any(|e| matches!(&e.error_type, ErrorType::MultiplePermissions { record } if record == "Post")),
+        "Should have MultiplePermissions error for Post record. Errors: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_public_with_fine_grained_permission_fails() {
+    // @public can't coexist with fine-grained permissions
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    @public
+    @permissions(select) { authorId = Session.userId }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema should parse successfully");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_err(),
+        "Typecheck should fail when @public coexists with fine-grained permissions"
+    );
+
+    let errors = typecheck_result.unwrap_err();
+    assert!(
+        errors.iter().any(|e| matches!(&e.error_type, ErrorType::MultiplePermissions { record } if record == "Post")),
+        "Should have MultiplePermissions error for Post record. Errors: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_overlapping_fine_grained_permissions_fails() {
+    // Fine-grained permissions can't overlap operations
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    @permissions(select, update) { authorId = Session.userId }
+    @permissions(select) { status = "published" }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema should parse successfully");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_err(),
+        "Typecheck should fail when fine-grained permissions overlap operations"
+    );
+
+    let errors = typecheck_result.unwrap_err();
+    assert!(
+        errors.iter().any(|e| matches!(&e.error_type, ErrorType::MultiplePermissions { record } if record == "Post")),
+        "Should have MultiplePermissions error for Post record. Errors: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_partial_operation_coverage_allowed() {
+    // It's allowed to only grant permissions to some operations (others are denied)
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    @permissions(select) { authorId = Session.userId }
+    // insert, update, delete are implicitly denied
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(parse_result.is_ok(), "Schema should parse successfully");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let typecheck_result = typecheck::check_schema(&database);
+
+    assert!(
+        typecheck_result.is_ok(),
+        "Typecheck should succeed with partial operation coverage. Errors: {:?}",
         typecheck_result.err()
     );
 }
