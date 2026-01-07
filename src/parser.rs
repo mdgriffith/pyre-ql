@@ -405,11 +405,11 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
                     // Parse where clause - must be wrapped in braces for operation-specific permissions
                     let (input, _) = tag("{")(input)?;
                     let (input, _) = multispace0(input)?;
-                    // Parse comma-separated list of where conditions
+                    // Parse comma or newline-separated list of where conditions
                     let (input, where_args) = separated_list0(
                         |input| {
                             let (input, _) = multispace0(input)?;
-                            let (input, _) = char(',')(input)?;
+                            let (input, _) = parse_block_separator(input)?;
                             let (input, _) = multispace0(input)?;
                             Ok((input, ()))
                         },
@@ -447,9 +447,27 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
         },
         // Star permission case (fallback - anything that's not operation-specific)
         |input| {
-            let (input, where_) = parse_where_arg(input)?;
+            // Parse comma or newline-separated list of where conditions (or single condition)
+            // separated_list0 handles both single expressions and comma/newline-separated lists
+            let (input, where_args) = separated_list0(
+                |input| {
+                    let (input, _) = multispace0(input)?;
+                    let (input, _) = parse_block_separator(input)?;
+                    let (input, _) = multispace0(input)?;
+                    Ok((input, ()))
+                },
+                parse_where_arg,
+            )(input)?;
             let (input, _) = multispace0(input)?;
             let (input, _) = tag("}")(input)?;
+            let where_ = if where_args.len() == 1 {
+                where_args
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| ast::WhereArg::And(vec![]))
+            } else {
+                ast::WhereArg::And(where_args)
+            };
             Ok((input, ast::PermissionDetails::Star(where_)))
         },
     ))(input)?;

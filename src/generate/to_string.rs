@@ -286,9 +286,7 @@ fn to_string_permissions_details(
         ast::PermissionDetails::Public => {
             format!("{}@public\n", spaces)
         }
-        ast::PermissionDetails::Star(where_) => {
-            format!("{}@permissions {{{}}}\n", spaces, format_where(where_))
-        }
+        ast::PermissionDetails::Star(where_) => format_permissions_where(spaces, where_),
         ast::PermissionDetails::OnOperation(operations) => {
             let mut result = format!("{}@permissions {{\n", spaces);
 
@@ -304,15 +302,67 @@ fn to_string_permissions_details(
                     .map(|o| format!("{:?}", o).to_lowercase())
                     .collect::<Vec<_>>()
                     .join(", ");
-                result.push_str(&format!(
-                    "{}{} {{{}}}\n",
-                    op_spaces,
-                    ops,
-                    format_where(&op.where_)
-                ));
+                let where_content = format_where_content(&op.where_, indentation.minimum + 4);
+                result.push_str(&format!("{}{} {{{}}}\n", op_spaces, ops, where_content));
             }
             result.push_str(&format!("{}}}\n", spaces));
             result
+        }
+    }
+}
+
+fn format_permissions_where(indent: String, where_arg: &ast::WhereArg) -> String {
+    let content = format_where_for_braces(where_arg, indent.len());
+    format!("{}@permissions {}\n", indent, content)
+}
+
+fn format_where_for_braces(where_arg: &ast::WhereArg, base_indent: usize) -> String {
+    let content = format_where_content(where_arg, base_indent);
+    format!("{{{} }}", content)
+}
+
+fn format_where_content(where_arg: &ast::WhereArg, base_indent: usize) -> String {
+    // Check if this is a single expression (Column) or multiple expressions (And/Or)
+    match where_arg {
+        ast::WhereArg::Column(..) => {
+            // Single expression: format as  userId = Session.userId  with spaces
+            format!(" {} ", format_where(where_arg))
+        }
+        ast::WhereArg::And(args) => {
+            if args.len() == 1 {
+                // Single item in And - treat as single expression
+                format_where_content(&args[0], base_indent)
+            } else {
+                // Multiple expressions: format as multi-line (newlines act as separators, no commas)
+                let mut result = String::from("\n");
+                let inner_indent = " ".repeat(base_indent + 4);
+                for arg in args {
+                    result.push_str(&format!("{}{}\n", inner_indent, format_where(arg)));
+                }
+                result.push_str(&format!("{}", " ".repeat(base_indent)));
+                result
+            }
+        }
+        ast::WhereArg::Or(args) => {
+            if args.len() == 1 {
+                // Single item in Or - treat as single expression
+                format_where_content(&args[0], base_indent)
+            } else {
+                // Multiple expressions: format as multi-line with || separator
+                let mut result = String::from("\n");
+                let inner_indent = " ".repeat(base_indent + 4);
+                for (i, arg) in args.iter().enumerate() {
+                    if i != 0 {
+                        result.push_str(&format!("{}|| ", inner_indent));
+                    } else {
+                        result.push_str(&inner_indent);
+                    }
+                    result.push_str(&format_where(arg));
+                    result.push_str("\n");
+                }
+                result.push_str(&format!("{}", " ".repeat(base_indent)));
+                result
+            }
         }
     }
 }
@@ -537,29 +587,9 @@ fn to_string_param(indent_size: usize, arg: &ast::Arg) -> String {
                 ast::direction_to_string(direction)
             )
         }
-        ast::Arg::Where(ast::WhereArg::And(and)) => {
-            let mut result = format!("{}@where {{", indent);
-            let inner_indent = " ".repeat(indent_size + 4);
-            for arg in and {
-                result.push_str("\n");
-                result.push_str(&inner_indent);
-                result.push_str(&format_where(arg));
-            }
-            result.push_str(&format!("\n{}}}\n", indent));
-            result
-        }
-        ast::Arg::Where(ast::WhereArg::Or(or)) => {
-            let mut result = format!("{}@where {{", indent);
-            let inner_indent = " ".repeat(indent_size + 4);
-            for arg in or {
-                result.push_str(&format!("\n{}|| ", inner_indent));
-                result.push_str(&format_where(arg));
-            }
-            result.push_str(&format!("\n{}}}\n", indent));
-            result
-        }
         ast::Arg::Where(where_arg) => {
-            format!("{}@where {{ {} }}\n", indent, format_where(where_arg))
+            let content = format_where_for_braces(where_arg, indent_size);
+            format!("{}@where {}\n", indent, content)
         }
     }
 }
