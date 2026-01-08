@@ -1,5 +1,6 @@
 mod ast;
 mod commands;
+mod formatting;
 pub mod helpers;
 mod migrations;
 mod parsing;

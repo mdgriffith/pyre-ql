@@ -343,20 +343,38 @@ fn format_where_content(where_arg: &ast::WhereArg, base_indent: usize) -> String
                 // Single item in Or - treat as single expression
                 format_where_content(&args[0], base_indent)
             } else {
-                // Multiple expressions: format as multi-line with || separator
-                let mut result = String::from("\n");
-                let inner_indent = " ".repeat(base_indent + 4);
-                for (i, arg) in args.iter().enumerate() {
-                    if i != 0 {
-                        result.push_str(&format!("{}|| ", inner_indent));
-                    } else {
-                        result.push_str(&inner_indent);
+                // Check if all items are simple (Column or And/Or with only Column items) - if so, format as single-line
+                let all_simple = args.iter().all(|arg| match arg {
+                    ast::WhereArg::Column(..) => true,
+                    ast::WhereArg::And(items) => {
+                        items.len() <= 2
+                            && items.iter().all(|a| matches!(a, ast::WhereArg::Column(..)))
                     }
-                    result.push_str(&format_where(arg));
-                    result.push_str("\n");
+                    ast::WhereArg::Or(items) => {
+                        items.len() <= 2
+                            && items.iter().all(|a| matches!(a, ast::WhereArg::Column(..)))
+                    }
+                });
+
+                if all_simple {
+                    // Format as single-line using format_where
+                    format!(" {} ", format_where(where_arg))
+                } else {
+                    // Multiple expressions: format as multi-line with || separator
+                    let mut result = String::from("\n");
+                    let inner_indent = " ".repeat(base_indent + 4);
+                    for (i, arg) in args.iter().enumerate() {
+                        if i != 0 {
+                            result.push_str(&format!("{}|| ", inner_indent));
+                        } else {
+                            result.push_str(&inner_indent);
+                        }
+                        result.push_str(&format_where(arg));
+                        result.push_str("\n");
+                    }
+                    result.push_str(&format!("{}", " ".repeat(base_indent)));
+                    result
                 }
-                result.push_str(&format!("{}", " ".repeat(base_indent)));
-                result
             }
         }
     }

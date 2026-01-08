@@ -1,0 +1,1049 @@
+use pyre::ast;
+use pyre::format;
+use pyre::generate;
+use pyre::parser;
+
+/// Helper function to compare two schemas ignoring location information
+fn schemas_equal_ignoring_locations(a: &ast::Schema, b: &ast::Schema) -> bool {
+    if a.namespace != b.namespace {
+        return false;
+    }
+
+    // Compare session
+    match (&a.session, &b.session) {
+        (None, None) => {}
+        (Some(sa), Some(sb)) => {
+            if !session_details_equal_ignoring_locations(sa, sb) {
+                return false;
+            }
+        }
+        _ => return false,
+    }
+
+    // Compare files
+    if a.files.len() != b.files.len() {
+        return false;
+    }
+
+    for (fa, fb) in a.files.iter().zip(b.files.iter()) {
+        if fa.path != fb.path {
+            return false;
+        }
+        if !definitions_equal_ignoring_locations(&fa.definitions, &fb.definitions) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn session_details_equal_ignoring_locations(
+    a: &ast::SessionDetails,
+    b: &ast::SessionDetails,
+) -> bool {
+    fields_equal_ignoring_locations(&a.fields, &b.fields)
+}
+
+fn definitions_equal_ignoring_locations(
+    a: &Vec<ast::Definition>,
+    b: &Vec<ast::Definition>,
+) -> bool {
+    // Filter out Lines entries (whitespace) for comparison, similar to queries
+    let a_defs: Vec<_> = a
+        .iter()
+        .filter(|d| !matches!(d, ast::Definition::Lines { .. }))
+        .collect();
+    let b_defs: Vec<_> = b
+        .iter()
+        .filter(|d| !matches!(d, ast::Definition::Lines { .. }))
+        .collect();
+
+    if a_defs.len() != b_defs.len() {
+        eprintln!(
+            "Definition counts differ (after filtering Lines): {} vs {}",
+            a_defs.len(),
+            b_defs.len()
+        );
+        return false;
+    }
+
+    for (i, (da, db)) in a_defs.iter().zip(b_defs.iter()).enumerate() {
+        if !definition_equal_ignoring_locations(da, db) {
+            eprintln!("Definition {} differs", i);
+            return false;
+        }
+    }
+
+    true
+}
+
+fn definition_equal_ignoring_locations(a: &ast::Definition, b: &ast::Definition) -> bool {
+    match (a, b) {
+        (ast::Definition::Lines { count: ca }, ast::Definition::Lines { count: cb }) => ca == cb,
+        (ast::Definition::Comment { text: ta }, ast::Definition::Comment { text: tb }) => ta == tb,
+        (
+            ast::Definition::Tagged {
+                name: na,
+                variants: va,
+                ..
+            },
+            ast::Definition::Tagged {
+                name: nb,
+                variants: vb,
+                ..
+            },
+        ) => {
+            if na != nb {
+                return false;
+            }
+            if va.len() != vb.len() {
+                return false;
+            }
+            for (va_item, vb_item) in va.iter().zip(vb.iter()) {
+                if !variant_equal_ignoring_locations(va_item, vb_item) {
+                    return false;
+                }
+            }
+            true
+        }
+        (ast::Definition::Session(sa), ast::Definition::Session(sb)) => {
+            session_details_equal_ignoring_locations(sa, sb)
+        }
+        (
+            ast::Definition::Record {
+                name: na,
+                fields: fa,
+                ..
+            },
+            ast::Definition::Record {
+                name: nb,
+                fields: fb,
+                ..
+            },
+        ) => {
+            if na != nb {
+                return false;
+            }
+            fields_equal_ignoring_locations(fa, fb)
+        }
+        _ => false,
+    }
+}
+
+fn variant_equal_ignoring_locations(a: &ast::Variant, b: &ast::Variant) -> bool {
+    if a.name != b.name {
+        return false;
+    }
+
+    match (&a.fields, &b.fields) {
+        (None, None) => true,
+        (Some(fa), Some(fb)) => fields_equal_ignoring_locations(fa, fb),
+        _ => false,
+    }
+}
+
+fn fields_equal_ignoring_locations(a: &Vec<ast::Field>, b: &Vec<ast::Field>) -> bool {
+    // Filter out ColumnLines entries (whitespace) for comparison
+    let a_fields: Vec<_> = a
+        .iter()
+        .filter(|f| !matches!(f, ast::Field::ColumnLines { .. }))
+        .collect();
+    let b_fields: Vec<_> = b
+        .iter()
+        .filter(|f| !matches!(f, ast::Field::ColumnLines { .. }))
+        .collect();
+
+    // Separate columns, links, and other directives
+    let mut a_columns = Vec::new();
+    let mut a_links = Vec::new();
+    let mut a_other = Vec::new();
+
+    let mut b_columns = Vec::new();
+    let mut b_links = Vec::new();
+    let mut b_other = Vec::new();
+
+    for f in a_fields.iter() {
+        match f {
+            ast::Field::Column(c) => a_columns.push(c),
+            ast::Field::FieldDirective(ast::FieldDirective::Link(l)) => a_links.push(l),
+            _ => a_other.push(f),
+        }
+    }
+
+    for f in b_fields.iter() {
+        match f {
+            ast::Field::Column(c) => b_columns.push(c),
+            ast::Field::FieldDirective(ast::FieldDirective::Link(l)) => b_links.push(l),
+            _ => b_other.push(f),
+        }
+    }
+
+    // Compare columns
+    if a_columns.len() != b_columns.len() {
+        return false;
+    }
+    for (ca, cb) in a_columns.iter().zip(b_columns.iter()) {
+        if !column_equal_ignoring_locations(ca, cb) {
+            return false;
+        }
+    }
+
+    // Compare links semantically (using link_equivalent which ignores link_name)
+    if a_links.len() != b_links.len() {
+        return false;
+    }
+    // Check if all links in a have an equivalent in b
+    for link_a in a_links.iter() {
+        let mut found = false;
+        for link_b in b_links.iter() {
+            if ast::link_equivalent(link_a, link_b) {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+
+    // Compare other directives
+    if a_other.len() != b_other.len() {
+        return false;
+    }
+    for (fa, fb) in a_other.iter().zip(b_other.iter()) {
+        if !field_equal_ignoring_locations(fa, fb) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn field_equal_ignoring_locations(a: &ast::Field, b: &ast::Field) -> bool {
+    match (a, b) {
+        (ast::Field::Column(ca), ast::Field::Column(cb)) => column_equal_ignoring_locations(ca, cb),
+        (ast::Field::ColumnLines { count: ca }, ast::Field::ColumnLines { count: cb }) => ca == cb,
+        (ast::Field::ColumnComment { text: ta }, ast::Field::ColumnComment { text: tb }) => {
+            ta == tb
+        }
+        (ast::Field::FieldDirective(da), ast::Field::FieldDirective(db)) => {
+            field_directive_equal_ignoring_locations(da, db)
+        }
+        _ => false,
+    }
+}
+
+fn column_equal_ignoring_locations(a: &ast::Column, b: &ast::Column) -> bool {
+    a.name == b.name
+        && a.type_ == b.type_
+        && a.serialization_type == b.serialization_type
+        && a.nullable == b.nullable
+        && column_directives_equal_ignoring_locations(&a.directives, &b.directives)
+}
+
+fn column_directives_equal_ignoring_locations(
+    a: &Vec<ast::ColumnDirective>,
+    b: &Vec<ast::ColumnDirective>,
+) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    for (da, db) in a.iter().zip(b.iter()) {
+        if !column_directive_equal_ignoring_locations(da, db) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn column_directive_equal_ignoring_locations(
+    a: &ast::ColumnDirective,
+    b: &ast::ColumnDirective,
+) -> bool {
+    match (a, b) {
+        (ast::ColumnDirective::PrimaryKey, ast::ColumnDirective::PrimaryKey) => true,
+        (ast::ColumnDirective::Unique, ast::ColumnDirective::Unique) => true,
+        (ast::ColumnDirective::Index, ast::ColumnDirective::Index) => true,
+        (
+            ast::ColumnDirective::Default { id: ida, value: va },
+            ast::ColumnDirective::Default { id: idb, value: vb },
+        ) => ida == idb && default_value_equal_ignoring_locations(va, vb),
+        _ => false,
+    }
+}
+
+fn default_value_equal_ignoring_locations(a: &ast::DefaultValue, b: &ast::DefaultValue) -> bool {
+    match (a, b) {
+        (ast::DefaultValue::Now, ast::DefaultValue::Now) => true,
+        (ast::DefaultValue::Value(va), ast::DefaultValue::Value(vb)) => {
+            query_value_equal_ignoring_locations(va, vb)
+        }
+        _ => false,
+    }
+}
+
+fn field_directive_equal_ignoring_locations(
+    a: &ast::FieldDirective,
+    b: &ast::FieldDirective,
+) -> bool {
+    match (a, b) {
+        (ast::FieldDirective::Watched(wa), ast::FieldDirective::Watched(wb)) => {
+            wa.selects == wb.selects
+                && wa.inserts == wb.inserts
+                && wa.updates == wb.updates
+                && wa.deletes == wb.deletes
+        }
+        (ast::FieldDirective::TableName((_, ta)), ast::FieldDirective::TableName((_, tb))) => {
+            ta == tb
+        }
+        (ast::FieldDirective::Link(la), ast::FieldDirective::Link(lb)) => {
+            link_details_equal_ignoring_locations(la, lb)
+        }
+        (ast::FieldDirective::Permissions(pa), ast::FieldDirective::Permissions(pb)) => {
+            permission_details_equal_ignoring_locations(pa, pb)
+        }
+        _ => false,
+    }
+}
+
+fn link_details_equal_ignoring_locations(a: &ast::LinkDetails, b: &ast::LinkDetails) -> bool {
+    // Use the existing link_equivalent function which compares by local_ids and foreign,
+    // ignoring link_name (which can differ for reciprocal links)
+    ast::link_equivalent(a, b)
+}
+
+fn permission_details_equal_ignoring_locations(
+    a: &ast::PermissionDetails,
+    b: &ast::PermissionDetails,
+) -> bool {
+    match (a, b) {
+        (ast::PermissionDetails::Public, ast::PermissionDetails::Public) => true,
+        (ast::PermissionDetails::Star(wa), ast::PermissionDetails::Star(wb)) => {
+            where_arg_equal_ignoring_locations(wa, wb)
+        }
+        (ast::PermissionDetails::OnOperation(oa), ast::PermissionDetails::OnOperation(ob)) => {
+            if oa.len() != ob.len() {
+                return false;
+            }
+            for (oa_item, ob_item) in oa.iter().zip(ob.iter()) {
+                if oa_item.operations != ob_item.operations {
+                    return false;
+                }
+                if !where_arg_equal_ignoring_locations(&oa_item.where_, &ob_item.where_) {
+                    return false;
+                }
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn where_arg_equal_ignoring_locations(a: &ast::WhereArg, b: &ast::WhereArg) -> bool {
+    match (a, b) {
+        (ast::WhereArg::Column(sa, ca, oa, va), ast::WhereArg::Column(sb, cb, ob, vb)) => {
+            sa == sb && ca == cb && oa == ob && query_value_equal_ignoring_locations(va, vb)
+        }
+        (ast::WhereArg::And(va), ast::WhereArg::And(vb)) => {
+            if va.len() != vb.len() {
+                return false;
+            }
+            for (va_item, vb_item) in va.iter().zip(vb.iter()) {
+                if !where_arg_equal_ignoring_locations(va_item, vb_item) {
+                    return false;
+                }
+            }
+            true
+        }
+        (ast::WhereArg::Or(va), ast::WhereArg::Or(vb)) => {
+            if va.len() != vb.len() {
+                return false;
+            }
+            for (va_item, vb_item) in va.iter().zip(vb.iter()) {
+                if !where_arg_equal_ignoring_locations(va_item, vb_item) {
+                    return false;
+                }
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn query_value_equal_ignoring_locations(a: &ast::QueryValue, b: &ast::QueryValue) -> bool {
+    match (a, b) {
+        (ast::QueryValue::Fn(fa), ast::QueryValue::Fn(fb)) => {
+            fa.name == fb.name
+                && fa.args.len() == fb.args.len()
+                && fa
+                    .args
+                    .iter()
+                    .zip(fb.args.iter())
+                    .all(|(a, b)| query_value_equal_ignoring_locations(a, b))
+        }
+        (
+            ast::QueryValue::LiteralTypeValue((_, la)),
+            ast::QueryValue::LiteralTypeValue((_, lb)),
+        ) => {
+            la.name == lb.name
+                && match (&la.fields, &lb.fields) {
+                    (None, None) => true,
+                    (Some(fa), Some(fb)) => {
+                        fa.len() == fb.len()
+                            && fa.iter().zip(fb.iter()).all(|((na, va), (nb, vb))| {
+                                na == nb && query_value_equal_ignoring_locations(va, vb)
+                            })
+                    }
+                    _ => false,
+                }
+        }
+        (ast::QueryValue::Variable((_, va)), ast::QueryValue::Variable((_, vb))) => {
+            va.name == vb.name && va.session_field == vb.session_field
+        }
+        (ast::QueryValue::String((_, sa)), ast::QueryValue::String((_, sb))) => sa == sb,
+        (ast::QueryValue::Int((_, ia)), ast::QueryValue::Int((_, ib))) => ia == ib,
+        (ast::QueryValue::Float((_, fa)), ast::QueryValue::Float((_, fb))) => {
+            (fa - fb).abs() < f32::EPSILON
+        }
+        (ast::QueryValue::Bool((_, ba)), ast::QueryValue::Bool((_, bb))) => ba == bb,
+        (ast::QueryValue::Null(_), ast::QueryValue::Null(_)) => true,
+        _ => false,
+    }
+}
+
+/// Helper function to compare two query lists ignoring location information
+/// Filters out QueryLines entries as they're just formatting whitespace
+fn query_lists_equal_ignoring_locations(a: &ast::QueryList, b: &ast::QueryList) -> bool {
+    // Filter out QueryLines entries (whitespace) for comparison
+    let a_queries: Vec<_> = a
+        .queries
+        .iter()
+        .filter(|q| !matches!(q, ast::QueryDef::QueryLines { .. }))
+        .collect();
+    let b_queries: Vec<_> = b
+        .queries
+        .iter()
+        .filter(|q| !matches!(q, ast::QueryDef::QueryLines { .. }))
+        .collect();
+
+    if a_queries.len() != b_queries.len() {
+        return false;
+    }
+
+    for (qa, qb) in a_queries.iter().zip(b_queries.iter()) {
+        if !query_def_equal_ignoring_locations(qa, qb) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn query_def_equal_ignoring_locations(a: &ast::QueryDef, b: &ast::QueryDef) -> bool {
+    match (a, b) {
+        (ast::QueryDef::Query(qa), ast::QueryDef::Query(qb)) => {
+            query_equal_ignoring_locations(qa, qb)
+        }
+        (ast::QueryDef::QueryComment { text: ta }, ast::QueryDef::QueryComment { text: tb }) => {
+            ta == tb
+        }
+        (ast::QueryDef::QueryLines { count: ca }, ast::QueryDef::QueryLines { count: cb }) => {
+            ca == cb
+        }
+        _ => false,
+    }
+}
+
+fn query_equal_ignoring_locations(a: &ast::Query, b: &ast::Query) -> bool {
+    // Note: We ignore interface_hash and full_hash as they may differ
+    // due to formatting changes affecting whitespace
+    a.operation == b.operation
+        && a.name == b.name
+        && query_params_equal_ignoring_locations(&a.args, &b.args)
+        && top_level_query_fields_equal_ignoring_locations(&a.fields, &b.fields)
+}
+
+fn query_params_equal_ignoring_locations(
+    a: &Vec<ast::QueryParamDefinition>,
+    b: &Vec<ast::QueryParamDefinition>,
+) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    for (pa, pb) in a.iter().zip(b.iter()) {
+        if pa.name != pb.name || pa.type_ != pb.type_ {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn top_level_query_fields_equal_ignoring_locations(
+    a: &Vec<ast::TopLevelQueryField>,
+    b: &Vec<ast::TopLevelQueryField>,
+) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    for (fa, fb) in a.iter().zip(b.iter()) {
+        if !top_level_query_field_equal_ignoring_locations(fa, fb) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn top_level_query_field_equal_ignoring_locations(
+    a: &ast::TopLevelQueryField,
+    b: &ast::TopLevelQueryField,
+) -> bool {
+    match (a, b) {
+        (ast::TopLevelQueryField::Field(fa), ast::TopLevelQueryField::Field(fb)) => {
+            query_field_equal_ignoring_locations(fa, fb)
+        }
+        (
+            ast::TopLevelQueryField::Lines { count: ca },
+            ast::TopLevelQueryField::Lines { count: cb },
+        ) => ca == cb,
+        (
+            ast::TopLevelQueryField::Comment { text: ta },
+            ast::TopLevelQueryField::Comment { text: tb },
+        ) => ta == tb,
+        _ => false,
+    }
+}
+
+fn query_field_equal_ignoring_locations(a: &ast::QueryField, b: &ast::QueryField) -> bool {
+    a.name == b.name
+        && a.alias == b.alias
+        && match (&a.set, &b.set) {
+            (None, None) => true,
+            (Some(sa), Some(sb)) => query_value_equal_ignoring_locations(sa, sb),
+            _ => false,
+        }
+        && a.directives == b.directives
+        && arg_fields_equal_ignoring_locations(&a.fields, &b.fields)
+}
+
+fn arg_fields_equal_ignoring_locations(a: &Vec<ast::ArgField>, b: &Vec<ast::ArgField>) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    for (fa, fb) in a.iter().zip(b.iter()) {
+        if !arg_field_equal_ignoring_locations(fa, fb) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn arg_field_equal_ignoring_locations(a: &ast::ArgField, b: &ast::ArgField) -> bool {
+    match (a, b) {
+        (ast::ArgField::Field(fa), ast::ArgField::Field(fb)) => {
+            query_field_equal_ignoring_locations(fa, fb)
+        }
+        (ast::ArgField::Arg(la), ast::ArgField::Arg(lb)) => {
+            arg_equal_ignoring_locations(&la.arg, &lb.arg)
+        }
+        (ast::ArgField::Lines { count: ca }, ast::ArgField::Lines { count: cb }) => ca == cb,
+        (ast::ArgField::QueryComment { text: ta }, ast::ArgField::QueryComment { text: tb }) => {
+            ta == tb
+        }
+        _ => false,
+    }
+}
+
+fn arg_equal_ignoring_locations(a: &ast::Arg, b: &ast::Arg) -> bool {
+    match (a, b) {
+        (ast::Arg::Limit(va), ast::Arg::Limit(vb)) => query_value_equal_ignoring_locations(va, vb),
+        (ast::Arg::OrderBy(da, sa), ast::Arg::OrderBy(db, sb)) => match (da, db) {
+            (ast::Direction::Asc, ast::Direction::Asc)
+            | (ast::Direction::Desc, ast::Direction::Desc) => sa == sb,
+            _ => false,
+        },
+        (ast::Arg::Where(wa), ast::Arg::Where(wb)) => where_arg_equal_ignoring_locations(wa, wb),
+        _ => false,
+    }
+}
+
+/// Round trip test helper for schemas
+fn round_trip_schema(source: &str) {
+    // Parse original
+    let mut schema1 = ast::Schema::default();
+    let parse_result1 = parser::run("schema.pyre", source, &mut schema1);
+    assert!(
+        parse_result1.is_ok(),
+        "First parse should succeed. Error: {:?}",
+        parse_result1.err()
+    );
+
+    // Format
+    format::schema(&mut schema1);
+    let formatted = generate::to_string::schema_to_string(&schema1.namespace, &schema1);
+
+    // Parse formatted
+    let mut schema2 = ast::Schema::default();
+    let parse_result2 = parser::run("schema.pyre", &formatted, &mut schema2);
+    assert!(
+        parse_result2.is_ok(),
+        "Second parse should succeed. Error: {:?}\nFormatted output:\n{}",
+        parse_result2.err(),
+        formatted
+    );
+
+    // Format again
+    format::schema(&mut schema2);
+
+    // Compare ASTs (ignoring locations)
+    assert!(
+        schemas_equal_ignoring_locations(&schema1, &schema2),
+        "ASTs should match after round trip. Original:\n{}\n\nFormatted:\n{}",
+        source,
+        formatted
+    );
+}
+
+/// Round trip test helper for queries
+fn round_trip_query(source: &str, database: &ast::Database) {
+    // Parse original
+    let query_list1 = parser::parse_query("query.pyre", source);
+    assert!(
+        query_list1.is_ok(),
+        "First parse should succeed. Error: {:?}",
+        query_list1.err()
+    );
+    let mut query_list1 = query_list1.unwrap();
+
+    // Format
+    format::query_list(database, &mut query_list1);
+    let formatted = generate::to_string::query(&query_list1);
+
+    // Parse formatted
+    let query_list2 = parser::parse_query("query.pyre", &formatted);
+    assert!(
+        query_list2.is_ok(),
+        "Second parse should succeed. Error: {:?}\nFormatted output:\n{}",
+        query_list2.err(),
+        formatted
+    );
+    let mut query_list2 = query_list2.unwrap();
+
+    // Format again
+    format::query_list(database, &mut query_list2);
+
+    // Compare ASTs (ignoring locations)
+    assert!(
+        query_lists_equal_ignoring_locations(&query_list1, &query_list2),
+        "ASTs should match after round trip. Original:\n{}\n\nFormatted:\n{}",
+        source,
+        formatted
+    );
+}
+
+// ============================================================================
+// Schema Round Trip Tests
+// ============================================================================
+
+#[test]
+fn test_schema_round_trip_comprehensive() {
+    let schema_source = r#"
+// Comment at the top
+record User {
+    id Int @id
+    name String
+    email String @unique
+    age Int? @index
+    createdAt DateTime @default(now)
+    updatedAt DateTime @default(now) @index
+    @tablename "users"
+    @allow(*) { id = Session.userId }
+    @allow(select) { published = True }
+    @allow(insert, update) { authorId = Session.userId }
+}
+
+record Post {
+    id Int @id
+    title String
+    content String?
+    authorId Int
+    author @link(authorId, User.id)
+    published Bool @default(False)
+    createdAt DateTime @default(now)
+    @allow(*) { authorId = Session.userId }
+}
+
+record Comment {
+    id Int @id
+    postId Int
+    userId Int
+    content String
+    post @link(postId, Post.id)
+    user @link(userId, User.id)
+    createdAt DateTime @default(now)
+    @allow(select) { post.published = True }
+    @allow(insert, update) { userId = Session.userId }
+}
+
+type Status
+    = Active
+    | Inactive
+    | Pending {
+        reason String
+    }
+
+session {
+    userId Int
+    role String
+}
+    "#;
+
+    round_trip_schema(schema_source);
+}
+
+#[test]
+fn test_schema_round_trip_directives() {
+    let schema_source = r#"
+record Test {
+    id Int @id
+    uniqueField String @unique
+    indexedField String @index
+    defaultField String @default("test")
+    defaultNow DateTime @default(now)
+    nullableField String?
+    @tablename "test_table"
+    @public
+}
+    "#;
+
+    round_trip_schema(schema_source);
+}
+
+#[test]
+fn test_schema_round_trip_permissions() {
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    @allow(select) { published = True }
+    @allow(insert, update) { authorId = Session.userId && status = "draft" }
+    @allow(delete) { authorId = Session.userId || Session.role = "admin" }
+}
+    "#;
+
+    round_trip_schema(schema_source);
+}
+
+#[test]
+fn test_schema_round_trip_links() {
+    let schema_source = r#"
+record User {
+    id Int @id
+    name String
+}
+
+record Post {
+    id Int @id
+    authorId Int
+    author @link(authorId, User.id)
+}
+
+record Comment {
+    id Int @id
+    postId Int
+    userId Int
+    post @link(postId, Post.id)
+    user @link(userId, User.id)
+}
+    "#;
+
+    round_trip_schema(schema_source);
+}
+
+#[test]
+fn test_schema_round_trip_tagged_types() {
+    let schema_source = r#"
+type SimpleTagged
+    = Option1
+    | Option2
+    | Option3
+
+type TaggedWithFields
+    = Active
+    | Inactive
+    | Pending {
+        reason String
+        createdAt DateTime
+    }
+
+record Test {
+    id Int @id
+    status TaggedWithFields
+}
+    "#;
+
+    round_trip_schema(schema_source);
+}
+
+// ============================================================================
+// Query Round Trip Tests
+// ============================================================================
+
+fn create_test_database() -> ast::Database {
+    let schema_source = r#"
+record User {
+    id Int @id
+    name String
+    email String
+    age Int?
+}
+
+record Post {
+    id Int @id
+    title String
+    content String?
+    authorId Int
+    author @link(authorId, User.id)
+    published Bool
+}
+
+session {
+    userId Int
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).unwrap();
+    ast::Database {
+        schemas: vec![schema],
+    }
+}
+
+#[test]
+fn test_query_round_trip_simple_select() {
+    let database = create_test_database();
+    let query_source = r#"
+query GetUsers {
+    user {
+        id
+        name
+        email
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_with_params() {
+    let database = create_test_database();
+    let query_source = r#"
+query GetUser($id: Int) {
+    user {
+        @where { id = $id }
+        id
+        name
+        email
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_nested() {
+    let database = create_test_database();
+    let query_source = r#"
+query GetPostsWithAuthor {
+    post {
+        id
+        title
+        author {
+            id
+            name
+        }
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_with_where() {
+    let database = create_test_database();
+    let query_source = r#"
+query GetPublishedPosts {
+    post {
+        @where { published = True }
+        id
+        title
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_with_limit() {
+    let database = create_test_database();
+    let query_source = r#"
+query GetUsers {
+    user {
+        @limit 10
+        id
+        name
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_with_order_by() {
+    let database = create_test_database();
+    let query_source = r#"
+query GetUsers {
+    user {
+        @sort name asc
+        id
+        name
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_insert() {
+    let database = create_test_database();
+    let query_source = r#"
+insert CreateUser($name: String, $email: String) {
+    user {
+        name = $name
+        email = $email
+        id
+        name
+        email
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_update() {
+    let database = create_test_database();
+    let query_source = r#"
+update UpdateUser($id: Int, $name: String) {
+    user {
+        @where { id = $id }
+        name = $name
+        id
+        name
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_delete() {
+    let database = create_test_database();
+    let query_source = r#"
+delete DeleteUser($id: Int) {
+    user {
+        @where { id = $id }
+        id
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_complex_where() {
+    let database = create_test_database();
+    let query_source = r#"
+query GetUsers {
+    user {
+        @where { id = 1 && name = "test" || email = "test@example.com" }
+        id
+        name
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_with_session() {
+    let database = create_test_database();
+    let query_source = r#"
+query GetCurrentUser {
+    user {
+        @where { id = Session.userId }
+        id
+        name
+        email
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_multiple_queries() {
+    let database = create_test_database();
+    let query_source = r#"
+query GetUsers {
+    user {
+        id
+        name
+    }
+}
+
+query GetPosts {
+    post {
+        id
+        title
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_round_trip_with_comments() {
+    let database = create_test_database();
+    let query_source = r#"
+// Get all users
+query GetUsers {
+    user {
+        id
+        name
+    }
+}
+    "#;
+
+    round_trip_query(query_source, &database);
+}

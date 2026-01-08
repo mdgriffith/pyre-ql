@@ -359,10 +359,10 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = tag("@")(input)?;
 
     let (input, field_directive) = cut(alt((
+        parse_tablename(to_location(&start_pos)),
         parse_table_permission,
         parse_public,
         parse_watch(),
-        parse_tablename(to_location(&start_pos)),
         parse_link,
     )))(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaColumn);
@@ -501,7 +501,9 @@ fn parse_tablename(start_location: ast::Location) -> impl Fn(Text) -> ParseResul
         let (input, _) = multispace1(input)?;
         let (input, tablename) = parse_string_literal(input)?;
         let (input, end_pos) = position(input)?;
-        let (input, _) = multispace0(input)?;
+        let (input, _) = space0(input)?;
+        let (input, _) = newline(input)?;
+        let (input, _) = space0(input)?;
 
         let range = ast::Range {
             start: start_location.clone(),
@@ -785,6 +787,7 @@ fn parse_type_separator(input: Text) -> ParseResult<char> {
 fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
     let (input, start_pos) = position(input)?;
     // Enforce that type definitions must start at column 1 (beginning of line)
+    // Note: get_column() is 1-based, so column 1 means the first column
     if start_pos.get_column() != 1 {
         return Err(nom::Err::Error(VerboseError {
             errors: vec![(
@@ -798,7 +801,9 @@ fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = tag("type")(input)?;
     let (input, _) = multispace1(input)?;
     let (input, name) = cut(parse_typename)(input)?;
-    let (input, _) = multispace1(input)?;
+    // Allow whitespace (including newlines) before the = sign
+    // Use multispace0 to allow the = to be on the next line
+    let (input, _) = multispace0(input)?;
     let (input, _) = tag("=")(input)?;
     let (input, _) = multispace0(input)?;
     let (input, variants) = separated_list0(parse_type_separator, parse_variant)(input)?;
@@ -1326,24 +1331,53 @@ fn parse_where_arg(input: Text) -> ParseResult<ast::WhereArg> {
         // This is a continuation of a previous where expression
         Ok((input, where_col))
     } else {
-        // Normal case: parse a where expression, optionally followed by && or ||
-        let (input, where_col) = parse_query_where(input_after_check)?;
-        // Only consume spaces/tabs, not newlines (newlines are separators in list context)
-        let (input, _) = space0(input)?;
-        let (input, maybe_and_or) = opt(parse_and_or)(input)?;
-        match maybe_and_or {
-            Some(AndOr::And) => {
-                let (input, where_col2) = parse_query_where(input)?;
-                let (input, _) = multispace0(input)?;
-                Ok((input, ast::WhereArg::And(vec![where_col, where_col2])))
+        // Normal case: parse a where expression, optionally followed by chained && or ||
+        // Parse the first expression
+        let (mut input, mut result) = parse_query_where(input_after_check)?;
+
+        // Continue parsing chained operators
+        loop {
+            // Only consume spaces/tabs, not newlines (newlines are separators in list context)
+            let (input_after_space, _) = space0(input)?;
+            let (input_after_check, maybe_and_or) = opt(parse_and_or)(input_after_space)?;
+
+            if let Some(op) = maybe_and_or {
+                // Parse the next expression
+                let (input_after_op, _) = multispace0(input_after_check)?;
+                let (input_after_expr, next_expr) = parse_query_where(input_after_op)?;
+
+                match op {
+                    AndOr::And => {
+                        // && binds tighter, so combine with the current result
+                        result = match result {
+                            ast::WhereArg::And(mut args) => {
+                                args.push(next_expr);
+                                ast::WhereArg::And(args)
+                            }
+                            _ => ast::WhereArg::And(vec![result, next_expr]),
+                        };
+                    }
+                    AndOr::Or => {
+                        // || has lower precedence, so if result is an And, wrap it
+                        result = match result {
+                            ast::WhereArg::Or(mut args) => {
+                                args.push(next_expr);
+                                ast::WhereArg::Or(args)
+                            }
+                            _ => ast::WhereArg::Or(vec![result, next_expr]),
+                        };
+                    }
+                }
+
+                input = input_after_expr;
+            } else {
+                // No more operators, we're done - use input_after_check as the final position
+                input = input_after_check;
+                break;
             }
-            Some(AndOr::Or) => {
-                let (input, where_col2) = parse_query_where(input)?;
-                let (input, _) = multispace0(input)?;
-                Ok((input, ast::WhereArg::Or(vec![where_col, where_col2])))
-            }
-            None => Ok((input, where_col)),
         }
+
+        Ok((input, result))
     }
 }
 
