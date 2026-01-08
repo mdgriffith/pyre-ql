@@ -797,7 +797,6 @@ fn parse_type_separator(input: Text) -> ParseResult<char> {
 
 fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
     // Check column position BEFORE consuming whitespace to catch indentation
-    // This is the key: if column > 1 before consuming whitespace, we're indented
     let (input, pos_before) = position(input)?;
     let column_before = pos_before.get_column();
 
@@ -807,15 +806,9 @@ fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
     let (input, start_pos) = position(input)?;
 
     // Enforce that type definitions must start at column 1 (beginning of line)
-    // Note: get_column() is 1-based, so column 1 means the first column
-    // After parse_schema consumes leading newlines, the column calculation can be off by one,
-    // showing column 2 instead of 1. However, we need to distinguish this from actual indentation.
-    // The key: if column_before > 1, we're indented and should reject.
-    // If column_before is 1 and column after is 1, we're at the actual start.
-    // If column_before is 1 and column after is 2, we consumed whitespace (indentation) and should reject.
     let column = start_pos.get_column();
-    if column != 1 {
-        // If column is not 1 after consuming whitespace, we're indented - reject
+    if column_before > 1 {
+        // If column_before > 1, we're indented - reject
         return Err(nom::Err::Error(VerboseError {
             errors: vec![(
                 start_pos,
@@ -824,9 +817,9 @@ fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
                 ),
             )],
         }));
-    } else if column_before > 1 {
-        // Even if column is 1 after consuming whitespace, if column_before > 1, we're indented
-        // (this catches cases where tab/space was consumed but column calculation is off)
+    }
+    if column != 1 {
+        // If column is not 1 after consuming whitespace, we're indented - reject
         return Err(nom::Err::Error(VerboseError {
             errors: vec![(
                 start_pos,
@@ -846,7 +839,9 @@ fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = multispace0(input)?;
     let (input, variants) = separated_list0(parse_type_separator, parse_variant)(input)?;
     let (input, end_pos) = position(input)?;
-    let (input, _) = alt((line_ending, eof))(input)?;
+    // Note: We don't require line_ending/eof here because parse_type_separator already consumes
+    // whitespace (including newlines) around the | separator, so we may already be past the newline.
+    // The trailing multispace0 below will consume any remaining whitespace including blank lines.
     // Consume any trailing whitespace (including blank lines) after the definition
     // This allows multiple definitions to be separated by blank lines
     let (input, _) = multispace0(input)?;
