@@ -323,6 +323,9 @@ fn parse_session(input: Text) -> ParseResult<ast::Definition> {
 }
 
 fn parse_field(input: Text) -> ParseResult<ast::Field> {
+    // Consume leading whitespace (spaces, tabs, newlines) before parsing field
+    // This allows fields to be separated by whitespace
+    let (input, _) = multispace0(input)?;
     alt((
         parse_field_comment,
         parse_table_directive,
@@ -390,9 +393,11 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
             let (input, _) = multispace0(input)?;
 
             // Parse comma or newline-separated list of where conditions (or single condition)
+            // Separator: comma or newline (newlines are treated as implicit &&)
             let (input, where_args) = separated_list0(
                 |input| {
-                    let (input, _) = multispace0(input)?;
+                    // Consume spaces/tabs but not newlines (newlines are the separator)
+                    let (input, _) = space0(input)?;
                     let (input, _) = parse_block_separator(input)?;
                     let (input, _) = multispace0(input)?;
                     Ok((input, ()))
@@ -437,9 +442,11 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
             let (input, _) = multispace0(input)?;
 
             // Parse where clause - can be multiline
+            // Separator: comma or newline (newlines are treated as implicit &&)
             let (input, where_args) = separated_list0(
                 |input| {
-                    let (input, _) = multispace0(input)?;
+                    // Consume spaces/tabs but not newlines (newlines are the separator)
+                    let (input, _) = space0(input)?;
                     let (input, _) = parse_block_separator(input)?;
                     let (input, _) = multispace0(input)?;
                     Ok((input, ()))
@@ -467,9 +474,6 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
             ))
         },
     ))(input)?;
-
-    let (input, _) = multispace0(input)?;
-    let (input, _) = opt(alt((line_ending, eof)))(input)?;
 
     Ok((
         input,
@@ -1210,22 +1214,45 @@ fn parse_where(input: Text) -> ParseResult<ast::Arg> {
 }
 
 fn parse_where_arg(input: Text) -> ParseResult<ast::WhereArg> {
-    let (input, _) = multispace0(input)?;
-    let (input, where_col) = parse_query_where(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, maybe_and_or) = opt(parse_and_or)(input)?;
-    match maybe_and_or {
-        Some(AndOr::And) => {
-            let (input, where_col2) = parse_query_where(input)?;
-            let (input, _) = multispace0(input)?;
-            Ok((input, ast::WhereArg::And(vec![where_col, where_col2])))
+    // Only consume spaces/tabs, not newlines (newlines are separators in list context)
+    // This allows separated_list0 to properly detect newline separators
+    let (input, _) = space0(input)?;
+
+    // Try to parse && or || at the start (this can happen after a newline separator)
+    // If successful, this is a continuation of a previous expression
+    let (input_after_check, maybe_leading_and_or) = opt(parse_and_or)(input)?;
+
+    if let Some(AndOr::And) = maybe_leading_and_or {
+        // We have && at the start, so parse the where expression after it
+        let (input, _) = multispace0(input_after_check)?;
+        let (input, where_col) = parse_query_where(input)?;
+        // This is a continuation of a previous where expression
+        Ok((input, where_col))
+    } else if let Some(AndOr::Or) = maybe_leading_and_or {
+        // We have || at the start, so parse the where expression after it
+        let (input, _) = multispace0(input_after_check)?;
+        let (input, where_col) = parse_query_where(input)?;
+        // This is a continuation of a previous where expression
+        Ok((input, where_col))
+    } else {
+        // Normal case: parse a where expression, optionally followed by && or ||
+        let (input, where_col) = parse_query_where(input_after_check)?;
+        // Only consume spaces/tabs, not newlines (newlines are separators in list context)
+        let (input, _) = space0(input)?;
+        let (input, maybe_and_or) = opt(parse_and_or)(input)?;
+        match maybe_and_or {
+            Some(AndOr::And) => {
+                let (input, where_col2) = parse_query_where(input)?;
+                let (input, _) = multispace0(input)?;
+                Ok((input, ast::WhereArg::And(vec![where_col, where_col2])))
+            }
+            Some(AndOr::Or) => {
+                let (input, where_col2) = parse_query_where(input)?;
+                let (input, _) = multispace0(input)?;
+                Ok((input, ast::WhereArg::Or(vec![where_col, where_col2])))
+            }
+            None => Ok((input, where_col)),
         }
-        Some(AndOr::Or) => {
-            let (input, where_col2) = parse_query_where(input)?;
-            let (input, _) = multispace0(input)?;
-            Ok((input, ast::WhereArg::Or(vec![where_col, where_col2])))
-        }
-        None => Ok((input, where_col)),
     }
 }
 
@@ -1249,8 +1276,9 @@ fn parse_query_where(input: Text) -> ParseResult<ast::WhereArg> {
     let (input, operator) = parse_operator(input)?;
     let (input, _) = multispace0(input)?;
     let (input, value) = parse_value(input)?;
-    // Consume trailing whitespace - this is needed for proper parsing
-    let (input, _) = multispace0(input)?;
+    // Only consume spaces/tabs, not newlines (newlines are separators in list context)
+    // This allows separated_list0 to properly detect newline separators
+    let (input, _) = space0(input)?;
 
     Ok((
         input,

@@ -656,6 +656,148 @@ record Post {
 }
 
 #[test]
+fn test_permission_implicit_and_multiline() {
+    // Test that multiple conditions on separate lines have implicit && between them
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    status String
+    @allow(insert, update) {
+        authorId = Session.userId
+        status = "draft"
+    }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Permission with implicit && (multi-line) should parse successfully"
+    );
+}
+
+#[test]
+fn test_permission_implicit_and_multiline_star() {
+    // Test implicit && with star permission
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    published Bool
+    @allow(*) {
+        authorId = Session.userId
+        published = True
+    }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Star permission with implicit && (multi-line) should parse successfully"
+    );
+}
+
+#[test]
+fn test_permission_explicit_and_multiline() {
+    // Test that explicit && still works in multi-line format
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    status String
+    @allow(insert, update) {
+        authorId = Session.userId
+        && status = "draft"
+    }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Permission with explicit && in multi-line format should parse successfully"
+    );
+}
+
+#[test]
+fn test_permission_explicit_or_multiline() {
+    // Test that explicit || works in multi-line format
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    role String
+    @allow(delete) {
+        authorId = Session.userId
+        || role = "admin"
+    }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Permission with explicit || in multi-line format should parse successfully"
+    );
+}
+
+#[test]
+fn test_permission_mixed_implicit_and_explicit() {
+    // Test mixing implicit && (newlines) with explicit operators
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    status String
+    published Bool
+    @allow(insert, update) {
+        authorId = Session.userId
+        status = "draft"
+        && published = False
+    }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Permission with mixed implicit && and explicit && should parse successfully"
+    );
+}
+
+#[test]
 fn test_operation_specific_boolean_lowercase() {
     // Test that lowercase boolean values are accepted
     let schema_source = r#"
@@ -964,5 +1106,181 @@ record Post {
         typecheck_result.is_ok(),
         "Typecheck should succeed with partial operation coverage. Errors: {:?}",
         typecheck_result.err()
+    );
+}
+
+#[test]
+fn test_multiline_allow_closing_brace_on_separate_line() {
+    // Test the exact format that the formatter outputs - closing brace on its own line
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    @allow(insert, update) {
+        authorId = Session.userId
+        status = "draft"
+     }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Multiline @allow with closing brace on separate line should parse successfully"
+    );
+}
+
+#[test]
+fn test_multiple_allow_directives_first_multiline() {
+    // Test two @allow directives where the first is multiline
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    @allow(insert, update) {
+        authorId = Session.userId
+        status = "draft"
+     }
+    @allow(delete) { authorId = Session.userId }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Multiple @allow directives with first multiline should parse successfully"
+    );
+}
+
+#[test]
+fn test_multiple_allow_directives_second_multiline() {
+    // Test two @allow directives where the second is multiline (matches the failing test case)
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    @allow(select) { published = True }
+    @allow(insert, update) {
+        authorId = Session.userId
+        status = "draft"
+     }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Multiple @allow directives with second multiline should parse successfully"
+    );
+}
+
+#[test]
+fn test_multiple_allow_directives_both_multiline() {
+    // Test two @allow directives where both are multiline
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    @allow(insert, update) {
+        authorId = Session.userId
+        status = "draft"
+     }
+    @allow(delete) {
+        authorId = Session.userId
+        || Session.role = "admin"
+     }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+    }
+    assert!(
+        result.is_ok(),
+        "Multiple @allow directives with both multiline should parse successfully"
+    );
+}
+
+#[test]
+fn test_multiline_allow_with_space_before_closing_brace() {
+    // Test the exact format from the formatter - space before closing brace, then brace on new line
+    let schema_source = r#"
+record Post {
+    id Int @id
+    title String
+    authorId Int
+    @allow(select) { published = True  }
+    @allow(insert, update) {
+        authorId = Session.userId
+        status = "draft"
+     }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+        println!("Error details: {:?}", e);
+    }
+    assert!(
+        result.is_ok(),
+        "Multiline @allow with space before closing brace should parse successfully"
+    );
+}
+
+#[test]
+fn test_exact_formatted_output_format() {
+    // Test the exact format that the formatter outputs (matching the failing test)
+    let schema_source = r#"
+record Post {
+    id       Int @id
+    title    String
+    authorId Int
+    @allow(select) { published = True  }
+    @allow(insert, update) {
+        authorId = Session.userId
+        status = "draft"
+     }
+    @allow(delete) {
+        authorId = Session.userId
+        || Session.role = "admin"
+     }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    if let Err(e) = &result {
+        let error_msg = parser::render_error(schema_source, e.clone(), false);
+        println!("Parse error:\n{}", error_msg);
+        println!("Error details: {:?}", e);
+    }
+    assert!(
+        result.is_ok(),
+        "Exact formatted output format should parse successfully"
     );
 }
