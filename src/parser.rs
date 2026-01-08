@@ -394,6 +394,7 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
 
             // Parse comma or newline-separated list of where conditions (or single condition)
             // Separator: comma or newline (newlines are treated as implicit &&)
+            // But || at start of line indicates Or grouping
             let (input, where_args) = separated_list0(
                 |input| {
                     // Consume spaces/tabs but not newlines (newlines are the separator)
@@ -402,19 +403,12 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
                     let (input, _) = multispace0(input)?;
                     Ok((input, ()))
                 },
-                parse_where_arg,
+                parse_where_arg_with_or_marker,
             )(input)?;
             let (input, _) = multispace0(input)?;
             let (input, _) = tag("}")(input)?;
 
-            let where_ = if where_args.len() == 1 {
-                where_args
-                    .into_iter()
-                    .next()
-                    .unwrap_or_else(|| ast::WhereArg::And(vec![]))
-            } else {
-                ast::WhereArg::And(where_args)
-            };
+            let where_ = group_where_args_with_or(where_args);
 
             Ok((input, ast::PermissionDetails::Star(where_)))
         },
@@ -443,6 +437,7 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
 
             // Parse where clause - can be multiline
             // Separator: comma or newline (newlines are treated as implicit &&)
+            // But || at start of line indicates Or grouping
             let (input, where_args) = separated_list0(
                 |input| {
                     // Consume spaces/tabs but not newlines (newlines are the separator)
@@ -451,19 +446,12 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
                     let (input, _) = multispace0(input)?;
                     Ok((input, ()))
                 },
-                parse_where_arg,
+                parse_where_arg_with_or_marker,
             )(input)?;
             let (input, _) = multispace0(input)?;
             let (input, _) = tag("}")(input)?;
 
-            let where_ = if where_args.len() == 1 {
-                where_args
-                    .into_iter()
-                    .next()
-                    .unwrap_or_else(|| ast::WhereArg::And(vec![]))
-            } else {
-                ast::WhereArg::And(where_args)
-            };
+            let where_ = group_where_args_with_or(where_args);
 
             Ok((
                 input,
@@ -1210,6 +1198,109 @@ fn parse_where(input: Text) -> ParseResult<ast::Arg> {
         }
     } else {
         Ok((input, ast::Arg::Where(ast::WhereArg::And(where_arg))))
+    }
+}
+
+// Helper to parse where_arg and return a marker indicating if it starts with ||
+fn parse_where_arg_with_or_marker(input: Text) -> ParseResult<(ast::WhereArg, bool)> {
+    // Only consume spaces/tabs, not newlines (newlines are separators in list context)
+    let (input, _) = space0(input)?;
+
+    // Check if this starts with || (which indicates Or grouping)
+    let (input_after_check, maybe_leading_and_or) = opt(parse_and_or)(input)?;
+
+    if let Some(AndOr::And) = maybe_leading_and_or {
+        // We have && at the start, so parse the where expression after it
+        let (input, _) = multispace0(input_after_check)?;
+        let (input, where_col) = parse_query_where(input)?;
+        Ok((input, (where_col, false)))
+    } else if let Some(AndOr::Or) = maybe_leading_and_or {
+        // We have || at the start, so parse the where expression after it
+        let (input, _) = multispace0(input_after_check)?;
+        let (input, where_col) = parse_query_where(input)?;
+        Ok((input, (where_col, true)))
+    } else {
+        // Normal case: parse a where expression, optionally followed by && or ||
+        let (input, where_col) = parse_query_where(input_after_check)?;
+        // Only consume spaces/tabs, not newlines (newlines are separators in list context)
+        let (input, _) = space0(input)?;
+        let (input, maybe_and_or) = opt(parse_and_or)(input)?;
+        let result = match maybe_and_or {
+            Some(AndOr::And) => {
+                let (input, where_col2) = parse_query_where(input)?;
+                let (input, _) = multispace0(input)?;
+                (
+                    input,
+                    (ast::WhereArg::And(vec![where_col, where_col2]), false),
+                )
+            }
+            Some(AndOr::Or) => {
+                let (input, where_col2) = parse_query_where(input)?;
+                let (input, _) = multispace0(input)?;
+                (
+                    input,
+                    (ast::WhereArg::Or(vec![where_col, where_col2]), false),
+                )
+            }
+            None => (input, (where_col, false)),
+        };
+        Ok(result)
+    }
+}
+
+// Helper to group where_args into proper And/Or structures based on || markers
+fn group_where_args_with_or(args: Vec<(ast::WhereArg, bool)>) -> ast::WhereArg {
+    if args.is_empty() {
+        return ast::WhereArg::And(vec![]);
+    }
+    if args.len() == 1 {
+        return args.into_iter().next().unwrap().0;
+    }
+
+    let mut result = Vec::new();
+    let mut current_or_group: Option<Vec<ast::WhereArg>> = None;
+
+    for (arg, is_or_continuation) in args {
+        if is_or_continuation {
+            // This item starts with ||, so it should be combined with the previous item using Or
+            if let Some(ref mut or_group) = current_or_group {
+                // Continue the Or group
+                or_group.push(arg);
+            } else {
+                // Start a new Or group - take the last item from result
+                if let Some(last) = result.pop() {
+                    current_or_group = Some(vec![last, arg]);
+                } else {
+                    // This shouldn't happen, but handle it gracefully
+                    current_or_group = Some(vec![arg]);
+                }
+            }
+        } else {
+            // This item doesn't start with ||, so finish any current Or group and start a new And group
+            if let Some(or_group) = current_or_group.take() {
+                if or_group.len() == 1 {
+                    result.push(or_group.into_iter().next().unwrap());
+                } else {
+                    result.push(ast::WhereArg::Or(or_group));
+                }
+            }
+            result.push(arg);
+        }
+    }
+
+    // Finish any remaining Or group
+    if let Some(or_group) = current_or_group {
+        if or_group.len() == 1 {
+            result.push(or_group.into_iter().next().unwrap());
+        } else {
+            result.push(ast::WhereArg::Or(or_group));
+        }
+    }
+
+    if result.len() == 1 {
+        result.into_iter().next().unwrap()
+    } else {
+        ast::WhereArg::And(result)
     }
 }
 
