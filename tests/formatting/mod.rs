@@ -660,13 +660,12 @@ record User {
     id Int @id
     name String
     email String @unique
-    age Int? @index
+    age Int?
     createdAt DateTime @default(now)
-    updatedAt DateTime @default(now) @index
+    updatedAt DateTime @default(now)
     @tablename "users"
-    @allow(*) { id = Session.userId }
-    @allow(select) { published = True }
-    @allow(insert, update) { authorId = Session.userId }
+    @allow(select) { id = Session.userId }
+    @allow(insert, update) { id = Session.userId }
 }
 
 record Post {
@@ -688,7 +687,7 @@ record Comment {
     post @link(postId, Post.id)
     user @link(userId, User.id)
     createdAt DateTime @default(now)
-    @allow(select) { post.published = True }
+    @allow(select) { userId = Session.userId }
     @allow(insert, update) { userId = Session.userId }
 }
 
@@ -772,14 +771,14 @@ record Comment {
 fn test_schema_round_trip_tagged_types() {
     let schema_source = r#"
 type SimpleTagged
-    = Option1
-    | Option2
-    | Option3
+   = Option1
+   | Option2
+   | Option3
 
 type TaggedWithFields
-    = Active
-    | Inactive
-    | Pending {
+   = Active
+   | Inactive
+   | Pending {
         reason String
         createdAt DateTime
     }

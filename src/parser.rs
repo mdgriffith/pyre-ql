@@ -4,7 +4,7 @@ use nom::bytes::complete::take_while1;
 use nom::character::streaming::{space0, space1};
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until, take_while},
+    bytes::complete::{tag, take, take_until, take_while},
     character::complete::{
         alphanumeric1, char, line_ending, multispace0, multispace1, newline, one_of,
     },
@@ -160,8 +160,8 @@ fn add_session(schema: &mut ast::Schema, definitions: &Vec<ast::Definition>) {
 
 fn parse_definition(input: Text) -> ParseResult<ast::Definition> {
     alt((
-        parse_comment,
         parse_tagged,
+        parse_comment,
         parse_record,
         parse_session,
         parse_lines,
@@ -169,8 +169,7 @@ fn parse_definition(input: Text) -> ParseResult<ast::Definition> {
 }
 
 fn parse_lines(input: Text) -> ParseResult<ast::Definition> {
-    // Parse any whitespace (spaces, tabs, or newlines)
-    let (input, whitespaces) = many1(one_of(" \t\n"))(input)?;
+    let (input, whitespaces) = many1(one_of(" \n"))(input)?;
 
     // Count the newlines
     let count = whitespaces.iter().filter(|&&c| c == '\n').count();
@@ -258,6 +257,9 @@ fn parse_qualified(input: Text) -> ParseResult<ast::Qualified> {
 }
 
 fn parse_record(input: Text) -> ParseResult<ast::Definition> {
+    // Consume leading whitespace (including blank lines) before checking column position
+    // This allows definitions to be separated by blank lines
+    let (input, _) = multispace0(input)?;
     let (input, start_pos) = position(input)?;
     // Enforce that record definitions must start at column 1 (beginning of line)
     if start_pos.get_column() != 1 {
@@ -279,6 +281,9 @@ fn parse_record(input: Text) -> ParseResult<ast::Definition> {
     let (input, fields) = cut(with_braces(parse_field))(input)?;
     let (input, end_pos) = position(input)?;
     let (input, _) = alt((line_ending, eof))(input)?;
+    // Consume any trailing whitespace (including blank lines) after the definition
+    // This allows multiple definitions to be separated by blank lines
+    let (input, _) = multispace0(input)?;
 
     Ok((
         input,
@@ -294,6 +299,9 @@ fn parse_record(input: Text) -> ParseResult<ast::Definition> {
 }
 
 fn parse_session(input: Text) -> ParseResult<ast::Definition> {
+    // Consume leading whitespace (including blank lines) before checking column position
+    // This allows definitions to be separated by blank lines
+    let (input, _) = multispace0(input)?;
     let (input, start_pos) = position(input)?;
     // Enforce that session definitions must start at column 1 (beginning of line)
     if start_pos.get_column() != 1 {
@@ -311,6 +319,9 @@ fn parse_session(input: Text) -> ParseResult<ast::Definition> {
     let (input, fields) = cut(with_braces(parse_field))(input)?;
     let (input, end_pos) = position(input)?;
     let (input, _) = alt((line_ending, eof))(input)?;
+    // Consume any trailing whitespace (including blank lines) after the definition
+    // This allows multiple definitions to be separated by blank lines
+    let (input, _) = multispace0(input)?;
 
     Ok((
         input,
@@ -785,10 +796,37 @@ fn parse_type_separator(input: Text) -> ParseResult<char> {
 }
 
 fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
+    // Check column position BEFORE consuming whitespace to catch indentation
+    // This is the key: if column > 1 before consuming whitespace, we're indented
+    let (input, pos_before) = position(input)?;
+    let column_before = pos_before.get_column();
+
+    // Consume leading whitespace (including blank lines) before checking column position
+    // This allows definitions to be separated by blank lines
+    let (input, _) = multispace0(input)?;
     let (input, start_pos) = position(input)?;
+
     // Enforce that type definitions must start at column 1 (beginning of line)
     // Note: get_column() is 1-based, so column 1 means the first column
-    if start_pos.get_column() != 1 {
+    // After parse_schema consumes leading newlines, the column calculation can be off by one,
+    // showing column 2 instead of 1. However, we need to distinguish this from actual indentation.
+    // The key: if column_before > 1, we're indented and should reject.
+    // If column_before is 1 and column after is 1, we're at the actual start.
+    // If column_before is 1 and column after is 2, we consumed whitespace (indentation) and should reject.
+    let column = start_pos.get_column();
+    if column != 1 {
+        // If column is not 1 after consuming whitespace, we're indented - reject
+        return Err(nom::Err::Error(VerboseError {
+            errors: vec![(
+                start_pos,
+                VerboseErrorKind::Context(
+                    "type definitions must start at the beginning of a line (column 1)",
+                ),
+            )],
+        }));
+    } else if column_before > 1 {
+        // Even if column is 1 after consuming whitespace, if column_before > 1, we're indented
+        // (this catches cases where tab/space was consumed but column calculation is off)
         return Err(nom::Err::Error(VerboseError {
             errors: vec![(
                 start_pos,
@@ -809,6 +847,9 @@ fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
     let (input, variants) = separated_list0(parse_type_separator, parse_variant)(input)?;
     let (input, end_pos) = position(input)?;
     let (input, _) = alt((line_ending, eof))(input)?;
+    // Consume any trailing whitespace (including blank lines) after the definition
+    // This allows multiple definitions to be separated by blank lines
+    let (input, _) = multispace0(input)?;
 
     Ok((
         input,

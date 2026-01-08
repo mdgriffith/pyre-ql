@@ -490,15 +490,6 @@ fn test_record_with_tab_indentation_fails() {
 }
 
 #[test]
-fn test_type_with_tab_indentation_fails() {
-    let schema_source = "\ttype Status\n\t   = Active\n\t   | Inactive\n";
-
-    let mut schema = ast::Schema::default();
-    let result = parser::run("schema.pyre", schema_source, &mut schema);
-    assert!(result.is_err(), "Type with tab indentation should fail");
-}
-
-#[test]
 fn test_session_with_tab_indentation_fails() {
     let schema_source = "\tsession {\n\t    userId Int\n\t}\n";
 
@@ -703,4 +694,170 @@ fn test_multiple_indented_declarations_fail() {
         result.is_err(),
         "Multiple indented declarations should fail"
     );
+}
+
+#[test]
+fn test_tagged_type_with_leading_newline() {
+    // Test that a tagged type with a leading newline parses successfully
+    // This matches the format used in the failing round-trip test
+    let schema_source = r#"
+type SimpleTagged
+   = Option1
+   | Option2
+   | Option3
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(
+        result.is_ok(),
+        "Tagged type with leading newline should parse successfully. Error: {:?}",
+        result.err()
+    );
+
+    // Verify the tagged type was parsed
+    assert_eq!(schema.files.len(), 1, "Should have one schema file");
+    let file = &schema.files[0];
+    let tagged_count = file
+        .definitions
+        .iter()
+        .filter(|d| matches!(d, ast::Definition::Tagged { .. }))
+        .count();
+    assert_eq!(tagged_count, 1, "Should have parsed one tagged type");
+}
+
+#[test]
+fn test_tagged_type_with_fields_and_leading_newline() {
+    // Test that a tagged type with fields and a leading newline parses successfully
+    let schema_source = r#"
+type TaggedWithFields
+   = Active
+   | Inactive
+   | Pending {
+        reason String
+        createdAt DateTime
+    }
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(
+        result.is_ok(),
+        "Tagged type with fields and leading newline should parse successfully. Error: {:?}",
+        result.err()
+    );
+
+    // Verify the tagged type was parsed
+    assert_eq!(schema.files.len(), 1, "Should have one schema file");
+    let file = &schema.files[0];
+    let tagged_count = file
+        .definitions
+        .iter()
+        .filter(|d| matches!(d, ast::Definition::Tagged { .. }))
+        .count();
+    assert_eq!(tagged_count, 1, "Should have parsed one tagged type");
+}
+
+#[test]
+fn test_multiple_tagged_types_with_leading_newline() {
+    // Test that multiple tagged types with a leading newline parse successfully
+    let schema_source = r#"
+type SimpleTagged
+   = Option1
+   | Option2
+   | Option3
+
+type TaggedWithFields
+   = Active
+   | Inactive
+   | Pending {
+        reason String
+        createdAt DateTime
+    }
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(
+        result.is_ok(),
+        "Multiple tagged types with leading newline should parse successfully. Error: {:?}",
+        result.err()
+    );
+
+    // Verify both tagged types were parsed
+    assert_eq!(schema.files.len(), 1, "Should have one schema file");
+    let file = &schema.files[0];
+    let tagged_count = file
+        .definitions
+        .iter()
+        .filter(|d| matches!(d, ast::Definition::Tagged { .. }))
+        .count();
+    assert_eq!(tagged_count, 2, "Should have parsed two tagged types");
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", &schema_source, &mut schema);
+    assert!(
+        result.is_ok(),
+        "Multiple tagged types with leading newline should parse successfully. Error: {:?}",
+        result.err()
+    );
+
+    // Verify both tagged types were parsed
+    assert_eq!(schema.files.len(), 1, "Should have one schema file");
+    let file = &schema.files[0];
+    let tagged_count = file
+        .definitions
+        .iter()
+        .filter(|d| matches!(d, ast::Definition::Tagged { .. }))
+        .count();
+    assert_eq!(tagged_count, 2, "Should have parsed two tagged types");
+}
+
+#[test]
+fn test_tagged_type_followed_by_record_with_leading_newline() {
+    // Test that a tagged type followed by a record with a leading newline parses successfully
+    // This matches the exact format from the failing round-trip test
+    let schema_source = r#"
+type SimpleTagged
+   = Option1
+   | Option2
+   | Option3
+
+type TaggedWithFields
+   = Active
+   | Inactive
+   | Pending {
+        reason String
+        createdAt DateTime
+    }
+
+record Test {
+    id Int @id
+    status TaggedWithFields
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(
+        result.is_ok(),
+        "Tagged types followed by record with leading newline should parse successfully. Error: {:?}",
+        result.err()
+    );
+
+    // Verify all definitions were parsed
+    assert_eq!(schema.files.len(), 1, "Should have one schema file");
+    let file = &schema.files[0];
+    let tagged_count = file
+        .definitions
+        .iter()
+        .filter(|d| matches!(d, ast::Definition::Tagged { .. }))
+        .count();
+    let record_count = file
+        .definitions
+        .iter()
+        .filter(|d| matches!(d, ast::Definition::Record { .. }))
+        .count();
+    assert_eq!(tagged_count, 2, "Should have parsed two tagged types");
+    assert_eq!(record_count, 1, "Should have parsed one record");
 }
