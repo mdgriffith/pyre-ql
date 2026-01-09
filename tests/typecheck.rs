@@ -1,4 +1,5 @@
 use pyre::ast;
+use pyre::error;
 use pyre::parser;
 use pyre::typecheck;
 
@@ -492,4 +493,408 @@ record A {
         Some(&0),
         "A should be layer 0 (self-cycle)"
     );
+}
+
+#[test]
+fn test_nullable_query_parameter_typechecking() {
+    // Test that nullable query parameters work correctly with nullable columns
+    // This test verifies that a parameter defined as "String?" can be used
+    // against a nullable String column without typechecking errors.
+    let schema = r#"
+record User {
+    id   Int    @id
+    name String?
+    @public
+}
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    // Query with nullable parameter used against nullable column
+    let query_source = r#"
+        query GetUserByName($name: String?) {
+            user {
+                @where { name == $name }
+                id
+                name
+            }
+        }
+    "#;
+
+    let query_list = parser::parse_query("query.pyre", query_source)
+        .expect("Failed to parse query");
+
+    let result = typecheck::check_queries(&query_list, &context);
+
+    match result {
+        Ok(_) => {
+            // This should succeed - nullable param should work with nullable column
+            println!("Nullable parameter typechecking passed as expected");
+        }
+        Err(errors) => {
+            // If this fails, it demonstrates the bug
+            let mut error_messages = Vec::new();
+            for error in &errors {
+                error_messages.push(format!("{:?}", error));
+            }
+            panic!(
+                "Nullable parameter typechecking failed (this may indicate a bug):\n{}",
+                error_messages.join("\n")
+            );
+        }
+    }
+}
+
+#[test]
+fn test_nullable_query_parameter_with_non_nullable_column() {
+    // Test that nullable query parameters cannot be used with non-nullable columns
+    // Null is not a valid value for non-nullable types
+    let schema = r#"
+record User {
+    id   Int    @id
+    name String
+    @public
+}
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    // Query with nullable parameter used against non-nullable column
+    // This should fail - nullable params cannot be used with non-nullable columns
+    let query_source = r#"
+        query GetUserByName($name: String?) {
+            user {
+                @where { name == $name }
+                id
+                name
+            }
+        }
+    "#;
+
+    let query_list = parser::parse_query("query.pyre", query_source)
+        .expect("Failed to parse query");
+
+    let result = typecheck::check_queries(&query_list, &context);
+
+    match result {
+        Ok(_) => {
+            panic!("Nullable parameter with non-nullable column should fail typechecking");
+        }
+        Err(errors) => {
+            // Should fail with a type mismatch error
+            let has_type_mismatch = errors.iter().any(|e| {
+                matches!(
+                    &e.error_type,
+                    error::ErrorType::TypeMismatch { .. }
+                )
+            });
+            assert!(
+                has_type_mismatch,
+                "Should have a TypeMismatch error for nullable param with non-nullable column. Errors: {:?}",
+                errors
+            );
+        }
+    }
+}
+
+#[test]
+fn test_nullable_param_in_update_set_with_non_nullable_column() {
+    // Test that nullable parameters cannot be used in SET operations with non-nullable columns
+    let schema = r#"
+record Post {
+    id        Int    @id
+    title     String
+    content   String
+    published Bool
+    @public
+}
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    // Update with nullable parameter used in SET against non-nullable column
+    // This should fail - nullable params cannot be used with non-nullable columns
+    let query_source = r#"
+        update UpdatePost($id: Int, $title: String?) {
+            post {
+                @where { id == $id }
+                title = $title
+            }
+        }
+    "#;
+
+    let query_list = parser::parse_query("query.pyre", query_source)
+        .expect("Failed to parse query");
+
+    let result = typecheck::check_queries(&query_list, &context);
+
+    match result {
+        Ok(_) => {
+            panic!("Nullable parameter in SET operation with non-nullable column should fail typechecking");
+        }
+        Err(errors) => {
+            // Should fail with a type mismatch error
+            let has_type_mismatch = errors.iter().any(|e| {
+                matches!(
+                    &e.error_type,
+                    error::ErrorType::TypeMismatch { .. }
+                )
+            });
+            assert!(
+                has_type_mismatch,
+                "Should have a TypeMismatch error for nullable param in SET with non-nullable column. Errors: {:?}",
+                errors
+            );
+        }
+    }
+}
+
+#[test]
+fn test_nullable_param_in_insert_set_with_non_nullable_column() {
+    // Test that nullable parameters cannot be used in INSERT SET operations with non-nullable columns
+    let schema = r#"
+record Post {
+    id        Int    @id
+    title     String
+    content   String
+    published Bool
+    @public
+}
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    // Insert with nullable parameter used in SET against non-nullable column
+    // This should fail - nullable params cannot be used with non-nullable columns
+    let query_source = r#"
+        insert CreatePost($title: String?) {
+            post {
+                title = $title
+                content = "test"
+                published = True
+            }
+        }
+    "#;
+
+    let query_list = parser::parse_query("query.pyre", query_source)
+        .expect("Failed to parse query");
+
+    let result = typecheck::check_queries(&query_list, &context);
+
+    match result {
+        Ok(_) => {
+            panic!("Nullable parameter in INSERT SET operation with non-nullable column should fail typechecking");
+        }
+        Err(errors) => {
+            // Should fail with a type mismatch error
+            let has_type_mismatch = errors.iter().any(|e| {
+                matches!(
+                    &e.error_type,
+                    error::ErrorType::TypeMismatch { .. }
+                )
+            });
+            assert!(
+                has_type_mismatch,
+                "Should have a TypeMismatch error for nullable param in INSERT SET with non-nullable column. Errors: {:?}",
+                errors
+            );
+        }
+    }
+}
+
+#[test]
+fn test_non_nullable_param_with_nullable_column() {
+    // Test that non-nullable parameters can be used with nullable columns
+    // Non-null values are valid for nullable columns
+    let schema = r#"
+record User {
+    id   Int    @id
+    name String?
+    @public
+}
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    // Query with non-nullable parameter used against nullable column
+    // This should succeed - non-null values are valid for nullable columns
+    let query_source = r#"
+        query GetUserByName($name: String) {
+            user {
+                @where { name == $name }
+                id
+                name
+            }
+        }
+    "#;
+
+    let query_list = parser::parse_query("query.pyre", query_source)
+        .expect("Failed to parse query");
+
+    let result = typecheck::check_queries(&query_list, &context);
+
+    match result {
+        Ok(_) => {
+            // This should succeed - non-nullable param should work with nullable column
+            println!("Non-nullable parameter with nullable column passed as expected");
+        }
+        Err(errors) => {
+            let mut error_messages = Vec::new();
+            for error in &errors {
+                error_messages.push(format!("{:?}", error));
+            }
+            panic!(
+                "Non-nullable parameter with nullable column should succeed. Errors: {}",
+                error_messages.join("\n")
+            );
+        }
+    }
+}
+
+#[test]
+fn test_non_nullable_param_in_update_set_with_nullable_column() {
+    // Test that non-nullable parameters can be used in SET operations with nullable columns
+    let schema = r#"
+record Post {
+    id        Int    @id
+    title     String?
+    content   String?
+    published Bool?
+    @public
+}
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    // Update with non-nullable parameter used in SET against nullable column
+    // This should succeed - non-null values are valid for nullable columns
+    let query_source = r#"
+        update UpdatePost($id: Int, $title: String) {
+            post {
+                @where { id == $id }
+                title = $title
+            }
+        }
+    "#;
+
+    let query_list = parser::parse_query("query.pyre", query_source)
+        .expect("Failed to parse query");
+
+    let result = typecheck::check_queries(&query_list, &context);
+
+    match result {
+        Ok(_) => {
+            // This should succeed - non-nullable param should work with nullable column
+            println!("Non-nullable parameter in SET with nullable column passed as expected");
+        }
+        Err(errors) => {
+            let mut error_messages = Vec::new();
+            for error in &errors {
+                error_messages.push(format!("{:?}", error));
+            }
+            panic!(
+                "Non-nullable parameter in SET with nullable column should succeed. Errors: {}",
+                error_messages.join("\n")
+            );
+        }
+    }
+}
+
+#[test]
+fn test_non_nullable_param_in_insert_set_with_nullable_column() {
+    // Test that non-nullable parameters can be used in INSERT SET operations with nullable columns
+    let schema = r#"
+record Post {
+    id        Int    @id
+    title     String?
+    content   String?
+    published Bool?
+    @public
+}
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    // Insert with non-nullable parameter used in SET against nullable column
+    // This should succeed - non-null values are valid for nullable columns
+    let query_source = r#"
+        insert CreatePost($title: String) {
+            post {
+                title = $title
+                content = "test"
+                published = False
+            }
+        }
+    "#;
+
+    let query_list = parser::parse_query("query.pyre", query_source)
+        .expect("Failed to parse query");
+
+    let result = typecheck::check_queries(&query_list, &context);
+
+    match result {
+        Ok(_) => {
+            // This should succeed - non-nullable param should work with nullable column
+            println!("Non-nullable parameter in INSERT SET with nullable column passed as expected");
+        }
+        Err(errors) => {
+            let mut error_messages = Vec::new();
+            for error in &errors {
+                error_messages.push(format!("{:?}", error));
+            }
+            panic!(
+                "Non-nullable parameter in INSERT SET with nullable column should succeed. Errors: {}",
+                error_messages.join("\n")
+            );
+        }
+    }
 }

@@ -618,6 +618,7 @@ pub enum QueryOperation {
 pub struct QueryParamDefinition {
     pub name: String,
     pub type_: Option<String>,
+    pub nullable: bool,
     pub start_name: Option<Location>,
     pub end_name: Option<Location>,
 

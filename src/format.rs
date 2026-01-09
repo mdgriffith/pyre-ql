@@ -194,7 +194,7 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
 fn get_permission_order(field: &ast::Field) -> usize {
     match field {
         ast::Field::FieldDirective(ast::FieldDirective::Permissions(perm)) => match perm {
-            ast::PermissionDetails::Public => 0, // Public comes first
+            ast::PermissionDetails::Public => 0,  // Public comes first
             ast::PermissionDetails::Star(_) => 1, // Star comes after public
             ast::PermissionDetails::OnOperation(ops) => {
                 // Get the minimum operation order from the operations
@@ -398,10 +398,15 @@ pub fn query_list(db_schema: &ast::Database, queries: &mut ast::QueryList) {
                             for (name, param) in query_info.variables.iter() {
                                 match param {
                                     typecheck::ParamInfo::Defined { .. } => (),
-                                    typecheck::ParamInfo::NotDefinedButUsed { type_, .. } => {
+                                    typecheck::ParamInfo::NotDefinedButUsed {
+                                        type_,
+                                        nullable,
+                                        ..
+                                    } => {
                                         q.args.push(ast::QueryParamDefinition {
                                             name: name.clone(),
                                             type_: type_.clone(),
+                                            nullable: *nullable,
                                             start_name: None,
                                             end_name: None,
                                             start_type: None,

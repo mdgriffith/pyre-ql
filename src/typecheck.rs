@@ -1269,6 +1269,7 @@ pub enum ParamInfo {
         raw_variable_name: String,
         defined_at: Option<Range>,
         type_: Option<String>,
+        nullable: bool,
         used_by_top_level_field_alias: HashSet<String>,
         used: bool,
         type_inferred: bool,
@@ -1278,6 +1279,7 @@ pub enum ParamInfo {
     NotDefinedButUsed {
         used_at: Option<Range>,
         type_: Option<String>,
+        nullable: bool,
     },
 }
 
@@ -1330,6 +1332,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                         raw_variable_name: param_def.name.clone(),
                         defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
                         type_: None,
+                        nullable: param_def.nullable,
                         used: false,
                         used_by_top_level_field_alias: HashSet::new(),
                         type_inferred: false,
@@ -1361,6 +1364,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                         raw_variable_name: param_def.name.clone(),
                         defined_at: to_single_range(&param_def.start_name, &param_def.end_name),
                         type_: Some(type_.clone()),
+                        nullable: param_def.nullable,
                         used: false,
                         used_by_top_level_field_alias: HashSet::new(),
                         type_inferred: false,
@@ -1385,6 +1389,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                                 raw_variable_name: format!("session_{}", col.name),
                                 defined_at: None,
                                 type_: Some(col.type_.clone()),
+                                nullable: col.nullable,
                                 used: false,
                                 used_by_top_level_field_alias: HashSet::new(),
                                 type_inferred: false,
@@ -1492,7 +1497,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                     })
                 }
             }
-            ParamInfo::NotDefinedButUsed { used_at, type_ } => errors.push(Error {
+            ParamInfo::NotDefinedButUsed { used_at, type_, .. } => errors.push(Error {
                 filepath: context.current_filepath.clone(),
                 error_type: ErrorType::UndefinedParam {
                     param: param_name.clone(),
@@ -2000,6 +2005,7 @@ fn mark_as_used(
                         ParamInfo::NotDefinedButUsed {
                             used_at: Some(convert_range(var_range)),
                             type_: None,
+                            nullable: false, // mark_as_used doesn't have nullable context
                         },
                     );
                 }
@@ -2015,7 +2021,7 @@ fn mark_as_used(
                             used_by_top_level_field_alias
                                 .insert(query_context.top_level_field_alias.clone());
                         }
-                        ParamInfo::NotDefinedButUsed { used_at, type_ } => (),
+                        ParamInfo::NotDefinedButUsed { .. } => (),
                     };
                 }
             }
@@ -2156,6 +2162,7 @@ fn check_value(
                         ParamInfo::NotDefinedButUsed {
                             used_at: Some(convert_range(var_range)),
                             type_: Some(table_type_string.to_string()),
+                            nullable: is_nullable,
                         },
                     );
                 }
@@ -2164,6 +2171,7 @@ fn check_value(
                         ParamInfo::Defined {
                             defined_at,
                             ref mut type_,
+                            nullable: param_nullable,
                             ref mut used,
                             ref mut type_inferred,
                             ref mut used_by_top_level_field_alias,
@@ -2182,6 +2190,8 @@ fn check_value(
                                     *type_inferred = true;
                                 }
                                 Some(type_name) => {
+                                    // Check type compatibility:
+                                    // 1. Base types must match
                                     if type_name != table_type_string {
                                         errors.push(Error {
                                             filepath: context.current_filepath.clone(),
@@ -2202,6 +2212,34 @@ fn check_value(
                                                 },
                                                 Location {
                                                     contexts: vec![], // to_range(&start, &end),
+                                                    primary: vec![convert_range(var_range)],
+                                                },
+                                            ],
+                                        })
+                                    }
+                                    // 2. Check nullability: nullable params cannot be used with non-nullable columns
+                                    //    Null is not a valid value for non-nullable types, regardless of context
+                                    //    (WHERE clauses, SET operations, etc.)
+                                    if !is_nullable && *param_nullable {
+                                        errors.push(Error {
+                                            filepath: context.current_filepath.clone(),
+                                            error_type: ErrorType::TypeMismatch {
+                                                table: table_name.to_string(),
+                                                column_defined_as: format!("{} (non-nullable)", table_type_string),
+                                                variable_name: var.name.clone(),
+                                                variable_defined_as: format!("{} (nullable)", type_name),
+                                            },
+                                            locations: vec![
+                                                Location {
+                                                    contexts: vec![],
+                                                    primary: defined_at
+                                                        .as_ref()
+                                                        .map_or_else(Vec::new, |range| {
+                                                            vec![range.clone()]
+                                                        }),
+                                                },
+                                                Location {
+                                                    contexts: vec![],
                                                     primary: vec![convert_range(var_range)],
                                                 },
                                             ],

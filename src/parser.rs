@@ -912,14 +912,20 @@ fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefin
 
     let (input, start_type_pos) = position(input)?;
     let (input, typename) = cut(opt(parse_typename))(input)?;
+    let (input, nullable_marker) = opt(char('?'))(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
+
+    // Store nullable separately, don't include ? in type string
+    let nullable = nullable_marker.is_some();
+    let type_string = typename.map(|t| t.to_string());
 
     Ok((
         input,
         ast::QueryParamDefinition {
             name: name.to_string(),
-            type_: typename.map(|t| t.to_string()),
+            type_: type_string,
+            nullable,
             start_name: Some(to_location(&start_name_pos)),
             end_name: Some(to_location(&end_name_pos)),
             start_type: Some(to_location(&start_type_pos)),
