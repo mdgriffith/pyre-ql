@@ -156,17 +156,21 @@ fn fields_equal_ignoring_locations(a: &Vec<ast::Field>, b: &Vec<ast::Field>) -> 
     // Separate columns, links, and other directives
     let mut a_columns = Vec::new();
     let mut a_links = Vec::new();
-    let mut a_other = Vec::new();
+    let mut a_directives = Vec::new();
+    let mut a_comments = Vec::new();
 
     let mut b_columns = Vec::new();
     let mut b_links = Vec::new();
-    let mut b_other = Vec::new();
+    let mut b_directives = Vec::new();
+    let mut b_comments = Vec::new();
 
     for f in a_fields.iter() {
         match f {
             ast::Field::Column(c) => a_columns.push(c),
             ast::Field::FieldDirective(ast::FieldDirective::Link(l)) => a_links.push(l),
-            _ => a_other.push(f),
+            ast::Field::FieldDirective(_) => a_directives.push(f),
+            ast::Field::ColumnComment { .. } => a_comments.push(f),
+            _ => (),
         }
     }
 
@@ -174,11 +178,13 @@ fn fields_equal_ignoring_locations(a: &Vec<ast::Field>, b: &Vec<ast::Field>) -> 
         match f {
             ast::Field::Column(c) => b_columns.push(c),
             ast::Field::FieldDirective(ast::FieldDirective::Link(l)) => b_links.push(l),
-            _ => b_other.push(f),
+            ast::Field::FieldDirective(_) => b_directives.push(f),
+            ast::Field::ColumnComment { .. } => b_comments.push(f),
+            _ => (),
         }
     }
 
-    // Compare columns
+    // Compare columns (order matters)
     if a_columns.len() != b_columns.len() {
         return false;
     }
@@ -189,6 +195,7 @@ fn fields_equal_ignoring_locations(a: &Vec<ast::Field>, b: &Vec<ast::Field>) -> 
     }
 
     // Compare links semantically (using link_equivalent which ignores link_name)
+    // Order doesn't matter for links
     if a_links.len() != b_links.len() {
         return false;
     }
@@ -206,12 +213,30 @@ fn fields_equal_ignoring_locations(a: &Vec<ast::Field>, b: &Vec<ast::Field>) -> 
         }
     }
 
-    // Compare other directives
-    if a_other.len() != b_other.len() {
+    // Compare directives ignoring order (tablename, watch, permissions can be in any order)
+    if a_directives.len() != b_directives.len() {
         return false;
     }
-    for (fa, fb) in a_other.iter().zip(b_other.iter()) {
-        if !field_equal_ignoring_locations(fa, fb) {
+    // Check if all directives in a have an equivalent in b
+    for dir_a in a_directives.iter() {
+        let mut found = false;
+        for dir_b in b_directives.iter() {
+            if field_equal_ignoring_locations(dir_a, dir_b) {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+
+    // Compare comments (order matters, relative to columns)
+    if a_comments.len() != b_comments.len() {
+        return false;
+    }
+    for (ca, cb) in a_comments.iter().zip(b_comments.iter()) {
+        if !field_equal_ignoring_locations(ca, cb) {
             return false;
         }
     }

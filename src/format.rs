@@ -104,6 +104,123 @@ fn add_link(
     }
 }
 
+fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
+    // Separate fields into categories
+    let mut tablename: Option<ast::Field> = None;
+    let mut watch: Option<ast::Field> = None;
+    let mut permissions: Vec<ast::Field> = Vec::new();
+    let mut non_directive_fields: Vec<ast::Field> = Vec::new();
+    let mut links: Vec<ast::Field> = Vec::new();
+
+    // First pass: extract directives and separate links from other fields
+    for field in fields.drain(..) {
+        match &field {
+            ast::Field::FieldDirective(ast::FieldDirective::TableName(_)) => {
+                tablename = Some(field);
+            }
+            ast::Field::FieldDirective(ast::FieldDirective::Watched(_)) => {
+                watch = Some(field);
+            }
+            ast::Field::FieldDirective(ast::FieldDirective::Permissions(_)) => {
+                permissions.push(field);
+            }
+            ast::Field::FieldDirective(ast::FieldDirective::Link(_)) => {
+                links.push(field);
+            }
+            _ => {
+                non_directive_fields.push(field);
+            }
+        }
+    }
+
+    // Sort permissions by operation order: select, update, insert, delete
+    permissions.sort_by(|a, b| {
+        let order_a = get_permission_order(a);
+        let order_b = get_permission_order(b);
+        order_a.cmp(&order_b)
+    });
+
+    // Reassemble fields in the correct order
+    fields.clear();
+
+    // Check if we have directives before moving them
+    let has_directives = tablename.is_some() || watch.is_some() || !permissions.is_empty();
+    let has_content = !non_directive_fields.is_empty() || !links.is_empty();
+
+    // 1. @tablename
+    if let Some(tn) = tablename {
+        fields.push(tn);
+    }
+
+    // 2. @allowed (or @public)
+    fields.extend(permissions);
+
+    // 3. @watch
+    if let Some(w) = watch {
+        fields.push(w);
+    }
+
+    // 4. Empty line (if we have directives and non-directive fields/links)
+    if has_directives && has_content {
+        // Check if there's already a ColumnLines at the start of non_directive_fields
+        let needs_separator = match non_directive_fields.first() {
+            Some(ast::Field::ColumnLines { .. }) => false,
+            _ => true,
+        };
+        if needs_separator {
+            fields.push(ast::Field::ColumnLines { count: 1 });
+        }
+    }
+
+    // 5. Non-directive fields (columns, comments, column_lines) - preserve order
+    fields.extend(non_directive_fields);
+
+    // 6. Empty line (if links exist and we have other fields)
+    if !links.is_empty() && !fields.is_empty() {
+        // Check if the last field is already a ColumnLines
+        let needs_separator = match fields.last() {
+            Some(ast::Field::ColumnLines { .. }) => false,
+            _ => true,
+        };
+        if needs_separator {
+            fields.push(ast::Field::ColumnLines { count: 1 });
+        }
+    }
+
+    // 7. Links
+    fields.extend(links);
+}
+
+fn get_permission_order(field: &ast::Field) -> usize {
+    match field {
+        ast::Field::FieldDirective(ast::FieldDirective::Permissions(perm)) => match perm {
+            ast::PermissionDetails::Public => 0, // Public comes first
+            ast::PermissionDetails::Star(_) => 1, // Star comes after public
+            ast::PermissionDetails::OnOperation(ops) => {
+                // Get the minimum operation order from the operations
+                let mut min_order = usize::MAX;
+                for op in ops {
+                    for operation in &op.operations {
+                        let order = match operation {
+                            ast::QueryOperation::Select => 2,
+                            ast::QueryOperation::Update => 3,
+                            ast::QueryOperation::Insert => 4,
+                            ast::QueryOperation::Delete => 5,
+                        };
+                        min_order = min_order.min(order);
+                    }
+                }
+                if min_order == usize::MAX {
+                    6 // Fallback
+                } else {
+                    min_order
+                }
+            }
+        },
+        _ => 6, // Fallback
+    }
+}
+
 fn format_definition(
     def: &mut ast::Definition,
     links: &HashMap<String, Vec<(bool, ast::LinkDetails)>>,
@@ -213,6 +330,16 @@ fn format_definition(
             for link in links_missing.drain(..) {
                 fields.push(ast::Field::FieldDirective(ast::FieldDirective::Link(link)));
             }
+
+            // Reorder fields according to standard format:
+            // 1. @tablename
+            // 2. @watch
+            // 3. @allowed (or @public) - ordered: select, update, insert, delete
+            // 4. Empty line
+            // 5. Columns (in order)
+            // 6. Empty line (if links exist)
+            // 7. Links
+            reorder_record_fields(fields);
         }
     }
 }
