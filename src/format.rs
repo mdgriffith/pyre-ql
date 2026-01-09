@@ -410,13 +410,143 @@ pub fn query_list(db_schema: &ast::Database, queries: &mut ast::QueryList) {
                                     }
                                 }
                             }
+
+                            // Reorder query fields
+                            for field in &mut q.fields {
+                                match field {
+                                    ast::TopLevelQueryField::Field(query_field) => {
+                                        reorder_query_field(query_field);
+                                    }
+                                    _ => (),
+                                }
+                            }
                         }
                         None => (),
                     },
                     _ => (),
                 }
             }
+
+            // Format leading and trailing newlines
+            format_query_list_newlines(&mut queries.queries);
         }
         Err(_) => (),
     }
+}
+
+fn format_query_list_newlines(queries: &mut Vec<ast::QueryDef>) {
+    // Handle leading newlines: remove all leading QueryLines
+    // (No leading newline should be present)
+    while !queries.is_empty() {
+        match queries[0] {
+            ast::QueryDef::QueryLines { .. } => {
+                queries.remove(0);
+            }
+            _ => break,
+        }
+    }
+
+    // Handle trailing newlines: remove all trailing QueryLines
+    // We'll handle trailing newlines in to_string to ensure exactly 2
+    while !queries.is_empty() {
+        let last_idx = queries.len() - 1;
+        match queries[last_idx] {
+            ast::QueryDef::QueryLines { .. } => {
+                queries.remove(last_idx);
+            }
+            _ => break,
+        }
+    }
+
+    // Don't add QueryLines here - let to_string handle the trailing newlines
+    // (to_string already handles empty files by returning "\n\n" directly)
+}
+
+fn reorder_query_field(query_field: &mut ast::QueryField) {
+    // Reorder args in this field
+    reorder_query_field_args(&mut query_field.fields);
+
+    // Recursively reorder nested fields
+    for arg_field in &mut query_field.fields {
+        match arg_field {
+            ast::ArgField::Field(nested_field) => {
+                reorder_query_field(nested_field);
+            }
+            _ => (),
+        }
+    }
+}
+
+fn reorder_query_field_args(arg_fields: &mut Vec<ast::ArgField>) {
+    // Separate fields into categories
+    let mut limits: Vec<ast::ArgField> = Vec::new();
+    let mut sorts: Vec<ast::ArgField> = Vec::new();
+    let mut wheres: Vec<ast::ArgField> = Vec::new();
+    let mut fields: Vec<ast::ArgField> = Vec::new();
+    let mut comments: Vec<ast::ArgField> = Vec::new();
+    let mut lines: Vec<ast::ArgField> = Vec::new();
+
+    for arg_field in arg_fields.drain(..) {
+        match &arg_field {
+            ast::ArgField::Arg(located_arg) => match &located_arg.arg {
+                ast::Arg::Limit(_) => limits.push(arg_field),
+                ast::Arg::OrderBy(_, _) => sorts.push(arg_field),
+                ast::Arg::Where(_) => wheres.push(arg_field),
+            },
+            ast::ArgField::Field(_) => fields.push(arg_field),
+            ast::ArgField::QueryComment { .. } => comments.push(arg_field),
+            ast::ArgField::Lines { .. } => lines.push(arg_field),
+        }
+    }
+
+    // Check if we have args and fields before moving
+    let has_args = !limits.is_empty() || !sorts.is_empty() || !wheres.is_empty();
+    let has_fields = !fields.is_empty();
+
+    // Reassemble in the correct order
+    arg_fields.clear();
+
+    // 1. @limit
+    arg_fields.extend(limits);
+
+    // 2. @sort
+    arg_fields.extend(sorts);
+
+    // 3. @where
+    arg_fields.extend(wheres);
+    if has_args && has_fields {
+        // Merge all lines into one if needed
+        let mut total_lines = 0;
+        for line in &lines {
+            if let ast::ArgField::Lines { count } = line {
+                total_lines += count;
+            }
+        }
+        if total_lines == 0 {
+            // Add a newline if there isn't one already
+            arg_fields.push(ast::ArgField::Lines { count: 1 });
+        } else {
+            // Use existing lines but merge them
+            arg_fields.push(ast::ArgField::Lines {
+                count: total_lines.min(2),
+            });
+        }
+    } else if !lines.is_empty() {
+        // If we have lines but no args/fields separation needed, preserve them
+        let mut total_lines = 0;
+        for line in &lines {
+            if let ast::ArgField::Lines { count } = line {
+                total_lines += count;
+            }
+        }
+        arg_fields.push(ast::ArgField::Lines {
+            count: total_lines.min(2),
+        });
+    }
+
+    // 5. Fields
+    arg_fields.extend(fields);
+
+    // Comments are preserved with their relative positions (after fields for simplicity)
+    arg_fields.extend(comments);
 }

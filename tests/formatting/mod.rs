@@ -1,3 +1,5 @@
+mod newlines;
+
 use pyre::ast;
 use pyre::format;
 use pyre::generate;
@@ -557,12 +559,122 @@ fn query_field_equal_ignoring_locations(a: &ast::QueryField, b: &ast::QueryField
 }
 
 fn arg_fields_equal_ignoring_locations(a: &Vec<ast::ArgField>, b: &Vec<ast::ArgField>) -> bool {
-    if a.len() != b.len() {
-        return false;
+    // Filter out Lines entries (whitespace) for comparison
+    let a_fields: Vec<_> = a
+        .iter()
+        .filter(|f| !matches!(f, ast::ArgField::Lines { .. }))
+        .collect();
+    let b_fields: Vec<_> = b
+        .iter()
+        .filter(|f| !matches!(f, ast::ArgField::Lines { .. }))
+        .collect();
+
+    // Separate args (limit, sort, where) from fields and comments
+    let mut a_limits = Vec::new();
+    let mut a_sorts = Vec::new();
+    let mut a_wheres = Vec::new();
+    let mut a_fields_list = Vec::new();
+    let mut a_comments = Vec::new();
+
+    let mut b_limits = Vec::new();
+    let mut b_sorts = Vec::new();
+    let mut b_wheres = Vec::new();
+    let mut b_fields_list = Vec::new();
+    let mut b_comments = Vec::new();
+
+    for f in a_fields.iter() {
+        match f {
+            ast::ArgField::Arg(located_arg) => match &located_arg.arg {
+                ast::Arg::Limit(_) => a_limits.push(f),
+                ast::Arg::OrderBy(_, _) => a_sorts.push(f),
+                ast::Arg::Where(_) => a_wheres.push(f),
+            },
+            ast::ArgField::Field(_) => a_fields_list.push(f),
+            ast::ArgField::QueryComment { .. } => a_comments.push(f),
+            _ => (),
+        }
     }
 
-    for (fa, fb) in a.iter().zip(b.iter()) {
+    for f in b_fields.iter() {
+        match f {
+            ast::ArgField::Arg(located_arg) => match &located_arg.arg {
+                ast::Arg::Limit(_) => b_limits.push(f),
+                ast::Arg::OrderBy(_, _) => b_sorts.push(f),
+                ast::Arg::Where(_) => b_wheres.push(f),
+            },
+            ast::ArgField::Field(_) => b_fields_list.push(f),
+            ast::ArgField::QueryComment { .. } => b_comments.push(f),
+            _ => (),
+        }
+    }
+
+    // Compare limits (order doesn't matter, but there should only be one)
+    if a_limits.len() != b_limits.len() {
+        return false;
+    }
+    for limit_a in a_limits.iter() {
+        let mut found = false;
+        for limit_b in b_limits.iter() {
+            if arg_field_equal_ignoring_locations(limit_a, limit_b) {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+
+    // Compare sorts (order doesn't matter)
+    if a_sorts.len() != b_sorts.len() {
+        return false;
+    }
+    for sort_a in a_sorts.iter() {
+        let mut found = false;
+        for sort_b in b_sorts.iter() {
+            if arg_field_equal_ignoring_locations(sort_a, sort_b) {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+
+    // Compare wheres (order doesn't matter)
+    if a_wheres.len() != b_wheres.len() {
+        return false;
+    }
+    for where_a in a_wheres.iter() {
+        let mut found = false;
+        for where_b in b_wheres.iter() {
+            if arg_field_equal_ignoring_locations(where_a, where_b) {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+
+    // Compare fields (order matters)
+    if a_fields_list.len() != b_fields_list.len() {
+        return false;
+    }
+    for (fa, fb) in a_fields_list.iter().zip(b_fields_list.iter()) {
         if !arg_field_equal_ignoring_locations(fa, fb) {
+            return false;
+        }
+    }
+
+    // Compare comments (order matters)
+    if a_comments.len() != b_comments.len() {
+        return false;
+    }
+    for (ca, cb) in a_comments.iter().zip(b_comments.iter()) {
+        if !arg_field_equal_ignoring_locations(ca, cb) {
             return false;
         }
     }
