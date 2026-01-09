@@ -472,10 +472,49 @@ fn to_string_directive(directive: &ast::ColumnDirective) -> String {
 
 //
 pub fn query(query_list: &ast::QueryList) -> String {
-    let mut result = String::new();
-    for operation in &query_list.queries {
-        result.push_str(&to_string_query_definition(operation));
+    if query_list.queries.is_empty() {
+        return "\n\n".to_string();
     }
+
+    let mut result = String::new();
+    // Skip trailing QueryLines - we'll handle them with normalization
+    let mut queries_iter = query_list.queries.iter();
+    let mut last_non_lines_idx = None;
+    
+    // Find the last non-QueryLines element
+    for (idx, operation) in query_list.queries.iter().enumerate().rev() {
+        match operation {
+            ast::QueryDef::QueryLines { .. } => continue,
+            _ => {
+                last_non_lines_idx = Some(idx);
+                break;
+            }
+        }
+    }
+    
+    // Convert all queries up to and including the last non-QueryLines element
+    // Skip QueryLines elements as they're just formatting whitespace that we'll normalize
+    if let Some(last_idx) = last_non_lines_idx {
+        for operation in query_list.queries.iter().take(last_idx + 1) {
+            match operation {
+                ast::QueryDef::QueryLines { .. } => {
+                    // Skip QueryLines - we'll handle trailing newlines below
+                }
+                _ => {
+                    result.push_str(&to_string_query_definition(operation));
+                }
+            }
+        }
+    }
+    
+    // Ensure exactly 2 newlines at the end
+    // Remove all trailing newlines first
+    while result.ends_with('\n') {
+        result.pop();
+    }
+    // Add exactly 2 newlines
+    result.push_str("\n\n");
+    
     result
 }
 
@@ -531,12 +570,18 @@ fn to_string_param_definition(is_first: bool, param: &ast::QueryParamDefinition)
     if is_first {
         match &param.type_ {
             None => return format!("${}", param.name),
-            Some(type_) => return format!("${}: {}", param.name, type_),
+            Some(type_) => {
+                let nullable_marker = if param.nullable { "?" } else { "" };
+                return format!("${}: {}{}", param.name, type_, nullable_marker);
+            }
         }
     } else {
         match &param.type_ {
             None => return format!(", ${}", param.name),
-            Some(type_) => return format!(", ${}: {}", param.name, type_),
+            Some(type_) => {
+                let nullable_marker = if param.nullable { "?" } else { "" };
+                return format!(", ${}: {}{}", param.name, type_, nullable_marker);
+            }
         }
     }
 }

@@ -259,3 +259,29 @@ fn test_invalid_where_syntax() {
         }
     }
 }
+
+#[test]
+fn test_update_with_nullable_params() {
+    // Test update query with nullable parameters (String?, Bool?)
+    // This is the exact query from updatePost.pyre
+    let update_source = r#"update UpdatePost($id: Int, $title: String?, $content: String?, $published: Bool?) {
+    post {
+        @where { id == $id }
+        title = $title
+        content = $content
+        published = $published
+    }
+}
+
+
+
+
+"#;
+
+    let result = parser::parse_query("query.pyre", update_source);
+    assert!(
+        result.is_ok(),
+        "Valid update with nullable params should parse successfully. Error: {:?}",
+        result.err()
+    );
+}
