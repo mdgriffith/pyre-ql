@@ -173,7 +173,7 @@ async fn test_update_affected_rows() -> Result<(), TestError> {
     let update_query = r#"
         update UpdateUser($id: Int, $name: String) {
             user {
-                @where { id = $id }
+                @where { id == $id }
                 name = $name
                 id
             }
@@ -254,7 +254,7 @@ async fn test_delete_affected_rows() -> Result<(), TestError> {
     let delete_query = r#"
         delete RemoveUser($id: Int) {
             user {
-                @where { id = $id }
+                @where { id == $id }
                 id
             }
         }

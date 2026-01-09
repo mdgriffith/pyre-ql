@@ -48,7 +48,7 @@ fn test_valid_query_with_params() {
     let query_source = r#"
         query GetUser($id: Int) {
             user {
-                @where { id = $id }
+                @where { id == $id }
                 id
                 name
             }
@@ -89,7 +89,7 @@ fn test_valid_query_with_where() {
     let query_source = r#"
         query GetUser($id: Int) {
             user {
-                @where { id = $id }
+                @where { id == $id }
                 id
                 name
             }
@@ -108,7 +108,7 @@ fn test_valid_query_with_sort() {
     let query_source = r#"
         query GetUsers {
             user {
-                @sort name asc
+                @sort(name, Asc)
                 id
                 name
             }
@@ -127,7 +127,7 @@ fn test_valid_query_with_sort_desc() {
     let query_source = r#"
         query GetUsers {
             user {
-                @sort name desc
+                @sort(name, Desc)
                 id
                 name
             }
@@ -251,7 +251,7 @@ fn test_invalid_param_syntax() {
     let query_source = r#"
         query GetUser($id Int) {
             user {
-                @where { id = $id }
+                @where { id == $id }
                 id
             }
         }

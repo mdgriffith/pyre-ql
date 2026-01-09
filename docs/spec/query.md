@@ -30,7 +30,7 @@ query QueryName {
 ```pyre
 query GetUser($id: Int) {
     user {
-        @where { id = $id }
+        @where { id == $id }
         id
         name
     }
@@ -144,7 +144,7 @@ Updates existing records.
 ```pyre
 update UpdateUser($id: Int, $name: String?) {
     user {
-        @where { id = $id }
+        @where { id == $id }
         name = $name
     }
 }
@@ -154,7 +154,7 @@ update UpdateUser($id: Int, $name: String?) {
 ```pyre
 update UpdatePost($id: Int, $title: String?, $content: String?, $published: Bool?) {
     post {
-        @where { id = $id }
+        @where { id == $id }
         title = $title
         content = $content
         published = $published
@@ -172,7 +172,7 @@ Deletes records.
 ```pyre
 delete DeleteUser($id: Int) {
     user {
-        @where { id = $id }
+        @where { id == $id }
         id
     }
 }
@@ -246,39 +246,39 @@ Filters records using conditions.
 
 **Basic Syntax:**
 ```pyre
-@where { field = value }
+@where { field == value }
 ```
 
 **With Variables:**
 ```pyre
-@where { id = $id }
+@where { id == $id }
 ```
 
 **With Session Variables:**
 ```pyre
-@where { authorId = Session.userId }
+@where { authorId == Session.userId }
 ```
 
 **Multiple Conditions (AND):**
 ```pyre
 @where { 
-    published = True
-    authorId = Session.userId
+    published == True
+    authorId == Session.userId
 }
 ```
 
 **OR Conditions:**
 ```pyre
 @where { 
-    status = "active" || status = "pending"
+    status == "active" || status == "pending"
 }
 ```
 
 **Complex Conditions:**
 ```pyre
 @where {
-    (authorId = Session.userId || Session.role = "admin") &&
-    published = True
+    (authorId == Session.userId || Session.role == "admin") &&
+    published == True
 }
 ```
 
@@ -290,18 +290,18 @@ Orders results.
 
 **Ascending:**
 ```pyre
-@sort name asc
+@sort(name, Asc)
 ```
 
 **Descending:**
 ```pyre
-@sort createdAt desc
+@sort(createdAt, Desc)
 ```
 
 **Multiple Sorts:**
 ```pyre
-@sort createdAt desc
-@sort name asc
+@sort(createdAt, Desc)
+@sort(name, Asc)
 ```
 
 ### @limit
@@ -309,14 +309,14 @@ Orders results.
 Limits the number of results.
 
 ```pyre
-@limit 10
-@limit $limitValue
+@limit(10)
+@limit($limitValue)
 ```
 
 ## Where Clause Operators
 
 **Comparison Operators:**
-- `=` - Equal
+- `==` - Equal (also accepts `=` for backward compatibility, but writes `==`)
 - `!=` - Not equal
 - `>` - Greater than
 - `<` - Less than
@@ -328,7 +328,7 @@ Limits the number of results.
 - `&&` - AND
 - `||` - OR
 
-**Note**: Parentheses can be used for grouping: `(a = 1 || a = 2) && b = 3`
+**Note**: Parentheses can be used for grouping: `(a == 1 || a == 2) && b == 3`
 
 ## Values
 
@@ -429,7 +429,7 @@ dateStr = date("now")
 // Get a single user
 query GetUser($id: Int) {
     user {
-        @where { id = $id }
+        @where { id == $id }
         id
         name
         email
@@ -440,7 +440,7 @@ query GetUser($id: Int) {
 // List users with sorting
 query ListUsers {
     user {
-        @sort createdAt desc
+        @sort(createdAt, Desc)
         id
         name
         email
@@ -450,7 +450,7 @@ query ListUsers {
 // Get post with author
 query GetPost($id: Int) {
     post {
-        @where { id = $id }
+        @where { id == $id }
         id
         title
         content
@@ -485,7 +485,7 @@ insert CreatePost($title: String, $content: String) {
 // Update post
 update UpdatePost($id: Int, $title: String?, $content: String?) {
     post {
-        @where { id = $id }
+        @where { id == $id }
         title = $title
         content = $content
     }
@@ -494,7 +494,7 @@ update UpdatePost($id: Int, $title: String?, $content: String?) {
 // Delete post
 delete DeletePost($id: Int) {
     post {
-        @where { id = $id }
+        @where { id == $id }
         id
     }
 }
@@ -503,11 +503,11 @@ delete DeletePost($id: Int) {
 query GetPublishedPosts($limit: Int) {
     post {
         @where { 
-            published = True &&
-            (authorId = Session.userId || Session.role = "admin")
+            published == True &&
+            (authorId == Session.userId || Session.role == "admin")
         }
-        @sort createdAt desc
-        @limit $limit
+        @sort(createdAt, Desc)
+        @limit($limit)
         id
         title
         content

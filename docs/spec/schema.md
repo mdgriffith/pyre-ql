@@ -91,10 +91,10 @@ createdAt DateTime @default(now) @index
 
 These directives apply to the entire record:
 
-**`@tablename "name"`** - Override default table name
+**`@tablename("name")`** - Override default table name
 ```pyre
 record User {
-    @tablename "users"
+    @tablename("users")
     id Int @id
     name String
 }
@@ -115,24 +115,24 @@ record Post {
 ```pyre
 record Post {
     // Single operation
-    @allow(select) { published = True }
+    @allow(select) { published == True }
     
     // Multiple operations
-    @allow(insert, update) { authorId = Session.userId }
+    @allow(insert, update) { authorId == Session.userId }
     
     // All operations
-    @allow(*) { authorId = Session.userId }
+    @allow(*) { authorId == Session.userId }
     
     // Complex conditions
     @allow(delete) { 
-        authorId = Session.userId || Session.role = "admin" 
+        authorId == Session.userId || Session.role == "admin" 
     }
 }
 ```
 
 **Operations**: `select`, `insert`, `update`, `delete`, or `*` for all.
 
-**Conditions**: Use `Session.fieldName` to reference session variables. Supported operators: `=`, `&&` (and), `||` (or).
+**Conditions**: Use `Session.fieldName` to reference session variables. Supported operators: `==` (equal), `&&` (and), `||` (or).
 
 **`@watch`** - Enable change watching for inserts
 ```pyre
@@ -145,9 +145,9 @@ record Post {
 
 ### Links
 
-Links define relationships between records. They can appear as field-level directives or standalone fields.
+Links define relationships between records. They appear as field-level directives.
 
-**Shorthand syntax** (field-level):
+**Syntax:**
 ```pyre
 record Post {
     authorId Int
@@ -155,22 +155,7 @@ record Post {
 }
 ```
 
-**Full syntax** (standalone field):
-```pyre
-record Post {
-    authorId Int
-    author @link(User.id)
-}
-```
-
-When the local field name matches the foreign table's primary key name (typically `id`), you can omit it:
-```pyre
-record Post {
-    id Int @id
-    authorId Int
-    author @link(User.id)  // Assumes authorId references User.id
-}
-```
+Both the local field name and the foreign table's primary key must be explicitly specified.
 
 **Multi-field links** (for composite keys):
 ```pyre
@@ -282,7 +267,7 @@ type Status
     }
 
 record User {
-    @tablename "users"
+    @tablename("users")
     @public
     
     id Int @id

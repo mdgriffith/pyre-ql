@@ -663,9 +663,9 @@ record User {
     age Int?
     createdAt DateTime @default(now)
     updatedAt DateTime @default(now)
-    @tablename "users"
-    @allow(select) { id = Session.userId }
-    @allow(insert, update) { id = Session.userId }
+    @tablename("users")
+    @allow(select) { id == Session.userId }
+    @allow(insert, update) { id == Session.userId }
 }
 
 record Post {
@@ -676,7 +676,7 @@ record Post {
     author @link(authorId, User.id)
     published Bool @default(False)
     createdAt DateTime @default(now)
-    @allow(*) { authorId = Session.userId }
+    @allow(*) { authorId == Session.userId }
 }
 
 record Comment {
@@ -687,8 +687,8 @@ record Comment {
     post @link(postId, Post.id)
     user @link(userId, User.id)
     createdAt DateTime @default(now)
-    @allow(select) { userId = Session.userId }
-    @allow(insert, update) { userId = Session.userId }
+    @allow(select) { userId == Session.userId }
+    @allow(insert, update) { userId == Session.userId }
 }
 
 type Status
@@ -717,7 +717,7 @@ record Test {
     defaultField String @default("test")
     defaultNow DateTime @default(now)
     nullableField String?
-    @tablename "test_table"
+    @tablename("test_table")
     @public
 }
     "#;
@@ -732,9 +732,9 @@ record Post {
     id Int @id
     title String
     authorId Int
-    @allow(select) { published = True }
-    @allow(insert, update) { authorId = Session.userId && status = "draft" }
-    @allow(delete) { authorId = Session.userId || Session.role = "admin" }
+    @allow(select) { published == True }
+    @allow(insert, update) { authorId == Session.userId && status == "draft" }
+    @allow(delete) { authorId == Session.userId || Session.role == "admin" }
 }
     "#;
 
@@ -848,7 +848,7 @@ fn test_query_round_trip_with_params() {
     let query_source = r#"
 query GetUser($id: Int) {
     user {
-        @where { id = $id }
+        @where { id == $id }
         id
         name
         email
@@ -884,7 +884,7 @@ fn test_query_round_trip_with_where() {
     let query_source = r#"
 query GetPublishedPosts {
     post {
-        @where { published = True }
+        @where { published == True }
         id
         title
     }
@@ -900,7 +900,7 @@ fn test_query_round_trip_with_limit() {
     let query_source = r#"
 query GetUsers {
     user {
-        @limit 10
+        @limit(10)
         id
         name
     }
@@ -916,7 +916,7 @@ fn test_query_round_trip_with_order_by() {
     let query_source = r#"
 query GetUsers {
     user {
-        @sort name asc
+        @sort(name, Asc)
         id
         name
     }
@@ -950,7 +950,7 @@ fn test_query_round_trip_update() {
     let query_source = r#"
 update UpdateUser($id: Int, $name: String) {
     user {
-        @where { id = $id }
+        @where { id == $id }
         name = $name
         id
         name
@@ -967,7 +967,7 @@ fn test_query_round_trip_delete() {
     let query_source = r#"
 delete DeleteUser($id: Int) {
     user {
-        @where { id = $id }
+        @where { id == $id }
         id
     }
 }
@@ -982,7 +982,7 @@ fn test_query_round_trip_complex_where() {
     let query_source = r#"
 query GetUsers {
     user {
-        @where { id = 1 && name = "test" || email = "test@example.com" }
+        @where { id == 1 && name == "test" || email == "test@example.com" }
         id
         name
     }
@@ -998,7 +998,7 @@ fn test_query_round_trip_with_session() {
     let query_source = r#"
 query GetCurrentUser {
     user {
-        @where { id = Session.userId }
+        @where { id == Session.userId }
         id
         name
         email

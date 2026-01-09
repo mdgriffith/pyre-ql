@@ -10,7 +10,7 @@ async fn test_limit_with_literal_value() -> Result<(), TestError> {
     let query = r#"
         query GetUsers {
             user {
-                @limit 2
+                @limit(2)
                 id
                 name
             }
@@ -38,7 +38,7 @@ async fn test_limit_with_variable() -> Result<(), TestError> {
     let query = r#"
         query GetUsers($limit: Int) {
             user {
-                @limit $limit
+                @limit($limit)
                 id
                 name
             }
@@ -73,8 +73,8 @@ async fn test_limit_with_where_clause() -> Result<(), TestError> {
     let query = r#"
         query GetUsers($name: String) {
             user {
-                @where { name = $name }
-                @limit 1
+                @where { name == $name }
+                @limit(1)
                 id
                 name
             }
@@ -114,8 +114,8 @@ async fn test_limit_with_sort() -> Result<(), TestError> {
     let query = r#"
         query GetUsers {
             user {
-                @sort name asc
-                @limit 2
+                @sort(name, Asc)
+                @limit(2)
                 id
                 name
             }
@@ -150,7 +150,7 @@ async fn test_limit_zero_returns_empty() -> Result<(), TestError> {
     let query = r#"
         query GetUsers {
             user {
-                @limit 0
+                @limit(0)
                 id
                 name
             }
@@ -178,7 +178,7 @@ async fn test_limit_larger_than_results() -> Result<(), TestError> {
     let query = r#"
         query GetUsers {
             user {
-                @limit 1000
+                @limit(1000)
                 id
                 name
             }
@@ -217,7 +217,7 @@ async fn test_limit_with_session_variable() -> Result<(), TestError> {
     let query = r#"
         query GetUsers {
             user {
-                @limit 5
+                @limit(5)
                 id
                 name
             }

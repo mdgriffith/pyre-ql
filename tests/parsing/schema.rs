@@ -81,7 +81,7 @@ record Post {
 fn test_valid_record_with_tablename() {
     let schema_source = r#"
 record User {
-    @tablename "users"
+    @tablename("users")
     id   Int    @id
     name String
 }

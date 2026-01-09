@@ -721,8 +721,8 @@ pub enum Direction {
 
 pub fn direction_to_string(direction: &Direction) -> String {
     match direction {
-        Direction::Asc => "asc".to_string(),
-        Direction::Desc => "desc".to_string(),
+        Direction::Asc => "Asc".to_string(),
+        Direction::Desc => "Desc".to_string(),
     }
 }
 

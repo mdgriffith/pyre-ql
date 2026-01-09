@@ -4,8 +4,7 @@ use pyre::typecheck;
 
 fn check_schema_and_get_layers(schema_source: &str) -> std::collections::HashMap<String, usize> {
     let mut schema = ast::Schema::default();
-    parser::run("schema.pyre", schema_source, &mut schema)
-        .expect("Failed to parse schema");
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
 
     let database = ast::Database {
         schemas: vec![schema],
@@ -29,13 +28,13 @@ fn test_simple_linear_dependency() {
     // Expected: A=0, B=1, C=2
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     @public
 }
 
 record B {
-    @tablename "b"
+    @tablename("b")
     id Int @id
     aId Int
     a @link(aId, A.id)
@@ -43,7 +42,7 @@ record B {
 }
 
 record C {
-    @tablename "c"
+    @tablename("c")
     id Int @id
     bId Int
     b @link(bId, B.id)
@@ -64,13 +63,13 @@ fn test_multiple_dependencies() {
     // Expected: A=0, B=1, C=1
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     @public
 }
 
 record B {
-    @tablename "b"
+    @tablename("b")
     id Int @id
     aId Int
     a @link(aId, A.id)
@@ -78,7 +77,7 @@ record B {
 }
 
 record C {
-    @tablename "c"
+    @tablename("c")
     id Int @id
     aId Int
     a @link(aId, A.id)
@@ -99,7 +98,7 @@ fn test_circular_dependency() {
     // Expected: A=0, B=0 (same layer due to cycle)
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     bId Int?
     b @link(bId, B.id)
@@ -107,7 +106,7 @@ record A {
 }
 
 record B {
-    @tablename "b"
+    @tablename("b")
     id Int @id
     aId Int?
     a @link(aId, A.id)
@@ -119,8 +118,11 @@ record B {
 
     let a_layer = layers.get("a").expect("Table 'a' should exist");
     let b_layer = layers.get("b").expect("Table 'b' should exist");
-    
-    assert_eq!(a_layer, b_layer, "A and B should have the same layer due to circular dependency");
+
+    assert_eq!(
+        a_layer, b_layer,
+        "A and B should have the same layer due to circular dependency"
+    );
     assert_eq!(a_layer, &0, "Circular dependency should be in layer 0");
 }
 
@@ -130,19 +132,19 @@ fn test_independent_tables() {
     // Expected: A=0, B=0, C=0
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     @public
 }
 
 record B {
-    @tablename "b"
+    @tablename("b")
     id Int @id
     @public
 }
 
 record C {
-    @tablename "c"
+    @tablename("c")
     id Int @id
     @public
 }
@@ -162,13 +164,13 @@ fn test_complex_graph() {
     // Expected: A=0, B=1, C=1, D=2
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     @public
 }
 
 record B {
-    @tablename "b"
+    @tablename("b")
     id Int @id
     aId Int
     a @link(aId, A.id)
@@ -176,7 +178,7 @@ record B {
 }
 
 record C {
-    @tablename "c"
+    @tablename("c")
     id Int @id
     aId Int
     a @link(aId, A.id)
@@ -184,7 +186,7 @@ record C {
 }
 
 record D {
-    @tablename "d"
+    @tablename("d")
     id Int @id
     bId Int?
     b @link(bId, B.id)
@@ -208,7 +210,7 @@ fn test_three_way_cycle() {
     // Expected: A=0, B=0, C=0 (all same layer)
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     bId Int?
     b @link(bId, B.id)
@@ -216,7 +218,7 @@ record A {
 }
 
 record B {
-    @tablename "b"
+    @tablename("b")
     id Int @id
     cId Int?
     c @link(cId, C.id)
@@ -224,7 +226,7 @@ record B {
 }
 
 record C {
-    @tablename "c"
+    @tablename("c")
     id Int @id
     aId Int?
     a @link(aId, A.id)
@@ -250,13 +252,13 @@ fn test_cycle_with_external_dependency() {
     // Expected: A=0, B=0, C=0 (cycle), D=1
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     @public
 }
 
 record B {
-    @tablename "b"
+    @tablename("b")
     id Int @id
     cId Int?
     c @link(cId, C.id)
@@ -264,7 +266,7 @@ record B {
 }
 
 record C {
-    @tablename "c"
+    @tablename("c")
     id Int @id
     bId Int?
     b @link(bId, B.id)
@@ -272,7 +274,7 @@ record C {
 }
 
 record D {
-    @tablename "d"
+    @tablename("d")
     id Int @id
     bId Int
     b @link(bId, B.id)
@@ -283,13 +285,20 @@ record D {
     let layers = check_schema_and_get_layers(schema);
 
     assert_eq!(layers.get("a"), Some(&0), "A should be layer 0");
-    
+
     let b_layer = layers.get("b").expect("Table 'b' should exist");
     let c_layer = layers.get("c").expect("Table 'c' should exist");
-    assert_eq!(b_layer, c_layer, "B and C should have the same layer (cycle)");
+    assert_eq!(
+        b_layer, c_layer,
+        "B and C should have the same layer (cycle)"
+    );
     assert_eq!(b_layer, &0, "Cycle should be in layer 0");
-    
-    assert_eq!(layers.get("d"), Some(&1), "D should be layer 1 (depends on B in cycle)");
+
+    assert_eq!(
+        layers.get("d"),
+        Some(&1),
+        "D should be layer 1 (depends on B in cycle)"
+    );
 }
 
 #[test]
@@ -298,13 +307,13 @@ fn test_deep_nested_dependencies() {
     // Expected: A=0, B=1, C=2, D=3, E=4
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     @public
 }
 
 record B {
-    @tablename "b"
+    @tablename("b")
     id Int @id
     aId Int
     a @link(aId, A.id)
@@ -312,7 +321,7 @@ record B {
 }
 
 record C {
-    @tablename "c"
+    @tablename("c")
     id Int @id
     bId Int
     b @link(bId, B.id)
@@ -320,7 +329,7 @@ record C {
 }
 
 record D {
-    @tablename "d"
+    @tablename("d")
     id Int @id
     cId Int
     c @link(cId, C.id)
@@ -328,7 +337,7 @@ record D {
 }
 
 record E {
-    @tablename "e"
+    @tablename("e")
     id Int @id
     dId Int
     d @link(dId, D.id)
@@ -352,13 +361,13 @@ fn test_multiple_links_same_table() {
     // Expected: A=0, B=1
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     @public
 }
 
 record B {
-    @tablename "b"
+    @tablename("b")
     id Int @id
     aId1 Int
     a1 @link(aId1, A.id)
@@ -380,13 +389,13 @@ fn test_table_with_no_links() {
     // Expected: Both should have valid layers
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     @public
 }
 
 record B {
-    @tablename "b"
+    @tablename("b")
     id Int @id
     aId Int
     a @link(aId, A.id)
@@ -394,7 +403,7 @@ record B {
 }
 
 record C {
-    @tablename "c"
+    @tablename("c")
     id Int @id
     name String
     @public
@@ -405,7 +414,11 @@ record C {
 
     assert_eq!(layers.get("a"), Some(&0), "A should be layer 0");
     assert_eq!(layers.get("b"), Some(&1), "B should be layer 1");
-    assert_eq!(layers.get("c"), Some(&0), "C should be layer 0 (no dependencies)");
+    assert_eq!(
+        layers.get("c"),
+        Some(&0),
+        "C should be layer 0 (no dependencies)"
+    );
 }
 
 #[test]
@@ -418,13 +431,13 @@ fn test_diamond_pattern() {
     // Expected: A=0, B=1, C=1, D=2
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     @public
 }
 
 record B {
-    @tablename "b"
+    @tablename("b")
     id Int @id
     aId Int
     a @link(aId, A.id)
@@ -432,7 +445,7 @@ record B {
 }
 
 record C {
-    @tablename "c"
+    @tablename("c")
     id Int @id
     aId Int
     a @link(aId, A.id)
@@ -440,7 +453,7 @@ record C {
 }
 
 record D {
-    @tablename "d"
+    @tablename("d")
     id Int @id
     bId Int?
     b @link(bId, B.id)
@@ -464,7 +477,7 @@ fn test_self_referential_table() {
     // Expected: A=0 (self-cycle)
     let schema = r#"
 record A {
-    @tablename "a"
+    @tablename("a")
     id Int @id
     parentId Int?
     parent @link(parentId, A.id)
@@ -474,6 +487,9 @@ record A {
 
     let layers = check_schema_and_get_layers(schema);
 
-    assert_eq!(layers.get("a"), Some(&0), "A should be layer 0 (self-cycle)");
+    assert_eq!(
+        layers.get("a"),
+        Some(&0),
+        "A should be layer 0 (self-cycle)"
+    );
 }
-

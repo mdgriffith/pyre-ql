@@ -16,7 +16,7 @@ record Post {
     content String
     authorId Int
     published Bool
-    @allow(*) { authorId = Session.userId }
+    @allow(*) { authorId == Session.userId }
 }
 
 record Comment {
@@ -25,7 +25,7 @@ record Comment {
     postId Int
     authorId Int
     post @link(postId, Post.id)
-    @allow(*) { authorId = Session.userId }
+    @allow(*) { authorId == Session.userId }
 }
 
 record Article {
@@ -34,8 +34,8 @@ record Article {
     content String
     authorId Int
     status String
-    @allow(select) { authorId = Session.userId || status = "published" }
-    @allow(insert, update, delete) { authorId = Session.userId }
+    @allow(select) { authorId == Session.userId || status == "published" }
+    @allow(insert, update, delete) { authorId == Session.userId }
 }
 
 record Document {
@@ -44,9 +44,9 @@ record Document {
     content String
     ownerId Int
     visibility String
-    @allow(select) { ownerId = Session.userId || visibility = "public" }
-    @allow(insert, update) { ownerId = Session.userId }
-    @allow(delete) { ownerId = Session.userId && Session.role = "admin" }
+    @allow(select) { ownerId == Session.userId || visibility == "public" }
+    @allow(insert, update) { ownerId == Session.userId }
+    @allow(delete) { ownerId == Session.userId && Session.role == "admin" }
 }
 "#
     .to_string()
@@ -423,7 +423,7 @@ async fn test_update_permissions() -> Result<(), TestError> {
     let update_query = r#"
         update UpdatePost($id: Int, $title: String) {
             post {
-                @where { id = $id }
+                @where { id == $id }
                 title = $title
             }
         }
@@ -447,7 +447,7 @@ async fn test_update_permissions() -> Result<(), TestError> {
     let query = r#"
         query GetPost {
             post {
-                @where { id = 1 }
+                @where { id == 1 }
                 id
                 title
                 authorId
@@ -484,7 +484,7 @@ async fn test_update_permissions() -> Result<(), TestError> {
     let query = r#"
         query GetPost {
             post {
-                @where { id = 2 }
+                @where { id == 2 }
                 id
                 title
                 authorId
@@ -516,7 +516,7 @@ async fn test_delete_permissions() -> Result<(), TestError> {
     let delete_query = r#"
 delete DeletePost($id: Int) {
     post {
-        @where { id = $id }
+        @where { id == $id }
     }
 }
     "#;
@@ -535,7 +535,7 @@ delete DeletePost($id: Int) {
     let check_deleted_query = r#"
 query CheckDeletedPost {
     post {
-        @where { id = 1 }
+        @where { id == 1 }
         id
         title
         authorId
@@ -554,7 +554,7 @@ query CheckDeletedPost {
     let check_remaining_query = r#"
 query CheckRemainingPost {
     post {
-        @where { id = 3 }
+        @where { id == 3 }
         id
         title
         authorId
@@ -613,7 +613,7 @@ async fn test_delete_permissions_with_role_check() -> Result<(), TestError> {
     let delete_query = r#"
 delete DeleteDocument($id: Int) {
     document {
-        @where { id = $id }
+        @where { id == $id }
     }
 }
     "#;

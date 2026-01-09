@@ -1,18 +1,16 @@
 
 record User {
-    @tablename "users"
+    @tablename("users")
     accounts @link(Account.userId)
     posts    @link(Post.authorUserId)
-
     id        Int     @id
     name      String?
     status    Status
     createdAt DateTime @default(now)
 }
 
-
 record Account {
-    @tablename "accounts"
+    @tablename("accounts")
     id     Int   @id
     userId Int
     name   String
@@ -21,17 +19,14 @@ record Account {
 }
 
 record Job {
-    @tablename "jobs"
+    @tablename("jobs")
     @watch
-
-
     id   Int   @id
     name String
 }
 
-
 record Post {
-    @tablename "posts"
+    @tablename("posts")
     id           Int     @id
     createdAt    DateTime @default(now)
     authorUserId Int
@@ -40,7 +35,6 @@ record Post {
     status       Status
     users        @link(authorUserId, User.id)
 }
-
 
 type Status
    = Active
@@ -52,7 +46,4 @@ type Status
         reason2 String
         error   String
      }
-
-
-
 

@@ -4,7 +4,7 @@ use nom::bytes::complete::take_while1;
 use nom::character::streaming::{space0, space1};
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take, take_until, take_while},
+    bytes::complete::{tag, take_until, take_while},
     character::complete::{
         alphanumeric1, char, line_ending, multispace0, multispace1, newline, one_of,
     },
@@ -374,7 +374,6 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
         parse_table_permission,
         parse_public,
         parse_watch(),
-        parse_link,
     )))(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaColumn);
     Ok((input, field_directive))
@@ -509,8 +508,11 @@ fn parse_watch() -> impl Fn(Text) -> ParseResult<ast::Field> {
 fn parse_tablename(start_location: ast::Location) -> impl Fn(Text) -> ParseResult<ast::Field> {
     move |input: Text| {
         let (input, _) = tag("tablename")(input)?;
-        let (input, _) = multispace1(input)?;
+        let (input, _) = tag("(")(input)?;
+        let (input, _) = space0(input)?;
         let (input, tablename) = parse_string_literal(input)?;
+        let (input, _) = space0(input)?;
+        let (input, _) = tag(")")(input)?;
         let (input, end_pos) = position(input)?;
         let (input, _) = space0(input)?;
         let (input, _) = newline(input)?;
@@ -523,132 +525,6 @@ fn parse_tablename(start_location: ast::Location) -> impl Fn(Text) -> ParseResul
 
         let directive = ast::FieldDirective::TableName((range, tablename.to_string()));
         return Ok((input, ast::Field::FieldDirective(directive)));
-    }
-}
-
-// This is deprecated and will be moved pretty quick
-fn parse_link(input: Text) -> ParseResult<ast::Field> {
-    let (input, _) = tag("link")(input)?;
-    let input = expecting(input, crate::error::Expecting::LinkDirective);
-    let (input, _) = cut(multispace1)(input)?;
-    let (input, start_pos) = position(input)?;
-    let (input, linkname) = parse_fieldname(input)?;
-    let (input, end_name_pos) = position(input)?;
-
-    // link details
-    // { from: userId, to: User.id }
-    let (input, _) = multispace1(input)?;
-    let (input, fields) = with_braces(parse_link_field)(input)?;
-    let (input, _) = space0(input)?;
-    let (input, _) = newline(input)?;
-
-    // gather into link details
-    let (input, link_details) =
-        link_field_to_details(input, linkname, start_pos, end_name_pos, fields)?;
-
-    return Ok((
-        input,
-        ast::Field::FieldDirective(ast::FieldDirective::Link(link_details)),
-    ));
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum LinkField {
-    From(Vec<String>),
-    To { table: String, id: Vec<String> },
-}
-
-fn link_field_to_details<'a, 'b>(
-    input: Text<'a>,
-    linkname: &'b str,
-    start_pos: Text<'a>,
-    end_name_pos: Text<'a>,
-    link_fields: Vec<LinkField>,
-) -> ParseResult<'a, ast::LinkDetails> {
-    let mut details = ast::LinkDetails {
-        link_name: linkname.to_string(),
-        local_ids: vec![],
-
-        foreign: ast::Qualified {
-            schema: "".to_string(),
-            table: "".to_string(),
-            fields: vec![],
-        },
-
-        start_name: Some(to_location(&start_pos)),
-        end_name: Some(to_location(&end_name_pos)),
-    };
-    let mut has_from = false;
-    let mut has_to = false;
-    for link in link_fields {
-        match link {
-            LinkField::From(id_list) => {
-                if has_from {
-                    return Err(nom::Err::Error(VerboseError {
-                        errors: vec![(input, VerboseErrorKind::Context("tag"))],
-                    }));
-                } else {
-                    has_from = true;
-                    details.local_ids = id_list
-                }
-            }
-            LinkField::To { table, id } => {
-                if has_to {
-                    return Err(nom::Err::Error(VerboseError {
-                        errors: vec![(input, VerboseErrorKind::Context("tag"))],
-                    }));
-                } else {
-                    has_to = true;
-                    details.foreign.table = table;
-                    details.foreign.fields = id;
-                }
-            }
-        }
-    }
-    if has_to & has_from {
-        return Ok((input, details));
-    }
-
-    Err(nom::Err::Error(VerboseError {
-        errors: vec![(input, VerboseErrorKind::Context("tag"))],
-    }))
-}
-
-fn parse_link_field(input: Text) -> ParseResult<LinkField> {
-    let (input, _) = multispace0(input)?;
-    let (input, name) = parse_fieldname(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = tag(":")(input)?;
-    let (input, _) = multispace0(input)?;
-
-    match name {
-        "to" => {
-            let (input, to_table) = parse_typename(input)?;
-            let (input, _) = tag(".")(input)?;
-            let (input, to_id) = parse_fieldname(input)?;
-            let (input, _) = multispace0(input)?;
-            let (input, _) = opt(tag(","))(input)?;
-            let (input, _) = multispace0(input)?;
-            return Ok((
-                input,
-                LinkField::To {
-                    table: to_table.to_string(),
-                    id: vec![to_id.to_string()],
-                },
-            ));
-        }
-        "from" => {
-            let (input, from_field) = parse_fieldname(input)?;
-            let (input, _) = multispace0(input)?;
-            let (input, _) = opt(tag(","))(input)?;
-            let (input, _) = multispace0(input)?;
-            return Ok((input, LinkField::From(vec![from_field.to_string()])));
-        }
-        _ => {
-            return Err(nom::Err::Error(VerboseError {
-                errors: vec![(input, VerboseErrorKind::Context("tag"))],
-            }));
-        }
     }
 }
 
@@ -1192,8 +1068,11 @@ fn parse_query_arg(input: Text) -> ParseResult<ast::Arg> {
 
 fn parse_limit(input: Text) -> ParseResult<ast::Arg> {
     let (input, _) = tag("limit")(input)?;
-    let (input, _) = multispace1(input)?;
+    let (input, _) = tag("(")(input)?;
+    let (input, _) = space0(input)?;
     let (input, val) = parse_value(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = tag(")")(input)?;
 
     Ok((input, ast::Arg::Limit(val)))
 }
@@ -1201,13 +1080,20 @@ fn parse_limit(input: Text) -> ParseResult<ast::Arg> {
 fn parse_sort(input: Text) -> ParseResult<ast::Arg> {
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("sort")(input)?;
-    let (input, _) = multispace1(input)?;
+    let (input, _) = tag("(")(input)?;
+    let (input, _) = space0(input)?;
     let (input, field) = parse_fieldname(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = tag(",")(input)?;
+    let (input, _) = space0(input)?;
     let (input, direction) = alt((
         parse_token("asc", ast::Direction::Asc),
+        parse_token("Asc", ast::Direction::Asc),
         parse_token("desc", ast::Direction::Desc),
+        parse_token("Desc", ast::Direction::Desc),
     ))(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = tag(")")(input)?;
 
     Ok((input, ast::Arg::OrderBy(direction, field.to_string())))
 }
@@ -1451,6 +1337,7 @@ fn parse_operator(input: Text) -> ParseResult<ast::Operator> {
     alt((
         parse_token(">=", ast::Operator::GreaterThanOrEqual),
         parse_token("<=", ast::Operator::LessThanOrEqual),
+        parse_token("==", ast::Operator::Equal),
         parse_token("=", ast::Operator::Equal),
         parse_token(">", ast::Operator::GreaterThan),
         parse_token("<", ast::Operator::LessThan),

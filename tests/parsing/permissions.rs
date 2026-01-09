@@ -9,7 +9,7 @@ fn test_star_permission_simple() {
 record Post {
     id Int @id
     title String
-    @allow(*) { authorId = Session.userId }
+    @allow(*) { authorId == Session.userId }
 }
     "#;
 
@@ -30,7 +30,7 @@ fn test_star_permission_with_and() {
 record Post {
     id Int @id
     title String
-    @allow(*) { authorId = Session.userId && published = True }
+    @allow(*) { authorId == Session.userId && published == True }
 }
     "#;
 
@@ -48,7 +48,7 @@ fn test_star_permission_with_or() {
 record Post {
     id Int @id
     title String
-    @allow(*) { authorId = Session.userId || status = "published" }
+    @allow(*) { authorId == Session.userId || status == "published" }
 }
     "#;
 
@@ -66,7 +66,7 @@ fn test_operation_specific_single_operation() {
 record Post {
     id Int @id
     title String
-    @allow(select) { authorId = Session.userId }
+    @allow(select) { authorId == Session.userId }
 }
     "#;
 
@@ -84,7 +84,7 @@ fn test_operation_specific_multiple_operations_same_line() {
 record Post {
     id Int @id
     title String
-    @allow(select, update) { authorId = Session.userId }
+    @allow(select, update) { authorId == Session.userId }
 }
     "#;
 
@@ -102,7 +102,7 @@ fn test_operation_specific_all_operations() {
 record Post {
     id Int @id
     title String
-    @allow(select, insert, update, delete) { authorId = Session.userId }
+    @allow(select, insert, update, delete) { authorId == Session.userId }
 }
     "#;
 
@@ -120,10 +120,10 @@ fn test_operation_specific_multiple_lines() {
 record Post {
     id Int @id
     title String
-    @allow(select) { authorId = Session.userId }
-    @allow(insert) { authorId = Session.userId }
-    @allow(update) { authorId = Session.userId }
-    @allow(delete) { authorId = Session.userId }
+    @allow(select) { authorId == Session.userId }
+    @allow(insert) { authorId == Session.userId }
+    @allow(update) { authorId == Session.userId }
+    @allow(delete) { authorId == Session.userId }
 }
     "#;
 
@@ -141,8 +141,8 @@ fn test_operation_specific_mixed_lines() {
 record Post {
     id Int @id
     title String
-    @allow(select, update) { authorId = Session.userId }
-    @allow(insert, delete) { authorId = Session.userId }
+    @allow(select, update) { authorId == Session.userId }
+    @allow(insert, delete) { authorId == Session.userId }
 }
     "#;
 
@@ -160,8 +160,8 @@ fn test_operation_specific_with_complex_where() {
 record Post {
     id Int @id
     title String
-    @allow(select) { authorId = Session.userId || status = "published" }
-    @allow(delete) { authorId = Session.userId && Session.role = "admin" }
+    @allow(select) { authorId == Session.userId || status == "published" }
+    @allow(delete) { authorId == Session.userId && Session.role == "admin" }
 }
     "#;
 
@@ -183,8 +183,8 @@ fn test_operation_specific_with_separate_permissions() {
 record Post {
     id Int @id
     title String
-    @allow(select) { authorId = Session.userId || status = "published" }
-    @allow(delete) { authorId = Session.userId }
+    @allow(select) { authorId == Session.userId || status == "published" }
+    @allow(delete) { authorId == Session.userId }
 }
     "#;
 
@@ -206,7 +206,7 @@ fn test_operation_specific_with_role_admin() {
 record Post {
     id Int @id
     title String
-    @allow(delete) { Session.role = "admin" }
+    @allow(delete) { Session.role == "admin" }
 }
     "#;
 
@@ -233,7 +233,7 @@ session {
 record Post {
     id Int @id
     title String
-    @allow(*) { authorId = Session.userId }
+    @allow(*) { authorId == Session.userId }
 }
     "#;
 
@@ -251,7 +251,7 @@ fn test_permission_with_string_literal() {
 record Post {
     id Int @id
     title String
-    @allow(*) { status = "published" }
+    @allow(*) { status == "published" }
 }
     "#;
 
@@ -269,7 +269,7 @@ fn test_permission_with_integer_literal() {
 record Post {
     id Int @id
     title String
-    @allow(*) { authorId = 1 }
+    @allow(*) { authorId == 1 }
 }
     "#;
 
@@ -287,7 +287,7 @@ fn test_permission_with_boolean_literal() {
 record Post {
     id Int @id
     published Bool
-    @allow(*) { published = True }
+    @allow(*) { published == True }
 }
     "#;
 
@@ -326,7 +326,7 @@ record Post {
     status String
     published Bool
     @allow(*) { 
-        (authorId = Session.userId || status = "published") && published = True 
+        (authorId == Session.userId || status == "published") && published == True 
     }
 }
     "#;
@@ -347,7 +347,7 @@ fn test_permission_missing_closing_brace() {
 record Post {
     id Int @id
     title String
-    @allow(*) { authorId = Session.userId
+    @allow(*) { authorId == Session.userId
 }
     "#;
 
@@ -384,7 +384,7 @@ fn test_permission_invalid_operation() {
 record Post {
     id Int @id
     title String
-    @allow(invalid) { authorId = Session.userId }
+    @allow(invalid) { authorId == Session.userId }
 }
     "#;
 
@@ -403,8 +403,8 @@ fn test_multiple_star_permissions_fails() {
 record Post {
     id Int @id
     title String
-    @allow(*) { authorId = Session.userId }
-    @allow(*) { status = "published" }
+    @allow(*) { authorId == Session.userId }
+    @allow(*) { status == "published" }
 }
     "#;
 
@@ -439,7 +439,7 @@ record Post {
     id Int @id
     title String
     authorId Int
-    @allow(*) { authorId = Session.userId }
+    @allow(*) { authorId == Session.userId }
 }
     "#;
 
@@ -466,7 +466,7 @@ fn test_permission_with_variable() {
 record Post {
     id Int @id
     title String
-    @allow(*) { authorId = $userId }
+    @allow(*) { authorId == $userId }
 }
     "#;
 
@@ -484,7 +484,7 @@ fn test_permission_operation_specific_with_multiple_where_conditions() {
 record Post {
     id Int @id
     title String
-    @allow(select) { authorId = Session.userId, status = "published" }
+    @allow(select) { authorId == Session.userId, status == "published" }
 }
     "#;
 
@@ -602,7 +602,7 @@ record Post {
     id Int @id
     title String
     @public
-    @allow(*) { authorId = Session.userId }
+    @allow(*) { authorId == Session.userId }
 }
     "#;
 
@@ -638,8 +638,8 @@ record Post {
     title String
     authorUserId Int
     published Bool
-    @allow(select, update) { authorUserId = Session.userId }
-    @allow(insert, delete) { authorUserId = Session.userId, published = True }
+    @allow(select, update) { authorUserId == Session.userId }
+    @allow(insert, delete) { authorUserId == Session.userId, published == True }
 }
     "#;
 
@@ -805,8 +805,8 @@ record Post {
     id Int @id
     title String
     published Bool
-    @allow(select) { published = true }
-    @allow(insert) { published = false }
+    @allow(select) { published == true }
+    @allow(insert) { published == false }
 }
     "#;
 
@@ -830,8 +830,8 @@ record Post {
     id Int @id
     title String
     published Bool
-    @allow(select) { published = True }
-    @allow(insert) { published = False }
+    @allow(select) { published == True }
+    @allow(insert) { published == False }
 }
     "#;
 
@@ -855,7 +855,7 @@ fn test_permissions_error_message_commits_to_permissions() {
 record Post {
     id Int @id
     title String
-    @allow(invalid syntax here) { authorId = Session.userId }
+    @allow(invalid syntax here) { authorId == Session.userId }
 }
     "#;
 
@@ -892,7 +892,7 @@ record Comment {
     id Int @id
     content String
     authorId Int
-    @allow(*) { authorId = Session.userId }
+    @allow(*) { authorId == Session.userId }
 }
     "#;
 
@@ -921,10 +921,10 @@ record Post {
     id Int @id
     title String
     authorId Int
-    @allow(select) { authorId = Session.userId }
-    @allow(insert) { authorId = Session.userId }
-    @allow(update) { authorId = Session.userId }
-    @allow(delete) { authorId = Session.userId }
+    @allow(select) { authorId == Session.userId }
+    @allow(insert) { authorId == Session.userId }
+    @allow(update) { authorId == Session.userId }
+    @allow(delete) { authorId == Session.userId }
 }
     "#;
 
@@ -951,8 +951,8 @@ fn test_star_permission_with_fine_grained_fails() {
 record Post {
     id Int @id
     title String
-    @allow(*) { authorId = Session.userId }
-    @allow(select) { authorId = Session.userId }
+    @allow(*) { authorId == Session.userId }
+    @allow(select) { authorId == Session.userId }
 }
     "#;
 
@@ -986,7 +986,7 @@ record Post {
     id Int @id
     title String
     @public
-    @allow(*) { authorId = Session.userId }
+    @allow(*) { authorId == Session.userId }
 }
     "#;
 
@@ -1020,7 +1020,7 @@ record Post {
     id Int @id
     title String
     @public
-    @allow(select) { authorId = Session.userId }
+    @allow(select) { authorId == Session.userId }
 }
     "#;
 
@@ -1053,8 +1053,8 @@ fn test_overlapping_fine_grained_permissions_fails() {
 record Post {
     id Int @id
     title String
-    @allow(select, update) { authorId = Session.userId }
-    @allow(select) { status = "published" }
+    @allow(select, update) { authorId == Session.userId }
+    @allow(select) { status == "published" }
 }
     "#;
 
@@ -1088,7 +1088,7 @@ record Post {
     id Int @id
     title String
     authorId Int
-    @allow(select) { authorId = Session.userId }
+    @allow(select) { authorId == Session.userId }
     // insert, update, delete are implicitly denied
 }
     "#;
@@ -1148,7 +1148,7 @@ record Post {
         authorId = Session.userId
         status = "draft"
      }
-    @allow(delete) { authorId = Session.userId }
+    @allow(delete) { authorId == Session.userId }
 }
     "#;
 
@@ -1172,7 +1172,7 @@ record Post {
     id Int @id
     title String
     authorId Int
-    @allow(select) { published = True }
+    @allow(select) { published == True }
     @allow(insert, update) {
         authorId = Session.userId
         status = "draft"
@@ -1231,7 +1231,7 @@ record Post {
     id Int @id
     title String
     authorId Int
-    @allow(select) { published = True  }
+    @allow(select) { published == True  }
     @allow(insert, update) {
         authorId = Session.userId
         status = "draft"
@@ -1260,7 +1260,7 @@ record Post {
     id       Int @id
     title    String
     authorId Int
-    @allow(select) { published = True  }
+    @allow(select) { published == True  }
     @allow(insert, update) {
         authorId = Session.userId
         status = "draft"

@@ -10,7 +10,7 @@ fn test_valid_delete() {
     let delete_source = r#"
         delete RemoveUser {
             user {
-                @where { id = 1 }
+                @where { id == 1 }
                 id
             }
         }
@@ -25,7 +25,7 @@ fn test_valid_delete_with_params() {
     let delete_source = r#"
         delete RemoveUser($id: Int) {
             user {
-                @where { id = $id }
+                @where { id == $id }
                 id
             }
         }
@@ -43,7 +43,7 @@ fn test_valid_delete_with_where() {
     let delete_source = r#"
         delete RemoveUser($id: Int) {
             user {
-                @where { id = $id }
+                @where { id == $id }
                 id
                 name
             }
@@ -62,7 +62,7 @@ fn test_missing_delete_name() {
     let delete_source = r#"
         delete {
             user {
-                @where { id = 1 }
+                @where { id == 1 }
                 id
             }
         }
@@ -90,7 +90,7 @@ fn test_missing_delete_brace() {
     let delete_source = r#"
         delete RemoveUser
             user {
-                @where { id = 1 }
+                @where { id == 1 }
                 id
             }
         }
@@ -171,7 +171,7 @@ fn test_missing_closing_brace() {
     let delete_source = r#"
         delete RemoveUser {
             user {
-                @where { id = 1 }
+                @where { id == 1 }
                 id
     "#;
 
@@ -202,7 +202,7 @@ fn test_delete_with_comments() {
         // This is a comment
         delete RemoveUser {
             user {
-                @where { id = 1 }
+                @where { id == 1 }
                 id
                 // Another comment
             }
@@ -218,7 +218,7 @@ fn test_delete_with_set_should_fail() {
     let delete_source = r#"
         delete RemoveUser($id: Int) {
             user {
-                @where { id = $id }
+                @where { id == $id }
                 id = 1
             }
         }

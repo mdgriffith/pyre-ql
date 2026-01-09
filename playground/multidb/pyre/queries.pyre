@@ -24,7 +24,7 @@ insert UserNew($name: String) {
 
 query UserInit {
     user {
-        @where { id = Session.userId }
+        @where { id == Session.userId }
         id
         name
         dbs: databaseUsers {
@@ -37,7 +37,7 @@ query UserInit {
 
 query Games {
     game {
-        @where { id = 1 }
+        @where { id == 1 }
         id
         name
         myPlayersAlias2: players {
@@ -51,7 +51,7 @@ query Games {
         }
     }
     game2: game {
-        @where { id = 1 }
+        @where { id == 1 }
         id
         name
         myPlayersAlias: players {

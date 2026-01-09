@@ -24,7 +24,7 @@ fn test_valid_update_with_params() {
     let update_source = r#"
         update UpdateUser($id: Int, $name: String) {
             user {
-                @where { id = $id }
+                @where { id == $id }
                 name = $name
             }
         }
@@ -42,7 +42,7 @@ fn test_valid_update_with_where() {
     let update_source = r#"
         update UpdateUser($id: Int) {
             user {
-                @where { id = $id }
+                @where { id == $id }
                 name = "Updated Name"
             }
         }
@@ -60,7 +60,7 @@ fn test_valid_update_multiple_fields() {
     let update_source = r#"
         update UpdateUser($id: Int, $name: String, $status: Status) {
             user {
-                @where { id = $id }
+                @where { id == $id }
                 name = $name
                 status = $status
             }
@@ -215,7 +215,7 @@ fn test_update_with_comments() {
         // This is a comment
         update UpdateUser {
             user {
-                @where { id = 1 }
+                @where { id == 1 }
                 name = "Bob"
                 // Another comment
             }

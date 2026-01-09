@@ -265,7 +265,7 @@ fn to_string_field_directive(
     match directive {
         ast::FieldDirective::Watched(_) => format!("{}@watch\n", spaces),
         ast::FieldDirective::TableName((_, name)) => {
-            format!("{}@tablename \"{}\"\n", spaces, name)
+            format!("{}@tablename(\"{}\")\n", spaces, name)
         }
         ast::FieldDirective::Link(details) => {
             to_string_link_details_shorthand(namespace, indent, details)
@@ -277,7 +277,7 @@ fn to_string_field_directive(
 }
 
 fn to_string_permissions_details(
-    namespace: &str,
+    _namespace: &str,
     indentation: &Indentation,
     details: &ast::PermissionDetails,
 ) -> String {
@@ -461,7 +461,7 @@ fn to_string_directive(directive: &ast::ColumnDirective) -> String {
         ast::ColumnDirective::PrimaryKey => "@id".to_string(),
         ast::ColumnDirective::Unique => "@unique".to_string(),
         ast::ColumnDirective::Index => "@index".to_string(),
-        ast::ColumnDirective::Default { id, value } => match value {
+        ast::ColumnDirective::Default { id: _, value } => match value {
             ast::DefaultValue::Now => "@default(now)".to_string(),
             ast::DefaultValue::Value(value) => {
                 format!("@default({})", &value_to_string(value))
@@ -590,11 +590,11 @@ fn to_string_param(indent_size: usize, arg: &ast::Arg) -> String {
     let indent = " ".repeat(indent_size);
     match arg {
         ast::Arg::Limit(lim) => {
-            format!("{}@limit {}\n", indent, value_to_string(lim))
+            format!("{}@limit({})\n", indent, value_to_string(lim))
         }
         ast::Arg::OrderBy(direction, column) => {
             format!(
-                "{}@sort {} {}\n",
+                "{}@sort({}, {})\n",
                 indent,
                 column,
                 ast::direction_to_string(direction)
@@ -668,7 +668,7 @@ fn value_to_string(value: &ast::QueryValue) -> String {
 
 fn operator_to_string(operator: &ast::Operator) -> &str {
     match operator {
-        ast::Operator::Equal => "=",
+        ast::Operator::Equal => "==",
         ast::Operator::NotEqual => "!=",
         ast::Operator::GreaterThan => ">",
         ast::Operator::LessThan => "<",

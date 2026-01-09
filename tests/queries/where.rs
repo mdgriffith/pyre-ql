@@ -11,7 +11,7 @@ async fn test_where_clause_filtering() -> Result<(), TestError> {
     let query = r#"
         query GetUserByName($name: String) {
             user {
-                @where { name = $name }
+                @where { name == $name }
                 id
                 name
             }
@@ -47,7 +47,7 @@ async fn test_where_clause_with_status() -> Result<(), TestError> {
     let query = r#"
         query GetActiveUsers($status: Status) {
             user {
-                @where { status = $status }
+                @where { status == $status }
                 id
                 name
                 status
