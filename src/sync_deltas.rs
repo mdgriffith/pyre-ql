@@ -13,7 +13,7 @@ use serde_json::{Map, Value as JsonValue};
 compile_error!("sync_deltas module requires the 'json' feature to be enabled");
 
 /// A single affected row from a mutation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AffectedRow {
     pub table_name: String,
     pub row: JsonValue,       // Object with column names as keys
@@ -21,21 +21,21 @@ pub struct AffectedRow {
 }
 
 /// A connected session with its identifier and values
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConnectedSession {
     pub session_id: String,
     pub session: HashMap<String, SessionValue>,
 }
 
 /// A group of sessions that share the same affected row indices
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct AffectedRowGroup {
     pub session_ids: HashSet<String>,
     pub affected_row_indices: Vec<usize>, // indices into all_affected_rows
 }
 
 /// Result containing deltas with deduplicated affected rows
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SyncDeltasResult {
     /// Shared pool of all unique affected rows
     pub all_affected_rows: Vec<AffectedRow>,
@@ -314,8 +314,15 @@ fn session_value_to_json(value: &SessionValue) -> JsonValue {
         }
         SessionValue::Text(s) => JsonValue::String(s.clone()),
         SessionValue::Blob(b) => {
-            // Convert blob to hex string for JSON
-            JsonValue::String(b.iter().map(|x| format!("{:02x}", x)).collect::<String>())
+            // Convert blob to hex string for JSON without using format!
+            // This avoids pulling in std::fmt infrastructure
+            const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+            let mut hex = String::with_capacity(b.len() * 2);
+            for byte in b {
+                hex.push(HEX_CHARS[(byte >> 4) as usize] as char);
+                hex.push(HEX_CHARS[(byte & 0x0f) as usize] as char);
+            }
+            JsonValue::String(hex)
         }
     }
 }
@@ -407,23 +414,10 @@ pub fn calculate_sync_deltas(
     })
 }
 
-#[derive(Debug)]
 pub enum SyncDeltasError {
     TableNotFound(String),
     InvalidRowData(String),
 }
 
-impl std::fmt::Display for SyncDeltasError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SyncDeltasError::TableNotFound(table) => {
-                write!(f, "Table not found: {}", table)
-            }
-            SyncDeltasError::InvalidRowData(msg) => {
-                write!(f, "Invalid row data: {}", msg)
-            }
-        }
-    }
-}
-
-impl std::error::Error for SyncDeltasError {}
+// Display and Error traits removed to avoid formatting infrastructure
+// Errors are converted to strings manually in WASM code

@@ -13,7 +13,7 @@ use serde_json::Value as JsonValue;
 compile_error!("sync module requires the 'json' feature to be enabled");
 
 /// Generic session value type that doesn't depend on libsql
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum SessionValue {
     Null,
     Integer(i64),
@@ -26,14 +26,14 @@ pub enum SessionValue {
 pub type SyncCursor = HashMap<String, TableCursor>;
 
 /// Cursor state for a single table
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TableCursor {
     pub last_seen_updated_at: Option<i64>, // Unix timestamp
     pub permission_hash: String,
 }
 
 /// Result of a sync page request
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SyncPageResult {
     /// Data organized by table name
     pub tables: HashMap<String, TableSyncData>,
@@ -42,7 +42,7 @@ pub struct SyncPageResult {
 }
 
 /// Data for a single table in a sync page
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct TableSyncData {
     /// The rows of data
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -54,7 +54,7 @@ pub struct TableSyncData {
 }
 
 /// SQL statements for syncing a table
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TableSyncSql {
     pub table_name: String,
     pub permission_hash: String,
@@ -64,13 +64,12 @@ pub struct TableSyncSql {
 }
 
 /// Result containing SQL for all tables that need syncing
-#[derive(Debug)]
 pub struct SyncSqlResult {
     pub tables: Vec<TableSyncSql>,
 }
 
 /// Status information for a single table's sync state
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TableSyncStatus {
     pub table_name: String,
     pub sync_layer: usize,
@@ -80,7 +79,6 @@ pub struct TableSyncStatus {
 }
 
 /// Result of sync status check
-#[derive(Debug)]
 pub struct SyncStatusResult {
     pub tables: Vec<TableSyncStatus>,
 }
@@ -132,7 +130,15 @@ pub fn calculate_permission_hash(
         }
     }
 
-    format!("{:x}", hasher.finalize())
+    // Convert hash to hex without using format!
+    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+    let hash_bytes = hasher.finalize();
+    let mut hex = String::with_capacity(hash_bytes.len() * 2);
+    for byte in hash_bytes.iter() {
+        hex.push(HEX_CHARS[(byte >> 4) as usize] as char);
+        hex.push(HEX_CHARS[(byte & 0x0f) as usize] as char);
+    }
+    hex
 }
 
 fn hash_permission_ast(hasher: &mut Sha256, where_arg: &WhereArg) {
@@ -141,7 +147,20 @@ fn hash_permission_ast(hasher: &mut Sha256, where_arg: &WhereArg) {
             hasher.update("column");
             hasher.update(if *is_session { "session" } else { "table" });
             hasher.update(fieldname);
-            hasher.update(&format!("{:?}", op));
+            // Convert operator to string without Debug formatting
+            let op_str = match op {
+                ast::Operator::Equal => "Equal",
+                ast::Operator::NotEqual => "NotEqual",
+                ast::Operator::GreaterThan => "GreaterThan",
+                ast::Operator::LessThan => "LessThan",
+                ast::Operator::GreaterThanOrEqual => "GreaterThanOrEqual",
+                ast::Operator::LessThanOrEqual => "LessThanOrEqual",
+                ast::Operator::In => "In",
+                ast::Operator::NotIn => "NotIn",
+                ast::Operator::Like => "Like",
+                ast::Operator::NotLike => "NotLike",
+            };
+            hasher.update(op_str);
             hash_query_value(hasher, value);
         }
         WhereArg::And(args) => {
@@ -178,15 +197,38 @@ fn hash_query_value(hasher: &mut Sha256, value: &ast::QueryValue) {
         }
         ast::QueryValue::Int((_, i)) => {
             hasher.update("int");
-            hasher.update(&i.to_string());
+            // Convert integer to string without formatting infrastructure
+            let mut num_str = String::new();
+            let mut n = *i;
+            if n < 0 {
+                num_str.push('-');
+                n = -n;
+            }
+            if n == 0 {
+                num_str.push('0');
+            } else {
+                let mut digits = Vec::new();
+                while n > 0 {
+                    digits.push((b'0' + (n % 10) as u8) as char);
+                    n /= 10;
+                }
+                for d in digits.iter().rev() {
+                    num_str.push(*d);
+                }
+            }
+            hasher.update(&num_str);
         }
         ast::QueryValue::Float((_, f)) => {
             hasher.update("float");
-            hasher.update(&f.to_string());
+            // For floats, hash the bits directly to avoid formatting
+            // Convert f32 bits to bytes for hashing
+            let bits = f.to_bits();
+            let bytes = bits.to_le_bytes();
+            hasher.update(&bytes);
         }
         ast::QueryValue::Bool((_, b)) => {
             hasher.update("bool");
-            hasher.update(&b.to_string());
+            hasher.update(if *b { "true" } else { "false" });
         }
         ast::QueryValue::Null(_) => {
             hasher.update("null");
@@ -203,11 +245,33 @@ fn hash_session_value(hasher: &mut Sha256, value: &SessionValue) {
         SessionValue::Null => hasher.update("null"),
         SessionValue::Integer(i) => {
             hasher.update("int");
-            hasher.update(&i.to_string());
+            // Convert integer to string without formatting infrastructure
+            let mut num_str = String::new();
+            let mut n = *i;
+            if n < 0 {
+                num_str.push('-');
+                n = -n;
+            }
+            if n == 0 {
+                num_str.push('0');
+            } else {
+                let mut digits = Vec::new();
+                while n > 0 {
+                    digits.push((b'0' + (n % 10) as u8) as char);
+                    n /= 10;
+                }
+                for d in digits.iter().rev() {
+                    num_str.push(*d);
+                }
+            }
+            hasher.update(&num_str);
         }
         SessionValue::Real(f) => {
             hasher.update("real");
-            hasher.update(&f.to_string());
+            // For floats, hash the bits directly to avoid formatting
+            let bits = f.to_bits();
+            let bytes = bits.to_le_bytes();
+            hasher.update(&bytes);
         }
         SessionValue::Text(s) => {
             hasher.update("text");
@@ -215,7 +279,8 @@ fn hash_session_value(hasher: &mut Sha256, value: &SessionValue) {
         }
         SessionValue::Blob(b) => {
             hasher.update("blob");
-            hasher.update(&format!("{:?}", b));
+            // Hash blob bytes directly instead of Debug formatting
+            hasher.update(b);
         }
     }
 }
@@ -492,10 +557,9 @@ pub fn get_sync_sql(
                 actual_table_name == status.table_name
             })
             .ok_or_else(|| {
-                SyncError::SqlGenerationError(format!(
-                    "Table {} not found in context",
-                    status.table_name
-                ))
+                SyncError::SqlGenerationError(
+                    "Table ".to_string() + &status.table_name + " not found in context"
+                )
             })?;
 
         let actual_table_name = &status.table_name;
@@ -649,21 +713,11 @@ pub fn get_sync_page_info(
     result
 }
 
-#[derive(Debug)]
 pub enum SyncError {
     DatabaseError(String),
     SqlGenerationError(String),
     PermissionError(String),
 }
 
-impl std::fmt::Display for SyncError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SyncError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
-            SyncError::SqlGenerationError(msg) => write!(f, "SQL generation error: {}", msg),
-            SyncError::PermissionError(msg) => write!(f, "Permission error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for SyncError {}
+// Display and Error traits removed to avoid formatting infrastructure
+// Errors are converted to strings manually in WASM code

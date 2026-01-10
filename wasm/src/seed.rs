@@ -27,8 +27,8 @@ pub fn seed_wasm(schema_source: String, options: Option<SeedOptions>) -> Result<
     // Parse the schema source
     let mut schema = ast::Schema::default();
     let parse_result = parser::run(FILEPATH, &schema_source, &mut schema);
-    if let Err(e) = parse_result {
-        return Err(format!("Failed to parse schema: {:?}", e));
+    if let Err(_e) = parse_result {
+        return Err("Failed to parse schema".to_string());
     }
 
     // Create a Database from the parsed Schema
@@ -39,15 +39,8 @@ pub fn seed_wasm(schema_source: String, options: Option<SeedOptions>) -> Result<
     // Typecheck the schema to get context
     let context = match typecheck::check_schema(&database) {
         Ok(ctx) => ctx,
-        Err(errors) => {
-            return Err(format!(
-                "Failed to typecheck schema: {:?}",
-                errors
-                    .iter()
-                    .map(|e| format!("{:?}", e))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+        Err(_errors) => {
+            return Err("Failed to typecheck schema".to_string());
         }
     };
 

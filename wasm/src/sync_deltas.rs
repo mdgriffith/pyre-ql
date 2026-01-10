@@ -108,11 +108,11 @@ pub fn calculate_sync_deltas_wasm(
 
     let affected_rows_wasm: Vec<AffectedRowWasm> =
         serde_wasm_bindgen::from_value(affected_rows)
-            .map_err(|e| format!("Failed to parse affected rows: {}", e))?;
+            .map_err(|_e| "Failed to parse affected rows".to_string())?;
 
     let connected_sessions_wasm: Vec<ConnectedSessionWasm> =
         serde_wasm_bindgen::from_value(connected_sessions)
-            .map_err(|e| format!("Failed to parse connected sessions: {}", e))?;
+            .map_err(|_e| "Failed to parse connected sessions".to_string())?;
 
     match &introspection.schema {
         introspect::SchemaResult::Success { context, .. } => {
@@ -140,7 +140,14 @@ pub fn calculate_sync_deltas_wasm(
                 &connected_sessions_rust,
                 context,
             )
-            .map_err(|e| format!("{}", e))?;
+            .map_err(|e| match e {
+                sync_deltas::SyncDeltasError::TableNotFound(table) => {
+                    "Table not found: ".to_string() + &table
+                }
+                sync_deltas::SyncDeltasError::InvalidRowData(msg) => {
+                    "Invalid row data: ".to_string() + &msg
+                }
+            })?;
 
             Ok(convert_result_rust_to_wasm(result))
         }

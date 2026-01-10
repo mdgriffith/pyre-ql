@@ -29,8 +29,8 @@ pub fn set_schema(introspection: JsValue) -> () {
                 // Cache the result
                 *cache = Some(Arc::new(introspection));
             }
-            Err(e) => {
-                web_sys::console::error_1(&format!("Failed to parse introspection: {}", e).into());
+            Err(_e) => {
+                // Silently fail - error handling can be done at JS level if needed
             }
         }
 

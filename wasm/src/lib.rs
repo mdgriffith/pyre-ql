@@ -53,7 +53,10 @@ pub fn calculate_permission_hash(table_name: String, session: JsValue) -> JsValu
     let result = sync::calculate_permission_hash_wasm(table_name, session);
     match result {
         Ok(hash) => serde_wasm_bindgen::to_value(&hash).unwrap(),
-        Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
+        Err(e) => {
+            // e is already a String, no need for .to_string()
+            serde_wasm_bindgen::to_value(&("Error: ".to_string() + &e)).unwrap()
+        }
     }
 }
 
@@ -62,16 +65,15 @@ pub fn get_sync_page_info(sync_cursor: JsValue, session: JsValue, page_size: usi
     let result = sync::get_sync_page_info_wasm(sync_cursor, session, page_size);
     match result {
         Ok(info) => {
-            web_sys::console::log_1(
-                &format!("Serializing WASM result with {} tables", info.tables.len()).into(),
-            );
             // Serialize to JSON string first, then parse it back to JsValue
             // This works around serde_wasm_bindgen HashMap serialization issues
             let json_str = serde_json::to_string(&info).unwrap();
-            web_sys::console::log_1(&format!("JSON serialization: {}", json_str).into());
             js_sys::JSON::parse(&json_str).unwrap()
         }
-        Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
+        Err(e) => {
+            // e is already a String, no need for .to_string()
+            serde_wasm_bindgen::to_value(&("Error: ".to_string() + &e)).unwrap()
+        }
     }
 }
 
@@ -80,7 +82,10 @@ pub fn get_sync_status_sql(sync_cursor: JsValue, session: JsValue) -> JsValue {
     let result = sync::get_sync_status_sql_wasm(sync_cursor, session);
     match result {
         Ok(sql) => serde_wasm_bindgen::to_value(&sql).unwrap(),
-        Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
+        Err(e) => {
+            // e is already a String, no need for .to_string()
+            serde_wasm_bindgen::to_value(&("Error: ".to_string() + &e)).unwrap()
+        }
     }
 }
 
@@ -99,7 +104,10 @@ pub fn get_sync_sql(
             let json_str = serde_json::to_string(&sql_result).unwrap();
             js_sys::JSON::parse(&json_str).unwrap()
         }
-        Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
+        Err(e) => {
+            // e is already a String, no need for .to_string()
+            serde_wasm_bindgen::to_value(&("Error: ".to_string() + &e)).unwrap()
+        }
     }
 }
 
@@ -112,7 +120,10 @@ pub fn calculate_sync_deltas(affected_rows: JsValue, connected_sessions: JsValue
             let json_str = serde_json::to_string(&deltas_result).unwrap();
             js_sys::JSON::parse(&json_str).unwrap()
         }
-        Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
+        Err(e) => {
+            // e is already a String, no need for .to_string()
+            serde_wasm_bindgen::to_value(&("Error: ".to_string() + &e)).unwrap()
+        }
     }
 }
 
@@ -123,12 +134,9 @@ pub fn seed_database(schema_source: String, options: JsValue) -> JsValue {
     } else {
         match serde_wasm_bindgen::from_value(options) {
             Ok(opts) => Some(opts),
-            Err(e) => {
-                return serde_wasm_bindgen::to_value(&format!(
-                    "Error: Failed to parse options: {}",
-                    e
-                ))
-                .unwrap();
+            Err(_e) => {
+                // Avoid calling .to_string() on JsValue error
+                return serde_wasm_bindgen::to_value(&"Error: Failed to parse options".to_string()).unwrap();
             }
         }
     };
@@ -140,6 +148,9 @@ pub fn seed_database(schema_source: String, options: JsValue) -> JsValue {
             let json_str = serde_json::to_string(&seed_sql).unwrap();
             js_sys::JSON::parse(&json_str).unwrap()
         }
-        Err(e) => serde_wasm_bindgen::to_value(&format!("Error: {}", e)).unwrap(),
+        Err(e) => {
+            // e is already a String, no need for .to_string()
+            serde_wasm_bindgen::to_value(&("Error: ".to_string() + &e)).unwrap()
+        }
     }
 }

@@ -114,7 +114,7 @@ pub fn calculate_permission_hash_wasm(
     };
 
     let session_wasm: SessionWasm = serde_wasm_bindgen::from_value(session)
-        .map_err(|e| format!("Failed to parse session: {}", e))?;
+        .map_err(|_e| "Failed to parse session".to_string())?;
 
     let session_rust = convert_session_wasm_to_rust(&session_wasm);
 
@@ -123,7 +123,7 @@ pub fn calculate_permission_hash_wasm(
             let table = context
                 .tables
                 .get(&table_name)
-                .ok_or_else(|| format!("Table {} not found", table_name))?;
+                .ok_or_else(|| "Table ".to_string() + &table_name + " not found")?;
 
             let permission =
                 pyre::ast::get_permissions(&table.record, &pyre::ast::QueryOperation::Query);
@@ -149,44 +149,28 @@ pub fn get_sync_page_info_wasm(
     };
 
     let cursor_wasm: SyncCursorWasm = serde_wasm_bindgen::from_value(sync_cursor)
-        .map_err(|e| format!("Failed to parse sync cursor: {}", e))?;
+        .map_err(|_e| "Failed to parse sync cursor".to_string())?;
 
     let session_wasm: SessionWasm = serde_wasm_bindgen::from_value(session)
-        .map_err(|e| format!("Failed to parse session: {}", e))?;
+        .map_err(|_e| "Failed to parse session".to_string())?;
 
     let session_rust = convert_session_wasm_to_rust(&session_wasm);
     let cursor_rust = convert_cursor_wasm_to_rust(&cursor_wasm);
 
     match &introspection.schema {
         introspect::SchemaResult::Success { context, .. } => {
-            web_sys::console::log_1(
-                &format!("Found {} tables in context", context.tables.len()).into(),
-            );
             let result = sync::get_sync_page_info(&cursor_rust, context, &session_rust, page_size);
-            web_sys::console::log_1(
-                &format!("Sync result has {} tables", result.tables.len()).into(),
-            );
-            for (table_name, _) in &result.tables {
-                web_sys::console::log_1(&format!("  Table: {}", table_name).into());
-            }
             let wasm_result = convert_result_rust_to_wasm(result);
-            web_sys::console::log_1(
-                &format!("WASM result has {} tables", wasm_result.tables.len()).into(),
-            );
-            for (table_name, _) in &wasm_result.tables {
-                web_sys::console::log_1(&format!("  WASM Table: {}", table_name).into());
-            }
             Ok(wasm_result)
         }
-        introspect::SchemaResult::FailedToParse { source, errors } => Err(format!(
-            "Schema failed to parse: {} errors. Source length: {}",
-            errors.len(),
-            source.len()
-        )),
-        introspect::SchemaResult::FailedToTypecheck { errors, .. } => Err(format!(
-            "Schema failed to typecheck: {} errors",
-            errors.len()
-        )),
+        introspect::SchemaResult::FailedToParse { source: _, errors: _ } => {
+            // Avoid number formatting by using simple error message
+            Err("Schema failed to parse".to_string())
+        }
+        introspect::SchemaResult::FailedToTypecheck { errors: _, .. } => {
+            // Avoid number formatting by using simple error message
+            Err("Schema failed to typecheck".to_string())
+        }
     }
 }
 
@@ -213,10 +197,10 @@ pub fn get_sync_status_sql_wasm(sync_cursor: JsValue, session: JsValue) -> Resul
     };
 
     let cursor_wasm: SyncCursorWasm = serde_wasm_bindgen::from_value(sync_cursor)
-        .map_err(|e| format!("Failed to parse sync cursor: {}", e))?;
+        .map_err(|_e| "Failed to parse sync cursor".to_string())?;
 
     let session_wasm: SessionWasm = serde_wasm_bindgen::from_value(session)
-        .map_err(|e| format!("Failed to parse session: {}", e))?;
+        .map_err(|_e| "Failed to parse session".to_string())?;
 
     let session_rust = convert_session_wasm_to_rust(&session_wasm);
     let cursor_rust = convert_cursor_wasm_to_rust(&cursor_wasm);
@@ -224,7 +208,11 @@ pub fn get_sync_status_sql_wasm(sync_cursor: JsValue, session: JsValue) -> Resul
     match &introspection.schema {
         introspect::SchemaResult::Success { context, .. } => {
             sync::get_sync_status_sql(&cursor_rust, context, &session_rust)
-                .map_err(|e| format!("{}", e))
+                .map_err(|e| match e {
+                    sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
+                    sync::SyncError::SqlGenerationError(msg) => "SQL generation error: ".to_string() + &msg,
+                    sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
+                })
         }
         _ => Err("No schema found".to_string()),
     }
@@ -259,10 +247,10 @@ pub fn get_sync_sql_wasm(
     };
 
     let cursor_wasm: SyncCursorWasm = serde_wasm_bindgen::from_value(sync_cursor)
-        .map_err(|e| format!("Failed to parse sync cursor: {}", e))?;
+        .map_err(|_e| "Failed to parse sync cursor".to_string())?;
 
     let session_wasm: SessionWasm = serde_wasm_bindgen::from_value(session)
-        .map_err(|e| format!("Failed to parse session: {}", e))?;
+        .map_err(|_e| "Failed to parse session".to_string())?;
 
     let session_rust = convert_session_wasm_to_rust(&session_wasm);
     let cursor_rust = convert_cursor_wasm_to_rust(&cursor_wasm);
@@ -270,14 +258,18 @@ pub fn get_sync_sql_wasm(
     // Parse rows from JS - expect array of objects
     let rows_vec: Vec<std::collections::HashMap<String, serde_json::Value>> =
         serde_wasm_bindgen::from_value(status_rows)
-            .map_err(|e| format!("Failed to parse status rows: {}", e))?;
+            .map_err(|_e| "Failed to parse status rows".to_string())?;
 
     match &introspection.schema {
         introspect::SchemaResult::Success { context, .. } => {
             // Parse sync status internally
             let status_rust =
                 sync::parse_sync_status(&cursor_rust, context, &session_rust, &rows_vec)
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| match e {
+                        sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
+                        sync::SyncError::SqlGenerationError(msg) => "SQL generation error: ".to_string() + &msg,
+                        sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
+                    })?;
 
             // Generate sync SQL
             let result = sync::get_sync_sql(
@@ -287,7 +279,11 @@ pub fn get_sync_sql_wasm(
                 &session_rust,
                 page_size,
             )
-            .map_err(|e| format!("{}", e))?;
+            .map_err(|e| match e {
+                sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
+                sync::SyncError::SqlGenerationError(msg) => "SQL generation error: ".to_string() + &msg,
+                sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
+            })?;
 
             Ok(SyncSqlResultWasm {
                 tables: result
