@@ -894,6 +894,107 @@ record Post {
 }
 
 #[test]
+fn test_type_mismatch_error_column_position() {
+    // Test that error highlighting for type mismatch errors has correct column position
+    let schema = r#"
+record Post {
+    id        Int    @id
+    title     String
+    content   String
+    published Bool
+    @public
+}
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    // Update with nullable parameter used in SET against non-nullable column
+    // This should fail with a type mismatch error
+    // Using the same structure as the actual file to match real-world usage
+    let query_source = r#"
+update UpdatePost($id: Int, $title: String?) {
+    post {
+        @where { id == $id  }
+
+        title = $title
+    }
+}
+    "#;
+
+    let query_list =
+        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
+
+    let result = typecheck::check_queries(&query_list, &context);
+
+    match result {
+        Ok(_) => {
+            panic!("Expected typechecking to fail due to nullable param with non-nullable column");
+        }
+        Err(errors) => {
+            // Check if the error is a TypeMismatch error
+            let type_mismatch_error = errors
+                .iter()
+                .find(|e| matches!(&e.error_type, ErrorType::TypeMismatch { .. }));
+
+            assert!(
+                type_mismatch_error.is_some(),
+                "Expected TypeMismatch error for nullable param with non-nullable column"
+            );
+
+            let error = type_mismatch_error.unwrap();
+            // TypeMismatch errors have two locations: one for definition, one for usage
+            assert!(
+                error.locations.len() >= 2,
+                "TypeMismatch error should have two locations (definition and usage), got {}",
+                error.locations.len()
+            );
+
+            // Check the usage location (second location)
+            let usage_location = &error.locations[1];
+
+            assert!(
+                !usage_location.primary.is_empty(),
+                "Error location should have a primary range"
+            );
+
+            let primary_range = &usage_location.primary[0];
+            // The line is: "        title = $title"
+            // Counting: "        " = 8 spaces, "title" = 5 chars, " " = 1, "=" = 1, " " = 1
+            // Total: 8 + 5 + 1 + 1 + 1 = 16 chars (0-based indices 0-15)
+            // Column 17 (1-based) is where "$" starts
+            // The parser correctly captures column 17 (the $), as verified by test_parse_variable_column_position
+            let expected_start_column = 17; // Parser captures column 17 correctly
+            assert_eq!(
+                primary_range.start.column, expected_start_column,
+                "Start column should be exactly {} (currently buggy, should be 17), got {}",
+                expected_start_column, primary_range.start.column
+            );
+            // The range should cover "$title" (6 characters: $ + title)
+            assert_eq!(
+                primary_range.end.column - primary_range.start.column,
+                6,
+                "Range should cover '$title' (6 chars), got {}",
+                primary_range.end.column - primary_range.start.column
+            );
+            assert_eq!(
+                primary_range.end.column,
+                expected_start_column + 6,
+                "End column should be exactly {}, got {}",
+                expected_start_column + 6,
+                primary_range.end.column
+            );
+        }
+    }
+}
+
+#[test]
 fn test_permission_field_error_column_position() {
     // Test that error highlighting for unknown fields in permissions has correct column position
     let schema_source = r#"
@@ -903,7 +1004,7 @@ session {
 }
 
 record Post {
-    @allow(query, update) { userId == Session.userId  }
+    @allow(query) { userId == Session.userId || published == True  }
     @watch
 
     id           Int     @id
@@ -959,27 +1060,28 @@ record Post {
             );
 
             let primary_range = &location.primary[0];
-            // The column should be around 29 (1-based) for the first occurrence
-            // We check that it's reasonable (not 0, and not way off)
-            assert!(
-                primary_range.start.column > 0,
-                "Column should be greater than 0, got {}",
-                primary_range.start.column
-            );
-            assert!(
-                primary_range.start.column < 100,
-                "Column should be reasonable, got {}",
-                primary_range.start.column
-            );
-            assert!(
-                primary_range.end.column >= primary_range.start.column,
-                "End column should be >= start column"
+            // The line is: "     @allow(query) { userId == Session.userId || published == True  }"
+            // Counting: "     @allow(query) { " = 21 chars (0-based) = column 21 (0-based)
+            // So userId starts at column 22 (0-based)
+            let expected_start_column = 21;
+            assert_eq!(
+                primary_range.start.column, expected_start_column,
+                "Start column should be exactly {}, got {}",
+                expected_start_column, primary_range.start.column
             );
             // The range should cover the field name "userId" (6 characters)
-            assert!(
-                primary_range.end.column - primary_range.start.column == 6,
+            assert_eq!(
+                primary_range.end.column - primary_range.start.column,
+                6,
                 "Range should cover 'userId' (6 chars), got {}",
                 primary_range.end.column - primary_range.start.column
+            );
+            assert_eq!(
+                primary_range.end.column,
+                expected_start_column + 6,
+                "End column should be exactly {}, got {}",
+                expected_start_column + 6,
+                primary_range.end.column
             );
         }
     }

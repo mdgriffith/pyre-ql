@@ -1351,7 +1351,7 @@ fn parse_operator(input: Text) -> ParseResult<ast::Operator> {
     ))(input)
 }
 
-fn parse_variable(input: Text) -> ParseResult<ast::QueryValue> {
+pub fn parse_variable(input: Text) -> ParseResult<ast::QueryValue> {
     let (input, start_pos) = position(input)?;
     let (input, _) = tag("$")(input)?;
     let (input, name) = parse_fieldname(input)?;
@@ -1538,7 +1538,7 @@ pub fn parse_number(input: Text) -> ParseResult<ast::QueryValue> {
     }
 }
 
-fn parse_string(input: Text) -> ParseResult<ast::QueryValue> {
+pub fn parse_string(input: Text) -> ParseResult<ast::QueryValue> {
     let (input, start_pos) = position(input)?;
     let (input, value) = parse_string_literal(input)?;
     let (input, end_pos) = position(input)?;

@@ -563,3 +563,91 @@ fn test_insert_delete_incomplete_union_variant() {
         }
     }
 }
+
+#[test]
+fn test_parse_string_column_position() {
+    use pyre::parser::{parse_string, ParseContext};
+    use nom_locate::LocatedSpan;
+    
+    // Test string parsing: "hello" with leading spaces
+    // Line: "        title = \"hello\""
+    // We want to verify the range starts at the opening quote
+    let input_str = "        title = \"hello\"";
+    let text = LocatedSpan::new_extra(
+        input_str,
+        ParseContext {
+            file: "test.pyre",
+            namespace: "Base".to_string(),
+            expecting: pyre::error::Expecting::PyreFile,
+        },
+    );
+    
+    // Skip to the position where the string starts
+    use nom::error::VerboseError;
+    use pyre::parser::Text;
+    let (remaining, _) = nom::bytes::complete::take_until::<_, _, VerboseError<Text>>("\"")(text).unwrap();
+    let (remaining, result) = parse_string(remaining).unwrap();
+    
+    match result {
+        pyre::ast::QueryValue::String((range, _)) => {
+            // The string starts at column 17 (1-based): "        title = " = 16 chars, then " at column 17
+            // Column 17 should be the opening quote
+            assert_eq!(
+                range.start.column, 17,
+                "String start column should be 17 (the opening quote), got {}",
+                range.start.column
+            );
+            // The range should end after the closing quote (column 24: 17 + 7 chars for "\"hello\"")
+            assert_eq!(
+                range.end.column, 24,
+                "String end column should be 24 (after closing quote), got {}",
+                range.end.column
+            );
+        }
+        _ => panic!("Expected String variant"),
+    }
+}
+
+#[test]
+fn test_parse_variable_column_position() {
+    use pyre::parser::{parse_variable, ParseContext};
+    use nom_locate::LocatedSpan;
+    
+    // Test variable parsing: $title with leading spaces
+    // Line: "        title = $title"
+    // We want to verify the range starts at the $ character
+    let input_str = "        title = $title";
+    let text = LocatedSpan::new_extra(
+        input_str,
+        ParseContext {
+            file: "test.pyre",
+            namespace: "Base".to_string(),
+            expecting: pyre::error::Expecting::PyreFile,
+        },
+    );
+    
+    // Skip to the position where the variable starts
+    use nom::error::VerboseError;
+    use pyre::parser::Text;
+    let (remaining, _) = nom::bytes::complete::take_until::<_, _, VerboseError<Text>>("$")(text).unwrap();
+    let (remaining, result) = parse_variable(remaining).unwrap();
+    
+    match result {
+        pyre::ast::QueryValue::Variable((range, _)) => {
+            // The variable should start at column 17 (1-based): "        title = " = 16 chars, then $ at column 17
+            // Column 17 should be the $ character
+            assert_eq!(
+                range.start.column, 17,
+                "Variable start column should be 17 (the $), got {}",
+                range.start.column
+            );
+            // The range should end after "title" (column 23: 17 + 6 chars for "$title")
+            assert_eq!(
+                range.end.column, 23,
+                "Variable end column should be 23 (after 'title'), got {}",
+                range.end.column
+            );
+        }
+        _ => panic!("Expected Variable variant"),
+    }
+}

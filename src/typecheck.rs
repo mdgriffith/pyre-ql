@@ -1812,9 +1812,11 @@ fn check_permissions_where_args(
                     // Try to find the field name location for better error highlighting
                     let permission_location =
                         if let ast::QueryValue::Variable((var_range, _)) = query_val {
+                            // Pattern is: "fieldName == $var" or "fieldName == Session.var"
+                            // " == " is 4 characters (space, ==, space)
                             let field_name_start_col =
-                                if var_range.start.column > field_name.len() + 2 {
-                                    var_range.start.column.saturating_sub(field_name.len() + 3)
+                                if var_range.start.column > field_name.len() + 3 {
+                                    var_range.start.column.saturating_sub(field_name.len() + 4)
                                 } else {
                                     0
                                 };
@@ -1826,12 +1828,12 @@ fn check_permissions_where_args(
                                         offset: var_range
                                             .start
                                             .offset
-                                            .saturating_sub(field_name.len() + 3),
+                                            .saturating_sub(field_name.len() + 4),
                                         line: var_range.start.line,
                                         column: field_name_start_col,
                                     },
                                     end: ast::Location {
-                                        offset: var_range.start.offset.saturating_sub(3),
+                                        offset: var_range.start.offset.saturating_sub(4),
                                         line: var_range.start.line,
                                         column: field_name_start_col + field_name.len(),
                                     },

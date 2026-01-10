@@ -399,7 +399,8 @@ fn line_number_prefix(show_line_number: bool, number: usize) -> String {
 fn highlight_line(range: &Range, enable_color: bool) -> String {
     if range.start.column < range.end.column && range.start.line == range.end.line {
         // Columns are 1-based, so subtract 1 for 0-based string indexing
-        let indent = " ".repeat(range.start.column.saturating_sub(1));
+        // But position() captures BEFORE consuming, so we need to add 1 to get the actual character position
+        let indent = " ".repeat(range.start.column);
         let highlight = "^".repeat(range.end.column - range.start.column);
         format!(
             "    {}{}{}",
@@ -409,7 +410,8 @@ fn highlight_line(range: &Range, enable_color: bool) -> String {
         )
     } else if range.start.column == range.end.column && range.start.line == range.end.line {
         // Columns are 1-based, so subtract 1 for 0-based string indexing
-        let indent = " ".repeat(range.start.column.saturating_sub(1));
+        // But position() captures BEFORE consuming, so we need to add 1 to get the actual character position
+        let indent = " ".repeat(range.start.column);
         let highlight = "^";
         format!(
             "    {}{}{}",
