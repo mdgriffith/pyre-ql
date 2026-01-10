@@ -272,11 +272,10 @@ pub fn insert_to_string(
         }
     }
 
-    // Drop temp tables at the end to ensure they're cleaned up for this query.
-    // Temp tables are session-scoped, so they'll persist across queries if not dropped.
-    // However, when tracking affected rows, we can't drop them immediately because the affected rows
-    // query's Rows object holds locks until consumed. In that case, temp tables will be cleaned up
-    // when the connection closes. The application layer could drop them after consuming rows if needed.
+    // Drop temp tables when not tracking affected rows (no result sets = safe to drop).
+    // When tracking affected rows, temp tables are automatically cleaned up when the batch's
+    // logical connection closes (see docs/sql_remote.md). We don't drop them explicitly to
+    // avoid lock errors from dropping while result sets are active.
     if multiple_table_inserts && !include_affected_rows {
         drop_temp_tables(query_table_field, &mut statements);
     }
@@ -515,15 +514,13 @@ fn generate_affected_rows_query_for_inserts(
     for affected_table in affected_tables {
         let quoted_table_name = string::quote(&affected_table.table_name);
 
-        // Build json_object call for row data
-        let mut row_parts = Vec::new();
+        // Build json_array call for each row - values in same order as headers
+        let mut row_value_parts = Vec::new();
         for col in &affected_table.column_names {
-            // For JSON key, use the column name as-is (will be in single quotes for JSON string)
-            // For table reference, quote both table and column to handle special characters like __
+            // Quote both table and column to handle special characters like __
             // Column names with __ are valid unquoted identifiers in SQLite, but we quote them for safety
-            row_parts.push(format!(
-                "'{}', {}.{}",
-                col,
+            row_value_parts.push(format!(
+                "{}.{}",
                 quoted_table_name,
                 string::quote(col)
             ));
@@ -542,11 +539,12 @@ fn generate_affected_rows_query_for_inserts(
             affected_table.temp_table_name, quoted_table_name
         );
 
+        // Format: { table_name, headers, rows: [[...], [...]] }
         let select_part = format!(
-            "select json_object(\n    'table_name', '{}',\n    'row', json_object({}),\n    'headers', json_array({})\n  ) as affected_row\n  from {}\n  {}",
+            "select json_object(\n    'table_name', '{}',\n    'headers', json_array({}),\n    'rows', json_group_array(json_array({}))\n  ) as affected_row\n  from {}\n  {}",
             affected_table.table_name,
-            row_parts.join(", "),
             header_parts.join(", "),
+            row_value_parts.join(", "),
             quoted_table_name,
             join_condition
         );

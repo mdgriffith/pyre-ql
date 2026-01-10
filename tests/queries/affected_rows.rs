@@ -57,48 +57,48 @@ async fn test_insert_affected_rows() -> Result<(), TestError> {
                                 json_value
                             );
 
-                            // Verify each affected row has the correct structure
-                            for (idx, affected_row) in arr.iter().enumerate() {
-                                // Parse the affected row (it might be a JSON string)
-                                let obj = if affected_row.is_string() {
+                            // Verify each table group has the correct structure
+                            for (idx, table_group) in arr.iter().enumerate() {
+                                // Parse the table group (it might be a JSON string)
+                                let obj = if table_group.is_string() {
                                     // If it's a string, parse it as JSON
-                                    let row_str = affected_row.as_str().unwrap();
-                                    serde_json::from_str::<serde_json::Value>(row_str)
+                                    let group_str = table_group.as_str().unwrap();
+                                    serde_json::from_str::<serde_json::Value>(group_str)
                                         .map_err(|e| {
                                             TestError::TypecheckError(format!(
-                                                "Failed to parse affected row JSON: {}",
+                                                "Failed to parse table group JSON: {}",
                                                 e
                                             ))
                                         })?
                                         .as_object()
                                         .ok_or_else(|| {
                                             TestError::TypecheckError(
-                                                "Parsed affected row is not an object".to_string(),
+                                                "Parsed table group is not an object".to_string(),
                                             )
                                         })?
                                         .clone()
                                 } else {
                                     assert!(
-                                        affected_row.is_object(),
-                                        "Each affected row should be an object or JSON string, got at index {}: {:#}",
+                                        table_group.is_object(),
+                                        "Each table group should be an object or JSON string, got at index {}: {:#}",
                                         idx,
-                                        affected_row
+                                        table_group
                                     );
-                                    affected_row.as_object().unwrap().clone()
+                                    table_group.as_object().unwrap().clone()
                                 };
 
                                 // Check for required fields
                                 assert!(
                                     obj.contains_key("table_name"),
-                                    "Affected row should have 'table_name' field"
+                                    "Table group should have 'table_name' field"
                                 );
                                 assert!(
-                                    obj.contains_key("row"),
-                                    "Affected row should have 'row' field"
+                                    obj.contains_key("rows"),
+                                    "Table group should have 'rows' field"
                                 );
                                 assert!(
                                     obj.contains_key("headers"),
-                                    "Affected row should have 'headers' field"
+                                    "Table group should have 'headers' field"
                                 );
 
                                 // Verify table_name is a string
@@ -107,19 +107,19 @@ async fn test_insert_affected_rows() -> Result<(), TestError> {
                                     "table_name should be a string"
                                 );
 
-                                // Verify row is an object
-                                assert!(obj["row"].is_object(), "row should be an object");
+                                // Verify rows is an array
+                                assert!(obj["rows"].is_array(), "rows should be an array");
 
                                 // Verify headers is an array
                                 assert!(obj["headers"].is_array(), "headers should be an array");
 
-                                // Verify the row contains all columns
-                                let row_obj = obj
-                                    .get("row")
-                                    .and_then(|v| v.as_object())
+                                // Verify the rows array structure
+                                let rows_arr = obj
+                                    .get("rows")
+                                    .and_then(|v| v.as_array())
                                     .ok_or_else(|| {
                                         TestError::TypecheckError(
-                                            "Row field should be an object".to_string(),
+                                            "Rows field should be an array".to_string(),
                                         )
                                     })?;
                                 let headers_arr = obj
@@ -131,21 +131,20 @@ async fn test_insert_affected_rows() -> Result<(), TestError> {
                                         )
                                     })?;
 
-                                // Headers should match row keys
-                                assert_eq!(
-                                    row_obj.len(),
-                                    headers_arr.len(),
-                                    "Number of headers should match number of row fields"
-                                );
-
-                                // Verify all headers are present in row
-                                for header in headers_arr {
-                                    assert!(header.is_string(), "Header should be a string");
-                                    let header_str = header.as_str().unwrap();
+                                // Verify each row array has the same length as headers
+                                for (row_idx, row_array) in rows_arr.iter().enumerate() {
                                     assert!(
-                                        row_obj.contains_key(header_str),
-                                        "Row should contain field '{}'",
-                                        header_str
+                                        row_array.is_array(),
+                                        "Each row should be an array, got at row index {}: {:#}",
+                                        row_idx,
+                                        row_array
+                                    );
+                                    let row_values = row_array.as_array().unwrap();
+                                    assert_eq!(
+                                        row_values.len(),
+                                        headers_arr.len(),
+                                        "Row array length should match headers length (row index {})",
+                                        row_idx
                                     );
                                 }
                             }
@@ -217,17 +216,25 @@ async fn test_update_affected_rows() -> Result<(), TestError> {
                             assert!(arr.len() > 0, "Should have at least one affected row");
 
                             // Verify structure
-                            if let Some(affected_row) = arr.first() {
+                            if let Some(table_group) = arr.first() {
                                 assert!(
-                                    affected_row.is_object(),
-                                    "Affected row should be an object"
+                                    table_group.is_object(),
+                                    "Table group should be an object"
                                 );
 
-                                let obj = affected_row.as_object().unwrap();
+                                let obj = table_group.as_object().unwrap();
                                 assert_eq!(
                                     obj["table_name"].as_str().unwrap(),
                                     "users",
                                     "Table name should be 'users'"
+                                );
+                                assert!(
+                                    obj.contains_key("rows"),
+                                    "Table group should have 'rows' field"
+                                );
+                                assert!(
+                                    obj.contains_key("headers"),
+                                    "Table group should have 'headers' field"
                                 );
                             }
                         }
@@ -293,17 +300,25 @@ async fn test_delete_affected_rows() -> Result<(), TestError> {
                             assert!(arr.len() > 0, "Should have at least one affected row");
 
                             // Verify structure
-                            if let Some(affected_row) = arr.first() {
+                            if let Some(table_group) = arr.first() {
                                 assert!(
-                                    affected_row.is_object(),
-                                    "Affected row should be an object"
+                                    table_group.is_object(),
+                                    "Table group should be an object"
                                 );
 
-                                let obj = affected_row.as_object().unwrap();
+                                let obj = table_group.as_object().unwrap();
                                 assert_eq!(
                                     obj["table_name"].as_str().unwrap(),
                                     "users",
                                     "Table name should be 'users'"
+                                );
+                                assert!(
+                                    obj.contains_key("rows"),
+                                    "Table group should have 'rows' field"
+                                );
+                                assert!(
+                                    obj.contains_key("headers"),
+                                    "Table group should have 'headers' field"
                                 );
                             }
                         }
@@ -383,8 +398,8 @@ async fn test_nested_insert_affected_rows() -> Result<(), TestError> {
                             );
 
                             // Collect table names
-                            for affected_row in arr {
-                                if let Some(obj) = affected_row.as_object() {
+                            for table_group in arr {
+                                if let Some(obj) = table_group.as_object() {
                                     if let Some(table_name) = obj["table_name"].as_str() {
                                         table_names.push(table_name.to_string());
                                     }

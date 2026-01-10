@@ -36,6 +36,8 @@ pub fn delete_to_string(
         // 1. SELECT rows that will be deleted into a temp table (before deletion)
         // 2. Execute DELETE
         // 3. Format the results from the temp table
+        // Note: Temp tables are automatically cleaned up when the batch's logical connection closes
+        // (see docs/sql_remote.md for details). We don't drop them explicitly to avoid lock errors.
         let temp_table_name = format!("_temp_deleted_{}", table_name);
         let quoted_table_name = string::quote(&table_name);
 
@@ -76,14 +78,14 @@ fn generate_affected_rows_query(
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
     let columns = ast::collect_columns(&table.record.fields);
 
-    // Generate column names and json_object keys
+    // Generate column names
     let column_names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
 
-    // Build json_object call for row data
-    let mut row_parts = Vec::new();
+    // Build json_array call for each row - values in same order as headers
+    let mut row_value_parts = Vec::new();
     for col in &column_names {
         let quoted_col = string::quote(col);
-        row_parts.push(format!("'{}', {}.{}", col, temp_table_name, quoted_col));
+        row_value_parts.push(format!("{}.{}", temp_table_name, quoted_col));
     }
 
     // Build json_array call for headers
@@ -94,11 +96,12 @@ fn generate_affected_rows_query(
 
     // Format affected rows query - select from temp table and aggregate
     // The temp table contains the rows that were deleted (captured before deletion)
+    // Format: { table_name, headers, rows: [[...], [...]] }
     format!(
-        "select json_group_array(json(affected_row)) as _affectedRows\nfrom (\n  select json_object(\n    'table_name', '{}',\n    'row', json_object({}),\n    'headers', json_array({})\n  ) as affected_row\n  from {}\n)",
+        "select json_group_array(json(affected_row)) as _affectedRows\nfrom (\n  select json_object(\n    'table_name', '{}',\n    'headers', json_array({}),\n    'rows', json_group_array(json_array({}))\n  ) as affected_row\n  from {}\n)",
         table_name,
-        row_parts.join(", "),
         header_parts.join(", "),
+        row_value_parts.join(", "),
         temp_table_name
     )
 }

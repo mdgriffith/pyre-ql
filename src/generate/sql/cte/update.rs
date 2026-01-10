@@ -81,20 +81,20 @@ fn generate_affected_rows_query(
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
     let columns = ast::collect_columns(&table.record.fields);
 
-    // Generate column names and json_object keys
+    // Generate column names
     let column_names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
 
-    // Build json_object call for row data
-    let mut row_parts = Vec::new();
+    // Build json_array call for each row - values in same order as headers
+    let mut row_value_parts = Vec::new();
     for col in &column_names {
         let quoted_col = string::quote(col);
-        row_parts.push(format!("'{}', t.{}", quoted_col, quoted_col));
+        row_value_parts.push(format!("t.{}", quoted_col));
     }
 
     // Build json_array call for headers
     let mut header_parts = Vec::new();
     for col in &column_names {
-        header_parts.push(format!("'{}'", string::quote(col)));
+        header_parts.push(format!("'{}'", col));
     }
 
     // Select affected rows using the same WHERE conditions
@@ -103,12 +103,12 @@ fn generate_affected_rows_query(
     // Replace table name in WHERE clause with alias 't'
     let quoted_table_name = string::quote(&table_name);
     let where_with_alias = where_clause.replace(&format!("{}.", quoted_table_name), "t.");
-    // Use json() to parse the JSON string before grouping, so we get an array of objects, not an array of strings
+    // Format: { table_name, headers, rows: [[...], [...]] }
     format!(
-        "select json_group_array(json(affected_row)) as _affectedRows\nfrom (\n  select json_object(\n    'table_name', '{}',\n    'row', json_object({}),\n    'headers', json_array({})\n  ) as affected_row\n  from {} t\n{}\n)",
+        "select json_group_array(json(affected_row)) as _affectedRows\nfrom (\n  select json_object(\n    'table_name', '{}',\n    'headers', json_array({}),\n    'rows', json_group_array(json_array({}))\n  ) as affected_row\n  from {} t\n{}\n)",
         table_name,
-        row_parts.join(", "),
         header_parts.join(", "),
+        row_value_parts.join(", "),
         quoted_table_name,
         where_with_alias.trim()
     )

@@ -298,21 +298,43 @@ function extractAffectedRowsFromBatch(batchResults: any[]): AffectedRow[] {
                 continue;
             }
 
-            // Process each affected row
-            for (const affectedRowData of affectedRowsArray) {
+            // Process each table group
+            for (const tableGroup of affectedRowsArray) {
                 // Handle both string and object formats
-                let rowData: any;
-                if (typeof affectedRowData === 'string') {
-                    rowData = JSON.parse(affectedRowData);
+                let groupData: any;
+                if (typeof tableGroup === 'string') {
+                    groupData = JSON.parse(tableGroup);
                 } else {
-                    rowData = affectedRowData;
+                    groupData = tableGroup;
                 }
 
-                if (rowData.table_name && rowData.row && rowData.headers) {
+                // New format: { table_name, headers, rows: [[...], [...]] }
+                if (groupData.table_name && groupData.headers && groupData.rows) {
+                    const tableName = groupData.table_name;
+                    const headers = groupData.headers;
+                    const rows = groupData.rows;
+
+                    // Convert each row array to an object
+                    for (const rowArray of rows) {
+                        // Zip headers with row values to create an object
+                        const rowObject: Record<string, any> = {};
+                        for (let i = 0; i < headers.length && i < rowArray.length; i++) {
+                            rowObject[headers[i]] = rowArray[i];
+                        }
+
+                        affectedRows.push({
+                            table_name: tableName,
+                            row: rowObject,
+                            headers: headers,
+                        });
+                    }
+                }
+                // Legacy format: { table_name, row: {...}, headers } (for backwards compatibility)
+                else if (groupData.table_name && groupData.row && groupData.headers) {
                     affectedRows.push({
-                        table_name: rowData.table_name,
-                        row: rowData.row,
-                        headers: rowData.headers,
+                        table_name: groupData.table_name,
+                        row: groupData.row,
+                        headers: groupData.headers,
                     });
                 }
             }
