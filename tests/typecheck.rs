@@ -1,5 +1,6 @@
 use pyre::ast;
 use pyre::error;
+use pyre::error::ErrorType;
 use pyre::parser;
 use pyre::typecheck;
 
@@ -887,6 +888,98 @@ record Post {
             panic!(
                 "Non-nullable parameter in INSERT SET with nullable column should succeed. Errors: {}",
                 error_messages.join("\n")
+            );
+        }
+    }
+}
+
+#[test]
+fn test_permission_field_error_column_position() {
+    // Test that error highlighting for unknown fields in permissions has correct column position
+    let schema_source = r#"
+session {
+    userId Int
+    role   String
+}
+
+record Post {
+    @allow(query, update) { userId == Session.userId  }
+    @watch
+
+    id           Int     @id
+    createdAt    DateTime @default(now)
+    authorUserId Int
+    title        String
+    content      String
+    published    Bool    @default(False)
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    match schema_result {
+        Ok(_) => {
+            panic!("Expected schema typechecking to fail due to invalid permissions (userId doesn't exist on Post)");
+        }
+        Err(errors) => {
+            // Check if the error is about userId not existing on Post in permissions
+            let unknown_field_error = errors.iter().find(|e| {
+                matches!(
+                    &e.error_type,
+                    ErrorType::UnknownField { found, record_name, .. }
+                    if found == "userId" && record_name == "Post"
+                )
+            });
+
+            assert!(
+                unknown_field_error.is_some(),
+                "Expected UnknownField error for userId on Post in permissions"
+            );
+
+            let error = unknown_field_error.unwrap();
+            assert!(
+                !error.locations.is_empty(),
+                "Error should have at least one location"
+            );
+
+            // Verify the column position is correct
+            // The field name "userId" should start at column 29 (1-based) in the line:
+            // "    @allow(query, update) { userId == Session.userId  }"
+            // Counting: "    @allow(query, update) { " = 28 chars, so userId starts at column 29
+            let location = &error.locations[0];
+            assert!(
+                !location.primary.is_empty(),
+                "Error location should have a primary range"
+            );
+
+            let primary_range = &location.primary[0];
+            // The column should be around 29 (1-based) for the first occurrence
+            // We check that it's reasonable (not 0, and not way off)
+            assert!(
+                primary_range.start.column > 0,
+                "Column should be greater than 0, got {}",
+                primary_range.start.column
+            );
+            assert!(
+                primary_range.start.column < 100,
+                "Column should be reasonable, got {}",
+                primary_range.start.column
+            );
+            assert!(
+                primary_range.end.column >= primary_range.start.column,
+                "End column should be >= start column"
+            );
+            // The range should cover the field name "userId" (6 characters)
+            assert!(
+                primary_range.end.column - primary_range.start.column == 6,
+                "Range should cover 'userId' (6 chars), got {}",
+                primary_range.end.column - primary_range.start.column
             );
         }
     }
