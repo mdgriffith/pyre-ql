@@ -13,7 +13,7 @@ const DB_ENGINE: &str = include_str!("./static/typescript/db.ts");
 
 /// Generate all typescript files
 pub fn generate(
-    _context: &typecheck::Context,
+    context: &typecheck::Context,
     database: &ast::Database,
     base_out_dir: &Path,
     files: &mut Vec<filesystem::GeneratedFile<String>>
@@ -28,6 +28,8 @@ pub fn generate(
     files.push(generate_text_file(base_out_dir.join("db/data.ts"), schema(database)));
     files.push(generate_text_file(base_out_dir.join("db/decode.ts"), to_schema_decoders(database)));
     
+    // Generate watched.ts file
+    watched::generate(files, context, base_out_dir);
 }
 
 pub fn schema(database: &ast::Database) -> String {
@@ -258,15 +260,20 @@ pub fn generate_queries(
     context: &typecheck::Context,
     all_query_info: &HashMap<String, typecheck::QueryInfo>,
     query_list: &ast::QueryList,
+    database: &ast::Database,
     base_out_dir: &Path,
-    files: &mut Vec<filesystem::GeneratedFile<String>>
+    files: &mut Vec<filesystem::GeneratedFile<String>>,
+    generate_runner_file: bool,
 ) {
-    // Generate the main query runner file
-    files.push(
-        generate_runner(context, base_out_dir, query_list)
-    );
+    // Only generate the runner file if requested (should be done once after all queries are collected)
+    if generate_runner_file {
+        files.push(
+            generate_runner(context, base_out_dir, query_list)
+        );
+    }
 
     let formatter = to_formatter();
+    let is_multidb = database.schemas.len() > 1;
 
     // Generate individual query files
     for operation in &query_list.queries {
@@ -275,7 +282,7 @@ pub fn generate_queries(
                 match all_query_info.get(&q.name) {
                     Some(query_info) => {
                         let filename = base_out_dir.join("query").join(format!("{}.ts", crate::ext::string::decapitalize(&q.name)));
-                        let content = to_query_file(context, query_info, q, &formatter);
+                        let content = to_query_file(context, query_info, q, &formatter, is_multidb);
                         files.push(generate_text_file(filename, content));
                     }
                     None => {
@@ -334,7 +341,7 @@ fn generate_runner(_context: &typecheck::Context, base_out_dir: &Path, query_lis
     // Add default case
     content.push_str("        default:\n");
     content.push_str(
-        "            return { kind: \"error\", errorType: Db.ErrorType.UnknownQuery, message: \"\" }\n"
+        "            return { kind: \"error\", errorType: Db.ErrorType.UnknownQuery, message: `Unknown query ID: ${id}` }\n"
     );
     content.push_str("    }\n");
     content.push_str("};\n");
@@ -464,11 +471,39 @@ fn to_query_file(
     query_info: &typecheck::QueryInfo,
     query: &ast::Query,
     formatter: &typealias::TypeFormatter,
+    is_multidb: bool,
 ) -> String {
     let mut result = "".to_string();
+    
+    // Collect watchers first to determine if Watched import is needed
+    let mut watchers = vec![];
+    for field in &query.fields {
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                if let Some(table) = context.tables.get(&query_field.name) {
+                    for watched_operation in ast::to_watched_operations(&table.record) {
+                        let name = format!(
+                            "{}{}",
+                            table.record.name,
+                            watched::operation_name(&watched_operation)
+                        );
+                        watchers.push(format!(
+                            "{{ kind: Watched.WatchedKind.{}, data: {{}} }}",
+                            name
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    // Add imports
     result.push_str("import * as Ark from 'arktype';\n");
     result.push_str("import * as Db from '../db';\n");
-    result.push_str("import * as Watched from '../watched';\n");
+    if !watchers.is_empty() {
+        result.push_str("import * as Watched from '../watched';\n");
+    }
     result.push_str("import * as Decode from '../db/decode';\n");
     result.push_str("import * as Env from '../db/env';\n\n");
 
@@ -476,7 +511,6 @@ fn to_query_file(
     to_query_input_decoder(context, &query, &mut result);
 
     result.push_str("\n\nconst sql = [");
-    let mut watchers = vec![];
 
     let mut written_field = false;
     for field in &query.fields {
@@ -484,19 +518,6 @@ fn to_query_file(
             ast::TopLevelQueryField::Field(query_field) => {
                 match context.tables.get(&query_field.name) {
                     Some(table) => {
-
-                for watched_operation in ast::to_watched_operations(&table.record) {
-                    let name = format!(
-                        "{}{}",
-                        table.record.name,
-                        watched::operation_name(&watched_operation)
-                    );
-                    watchers.push(format!(
-                        "{{ kind: Watched.WatchedKind.{}, data: {{}} }}",
-                        name
-                    ));
-                }
-
                 let param_info = get_formatted_used_params(
                     &ast::get_aliased_name(query_field),
                     &query_info.variables,
@@ -556,11 +577,17 @@ fn to_query_file(
 
     let session_args = get_session_args(&query_info.variables);
 
+    let primary_db_expr = if is_multidb {
+        format!("Env.DatabaseKey.{}", query_info.primary_db)
+    } else {
+        format!("\"{}\"", query_info.primary_db)
+    };
+
     let validate = format!(
         r#"
 export const query = Db.to_runner({{
   id: "{}",
-  primary_db: Env.DatabaseKey.{},
+  primary_db: {},
   attached_dbs: {},
   sql: sql,
   session: Env.Session,
@@ -573,7 +600,7 @@ export const query = Db.to_runner({{
 type Input = typeof Input.infer
 "#,
         query.interface_hash,
-        query_info.primary_db,
+        primary_db_expr,
         format!(
             "[{}]",
             query_info
@@ -779,7 +806,8 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
         .unwrap_or_else(|| ast::default_session_details());
 
     if database.schemas.len() == 1 {
-        result.push_str("export type Config from '@libsql/client';\n");
+        result.push_str("import type { Config } from '@libsql/client';\n");
+        result.push_str("export type { Config };\n");
     } else {
         result.push_str("import type { Config as LibSqlConfig } from '@libsql/client';\n");
     }
@@ -841,15 +869,18 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
         result.push_str("}\n");
     }
 
-    result.push_str(
-        "export const to_libSql_config = (env: Config, primary: DatabaseKey): LibSqlConfig | undefined => {\n",
-    );
     if database.schemas.len() == 1 {
-        result.push_str("  return env")
+        result.push_str(
+            "export const to_libSql_config = (env: Config, primary: DatabaseKey): Config | undefined => {\n",
+        );
+        result.push_str("  return env\n");
     } else {
-        result.push_str("  return env[primary]")
+        result.push_str(
+            "export const to_libSql_config = (env: Config, primary: DatabaseKey): LibSqlConfig | undefined => {\n",
+        );
+        result.push_str("  return env[primary]\n");
     }
-    result.push_str("\n};\n\n");
+    result.push_str("};\n\n");
 
     Some(result)
 }
