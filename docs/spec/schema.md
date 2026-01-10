@@ -115,7 +115,7 @@ record Post {
 ```pyre
 record Post {
     // Single operation
-    @allow(select) { published == True }
+    @allow(query) { published == True }
     
     // Multiple operations
     @allow(insert, update) { authorId == Session.userId }
@@ -130,7 +130,7 @@ record Post {
 }
 ```
 
-**Operations**: `select`, `insert`, `update`, `delete`, or `*` for all.
+**Operations**: `query`, `insert`, `update`, `delete`, or `*` for all.
 
 **Conditions**: Use `Session.fieldName` to reference session variables. Supported operators: `==` (equal), `&&` (and), `||` (or).
 
@@ -235,7 +235,7 @@ Session fields can be nullable using `?`.
 
 **Usage in permissions:**
 ```pyre
-@allow(select) { userId = Session.userId }
+@allow(query) { userId = Session.userId }
 @allow(delete) { role = Session.role || Session.role = "admin" }
 ```
 
@@ -282,7 +282,7 @@ record User {
 
 record Post {
     @watch
-    @allow(select) { published = True }
+    @allow(query) { published = True }
     @allow(insert, update, delete) { authorUserId = Session.userId }
     
     id Int @id
