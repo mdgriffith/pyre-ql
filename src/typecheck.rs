@@ -2225,9 +2225,15 @@ fn check_value(
                                             filepath: context.current_filepath.clone(),
                                             error_type: ErrorType::TypeMismatch {
                                                 table: table_name.to_string(),
-                                                column_defined_as: format!("{} (non-nullable)", table_type_string),
+                                                column_defined_as: format!(
+                                                    "{} (non-nullable)",
+                                                    table_type_string
+                                                ),
                                                 variable_name: var.name.clone(),
-                                                variable_defined_as: format!("{} (nullable)", type_name),
+                                                variable_defined_as: format!(
+                                                    "{} (nullable)",
+                                                    type_name
+                                                ),
                                             },
                                             locations: vec![
                                                 Location {

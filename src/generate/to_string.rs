@@ -485,7 +485,7 @@ pub fn query(query_list: &ast::QueryList) -> String {
     // Skip trailing QueryLines - we'll handle them with normalization
     let mut queries_iter = query_list.queries.iter();
     let mut last_non_lines_idx = None;
-    
+
     // Find the last non-QueryLines element
     for (idx, operation) in query_list.queries.iter().enumerate().rev() {
         match operation {
@@ -496,7 +496,7 @@ pub fn query(query_list: &ast::QueryList) -> String {
             }
         }
     }
-    
+
     // Convert all queries up to and including the last non-QueryLines element
     // Skip QueryLines elements as they're just formatting whitespace that we'll normalize
     if let Some(last_idx) = last_non_lines_idx {
@@ -511,7 +511,7 @@ pub fn query(query_list: &ast::QueryList) -> String {
             }
         }
     }
-    
+
     // Ensure exactly 2 newlines at the end
     // Remove all trailing newlines first
     while result.ends_with('\n') {
@@ -519,7 +519,7 @@ pub fn query(query_list: &ast::QueryList) -> String {
     }
     // Add exactly 2 newlines
     result.push_str("\n\n");
-    
+
     result
 }
 
