@@ -106,9 +106,8 @@ pub fn calculate_sync_deltas_wasm(
         None => return Err("No schema found".to_string()),
     };
 
-    let affected_rows_wasm: Vec<AffectedRowWasm> =
-        serde_wasm_bindgen::from_value(affected_rows)
-            .map_err(|_e| "Failed to parse affected rows".to_string())?;
+    let affected_rows_wasm: Vec<AffectedRowWasm> = serde_wasm_bindgen::from_value(affected_rows)
+        .map_err(|_e| "Failed to parse affected rows".to_string())?;
 
     let connected_sessions_wasm: Vec<ConnectedSessionWasm> =
         serde_wasm_bindgen::from_value(connected_sessions)
@@ -154,4 +153,3 @@ pub fn calculate_sync_deltas_wasm(
         _ => Err("No schema found".to_string()),
     }
 }
-
