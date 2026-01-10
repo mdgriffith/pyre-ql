@@ -195,7 +195,7 @@ const to_session_args = (allowed_keys: string[], session: any): KeyValues => {
   }
 
   const session_args: KeyValues = {};
-  for (const key in allowed_keys) {
+  for (const key of allowed_keys) {
     session_args['session_' + key] = session[key];
   }
   return session_args;
