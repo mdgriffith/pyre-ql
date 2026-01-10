@@ -1,0 +1,10 @@
+query ListUsers {
+    user {
+        id
+        name
+        email
+        createdAt
+    }
+}
+
+

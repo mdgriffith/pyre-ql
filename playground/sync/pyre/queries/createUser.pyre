@@ -1,0 +1,8 @@
+insert CreateUser($name: String, $email: String) {
+    user {
+        name = $name
+        email = $email
+    }
+}
+
+

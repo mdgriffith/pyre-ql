@@ -1,0 +1,31 @@
+
+session {
+    userId Int
+    role   String
+}
+
+record User {
+    @public
+
+    id        Int     @id
+    name      String?
+    email     String?
+    createdAt DateTime @default(now)
+
+    posts @link(Post.authorUserId)
+}
+
+record Post {
+    @allow(query) { authorUserId == Session.userId || published == True  }
+    @allow(update, insert, delete) { authorUserId == Session.userId  }
+
+    id           Int     @id
+    createdAt    DateTime @default(now)
+    authorUserId Int
+    title        String
+    content      String
+    published    Bool    @default(False)
+
+    users @link(authorUserId, User.id)
+}
+

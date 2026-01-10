@@ -1,0 +1,17 @@
+query ListPosts {
+    post {
+        id
+        title
+        content
+        published
+        createdAt
+        authorUserId
+        users {
+            id
+            name
+            email
+        }
+    }
+}
+
+

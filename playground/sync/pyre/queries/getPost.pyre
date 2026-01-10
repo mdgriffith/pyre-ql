@@ -1,0 +1,19 @@
+query GetPost($id: Int) {
+    post {
+        @where { id == $id  }
+
+        id
+        title
+        content
+        published
+        createdAt
+        authorUserId
+        users {
+            id
+            name
+            email
+        }
+    }
+}
+
+

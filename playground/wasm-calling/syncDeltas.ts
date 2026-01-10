@@ -148,7 +148,7 @@ record Post {
     title        String
     content      String
     published    Bool
-    @allow(select) { authorUserId = Session.userId || published = true }
+    @allow(query) { authorUserId = Session.userId || published = true }
     @allow(insert) { authorUserId = Session.userId }
     @allow(update) { authorUserId = Session.userId }
     @allow(delete) { authorUserId = Session.userId }

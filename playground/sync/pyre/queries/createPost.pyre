@@ -1,0 +1,10 @@
+insert CreatePost($title: String, $content: String, $published: Bool) {
+    post {
+        authorUserId = Session.userId
+        title = $title
+        content = $content
+        published = $published
+    }
+}
+
+

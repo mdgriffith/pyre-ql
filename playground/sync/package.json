@@ -1,0 +1,30 @@
+{
+    "name": "sync",
+    "version": "0.1.0",
+    "type": "module",
+    "scripts": {
+        "dev": "./dev.sh",
+        "generate": "pyre generate",
+        "migrate": "pyre migrate test.db",
+        "init": "bun run src/init.ts",
+        "build": "vite build",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "@libsql/client": "^0.14.0",
+        "arktype": "^2.0.0-rc.32",
+        "hono": "^4.4.10",
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+        "ws": "^8.18.0"
+    },
+    "devDependencies": {
+        "@types/bun": "latest",
+        "@types/react": "^18.2.0",
+        "@types/react-dom": "^18.2.0",
+        "@types/ws": "^8.5.12",
+        "@vitejs/plugin-react": "^4.2.1",
+        "typescript": "^5.3.3",
+        "vite": "^5.1.0"
+    }
+}

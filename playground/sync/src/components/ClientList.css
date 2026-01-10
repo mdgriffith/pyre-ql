@@ -1,0 +1,64 @@
+.client-list {
+  padding: 1rem;
+  border-bottom: 1px solid #e0e0e0;
+  background: #fafafa;
+}
+
+.client-list h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.75rem;
+  color: #333;
+}
+
+.client-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.client-item {
+  padding: 0.75rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  cursor: pointer;
+  background: white;
+  transition: all 0.2s;
+}
+
+.client-item:hover {
+  border-color: #007bff;
+  background: #f0f7ff;
+}
+
+.client-item.selected {
+  border-color: #007bff;
+  background: #e7f3ff;
+}
+
+.client-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+  color: #333;
+}
+
+.status {
+  font-size: 0.9rem;
+  font-weight: bold;
+}
+
+.status.connected {
+  color: #28a745;
+}
+
+.status.disconnected {
+  color: #dc3545;
+}
+
+.client-session {
+  font-size: 0.75rem;
+  color: #666;
+  margin-top: 0.25rem;
+  font-family: monospace;
+}
