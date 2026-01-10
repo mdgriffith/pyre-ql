@@ -1590,7 +1590,13 @@ fn check_where_args(
                 );
             }
         }
-        ast::WhereArg::Column(is_session_var, field_name, operator, query_val, field_name_range) => {
+        ast::WhereArg::Column(
+            is_session_var,
+            field_name,
+            operator,
+            query_val,
+            field_name_range,
+        ) => {
             // Check if this is a Session variable (e.g., Session.userId, Session.role)
             let mut is_known_field = false;
             let mut column_type: Option<String> = None;
@@ -1744,7 +1750,13 @@ fn check_permissions_where_args(
                 check_permissions_where_args(context, table, or, filepath, errors);
             }
         }
-        ast::WhereArg::Column(is_session_var, field_name, _operator, query_val, field_name_range) => {
+        ast::WhereArg::Column(
+            is_session_var,
+            field_name,
+            _operator,
+            query_val,
+            field_name_range,
+        ) => {
             if *is_session_var {
                 // Validate session variable exists
                 if let Some(session) = &context.session {
@@ -1899,7 +1911,13 @@ fn mark_session_vars_in_where_as_used(
                 mark_session_vars_in_where_as_used(query_context, context, or, params);
             }
         }
-        ast::WhereArg::Column(is_session_var, field_name, _operator, query_val, _field_name_range) => {
+        ast::WhereArg::Column(
+            is_session_var,
+            field_name,
+            _operator,
+            query_val,
+            _field_name_range,
+        ) => {
             // Check if the column itself is a session variable (e.g., Session.userId = ...)
             if *is_session_var {
                 if let Some(session) = &context.session {
