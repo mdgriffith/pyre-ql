@@ -73,10 +73,24 @@ export const to_runner = <Session, Input, Output>(options: ToRunnerArgs<Session,
       const validated_input: any | Ark.ArkErrors = options.input(input);
 
       if (validated_input instanceof Ark.type.errors) {
+        // Extract detailed error message from arktype
+        let errorMessage = 'Invalid input';
+        try {
+          const errors = validated_input;
+          if (errors && typeof errors === 'object') {
+            const errorStr = JSON.stringify(errors, null, 2);
+            errorMessage = `Validation failed: ${errorStr}`;
+          } else if (typeof errors === 'string') {
+            errorMessage = `Validation failed: ${errors}`;
+          }
+        } catch (e) {
+          // Fallback to a generic message if we can't stringify
+          errorMessage = 'Input validation failed. Check that all required fields are present and have correct types.';
+        }
         return {
           kind: 'error',
           errorType: ErrorType.InvalidInput,
-          message: 'Expected object',
+          message: errorMessage,
         };
       }
 

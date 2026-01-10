@@ -3,6 +3,7 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use super::shared::{parse_database_schemas, Options};
+use pyre::ast;
 use pyre::error;
 use pyre::filesystem;
 use pyre::generate;
@@ -52,6 +53,10 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
             // Generate schema files
             generate::generate_schema(&context, &schema, out_dir, &mut files);
 
+            // Collect all queries from all files first
+            let mut all_queries = ast::QueryList { queries: Vec::new() };
+            let mut all_query_info_combined: std::collections::HashMap<String, typecheck::QueryInfo> = std::collections::HashMap::new();
+
             for query_file_path in paths.query_files {
                 let mut query_file = fs::File::open(query_file_path.clone())?;
                 let mut query_source_str = String::new();
@@ -59,20 +64,15 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
 
                 match parser::parse_query(&query_file_path, &query_source_str) {
                     Ok(query_list) => {
-                        // Typecheck and generate
+                        // Typecheck
                         context.current_filepath = query_file_path.clone();
                         let typecheck_result = typecheck::check_queries(&query_list, &context);
 
                         match typecheck_result {
                             Ok(all_query_info) => {
-                                generate::write_queries(
-                                    &context,
-                                    &query_list,
-                                    &all_query_info,
-                                    &schema,
-                                    out_dir,
-                                    &mut files,
-                                );
+                                // Collect queries and query info
+                                all_queries.queries.extend(query_list.queries);
+                                all_query_info_combined.extend(all_query_info);
                             }
                             Err(error_list) => {
                                 let mut errors = "".to_string();
@@ -100,6 +100,18 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
                         std::process::exit(1);
                     }
                 }
+            }
+
+            // Generate all queries at once (including runner file)
+            if !all_queries.queries.is_empty() {
+                generate::write_queries(
+                    &context,
+                    &all_queries,
+                    &all_query_info_combined,
+                    &schema,
+                    out_dir,
+                    &mut files,
+                );
             }
 
             crate::filesystem::write_generated_files(out_dir, files)?;

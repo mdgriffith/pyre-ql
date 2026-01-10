@@ -60,10 +60,11 @@ fn write_server_schema(
 ) {
     // Target directory is
     // {base_out_dir}/server/{lang}
-    let server_dir = base_out_dir.join("server");
+    // Use relative path to avoid duplication when joined with base_path in write_generated_files
+    let server_dir = Path::new("server");
     let out_dir = to_server_dir_path(lang, &server_dir);
     // out_dir is
-    // {base_out_dir}/server/{lang}
+    // server/{lang} (relative path)
     match lang {
         Server::Typescript => {
             // Server schema
@@ -121,6 +122,7 @@ pub fn write_queries(
         database,
         base_out_dir,
         files,
+        true, // Generate runner file with all queries
     );
     ()
 }
@@ -160,6 +162,7 @@ fn write_server_queries(
     database: &ast::Database,
     base_out_dir: &Path,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
+    generate_runner_file: bool,
 ) {
     // Create relative path: server/typescript (relative to base_out_dir)
     let server_dir = Path::new("server");
@@ -171,8 +174,10 @@ fn write_server_queries(
                 context,
                 &all_query_info,
                 &query_list,
+                database,
                 &out_dir,
                 files,
+                generate_runner_file,
             )
         }
     }
