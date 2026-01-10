@@ -92,7 +92,7 @@ pub fn extract_session_fields_from_permission(where_arg: &WhereArg) -> Vec<Strin
 
 fn extract_session_fields_recursive(where_arg: &WhereArg, fields: &mut Vec<String>) {
     match where_arg {
-        WhereArg::Column(is_session_var, fieldname, _, _) => {
+        WhereArg::Column(is_session_var, fieldname, _, _, _field_name_range) => {
             if *is_session_var {
                 fields.push(fieldname.clone());
             }
@@ -143,7 +143,7 @@ pub fn calculate_permission_hash(
 
 fn hash_permission_ast(hasher: &mut Sha256, where_arg: &WhereArg) {
     match where_arg {
-        WhereArg::Column(is_session, fieldname, op, value) => {
+        WhereArg::Column(is_session, fieldname, op, value, _field_name_range) => {
             hasher.update("column");
             hasher.update(if *is_session { "session" } else { "table" });
             hasher.update(fieldname);
@@ -309,7 +309,7 @@ fn render_permission_where(
     session: &HashMap<String, SessionValue>,
 ) -> String {
     match where_arg {
-        WhereArg::Column(is_session_var, fieldname, op, value) => {
+        WhereArg::Column(is_session_var, fieldname, op, value, _field_name_range) => {
             // Handle session variable column references by replacing with literal
             let (qualified_column_name, final_value) = if *is_session_var {
                 // Session variable column - replace with literal value

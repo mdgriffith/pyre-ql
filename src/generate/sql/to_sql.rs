@@ -263,7 +263,7 @@ pub fn render_where_arg(
     query_field: &ast::QueryField,
 ) -> String {
     match arg {
-        ast::WhereArg::Column(is_session_var, fieldname, op, value) => {
+        ast::WhereArg::Column(is_session_var, fieldname, op, value, _field_name_range) => {
             let qualified_column_name =
                 render_real_where_field(table, query_info, *is_session_var, fieldname);
 

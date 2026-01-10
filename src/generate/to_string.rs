@@ -659,7 +659,7 @@ fn to_string_param(indent_size: usize, arg: &ast::Arg) -> String {
 
 fn format_where(where_arg: &ast::WhereArg) -> String {
     match where_arg {
-        ast::WhereArg::Column(is_session_var, column, operator, value) => {
+        ast::WhereArg::Column(is_session_var, column, operator, value, _field_name_range) => {
             let column_name = if *is_session_var {
                 format!("Session.{}", column)
             } else {

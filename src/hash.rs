@@ -95,7 +95,7 @@ fn hash_arg(hasher: &mut Sha256, arg: &Arg) {
 
 fn hash_where_arg(hasher: &mut Sha256, where_arg: &WhereArg) {
     match where_arg {
-        WhereArg::Column(is_session_var, column, operator, value) => {
+        WhereArg::Column(is_session_var, column, operator, value, _field_name_range) => {
             hasher.update(&is_session_var.to_string());
             hasher.update(column);
             hasher.update(format!("{:?}", operator));

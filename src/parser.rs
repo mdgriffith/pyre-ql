@@ -1312,17 +1312,29 @@ fn parse_where_arg(input: Text) -> ParseResult<ast::WhereArg> {
 fn parse_query_where(input: Text) -> ParseResult<ast::WhereArg> {
     let (input, _) = multispace0(input)?;
     // Try parsing a session variable first (e.g., Session.role), then fall back to fieldname
-    let (input, (is_session_var, name)) = alt((
+    let (input, (is_session_var, name, field_name_range)) = alt((
         |input| {
             // Try to parse Session.variableName as a column name
+            let (input, start_pos) = position(input)?;
             let (input, _) = tag("Session.")(input)?;
             let (input, session_field) = parse_fieldname(input)?;
-            Ok((input, (true, session_field.to_string())))
+            let (input, end_pos) = position(input)?;
+            let range = ast::Range {
+                start: to_location(&start_pos),
+                end: to_location(&end_pos),
+            };
+            Ok((input, (true, session_field.to_string(), range)))
         },
         |input| {
             // Fall back to regular fieldname
+            let (input, start_pos) = position(input)?;
             let (input, name) = parse_fieldname(input)?;
-            Ok((input, (false, name.to_string())))
+            let (input, end_pos) = position(input)?;
+            let range = ast::Range {
+                start: to_location(&start_pos),
+                end: to_location(&end_pos),
+            };
+            Ok((input, (false, name.to_string(), range)))
         },
     ))(input)?;
     let (input, _) = multispace0(input)?;
@@ -1335,7 +1347,7 @@ fn parse_query_where(input: Text) -> ParseResult<ast::WhereArg> {
 
     Ok((
         input,
-        ast::WhereArg::Column(is_session_var, name, operator, value),
+        ast::WhereArg::Column(is_session_var, name, operator, value, field_name_range),
     ))
 }
 

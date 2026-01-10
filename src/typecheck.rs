@@ -1590,7 +1590,7 @@ fn check_where_args(
                 );
             }
         }
-        ast::WhereArg::Column(is_session_var, field_name, operator, query_val) => {
+        ast::WhereArg::Column(is_session_var, field_name, operator, query_val, field_name_range) => {
             // Check if this is a Session variable (e.g., Session.userId, Session.role)
             let mut is_known_field = false;
             let mut column_type: Option<String> = None;
@@ -1642,7 +1642,10 @@ fn check_where_args(
                             record_name: "Session".to_string(),
                             known_fields,
                         },
-                        locations: vec![],
+                        locations: vec![Location {
+                            contexts: vec![],
+                            primary: vec![convert_range(field_name_range)],
+                        }],
                     })
                 }
             } else {
@@ -1688,7 +1691,10 @@ fn check_where_args(
                             record_name: table.name.clone(),
                             known_fields,
                         },
-                        locations: vec![],
+                        locations: vec![Location {
+                            contexts: vec![],
+                            primary: vec![convert_range(field_name_range)],
+                        }],
                     })
                 }
             }
@@ -1738,7 +1744,7 @@ fn check_permissions_where_args(
                 check_permissions_where_args(context, table, or, filepath, errors);
             }
         }
-        ast::WhereArg::Column(is_session_var, field_name, _operator, query_val) => {
+        ast::WhereArg::Column(is_session_var, field_name, _operator, query_val, field_name_range) => {
             if *is_session_var {
                 // Validate session variable exists
                 if let Some(session) = &context.session {
@@ -1763,7 +1769,10 @@ fn check_permissions_where_args(
                                 record_name: "Session".to_string(),
                                 known_fields,
                             },
-                            locations: vec![],
+                            locations: vec![Location {
+                                contexts: vec![],
+                                primary: vec![convert_range(field_name_range)],
+                            }],
                         });
                     }
                 } else {
@@ -1774,7 +1783,10 @@ fn check_permissions_where_args(
                             record_name: "Session".to_string(),
                             known_fields: vec![],
                         },
-                        locations: vec![],
+                        locations: vec![Location {
+                            contexts: vec![],
+                            primary: vec![convert_range(field_name_range)],
+                        }],
                     });
                 }
             } else {
@@ -1809,43 +1821,6 @@ fn check_permissions_where_args(
                 }
                 if !is_known_field {
                     let known_fields = get_column_reference(&table.fields);
-                    // Try to find the field name location for better error highlighting
-                    let permission_location =
-                        if let ast::QueryValue::Variable((var_range, _)) = query_val {
-                            // Pattern is: "fieldName == $var" or "fieldName == Session.var"
-                            // " == " is 4 characters (space, ==, space)
-                            let field_name_start_col =
-                                if var_range.start.column > field_name.len() + 3 {
-                                    var_range.start.column.saturating_sub(field_name.len() + 4)
-                                } else {
-                                    0
-                                };
-
-                            Location {
-                                contexts: vec![],
-                                primary: vec![Range {
-                                    start: ast::Location {
-                                        offset: var_range
-                                            .start
-                                            .offset
-                                            .saturating_sub(field_name.len() + 4),
-                                        line: var_range.start.line,
-                                        column: field_name_start_col,
-                                    },
-                                    end: ast::Location {
-                                        offset: var_range.start.offset.saturating_sub(4),
-                                        line: var_range.start.line,
-                                        column: field_name_start_col + field_name.len(),
-                                    },
-                                }],
-                            }
-                        } else {
-                            Location {
-                                contexts: vec![],
-                                primary: to_range(&table.start, &table.end),
-                            }
-                        };
-
                     errors.push(Error {
                         filepath: filepath.clone(),
                         error_type: ErrorType::UnknownField {
@@ -1853,7 +1828,10 @@ fn check_permissions_where_args(
                             record_name: table.name.clone(),
                             known_fields,
                         },
-                        locations: vec![permission_location],
+                        locations: vec![Location {
+                            contexts: vec![],
+                            primary: vec![convert_range(field_name_range)],
+                        }],
                     });
                 }
             }
@@ -1921,7 +1899,7 @@ fn mark_session_vars_in_where_as_used(
                 mark_session_vars_in_where_as_used(query_context, context, or, params);
             }
         }
-        ast::WhereArg::Column(is_session_var, field_name, _operator, query_val) => {
+        ast::WhereArg::Column(is_session_var, field_name, _operator, query_val, _field_name_range) => {
             // Check if the column itself is a session variable (e.g., Session.userId = ...)
             if *is_session_var {
                 if let Some(session) = &context.session {
