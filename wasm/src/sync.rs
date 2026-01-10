@@ -126,7 +126,7 @@ pub fn calculate_permission_hash_wasm(
                 .ok_or_else(|| format!("Table {} not found", table_name))?;
 
             let permission =
-                pyre::ast::get_permissions(&table.record, &pyre::ast::QueryOperation::Select);
+                pyre::ast::get_permissions(&table.record, &pyre::ast::QueryOperation::Query);
 
             let hash = sync::calculate_permission_hash(&permission, &session_rust);
             Ok(hash)

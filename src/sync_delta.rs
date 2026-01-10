@@ -69,7 +69,7 @@ pub fn generate_deltas(
                 })?;
 
             // Get permission for select operation
-            let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Select);
+            let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Query);
 
             // Filter rows that this session can see
             let mut visible_rows: Vec<JsonValue> = Vec::new();

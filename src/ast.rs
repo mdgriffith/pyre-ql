@@ -197,7 +197,7 @@ pub fn to_watched_operations(record: &RecordDetails) -> Vec<QueryOperation> {
         match field {
             Field::FieldDirective(FieldDirective::Watched(details)) => {
                 if details.selects {
-                    ops.push(QueryOperation::Select);
+                    ops.push(QueryOperation::Query);
                 }
                 if details.inserts {
                     ops.push(QueryOperation::Insert);
@@ -608,7 +608,7 @@ pub enum TopLevelQueryField {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum QueryOperation {
-    Select,
+    Query,
     Insert,
     Update,
     Delete,

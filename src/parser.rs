@@ -388,7 +388,7 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
     let input = expecting(input, crate::error::Expecting::SchemaFieldAtDirective);
     let (input, _) = multispace0(input)?;
 
-    // Parse either fine-grained permissions @allow(select, update) { ... }
+    // Parse either fine-grained permissions @allow(query, update) { ... }
     // or star permission @allow(*) { ... }
     let (input, details) = alt((
         // Star permission: @allow(*) { ... } - try this first to avoid conflicts
@@ -422,7 +422,7 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
 
             Ok((input, ast::PermissionDetails::Star(where_)))
         },
-        // Fine-grained permissions: @allow(select, update) { ... }
+        // Fine-grained permissions: @allow(query, update) { ... }
         |input| {
             let (input, _) = tag("(")(input)?;
             let (input, ops) = cut(separated_list1(
@@ -433,7 +433,7 @@ fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
                     Ok((input, ()))
                 },
                 alt((
-                    value(ast::QueryOperation::Select, tag("select")),
+                    value(ast::QueryOperation::Query, tag("query")),
                     value(ast::QueryOperation::Insert, tag("insert")),
                     value(ast::QueryOperation::Update, tag("update")),
                     value(ast::QueryOperation::Delete, tag("delete")),
@@ -814,7 +814,7 @@ fn parse_query_lines(input: Text) -> ParseResult<ast::QueryDef> {
 
 fn parse_query_details(input: Text) -> ParseResult<ast::QueryDef> {
     let (input, op) = alt((
-        parse_token("query", ast::QueryOperation::Select),
+        parse_token("query", ast::QueryOperation::Query),
         parse_token("insert", ast::QueryOperation::Insert),
         parse_token("update", ast::QueryOperation::Update),
         parse_token("delete", ast::QueryOperation::Delete),

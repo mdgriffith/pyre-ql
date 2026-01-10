@@ -128,7 +128,7 @@ pub fn to_string_with_affected_rows(
     include_affected_rows: bool,
 ) -> Vec<to_sql::Prepared> {
     match query.operation {
-        ast::QueryOperation::Select => {
+        ast::QueryOperation::Query => {
             json::select::select_to_string(context, query, query_info, table, table_field)
         }
         ast::QueryOperation::Insert =>

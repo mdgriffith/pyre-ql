@@ -290,12 +290,17 @@ fn to_string_permissions_details(
         ast::PermissionDetails::OnOperation(operations) => {
             let mut result = String::new();
 
-            // For each operation group, output a separate @allow(select, update) { ... } directive
+            // For each operation group, output a separate @allow(query, update) { ... } directive
             for op in operations {
                 let ops = op
                     .operations
                     .iter()
-                    .map(|o| format!("{:?}", o).to_lowercase())
+                    .map(|o| match o {
+                        ast::QueryOperation::Query => "query",
+                        ast::QueryOperation::Insert => "insert",
+                        ast::QueryOperation::Update => "update",
+                        ast::QueryOperation::Delete => "delete",
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 let where_content = format_where_for_braces(&op.where_, indentation.minimum);
@@ -528,7 +533,7 @@ fn to_string_query_definition(definition: &ast::QueryDef) -> String {
 
 fn to_string_query(query: &ast::Query) -> String {
     let operation_name = match &query.operation {
-        ast::QueryOperation::Select => "query",
+        ast::QueryOperation::Query => "query",
         ast::QueryOperation::Insert => "insert",
         ast::QueryOperation::Delete => "delete",
         ast::QueryOperation::Update => "update",

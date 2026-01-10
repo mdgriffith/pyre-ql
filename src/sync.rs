@@ -327,7 +327,7 @@ pub fn get_sync_status_sql(
         let quoted_table_name = string::quote(&actual_table_name);
 
         // Get permission for select operation
-        let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Select);
+        let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Query);
 
         // Calculate current permission hash
         let current_permission_hash = calculate_permission_hash(&permission, session);
@@ -501,7 +501,7 @@ pub fn get_sync_sql(
         let actual_table_name = &status.table_name;
 
         // Get permission for select operation
-        let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Select);
+        let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Query);
 
         // Use permission hash from status (already calculated)
         let current_permission_hash = &status.permission_hash;
@@ -613,7 +613,7 @@ pub fn get_sync_page_info(
         let actual_table_name = ast::get_tablename(&table.record.name, &table.record.fields);
 
         // Get permission for select operation
-        let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Select);
+        let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Query);
 
         // Calculate current permission hash
         let current_permission_hash = calculate_permission_hash(&permission, session);

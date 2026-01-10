@@ -202,7 +202,7 @@ fn get_permission_order(field: &ast::Field) -> usize {
                 for op in ops {
                     for operation in &op.operations {
                         let order = match operation {
-                            ast::QueryOperation::Select => 2,
+                            ast::QueryOperation::Query => 2,
                             ast::QueryOperation::Update => 3,
                             ast::QueryOperation::Insert => 4,
                             ast::QueryOperation::Delete => 5,
@@ -334,7 +334,7 @@ fn format_definition(
             // Reorder fields according to standard format:
             // 1. @tablename
             // 2. @watch
-            // 3. @allowed (or @public) - ordered: select, update, insert, delete
+            // 3. @allowed (or @public) - ordered: query, update, insert, delete
             // 4. Empty line
             // 5. Columns (in order)
             // 6. Empty line (if links exist)

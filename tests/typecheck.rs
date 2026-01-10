@@ -528,8 +528,8 @@ record User {
         }
     "#;
 
-    let query_list = parser::parse_query("query.pyre", query_source)
-        .expect("Failed to parse query");
+    let query_list =
+        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
 
     let result = typecheck::check_queries(&query_list, &context);
 
@@ -585,8 +585,8 @@ record User {
         }
     "#;
 
-    let query_list = parser::parse_query("query.pyre", query_source)
-        .expect("Failed to parse query");
+    let query_list =
+        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
 
     let result = typecheck::check_queries(&query_list, &context);
 
@@ -596,12 +596,9 @@ record User {
         }
         Err(errors) => {
             // Should fail with a type mismatch error
-            let has_type_mismatch = errors.iter().any(|e| {
-                matches!(
-                    &e.error_type,
-                    error::ErrorType::TypeMismatch { .. }
-                )
-            });
+            let has_type_mismatch = errors
+                .iter()
+                .any(|e| matches!(&e.error_type, error::ErrorType::TypeMismatch { .. }));
             assert!(
                 has_type_mismatch,
                 "Should have a TypeMismatch error for nullable param with non-nullable column. Errors: {:?}",
@@ -644,8 +641,8 @@ record Post {
         }
     "#;
 
-    let query_list = parser::parse_query("query.pyre", query_source)
-        .expect("Failed to parse query");
+    let query_list =
+        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
 
     let result = typecheck::check_queries(&query_list, &context);
 
@@ -655,12 +652,9 @@ record Post {
         }
         Err(errors) => {
             // Should fail with a type mismatch error
-            let has_type_mismatch = errors.iter().any(|e| {
-                matches!(
-                    &e.error_type,
-                    error::ErrorType::TypeMismatch { .. }
-                )
-            });
+            let has_type_mismatch = errors
+                .iter()
+                .any(|e| matches!(&e.error_type, error::ErrorType::TypeMismatch { .. }));
             assert!(
                 has_type_mismatch,
                 "Should have a TypeMismatch error for nullable param in SET with non-nullable column. Errors: {:?}",
@@ -704,8 +698,8 @@ record Post {
         }
     "#;
 
-    let query_list = parser::parse_query("query.pyre", query_source)
-        .expect("Failed to parse query");
+    let query_list =
+        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
 
     let result = typecheck::check_queries(&query_list, &context);
 
@@ -715,12 +709,9 @@ record Post {
         }
         Err(errors) => {
             // Should fail with a type mismatch error
-            let has_type_mismatch = errors.iter().any(|e| {
-                matches!(
-                    &e.error_type,
-                    error::ErrorType::TypeMismatch { .. }
-                )
-            });
+            let has_type_mismatch = errors
+                .iter()
+                .any(|e| matches!(&e.error_type, error::ErrorType::TypeMismatch { .. }));
             assert!(
                 has_type_mismatch,
                 "Should have a TypeMismatch error for nullable param in INSERT SET with non-nullable column. Errors: {:?}",
@@ -763,8 +754,8 @@ record User {
         }
     "#;
 
-    let query_list = parser::parse_query("query.pyre", query_source)
-        .expect("Failed to parse query");
+    let query_list =
+        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
 
     let result = typecheck::check_queries(&query_list, &context);
 
@@ -819,8 +810,8 @@ record Post {
         }
     "#;
 
-    let query_list = parser::parse_query("query.pyre", query_source)
-        .expect("Failed to parse query");
+    let query_list =
+        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
 
     let result = typecheck::check_queries(&query_list, &context);
 
@@ -876,15 +867,17 @@ record Post {
         }
     "#;
 
-    let query_list = parser::parse_query("query.pyre", query_source)
-        .expect("Failed to parse query");
+    let query_list =
+        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
 
     let result = typecheck::check_queries(&query_list, &context);
 
     match result {
         Ok(_) => {
             // This should succeed - non-nullable param should work with nullable column
-            println!("Non-nullable parameter in INSERT SET with nullable column passed as expected");
+            println!(
+                "Non-nullable parameter in INSERT SET with nullable column passed as expected"
+            );
         }
         Err(errors) => {
             let mut error_messages = Vec::new();

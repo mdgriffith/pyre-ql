@@ -334,7 +334,7 @@ pub fn calculate_sync_deltas(
     let mut table_map: HashMap<String, Option<WhereArg>> = HashMap::new();
     for table in context.tables.values() {
         let actual_table_name = ast::get_tablename(&table.record.name, &table.record.fields);
-        let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Select);
+        let permission = ast::get_permissions(&table.record, &ast::QueryOperation::Query);
         table_map.insert(actual_table_name, permission);
     }
 

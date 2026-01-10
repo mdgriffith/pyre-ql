@@ -74,7 +74,7 @@ pub fn select_to_string(
         table,
         query_info,
         query_field,
-        &ast::QueryOperation::Select,
+        &ast::QueryOperation::Query,
         &mut selection,
     );
 

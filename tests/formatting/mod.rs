@@ -801,7 +801,7 @@ record User {
     createdAt DateTime @default(now)
     updatedAt DateTime @default(now)
     @tablename("users")
-    @allow(select) { id == Session.userId }
+    @allow(query) { id == Session.userId }
     @allow(insert, update) { id == Session.userId }
 }
 
@@ -824,7 +824,7 @@ record Comment {
     post @link(postId, Post.id)
     user @link(userId, User.id)
     createdAt DateTime @default(now)
-    @allow(select) { userId == Session.userId }
+    @allow(query) { userId == Session.userId }
     @allow(insert, update) { userId == Session.userId }
 }
 
@@ -869,7 +869,7 @@ record Post {
     id Int @id
     title String
     authorId Int
-    @allow(select) { published == True }
+    @allow(query) { published == True }
     @allow(insert, update) { authorId == Session.userId && status == "draft" }
     @allow(delete) { authorId == Session.userId || Session.role == "admin" }
 }

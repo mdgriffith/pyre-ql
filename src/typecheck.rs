@@ -1873,7 +1873,7 @@ fn check_record_permissions(
 
     // Check permissions for all operations
     for operation in &[
-        ast::QueryOperation::Select,
+        ast::QueryOperation::Query,
         ast::QueryOperation::Insert,
         ast::QueryOperation::Update,
         ast::QueryOperation::Delete,
@@ -2353,7 +2353,7 @@ fn add_schema(
                 );
             }
         }
-        ast::QueryOperation::Select => {
+        ast::QueryOperation::Query => {
             used_schemas.secondary.insert(table.schema.to_string());
         }
     }
@@ -2839,7 +2839,7 @@ fn check_field(
     }
 
     match operation {
-        ast::QueryOperation::Select => {
+        ast::QueryOperation::Query => {
             if field.set.is_some() {
                 errors.push(Error {
                     filepath: context.current_filepath.clone(),

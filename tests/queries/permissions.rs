@@ -34,7 +34,7 @@ record Article {
     content String
     authorId Int
     status String
-    @allow(select) { authorId == Session.userId || status == "published" }
+    @allow(query) { authorId == Session.userId || status == "published" }
     @allow(insert, update, delete) { authorId == Session.userId }
 }
 
@@ -44,7 +44,7 @@ record Document {
     content String
     ownerId Int
     visibility String
-    @allow(select) { ownerId == Session.userId || visibility == "public" }
+    @allow(query) { ownerId == Session.userId || visibility == "public" }
     @allow(insert, update) { ownerId == Session.userId }
     @allow(delete) { ownerId == Session.userId && Session.role == "admin" }
 }

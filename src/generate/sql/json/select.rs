@@ -238,7 +238,7 @@ pub fn initial_select(
         table,
         query_info,
         query_field,
-        &ast::QueryOperation::Select,
+        &ast::QueryOperation::Query,
         &mut result,
     );
 
@@ -381,7 +381,7 @@ fn select_linked(
         table,
         query_info,
         query_field,
-        &ast::QueryOperation::Select,
+        &ast::QueryOperation::Query,
         &mut where_check,
     );
     has_where = where_check.contains("where");
@@ -391,7 +391,7 @@ fn select_linked(
         table,
         query_info,
         query_field,
-        &ast::QueryOperation::Select,
+        &ast::QueryOperation::Query,
         sql,
     );
 

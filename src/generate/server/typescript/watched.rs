@@ -6,7 +6,7 @@ use std::path::Path;
 
 pub fn operation_name(operation: &ast::QueryOperation) -> String {
     match operation {
-        ast::QueryOperation::Select => "Queried",
+        ast::QueryOperation::Query => "Queried",
         ast::QueryOperation::Insert => "Added",
         ast::QueryOperation::Update => "Updated",
         ast::QueryOperation::Delete => "Deleted",

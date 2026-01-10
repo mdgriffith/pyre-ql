@@ -1039,7 +1039,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             let mut result = "".to_string();
 
             let operation_words = match operation {
-                ast::QueryOperation::Select => "selecting from",
+                ast::QueryOperation::Query => "querying from",
                 ast::QueryOperation::Insert => "inserting a value to",
                 ast::QueryOperation::Update => "updating a value on",
                 ast::QueryOperation::Delete => "deleting from",
