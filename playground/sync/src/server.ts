@@ -21,6 +21,10 @@ await init({ wasm: wasmBuffer });
 const app = new Hono();
 
 // Types
+interface WebSocketData {
+    userId: string;
+}
+
 interface ConnectedClient {
     sessionId: string;
     session: {
@@ -539,10 +543,16 @@ export default async function startServer() {
             // Handle WebSocket upgrade
             const url = new URL(req.url);
             if (url.pathname === "/sync" && req.headers.get("upgrade") === "websocket") {
+                const userId = url.searchParams.get("userId");
+                if (!userId) {
+                    return new Response("userId query parameter is required", { status: 400 });
+                }
+                const upgradeData: WebSocketData = {
+                    userId: userId,
+                };
                 const success = server.upgrade(req, {
-                    data: {
-                        userId: url.searchParams.get("userId"),
-                    },
+                    // @ts-expect-error - Bun's types don't properly support the data property, but it works at runtime
+                    data: upgradeData,
                 });
                 if (success) {
                     return undefined as any;
@@ -568,7 +578,8 @@ export default async function startServer() {
             },
             open: (ws) => {
                 // Get userId from upgrade data (passed via query parameter)
-                const userIdParam = (ws.data as any)?.userId;
+                // @ts-expect-error - Bun's types don't properly support the data property, but it works at runtime
+                const userIdParam = (ws.data as WebSocketData)?.userId;
                 let userId: number;
 
                 if (userIdParam) {
