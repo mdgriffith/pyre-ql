@@ -83,3 +83,34 @@
   background: #ccc;
   cursor: not-allowed;
 }
+
+.query-response {
+  margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 1px solid #e0e0e0;
+}
+
+.query-response h3 {
+  font-size: 1rem;
+  margin-bottom: 0.75rem;
+  color: #333;
+}
+
+.response-loading {
+  padding: 1rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  color: #666;
+  font-style: italic;
+}
+
+.response-data {
+  padding: 1rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  max-height: 400px;
+  overflow-y: auto;
+}

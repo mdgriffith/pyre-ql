@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { QueryMetadata } from '../queryDiscovery'
 import './QueryForm.css'
 
@@ -10,7 +10,7 @@ interface Client {
 
 interface QueryFormProps {
   queries: QueryMetadata[]
-  onSubmit: (queryId: string, params: Record<string, any>) => void
+  onSubmit: (queryId: string, params: Record<string, any>) => Promise<any>
   selectedClient: Client | undefined
 }
 
@@ -22,8 +22,15 @@ export default function QueryForm({
   const [selectedQueryId, setSelectedQueryId] = useState<string | null>(null)
   const [queryParams, setQueryParams] = useState<Record<string, any>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [response, setResponse] = useState<any>(null)
+  const [isLoading, setIsLoading] = useState(false)
 
   const selectedQuery = queries.find((q) => q.id === selectedQueryId)
+
+  // Clear response when query selection changes
+  useEffect(() => {
+    setResponse(null)
+  }, [selectedQueryId])
 
   const handleQuerySelect = (queryId: string) => {
     setSelectedQueryId(queryId)
@@ -74,11 +81,30 @@ export default function QueryForm({
       });
     }
 
+    // Clear previous response
+    setResponse(null)
     setIsSubmitting(true)
+    setIsLoading(true)
+
     try {
-      await onSubmit(selectedQueryId, paramsToSubmit)
+      const result = await onSubmit(selectedQueryId, paramsToSubmit)
+      setResponse(result)
+      
+      // Clear form after successful submit
+      const initialParams: Record<string, any> = {}
+      if (selectedQuery?.inputFields) {
+        selectedQuery.inputFields.forEach(field => {
+          if (field.type === 'boolean') {
+            initialParams[field.name] = false
+          }
+        })
+      }
+      setQueryParams(initialParams)
+    } catch (error: any) {
+      setResponse({ error: error.message || 'An error occurred' })
     } finally {
       setIsSubmitting(false)
+      setIsLoading(false)
     }
   }
 
@@ -172,6 +198,20 @@ export default function QueryForm({
           {isSubmitting ? 'Submitting...' : 'Submit Query'}
         </button>
       </form>
+
+      {/* Response display */}
+      {(isLoading || response) && (
+        <div className="query-response">
+          <h3>Response</h3>
+          {isLoading ? (
+            <div className="response-loading">Loading...</div>
+          ) : (
+            <pre className="response-data">
+              {JSON.stringify(response, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
     </div>
   )
 }

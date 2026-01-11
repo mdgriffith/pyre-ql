@@ -335,10 +335,14 @@ function App() {
 
   const submitQuery = useCallback(
     async (queryId: string, params: Record<string, any>) => {
-      if (!selectedClientId) return
+      if (!selectedClientId) {
+        throw new Error('No client selected')
+      }
 
       const client = clients.find((c) => c.id === selectedClientId)
-      if (!client) return
+      if (!client) {
+        throw new Error('Client not found')
+      }
 
       const url = `http://localhost:3000/db/${queryId}`
       const method = 'POST'
@@ -364,12 +368,18 @@ function App() {
           data: result,
           clientId: selectedClientId,
         })
+
+        // Return result for QueryForm to display
+        return result
       } catch (error: any) {
+        const errorResult = { error: error.message }
         addEvent({
           type: 'query_response',
-          data: { error: error.message },
+          data: errorResult,
           clientId: selectedClientId,
         })
+        // Re-throw so QueryForm can catch and display
+        throw error
       }
     },
     [selectedClientId, clients, addEvent]
