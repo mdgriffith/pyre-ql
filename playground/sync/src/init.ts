@@ -1,6 +1,6 @@
 import { createClient } from "@libsql/client";
 import type { Client } from "@libsql/client";
-import { readFileSync } from "fs";
+import { readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { existsSync } from "fs";
 import init, {
@@ -19,9 +19,10 @@ await init({ wasm: wasmBuffer });
 
 const DB_PATH = join(process.cwd(), "test.db");
 
-async function runMigration() {
+async function runMigration(dbPath?: string) {
+    const targetDbPath = dbPath || DB_PATH;
     const db = createClient({
-        url: `file:${DB_PATH}`,
+        url: `file:${targetDbPath}`,
     });
 
     // Read schema file
@@ -64,6 +65,21 @@ async function runMigration() {
     await loadSchema(db);
 }
 
+// Initialize database (delete if exists, migrate, and seed)
+export async function initializeDatabase(dbPath?: string) {
+    const targetDbPath = dbPath || DB_PATH;
+
+    // Delete database if it exists
+    if (existsSync(targetDbPath)) {
+        console.log("Deleting existing database...");
+        unlinkSync(targetDbPath);
+    }
+
+    await runMigration(targetDbPath);
+    await seedDatabase(targetDbPath);
+    console.log("Database initialization completed");
+}
+
 async function loadSchema(db: Client) {
     const isInitializedQuery = sql_is_initialized();
     const isInitializedResult = await db.execute(isInitializedQuery);
@@ -95,9 +111,10 @@ async function loadSchema(db: Client) {
     console.log("Schema loaded into WASM cache");
 }
 
-async function seedDatabase() {
+async function seedDatabase(dbPath?: string) {
+    const targetDbPath = dbPath || DB_PATH;
     const db = createClient({
-        url: `file:${DB_PATH}`,
+        url: `file:${targetDbPath}`,
     });
 
     console.log("Seeding database...");
@@ -141,12 +158,13 @@ async function seedDatabase() {
     console.log("Seeding completed");
 }
 
-// Main execution
-try {
-    await runMigration();
-    await seedDatabase();
-    console.log("✅ Initialization completed successfully");
-} catch (error) {
-    console.error("❌ Initialization failed:", error);
-    process.exit(1);
+// Main execution (when run as a script)
+if (import.meta.main) {
+    try {
+        await initializeDatabase();
+        console.log("✅ Initialization completed successfully");
+    } catch (error) {
+        console.error("❌ Initialization failed:", error);
+        process.exit(1);
+    }
 }
