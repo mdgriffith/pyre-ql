@@ -14,8 +14,7 @@ interface SyncCursor {
 }
 
 interface ClientData {
-  user: any | null
-  posts: any[]
+  tables: Record<string, any[]>
 }
 
 interface Client {
@@ -46,7 +45,7 @@ function App() {
       sessionId: null,
       connected: false,
       syncCursor: { tables: {} },
-      data: { user: null, posts: [] },
+      data: { tables: {} },
       userId: null,
     },
   ])
@@ -120,9 +119,9 @@ function App() {
             if (c.id !== clientId) return c
 
             const updatedCursor: SyncCursor = { ...c.syncCursor, tables: { ...c.syncCursor.tables } }
-            const newData: ClientData = { ...c.data }
+            const newData: ClientData = { tables: { ...c.data.tables } }
 
-            // Process sync results
+            // Process sync results - store all tables generically
             for (const [tableName, tableData] of Object.entries(syncResult.tables)) {
               const table = tableData as {
                 rows: any[]
@@ -136,17 +135,8 @@ function App() {
                 permission_hash: table.permission_hash,
               }
 
-              // Update data based on table name (handle both capitalized and lowercase)
-              const tableNameLower = tableName.toLowerCase()
-              if (tableNameLower === 'user' || tableNameLower === 'users') {
-                // User table - should only have one row (the client's own user)
-                if (table.rows.length > 0) {
-                  newData.user = table.rows[0]
-                }
-              } else if (tableNameLower === 'post' || tableNameLower === 'posts') {
-                // Posts table - replace all posts with synced data
-                newData.posts = table.rows
-              }
+              // Store table data generically - replace all rows for this table
+              newData.tables[tableName] = table.rows
             }
 
             return {
@@ -180,30 +170,28 @@ function App() {
           if (c.id !== clientId) return c
 
           const { all_affected_rows, affected_row_indices } = deltaData
-          const updatedData = { ...c.data }
+          const updatedData: ClientData = { tables: { ...c.data.tables } }
 
-          // Process affected rows
+          // Process affected rows - handle any table generically
           for (const index of affected_row_indices) {
             const affectedRow = all_affected_rows[index]
             if (!affectedRow) continue
 
             const { table_name, row } = affectedRow
 
-            if (table_name === 'User') {
-              // Update user if it's the client's own user
-              if (updatedData.user && updatedData.user.id === row.id) {
-                updatedData.user = { ...updatedData.user, ...row }
-              }
-            } else if (table_name === 'Post') {
-              // Update posts
-              const postIndex = updatedData.posts.findIndex((p) => p.id === row.id)
-              if (postIndex >= 0) {
-                // Update existing post
-                updatedData.posts[postIndex] = { ...updatedData.posts[postIndex], ...row }
-              } else {
-                // Add new post
-                updatedData.posts.push(row)
-              }
+            // Ensure table exists in data structure
+            if (!updatedData.tables[table_name]) {
+              updatedData.tables[table_name] = []
+            }
+
+            // Find existing row by id (assuming all tables have an id field)
+            const rowIndex = updatedData.tables[table_name].findIndex((r: any) => r.id === row.id)
+            if (rowIndex >= 0) {
+              // Update existing row
+              updatedData.tables[table_name][rowIndex] = { ...updatedData.tables[table_name][rowIndex], ...row }
+            } else {
+              // Add new row
+              updatedData.tables[table_name].push(row)
             }
           }
 
@@ -314,7 +302,7 @@ function App() {
         sessionId: null,
         connected: false,
         syncCursor: { tables: {} },
-        data: { user: null, posts: [] },
+        data: { tables: {} },
         userId: null,
       }
       // Connect immediately after adding
