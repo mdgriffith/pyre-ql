@@ -56,9 +56,44 @@
   color: #dc3545;
 }
 
+.client-info {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
 .client-session {
   font-size: 0.75rem;
   color: #666;
-  margin-top: 0.25rem;
   font-family: monospace;
+}
+
+.client-user-id {
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.user-id-display {
+  cursor: default;
+}
+
+.user-id-display.editable {
+  cursor: pointer;
+  color: #007bff;
+  text-decoration: underline;
+}
+
+.user-id-display.editable:hover {
+  color: #0056b3;
+}
+
+.user-id-input {
+  width: 100%;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #007bff;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-family: monospace;
+  background: white;
 }

@@ -4,13 +4,14 @@ import { join } from "path";
 import { readFileSync } from "fs";
 import init, {
     calculate_sync_deltas,
+    get_sync_status_sql,
+    get_sync_sql,
     sql_is_initialized,
     sql_introspect,
     sql_introspect_uninitialized,
     set_schema,
-    get_sync_status_sql,
-    get_sync_sql,
 } from "../../../wasm/pkg/pyre_wasm.js";
+
 
 // Initialize WASM
 const wasmPath = join(process.cwd(), "..", "..", "wasm", "pkg", "pyre_wasm_bg.wasm");
@@ -320,8 +321,12 @@ app.get("/sync", async (c) => {
             fields: client.session.fields,
         };
 
+        console.log(`[Sync] Session for catchup:`, JSON.stringify(session, null, 2));
+        console.log(`[Sync] Sync cursor:`, JSON.stringify(syncCursor, null, 2));
+
         // Step 1: Get sync status SQL
         const statusSql = get_sync_status_sql(syncCursor, session);
+        console.log(`[Sync] Status SQL:`, statusSql);
 
         if (typeof statusSql === "string" && statusSql.startsWith("Error:")) {
             c.status(500);
@@ -362,6 +367,7 @@ app.get("/sync", async (c) => {
         // Collect all SQL statements from all tables for batch execution
         const allSqlStatements: string[] = [];
         for (const tableSql of sqlResult.tables) {
+            console.log(`[Sync] Table ${tableSql.table_name} SQL:`, tableSql.sql);
             allSqlStatements.push(...tableSql.sql);
         }
 
@@ -531,8 +537,13 @@ export default async function startServer() {
         port,
         fetch: async (req) => {
             // Handle WebSocket upgrade
-            if (req.url.endsWith("/sync") && req.headers.get("upgrade") === "websocket") {
-                const success = server.upgrade(req);
+            const url = new URL(req.url);
+            if (url.pathname === "/sync" && req.headers.get("upgrade") === "websocket") {
+                const success = server.upgrade(req, {
+                    data: {
+                        userId: url.searchParams.get("userId"),
+                    },
+                });
                 if (success) {
                     return undefined as any;
                 }
@@ -556,9 +567,25 @@ export default async function startServer() {
                 }
             },
             open: (ws) => {
-                // Generate session ID and values
+                // Get userId from upgrade data (passed via query parameter)
+                const userIdParam = (ws.data as any)?.userId;
+                let userId: number;
+
+                if (userIdParam) {
+                    const parsedUserId = parseInt(userIdParam, 10);
+                    if (isNaN(parsedUserId) || parsedUserId < 1) {
+                        console.error(`Invalid userId provided: ${userIdParam}, defaulting to 1`);
+                        userId = 1;
+                    } else {
+                        userId = parsedUserId;
+                    }
+                } else {
+                    console.warn("No userId provided in WebSocket connection, defaulting to 1");
+                    userId = 1;
+                }
+
+                // Generate session ID
                 const sessionId = `session_${nextSessionId++}`;
-                const userId = Math.floor(Math.random() * 100) + 1; // Random userId 1-100
                 const session = {
                     fields: {
                         userId: userId,

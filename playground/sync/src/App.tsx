@@ -26,6 +26,7 @@ interface Client {
   syncCursor: SyncCursor
   data: ClientData
   userId: number | null
+  requestedUserId: number | null // User-specified userId for connection
 }
 
 interface Event {
@@ -47,11 +48,13 @@ function App() {
       syncCursor: { tables: {} },
       data: { tables: {} },
       userId: null,
+      requestedUserId: 1, // First client always starts as userId 1
     },
   ])
-  const [activeTab, setActiveTab] = useState<'messages' | 'tableau'>('messages')
+  const [activeTab, setActiveTab] = useState<'messages' | 'tableau'>('tableau')
   const clientsRef = useRef<Client[]>([])
   const initialClientConnectedRef = useRef(false)
+  const nextUserIdRef = useRef<number>(2) // Next userId to assign (starts at 2 since 1 is taken)
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -210,7 +213,20 @@ function App() {
     const client = clientsRef.current.find((c) => c.id === clientId)
     if (!client || client.connected || client.ws) return
 
-    const ws = new WebSocket('ws://localhost:3000/sync')
+    // Use requestedUserId if set, otherwise use nextUserId
+    const userId = client.requestedUserId ?? nextUserIdRef.current++
+
+    // Update requestedUserId to match what we're using (for consistency)
+    if (!client.requestedUserId) {
+      setClients((prev) =>
+        prev.map((c) =>
+          c.id === clientId ? { ...c, requestedUserId: userId } : c
+        )
+      )
+    }
+
+    const wsUrl = `ws://localhost:3000/sync?userId=${userId}`
+    const ws = new WebSocket(wsUrl)
 
     ws.onopen = () => {
       setClients((prev) =>
@@ -295,6 +311,7 @@ function App() {
   const addNewClient = useCallback(() => {
     setClients((prev) => {
       const newId = `${prev.length + 1}`
+      const newUserId = nextUserIdRef.current++
       const newClient: Client = {
         id: newId,
         name: `Client ${newId}`,
@@ -304,6 +321,7 @@ function App() {
         syncCursor: { tables: {} },
         data: { tables: {} },
         userId: null,
+        requestedUserId: newUserId, // Assign next sequential userId
       }
       // Connect immediately after adding
       setTimeout(() => {
@@ -312,6 +330,16 @@ function App() {
       return [...prev, newClient]
     })
   }, [connectClient])
+
+  const updateClientUserId = useCallback((clientId: string, userId: number | null) => {
+    setClients((prev) =>
+      prev.map((c) =>
+        c.id === clientId
+          ? { ...c, requestedUserId: userId }
+          : c
+      )
+    )
+  }, [])
 
   // Connect WebSocket for initial client (only once, even in StrictMode)
   useEffect(() => {
@@ -334,7 +362,7 @@ function App() {
 
       // Include sessionId in query params if client has one
       const sessionId = client.sessionId
-      const url = sessionId 
+      const url = sessionId
         ? `http://localhost:3000/db/${queryId}?sessionId=${sessionId}`
         : `http://localhost:3000/db/${queryId}`
       const method = 'POST'
@@ -391,6 +419,7 @@ function App() {
             clients={clients}
             selectedClientId={selectedClientId}
             onSelectClient={setSelectedClientId}
+            onUpdateUserId={updateClientUserId}
           />
           <QueryForm
             queries={queries}
