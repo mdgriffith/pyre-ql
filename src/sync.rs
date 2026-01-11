@@ -316,7 +316,9 @@ fn render_permission_where(
                 // When is_session_var is true, fieldname is the session var name (e.g., "userId")
                 // We replace it: Session.userId = table.userId becomes table.userId = <literal>
                 // Since permissions are typechecked, session variables should always exist
-                let session_value = session.get(fieldname).expect("Session variable should exist after typechecking");
+                let session_value = session
+                    .get(fieldname)
+                    .expect("Session variable should exist after typechecking");
                 let literal_value = session_value_to_query_value(session_value);
                 // The fieldname becomes a table column (same name, but now it's a table column)
                 let table_name = crate::ext::string::quote(&ast::get_tablename(
@@ -347,7 +349,9 @@ fn render_permission_where(
                             "Permission variables should be session variables, not query parameters"
                         );
                         session_value_to_query_value(
-                            session.get(session_key).expect("Session variable should exist after typechecking")
+                            session
+                                .get(session_key)
+                                .expect("Session variable should exist after typechecking"),
                         )
                     }
                     _ => value.clone(),

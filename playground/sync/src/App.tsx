@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import ClientList from './components/ClientList'
 import QueryForm from './components/QueryForm'
 import MessagePane from './components/MessagePane'
-import Tableau from './components/Tableau'
+import Clients from './components/Clients'
 import { discoverQueries, QueryMetadata } from './queryDiscovery'
 import './App.css'
 
@@ -51,7 +50,7 @@ function App() {
       requestedUserId: 1, // First client always starts as userId 1
     },
   ])
-  const [activeTab, setActiveTab] = useState<'messages' | 'tableau'>('tableau')
+  const [activeTab, setActiveTab] = useState<'messages' | 'clients'>('clients')
   const clientsRef = useRef<Client[]>([])
   const initialClientConnectedRef = useRef(false)
   const nextUserIdRef = useRef<number>(2) // Next userId to assign (starts at 2 since 1 is taken)
@@ -214,15 +213,30 @@ function App() {
     if (!client || client.connected || client.ws) return
 
     // Use requestedUserId if set, otherwise use nextUserId
-    const userId = client.requestedUserId ?? nextUserIdRef.current++
-
-    // Update requestedUserId to match what we're using (for consistency)
-    if (!client.requestedUserId) {
-      setClients((prev) =>
-        prev.map((c) =>
-          c.id === clientId ? { ...c, requestedUserId: userId } : c
+    let userId: number
+    if (client.requestedUserId != null) {
+      // Client already has a requestedUserId, use it and don't increment
+      userId = client.requestedUserId
+    } else {
+      // Client doesn't have requestedUserId, assign next available and increment
+      // BUT: Never increment for the initial client (id '1') - it should always be 1
+      if (clientId === '1') {
+        userId = 1
+        setClients((prev) =>
+          prev.map((c) =>
+            c.id === clientId ? { ...c, requestedUserId: 1 } : c
+          )
         )
-      )
+      } else {
+        userId = nextUserIdRef.current
+        nextUserIdRef.current = userId + 1
+        // Update requestedUserId to match what we're using (for consistency)
+        setClients((prev) =>
+          prev.map((c) =>
+            c.id === clientId ? { ...c, requestedUserId: userId } : c
+          )
+        )
+      }
     }
 
     const wsUrl = `ws://localhost:3000/sync?userId=${userId}`
@@ -298,7 +312,7 @@ function App() {
         )
       )
     }
-  }, [performSyncCatchup, handleSyncDelta])
+  }, [performSyncCatchup, handleSyncDelta, addEvent])
 
   // Connect WebSocket for initial client (only once, even in StrictMode)
   useEffect(() => {
@@ -309,9 +323,13 @@ function App() {
   }, [connectClient])
 
   const addNewClient = useCallback(() => {
+    // Get the next user ID and increment BEFORE adding to state
+    // This ensures we don't have race conditions with React batching
+    const newUserId = nextUserIdRef.current
+    nextUserIdRef.current = newUserId + 1
+    
     setClients((prev) => {
       const newId = `${prev.length + 1}`
-      const newUserId = nextUserIdRef.current++
       const newClient: Client = {
         id: newId,
         name: `Client ${newId}`,
@@ -340,14 +358,6 @@ function App() {
       )
     )
   }, [])
-
-  // Connect WebSocket for initial client (only once, even in StrictMode)
-  useEffect(() => {
-    if (!initialClientConnectedRef.current) {
-      initialClientConnectedRef.current = true
-      connectClient('1')
-    }
-  }, [connectClient])
 
   const submitQuery = useCallback(
     async (queryId: string, params: Record<string, any>) => {
@@ -409,26 +419,10 @@ function App() {
     <div className="app">
       <header className="app-header">
         <h1>Pyre Sync Playground</h1>
-        <button onClick={addNewClient} className="add-client-btn">
-          + Add Client
-        </button>
       </header>
       <div className="app-content">
         <div className="left-panel">
-          <ClientList
-            clients={clients}
-            selectedClientId={selectedClientId}
-            onSelectClient={setSelectedClientId}
-            onUpdateUserId={updateClientUserId}
-          />
-          <QueryForm
-            queries={queries}
-            onSubmit={submitQuery}
-            selectedClient={clients.find((c) => c.id === selectedClientId)}
-          />
-        </div>
-        <div className="right-panel">
-          <div className="right-panel-tabs">
+          <div className="left-panel-tabs">
             <button
               className={`tab-button ${activeTab === 'messages' ? 'active' : ''}`}
               onClick={() => setActiveTab('messages')}
@@ -436,19 +430,31 @@ function App() {
               Messages
             </button>
             <button
-              className={`tab-button ${activeTab === 'tableau' ? 'active' : ''}`}
-              onClick={() => setActiveTab('tableau')}
+              className={`tab-button ${activeTab === 'clients' ? 'active' : ''}`}
+              onClick={() => setActiveTab('clients')}
             >
-              Tableau
+              Clients
             </button>
           </div>
-          <div className="right-panel-content">
+          <div className="left-panel-content">
             {activeTab === 'messages' ? (
               <MessagePane events={events} clients={clients} />
             ) : (
-              <Tableau clients={clients} />
+              <Clients
+                clients={clients}
+                selectedClientId={selectedClientId}
+                onSelectClient={setSelectedClientId}
+                onAddClient={addNewClient}
+              />
             )}
           </div>
+        </div>
+        <div className="right-panel">
+          <QueryForm
+            queries={queries}
+            onSubmit={submitQuery}
+            selectedClient={clients.find((c) => c.id === selectedClientId)}
+          />
         </div>
       </div>
     </div>

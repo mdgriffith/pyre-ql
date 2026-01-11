@@ -1,17 +1,17 @@
-.tableau {
+.clients {
   padding: 20px;
   height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-.tableau h2 {
+.clients h2 {
   margin: 0 0 20px 0;
   font-size: 24px;
   font-weight: 600;
 }
 
-.tableau-grid {
+.clients-grid {
   display: flex;
   flex-wrap: wrap;
   gap: 20px;
@@ -21,7 +21,7 @@
   align-content: flex-start;
 }
 
-.tableau-client-wrapper {
+.clients-client-wrapper {
   display: flex;
   flex-direction: column;
   width: 250px;
@@ -29,7 +29,7 @@
   flex-grow: 0;
 }
 
-.tableau-client-name {
+.clients-client-name {
   color: #888;
   font-size: 12px;
   font-weight: 500;
@@ -39,7 +39,12 @@
   white-space: nowrap;
 }
 
-.tableau-client-card {
+.clients-client-id {
+  color: #aaa;
+  font-weight: 400;
+}
+
+.clients-client-card {
   border: 1px solid #e0e0e0;
   border-radius: 8px;
   padding: 12px;
@@ -50,9 +55,23 @@
   width: 100%;
   height: 350px;
   overflow-y: auto;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-.tableau-posts-grid {
+.clients-client-card:hover {
+  border-color: #007bff;
+  box-shadow: 0 2px 4px rgba(0, 123, 255, 0.1);
+}
+
+.clients-client-card.selected {
+  border-color: #007bff;
+  border-width: 2px;
+  box-shadow: 0 2px 8px rgba(0, 123, 255, 0.2);
+  background: #f0f7ff;
+}
+
+.clients-posts-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
   grid-auto-rows: min-content;
@@ -62,7 +81,7 @@
   align-items: start;
 }
 
-.tableau-post-card {
+.clients-post-card {
   border: 1px solid #ddd;
   border-radius: 4px;
   padding: 4px;
@@ -76,7 +95,7 @@
   align-self: start;
 }
 
-.tableau-post-title {
+.clients-post-title {
   font-size: 8px;
   line-height: 1.2;
   color: #666;
@@ -89,10 +108,42 @@
   opacity: 0.7;
 }
 
-.tableau-empty {
+.clients-empty {
   grid-column: 1 / -1;
   text-align: center;
   color: #999;
   font-size: 12px;
   padding: 20px;
+}
+
+.clients-add-client-card {
+  border: 1px dashed #ccc;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fafafa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 350px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.clients-add-client-card:hover {
+  border-color: #007bff;
+  border-style: solid;
+  background: #f0f7ff;
+  box-shadow: 0 2px 4px rgba(0, 123, 255, 0.1);
+}
+
+.clients-add-client-wrapper {
+  align-self: flex-end;
+}
+
+.clients-add-client-text {
+  color: #666;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
 }

@@ -6,7 +6,6 @@
 
 .app-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   padding: 1rem 2rem;
   border-bottom: 1px solid #e0e0e0;
@@ -17,21 +16,6 @@
   font-size: 1.5rem;
   font-weight: 600;
   color: #333;
-}
-
-.add-client-btn {
-  padding: 0.5rem 1rem;
-  background: #007bff;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  font-weight: 500;
-}
-
-.add-client-btn:hover {
-  background: #0056b3;
 }
 
 .app-content {
@@ -55,6 +39,7 @@
   overflow: hidden;
 }
 
+.left-panel-tabs,
 .right-panel-tabs {
   display: flex;
   border-bottom: 1px solid #e0e0e0;
@@ -85,6 +70,7 @@
   background: white;
 }
 
+.left-panel-content,
 .right-panel-content {
   flex: 1;
   overflow: hidden;
