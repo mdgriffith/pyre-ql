@@ -168,7 +168,10 @@ function extractAffectedRows(resultData: any): AffectedRow[] {
 
 // Broadcast sync deltas to connected clients
 async function broadcastSyncDeltas(affectedRows: AffectedRow[]) {
+    console.log(`[Broadcast] Starting broadcast. Affected rows: ${affectedRows.length}, Connected clients: ${connectedClients.size}`);
+    
     if (affectedRows.length === 0 || connectedClients.size === 0) {
+        console.log(`[Broadcast] Skipping broadcast - no affected rows or no connected clients`);
         return;
     }
 
@@ -180,15 +183,20 @@ async function broadcastSyncDeltas(affectedRows: AffectedRow[]) {
         })
     );
 
+    console.log(`[Broadcast] Connected sessions:`, JSON.stringify(connectedSessions, null, 2));
+    console.log(`[Broadcast] Affected rows:`, JSON.stringify(affectedRows, null, 2));
+
     // Calculate sync deltas
     const deltasResult = calculate_sync_deltas(affectedRows, connectedSessions);
 
     if (typeof deltasResult === "string" && deltasResult.startsWith("Error:")) {
-        console.error("Failed to calculate sync deltas:", deltasResult);
+        console.error("[Broadcast] Failed to calculate sync deltas:", deltasResult);
         return;
     }
 
     const result = typeof deltasResult === "string" ? JSON.parse(deltasResult) : deltasResult;
+    console.log(`[Broadcast] Sync deltas result:`, JSON.stringify(result, null, 2));
+    console.log(`[Broadcast] Number of groups:`, result.groups?.length || 0);
 
     // Broadcast to each group
     for (const group of result.groups) {
@@ -200,13 +208,20 @@ async function broadcastSyncDeltas(affectedRows: AffectedRow[]) {
             },
         };
 
+        console.log(`[Broadcast] Broadcasting to group with ${group.session_ids.length} sessions, ${group.affected_row_indices.length} affected row indices`);
+        
         for (const sessionId of group.session_ids) {
             const client = connectedClients.get(sessionId);
             if (client && client.ws.readyState === 1) { // WebSocket.OPEN = 1
+                console.log(`[Broadcast] Sending delta to session ${sessionId}`);
                 client.ws.send(JSON.stringify(deltaMessage));
+            } else {
+                console.log(`[Broadcast] Skipping session ${sessionId} - client not found or websocket not open (readyState: ${client?.ws?.readyState})`);
             }
         }
     }
+    
+    console.log(`[Broadcast] Broadcast complete`);
 }
 
 // Routes
@@ -433,12 +448,18 @@ app.post("/db/:req", async (c) => {
 
         if (result.kind === "success") {
             console.log(`[Query] Query succeeded. Data keys:`, Object.keys(result.data || {}));
+            console.log(`[Query] Full result.data:`, JSON.stringify(result.data, null, 2));
             // Check if this was a mutation (has affected rows)
             const affectedRows = extractAffectedRows(result.data);
+            console.log(`[Query] Extracted affected rows:`, JSON.stringify(affectedRows, null, 2));
+            console.log(`[Query] Affected rows count:`, affectedRows.length);
+            console.log(`[Query] Connected clients:`, connectedClients.size);
             if (affectedRows.length > 0) {
                 console.log(`[Query] Mutation detected. Affected rows: ${affectedRows.length}`);
                 // Broadcast sync deltas
                 await broadcastSyncDeltas(affectedRows);
+            } else {
+                console.log(`[Query] No affected rows found - this might not be a mutation or _affectedRows is missing`);
             }
 
             return c.json(result.data);
