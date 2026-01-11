@@ -109,8 +109,16 @@ async function seedDatabase() {
     }
     const schemaSource = readFileSync(schemaPath, "utf-8");
 
+    // Configure seed options: only 20 users, no posts
+    const seedOptions = {
+        table_rows: {
+            "User": 20,
+            "Post": 0,
+        },
+    };
+
     // Use seed_database from WASM to generate seed SQL
-    const seedResult = seed_database(schemaSource, null);
+    const seedResult = seed_database(schemaSource, seedOptions);
 
     // Check if result is an error string
     if (typeof seedResult === 'string' && seedResult.startsWith('Error:')) {

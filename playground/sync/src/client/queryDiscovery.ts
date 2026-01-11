@@ -94,7 +94,10 @@ export function discoverQueries(): QueryMetadata[] {
         if (existsSync(generatedQueryPath)) {
             const generatedContent = readFileSync(generatedQueryPath, "utf-8");
             // Look for the id field in the query runner (Db.to_runner({ id: "..." }))
-            const hashMatch = generatedContent.match(/id:\s*"([^"]+)"/);
+            // Match id: followed by a long hex hash string (64 hex chars) to distinguish from type definitions
+            // Query IDs are always 64-character hex strings, while type definitions use short strings like "number"
+            // We match the 64-char hex pattern which should be unique to query IDs
+            const hashMatch = generatedContent.match(/id:\s*"([a-f0-9]{64})"/);
             if (hashMatch) {
                 hashId = hashMatch[1];
             }

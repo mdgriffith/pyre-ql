@@ -8,6 +8,8 @@ import init, {
     sql_introspect,
     sql_introspect_uninitialized,
     set_schema,
+    get_sync_status_sql,
+    get_sync_sql,
 } from "../../../wasm/pkg/pyre_wasm.js";
 
 // Initialize WASM
@@ -243,6 +245,164 @@ app.get("/queries", async (c) => {
     }
 });
 
+// Sync endpoint for initial catchup and incremental sync
+app.get("/sync", async (c) => {
+    try {
+        // Get sessionId from query params
+        const sessionId = c.req.query("sessionId");
+        if (!sessionId) {
+            c.status(400);
+            return c.json({ error: "sessionId query parameter is required" });
+        }
+
+        // Look up client session from connected clients
+        const client = connectedClients.get(sessionId);
+        if (!client) {
+            c.status(404);
+            return c.json({ error: "Session not found. Client must be connected via WebSocket first." });
+        }
+
+        // Get syncCursor from query params (optional, defaults to empty)
+        const syncCursorParam = c.req.query("syncCursor");
+        let syncCursor: any = { tables: {} };
+        if (syncCursorParam) {
+            try {
+                syncCursor = JSON.parse(syncCursorParam);
+            } catch (e) {
+                c.status(400);
+                return c.json({ error: "Invalid syncCursor format. Must be valid JSON." });
+            }
+        }
+
+        const db = createClient({
+            url: `file:${DB_PATH}`,
+        });
+
+        const pageSize = 1000; // Large page size for catchup
+
+        // Convert session to format expected by WASM
+        const session = {
+            fields: client.session.fields,
+        };
+
+        // Step 1: Get sync status SQL
+        const statusSql = get_sync_status_sql(syncCursor, session);
+
+        if (typeof statusSql === "string" && statusSql.startsWith("Error:")) {
+            c.status(500);
+            return c.json({ error: statusSql });
+        }
+
+        // Step 2: Execute sync status SQL
+        const statusResult = await db.execute(statusSql as string);
+
+        // Step 3: Get sync SQL for tables that need syncing
+        const syncSqlResult = get_sync_sql(statusResult.rows, syncCursor, session, pageSize);
+
+        if (typeof syncSqlResult === "string" && syncSqlResult.startsWith("Error:")) {
+            c.status(500);
+            return c.json({ error: syncSqlResult });
+        }
+
+        const sqlResult =
+            typeof syncSqlResult === "string"
+                ? JSON.parse(syncSqlResult)
+                : syncSqlResult;
+
+        const result: {
+            tables: Record<
+                string,
+                {
+                    rows: any[];
+                    permission_hash: string;
+                    last_seen_updated_at: number | null;
+                }
+            >;
+            has_more: boolean;
+        } = {
+            tables: {},
+            has_more: false,
+        };
+
+        // Collect all SQL statements from all tables for batch execution
+        const allSqlStatements: string[] = [];
+        for (const tableSql of sqlResult.tables) {
+            allSqlStatements.push(...tableSql.sql);
+        }
+
+        // Execute all SQL statements in a single batch
+        const allQueryResults = await db.batch(allSqlStatements);
+
+        // Process results for each table
+        let resultIndex = 0;
+        for (const tableSql of sqlResult.tables) {
+            const updatedAtIndex = tableSql.headers.indexOf("updatedAt");
+            const tableRows: any[] = [];
+            let maxUpdatedAt: number | null = null;
+
+            // Process all query results for this table
+            for (const sql of tableSql.sql) {
+                const queryResult = allQueryResults[resultIndex++];
+                const columns = queryResult.columns;
+                const rows = queryResult.rows || [];
+
+                // Convert rows to objects (not positional arrays)
+                for (const row of rows) {
+                    const rowObject: Record<string, any> = {};
+                    for (const column of columns) {
+                        rowObject[column] = row[column];
+                    }
+                    tableRows.push(rowObject);
+
+                    // Track max updatedAt
+                    if (updatedAtIndex >= 0 && rowObject.updatedAt !== null && rowObject.updatedAt !== undefined) {
+                        const updatedAt = typeof rowObject.updatedAt === "number" 
+                            ? rowObject.updatedAt 
+                            : new Date(rowObject.updatedAt).getTime() / 1000;
+                        if (maxUpdatedAt === null || updatedAt > maxUpdatedAt) {
+                            maxUpdatedAt = updatedAt;
+                        }
+                    }
+                }
+            }
+
+            // Check if there's more data (SQL fetches pageSize + 1)
+            const hasMoreForTable = tableRows.length > pageSize;
+            const finalRows = hasMoreForTable ? tableRows.slice(0, pageSize) : tableRows;
+
+            // Recalculate maxUpdatedAt from returned rows if we sliced
+            if (hasMoreForTable && updatedAtIndex >= 0 && finalRows.length > 0) {
+                const lastRow = finalRows[finalRows.length - 1];
+                const lastUpdatedAt = lastRow.updatedAt;
+                if (lastUpdatedAt !== null && lastUpdatedAt !== undefined) {
+                    const updatedAt = typeof lastUpdatedAt === "number"
+                        ? lastUpdatedAt
+                        : new Date(lastUpdatedAt).getTime() / 1000;
+                    maxUpdatedAt = updatedAt;
+                }
+            }
+
+            // Store results
+            result.tables[tableSql.table_name] = {
+                rows: finalRows,
+                permission_hash: tableSql.permission_hash,
+                last_seen_updated_at: maxUpdatedAt,
+            };
+
+            if (hasMoreForTable) {
+                result.has_more = true;
+            }
+        }
+
+        return c.json(result);
+    } catch (error: any) {
+        console.error("[Sync] Sync error:", error);
+        console.error("[Sync] Error stack:", error.stack);
+        c.status(500);
+        return c.json({ error: error.message || "Internal server error" });
+    }
+});
+
 app.post("/db/:req", async (c) => {
     const { req } = c.req.param();
     const args = await c.req.json();
@@ -352,7 +512,14 @@ export default async function startServer() {
                 connectedClients.set(sessionId, client);
                 console.log(`Client connected: ${sessionId} (userId: ${userId})`);
 
-                ws.send(JSON.stringify({ type: "connected", sessionId }));
+                ws.send(JSON.stringify({ 
+                    type: "connected", 
+                    sessionId,
+                    session: {
+                        userId: userId,
+                        role: "user",
+                    },
+                }));
             },
             close: (ws) => {
                 // Find and remove client

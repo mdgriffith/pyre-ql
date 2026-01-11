@@ -36,6 +36,51 @@
   border-left: 3px solid #007bff;
 }
 
+.message-item-grouped {
+  border-left: 3px solid #007bff;
+}
+
+.message-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.message-group-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.message-group-meta {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+.message-group-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.message-group-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.message-section-header {
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 .message-header {
   display: flex;
   gap: 0.75rem;
