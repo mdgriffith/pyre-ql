@@ -52,7 +52,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'messages' | 'tableau'>('messages')
   const clientsRef = useRef<Client[]>([])
   const initialClientConnectedRef = useRef(false)
-  
+
   // Keep ref in sync with state
   useEffect(() => {
     clientsRef.current = clients
@@ -91,12 +91,12 @@ function App() {
         // Get sync cursor from ref (latest state)
         const client = clientsRef.current.find((c) => c.id === clientId)
         const syncCursor = client?.syncCursor || { tables: {} }
-        
+
         // Build URL with query params
         const syncCursorParam = encodeURIComponent(JSON.stringify(syncCursor))
         const url = `http://localhost:3000/sync?sessionId=${sessionId}&syncCursor=${syncCursorParam}`
         const method = 'GET'
-        
+
         addEvent({
           type: 'query_sent',
           data: { url, syncCursor, method },
@@ -234,12 +234,12 @@ function App() {
           setClients((prev) =>
             prev.map((c) =>
               c.id === clientId
-                ? { 
-                    ...c, 
-                    sessionId: message.sessionId, 
-                    connected: true,
-                    userId: session.userId || null,
-                  }
+                ? {
+                  ...c,
+                  sessionId: message.sessionId,
+                  connected: true,
+                  userId: session.userId || null,
+                }
                 : c
             )
           )
@@ -334,7 +334,7 @@ function App() {
 
       const url = `http://localhost:3000/db/${queryId}`
       const method = 'POST'
-      
+
       // Log query sent
       addEvent({
         type: 'query_sent',
