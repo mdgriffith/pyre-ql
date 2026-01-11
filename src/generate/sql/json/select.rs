@@ -534,10 +534,37 @@ fn select_single_json(
         if !first_field {
             json_object.push_str(",\n");
         }
-        json_object.push_str(&format!(
-            "{}    '{}', {}.{}",
-            indent_str, field, table_alias, field
-        ));
+
+        // Check if this is a boolean field by looking up the column type
+        let is_bool = query_table_field.fields.iter().any(|qf| {
+            if let ast::ArgField::Field(query_field) = qf {
+                if query_field.name == *field {
+                    if let Some(table_field) = table
+                        .record
+                        .fields
+                        .iter()
+                        .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
+                    {
+                        if let ast::Field::Column(column) = table_field {
+                            return column.type_ == "Bool";
+                        }
+                    }
+                }
+            }
+            false
+        });
+
+        if is_bool {
+            json_object.push_str(&format!(
+                "{}    '{}', jsonb(case when {}.{} = 1 then 'true' else 'false' end)",
+                indent_str, field, table_alias, field
+            ));
+        } else {
+            json_object.push_str(&format!(
+                "{}    '{}', {}.{}",
+                indent_str, field, table_alias, field
+            ));
+        }
         first_field = false;
     }
 
@@ -796,6 +823,15 @@ fn select_type(
     //
     sql: &mut String,
 ) {
+    // Handle boolean types: SQLite stores booleans as 0/1, convert to JSON boolean
+    if column.type_ == "Bool" {
+        sql.push_str(&format!(
+            "jsonb(case when {}.{} = 1 then 'true' else 'false' end)",
+            base_table_name, query_field_name
+        ));
+        return;
+    }
+
     match context.types.get(&column.type_) {
         None => sql.push_str(&format!("{}.{}", base_table_name, query_field_name)),
         Some((_, type_)) => match type_ {
@@ -919,7 +955,10 @@ fn final_select_formatted_as_json(
     let query_field_name = &query_table_field.name;
 
     // initial selection - wrap in JSON_GROUP_ARRAY (no outer json_object wrapper)
-    sql.push_str(&format!("\nselect\n{}  coalesce(json_group_array(\n", indent_str));
+    sql.push_str(&format!(
+        "\nselect\n{}  coalesce(json_group_array(\n",
+        indent_str
+    ));
     sql.push_str(&format!("{}    json_object(\n", indent_str));
 
     // Compose main json payload
@@ -936,18 +975,24 @@ fn final_select_formatted_as_json(
                     let aliased_field_name = ast::get_aliased_name(query_field);
 
                     match table_field {
-                        ast::Field::Column(_) => {
+                        ast::Field::Column(column) => {
                             if !first_field {
                                 sql.push_str(",\n");
                             }
-                            // sql.push_str(&format!(
-                            //     "{}    {}.{} as {}",
-                            //     indent_str, base_table_name, query_field.name, aliased_field_name
-                            // ));
                             sql.push_str(&format!(
-                                "{}      '{}', {}.{}",
-                                indent_str, aliased_field_name, base_table_name, query_field.name
+                                "{}      '{}', ",
+                                indent_str, aliased_field_name
                             ));
+
+                            // Handle boolean types: SQLite stores booleans as 0/1, convert to JSON boolean
+                            if column.type_ == "Bool" {
+                                sql.push_str(&format!(
+                                    "json(case when {}.{} = 1 then 'true' else 'false' end)",
+                                    base_table_name, query_field.name
+                                ));
+                            } else {
+                                sql.push_str(&format!("{}.{}", base_table_name, query_field.name));
+                            }
                             first_field = false;
                         }
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {

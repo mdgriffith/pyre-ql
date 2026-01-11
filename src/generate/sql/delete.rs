@@ -109,16 +109,26 @@ fn generate_typed_response_query(
                     let aliased_field_name = ast::get_aliased_name(query_field);
 
                     match table_field {
-                        ast::Field::Column(_) => {
+                        ast::Field::Column(column) => {
                             if !first_field {
                                 sql.push_str(",\n");
                             }
-                            sql.push_str(&format!(
-                                "      '{}', {}.{}",
-                                aliased_field_name,
-                                temp_table_name,
-                                string::quote(&query_field.name)
-                            ));
+                            sql.push_str(&format!("      '{}', ", aliased_field_name));
+
+                            // Handle boolean types: SQLite stores booleans as 0/1, convert to JSON boolean
+                            if column.type_ == "Bool" {
+                                sql.push_str(&format!(
+                                    "json(case when {}.{} = 1 then 'true' else 'false' end)",
+                                    temp_table_name,
+                                    string::quote(&query_field.name)
+                                ));
+                            } else {
+                                sql.push_str(&format!(
+                                    "{}.{}",
+                                    temp_table_name,
+                                    string::quote(&query_field.name)
+                                ));
+                            }
                             first_field = false;
                         }
                         _ => continue,

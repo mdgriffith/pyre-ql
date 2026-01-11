@@ -138,15 +138,22 @@ pub fn insert_to_string(
                     let aliased_field_name = ast::get_aliased_name(query_field);
 
                     match table_field {
-                        ast::Field::Column(_) => {
+                        ast::Field::Column(column) => {
                             if !first_field {
                                 final_statement.push_str(",\n");
                             }
-                            final_statement.push_str(&format!(
-                                "      '{}', t.{}",
-                                aliased_field_name,
-                                string::quote(&query_field.name)
-                            ));
+                            final_statement.push_str(&format!("      '{}', ", aliased_field_name));
+
+                            // Handle boolean types: SQLite stores booleans as 0/1, convert to JSON boolean
+                            if column.type_ == "Bool" {
+                                final_statement.push_str(&format!(
+                                    "json(case when t.{} = 1 then 'true' else 'false' end)",
+                                    string::quote(&query_field.name)
+                                ));
+                            } else {
+                                final_statement
+                                    .push_str(&format!("t.{}", string::quote(&query_field.name)));
+                            }
                             first_field = false;
                         }
                         _ => continue,
