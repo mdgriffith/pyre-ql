@@ -356,8 +356,8 @@ app.get("/sync", async (c) => {
 
                     // Track max updatedAt
                     if (updatedAtIndex >= 0 && rowObject.updatedAt !== null && rowObject.updatedAt !== undefined) {
-                        const updatedAt = typeof rowObject.updatedAt === "number" 
-                            ? rowObject.updatedAt 
+                        const updatedAt = typeof rowObject.updatedAt === "number"
+                            ? rowObject.updatedAt
                             : new Date(rowObject.updatedAt).getTime() / 1000;
                         if (maxUpdatedAt === null || updatedAt > maxUpdatedAt) {
                             maxUpdatedAt = updatedAt;
@@ -512,8 +512,8 @@ export default async function startServer() {
                 connectedClients.set(sessionId, client);
                 console.log(`Client connected: ${sessionId} (userId: ${userId})`);
 
-                ws.send(JSON.stringify({ 
-                    type: "connected", 
+                ws.send(JSON.stringify({
+                    type: "connected",
                     sessionId,
                     session: {
                         userId: userId,
