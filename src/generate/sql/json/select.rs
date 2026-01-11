@@ -199,7 +199,7 @@ pub fn select_to_string(
 }
 
 pub fn get_temp_table_name(query_field: &ast::QueryField) -> String {
-    format!("selected__{}", &ast::get_aliased_name(&query_field))
+    format!("temp_selected_{}", &ast::get_aliased_name(&query_field))
 }
 
 pub fn get_json_temp_table_name(query_field: &ast::QueryField) -> String {
@@ -667,7 +667,7 @@ fn select_formatted_as_json(
     let indent_str = " ".repeat(indent);
 
     let aliased_name = ast::get_aliased_name(query_table_field);
-    let base_table_name = format!("selected__{}", &aliased_name);
+    let base_table_name = format!("temp_selected_{}", &aliased_name);
 
     // This is the link.foreign_id, which is the id on this table
     let mut full_foreign_id = String::new();
@@ -951,7 +951,7 @@ fn final_select_formatted_as_json(
     let indent_str = " ".repeat(indent);
 
     let aliased_name = ast::get_aliased_name(query_table_field);
-    let base_table_name = format!("selected__{}", &aliased_name);
+    let base_table_name = format!("temp_selected_{}", &aliased_name);
     let query_field_name = &query_table_field.name;
 
     // initial selection - wrap in JSON_GROUP_ARRAY (no outer json_object wrapper)
@@ -1104,7 +1104,7 @@ fn to_temp_table_alias(query_field: &ast::QueryField, table: &typecheck::Table) 
     if selects_for_link(query_field, table) {
         return format!("json__{}", query_alias);
     } else {
-        return format!("selected__{}", query_alias);
+        return format!("temp_selected_{}", query_alias);
     }
 }
 

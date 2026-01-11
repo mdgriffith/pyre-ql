@@ -38,7 +38,7 @@ pub fn delete_to_string(
     // 3. Format the results from the temp table
     // Note: Temp tables are automatically cleaned up when the batch's logical connection closes
     // (see docs/sql_remote.md for details). We don't drop them explicitly to avoid lock errors.
-    let temp_table_name = format!("_temp_deleted_{}", table_name);
+    let temp_table_name = format!("temp_deleted_{}", table_name);
     let quoted_table_name = string::quote(&table_name);
 
     // Extract WHERE clause from delete SQL to use in SELECT

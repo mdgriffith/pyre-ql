@@ -149,7 +149,7 @@ pub fn insert_to_string(
 }
 
 pub fn get_temp_table_name(query_field: &ast::QueryField) -> String {
-    format!("inserted_{}", &ast::get_aliased_name(&query_field))
+    format!("temp_inserted_{}", &ast::get_aliased_name(&query_field))
 }
 
 pub fn initial_select(

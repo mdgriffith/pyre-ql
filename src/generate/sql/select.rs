@@ -412,8 +412,8 @@ pub fn get_tablename(
         TableAliasKind::Normal => ast::get_tablename(&table.record.name, &table.record.fields),
         TableAliasKind::Insert => {
             // If this is an insert, we are selecting from a temp table
-            // format!("inserted_{}", &ast::get_aliased_name(&query_field))
-            format!("inserted_{}", table_alias)
+            // format!("temp_inserted_{}", &ast::get_aliased_name(&query_field))
+            format!("temp_inserted_{}", table_alias)
         }
     }
 }
