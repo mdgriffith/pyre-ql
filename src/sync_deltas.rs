@@ -141,6 +141,7 @@ fn evaluate_operator(op: &ast::Operator, lhs: &JsonValue, rhs: &JsonValue) -> bo
 }
 
 /// Compare two JSON values for equality
+/// Handles SQLite boolean/integer equivalence: true == 1, false == 0
 fn json_values_equal(a: &JsonValue, b: &JsonValue) -> bool {
     match (a, b) {
         (JsonValue::Null, JsonValue::Null) => true,
@@ -151,6 +152,21 @@ fn json_values_equal(a: &JsonValue, b: &JsonValue) -> bool {
                 a_i == b_i
             } else if let (Some(a_f), Some(b_f)) = (a.as_f64(), b.as_f64()) {
                 (a_f - b_f).abs() < f64::EPSILON
+            } else {
+                false
+            }
+        }
+        // Handle SQLite boolean/integer equivalence: true == 1, false == 0
+        (JsonValue::Bool(a_bool), JsonValue::Number(b_num)) => {
+            if let Some(b_i) = b_num.as_i64() {
+                (*a_bool && b_i == 1) || (!*a_bool && b_i == 0)
+            } else {
+                false
+            }
+        }
+        (JsonValue::Number(a_num), JsonValue::Bool(b_bool)) => {
+            if let Some(a_i) = a_num.as_i64() {
+                (*b_bool && a_i == 1) || (!*b_bool && a_i == 0)
             } else {
                 false
             }
