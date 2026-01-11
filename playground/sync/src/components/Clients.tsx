@@ -67,15 +67,15 @@ export default function Clients({
                 onClick={() => onSelectClient(client.id)}
               >
                 <div className="clients-posts-grid">
-                {posts.length === 0 ? (
-                  <div className="clients-empty">No posts</div>
-                ) : (
-                  posts.map((post) => (
-                    <div key={post.id} className="clients-post-card">
-                      <div className="clients-post-title">{post.title || 'Untitled'}</div>
-                    </div>
-                  ))
-                )}
+                  {posts.length === 0 ? (
+                    <div className="clients-empty">No posts</div>
+                  ) : (
+                    posts.map((post) => (
+                      <div key={post.id} className="clients-post-card">
+                        <div className="clients-post-title">{post.title || 'Untitled'}</div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>

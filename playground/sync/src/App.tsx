@@ -250,7 +250,11 @@ function App() {
       )
       addEvent({
         type: 'query_sent',
-        data: { message: 'Connecting to server...' },
+        data: { 
+          message: 'Connecting to server...',
+          url: wsUrl,
+          method: 'WS',
+        },
         clientId,
       })
     }
@@ -424,16 +428,16 @@ function App() {
         <div className="left-panel">
           <div className="left-panel-tabs">
             <button
-              className={`tab-button ${activeTab === 'messages' ? 'active' : ''}`}
-              onClick={() => setActiveTab('messages')}
-            >
-              Messages
-            </button>
-            <button
               className={`tab-button ${activeTab === 'clients' ? 'active' : ''}`}
               onClick={() => setActiveTab('clients')}
             >
               Clients
+            </button>
+            <button
+              className={`tab-button ${activeTab === 'messages' ? 'active' : ''}`}
+              onClick={() => setActiveTab('messages')}
+            >
+              Messages
             </button>
           </div>
           <div className="left-panel-content">
