@@ -169,7 +169,7 @@ function extractAffectedRows(resultData: any): AffectedRow[] {
 // Broadcast sync deltas to connected clients
 async function broadcastSyncDeltas(affectedRows: AffectedRow[]) {
     console.log(`[Broadcast] Starting broadcast. Affected rows: ${affectedRows.length}, Connected clients: ${connectedClients.size}`);
-    
+
     if (affectedRows.length === 0 || connectedClients.size === 0) {
         console.log(`[Broadcast] Skipping broadcast - no affected rows or no connected clients`);
         return;
@@ -185,6 +185,26 @@ async function broadcastSyncDeltas(affectedRows: AffectedRow[]) {
 
     console.log(`[Broadcast] Connected sessions:`, JSON.stringify(connectedSessions, null, 2));
     console.log(`[Broadcast] Affected rows:`, JSON.stringify(affectedRows, null, 2));
+
+    // Debug: Log permission evaluation details
+    for (const session of connectedSessions) {
+        console.log(`[Broadcast] Evaluating permissions for session ${session.session_id}:`, JSON.stringify(session.fields, null, 2));
+        for (const row of affectedRows) {
+            console.log(`[Broadcast]   Row:`, JSON.stringify(row.row, null, 2));
+            // Check if this row should be visible
+            if (row.table_name === "posts") {
+                const rowData = row.row as any;
+                const sessionUserId = session.fields.userId;
+                const authorUserId = rowData.authorUserId;
+                const published = rowData.published;
+                console.log(`[Broadcast]   Permission check: authorUserId (${authorUserId}) == Session.userId (${sessionUserId}) || published (${published}) == True (1)`);
+                const authorMatch = authorUserId === sessionUserId;
+                const publishedMatch = published === 1;
+                const shouldSee = authorMatch || publishedMatch;
+                console.log(`[Broadcast]   Result: authorMatch=${authorMatch}, publishedMatch=${publishedMatch}, shouldSee=${shouldSee}`);
+            }
+        }
+    }
 
     // Calculate sync deltas
     const deltasResult = calculate_sync_deltas(affectedRows, connectedSessions);
@@ -209,7 +229,7 @@ async function broadcastSyncDeltas(affectedRows: AffectedRow[]) {
         };
 
         console.log(`[Broadcast] Broadcasting to group with ${group.session_ids.length} sessions, ${group.affected_row_indices.length} affected row indices`);
-        
+
         for (const sessionId of group.session_ids) {
             const client = connectedClients.get(sessionId);
             if (client && client.ws.readyState === 1) { // WebSocket.OPEN = 1
@@ -220,7 +240,7 @@ async function broadcastSyncDeltas(affectedRows: AffectedRow[]) {
             }
         }
     }
-    
+
     console.log(`[Broadcast] Broadcast complete`);
 }
 
@@ -421,9 +441,11 @@ app.get("/sync", async (c) => {
 app.post("/db/:req", async (c) => {
     const { req } = c.req.param();
     const args = await c.req.json();
+    const sessionId = c.req.query("sessionId");
 
     console.log(`[Query] Received request for query ID: ${req}`);
     console.log(`[Query] Args:`, JSON.stringify(args, null, 2));
+    console.log(`[Query] SessionId:`, sessionId);
 
     try {
         // Get Query module (cached after first import)
@@ -436,11 +458,31 @@ app.post("/db/:req", async (c) => {
             authToken: undefined,
         };
 
-        // Use a default session for now (in real app, get from auth)
-        const session = {
-            userId: 1,
-            role: "user",
-        };
+        // Get session from connected client if sessionId provided, otherwise use default
+        let session: { userId: number; role: string };
+        if (sessionId) {
+            const client = connectedClients.get(sessionId);
+            if (client) {
+                // Convert session fields to the format expected by queries
+                session = {
+                    userId: client.session.fields.userId as number,
+                    role: client.session.fields.role as string,
+                };
+                console.log(`[Query] Using session from connected client:`, JSON.stringify(session, null, 2));
+            } else {
+                console.log(`[Query] SessionId ${sessionId} not found, using default session`);
+                session = {
+                    userId: 1,
+                    role: "user",
+                };
+            }
+        } else {
+            console.log(`[Query] No sessionId provided, using default session`);
+            session = {
+                userId: 1,
+                role: "user",
+            };
+        }
 
         console.log(`[Query] Executing query with session:`, JSON.stringify(session, null, 2));
         const result = await Query.run(env, req, session, args);

@@ -332,13 +332,17 @@ function App() {
         throw new Error('Client not found')
       }
 
-      const url = `http://localhost:3000/db/${queryId}`
+      // Include sessionId in query params if client has one
+      const sessionId = client.sessionId
+      const url = sessionId 
+        ? `http://localhost:3000/db/${queryId}?sessionId=${sessionId}`
+        : `http://localhost:3000/db/${queryId}`
       const method = 'POST'
 
       // Log query sent
       addEvent({
         type: 'query_sent',
-        data: { queryId, params, url, method },
+        data: { queryId, params, url, method, sessionId },
         clientId: selectedClientId,
       })
 
