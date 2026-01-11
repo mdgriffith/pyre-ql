@@ -65,12 +65,8 @@ pub fn delete_to_string(
         &ast::get_aliased_name(query_field),
     );
 
-    let typed_response_sql = generate_typed_response_query(
-        table,
-        query_field,
-        &primary_table_name,
-        &temp_table_name,
-    );
+    let typed_response_sql =
+        generate_typed_response_query(table, query_field, &primary_table_name, &temp_table_name);
     statements.push(to_sql::include(typed_response_sql));
 
     // Generate affected rows query if requested
@@ -96,11 +92,8 @@ fn generate_typed_response_query(
 
     let mut sql = String::new();
     sql.push_str("select\n");
-    sql.push_str("  json_object(\n");
-    sql.push_str(&format!(
-        "    '{}', coalesce(json_group_array(\n      json_object(\n",
-        query_field_name
-    ));
+    sql.push_str("  coalesce(json_group_array(\n");
+    sql.push_str("    json_object(\n");
 
     // Generate JSON object fields directly from temp table
     let mut first_field = true;
@@ -121,7 +114,7 @@ fn generate_typed_response_query(
                                 sql.push_str(",\n");
                             }
                             sql.push_str(&format!(
-                                "        '{}', {}.{}",
+                                "      '{}', {}.{}",
                                 aliased_field_name,
                                 temp_table_name,
                                 string::quote(&query_field.name)
@@ -136,7 +129,7 @@ fn generate_typed_response_query(
         }
     }
 
-    sql.push_str("\n      )\n    ), json('[]'))\n  ) as ");
+    sql.push_str("\n    )\n  ), json('[]')) as ");
     sql.push_str(query_field_name);
     sql.push_str("\nfrom ");
     sql.push_str(temp_table_name);

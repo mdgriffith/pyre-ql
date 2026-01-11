@@ -61,7 +61,7 @@ The generated SQL should produce a result set with columns named after the top-l
 
 The database runner receives result sets with:
 - Column names matching the top-level query field names (e.g., `post`, `user`)
-- Values: JSON strings containing the complete query response for each field
+- Values: JSON strings containing JSON arrays (e.g., `[{...}, {...}]`) for each field
 - For queries with multiple top-level fields, each field gets its own column
 
 The application code parses these JSON values and constructs the response object with keys matching the column names, then returns it directly to the client.

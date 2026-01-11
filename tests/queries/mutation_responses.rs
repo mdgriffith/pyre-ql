@@ -5,37 +5,16 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
 /// Helper to extract the actual array from mutation response
-/// Mutations return json_object('fieldName', [...]) as fieldName,
-/// so parse_query_results returns [{"fieldName": [...]}]
-/// This extracts the inner array
+/// Mutations now return arrays directly (coalesce(json_group_array(...), json('[]')) as fieldName),
+/// so parse_query_results already returns the array directly
 fn extract_mutation_response(
     results: &HashMap<String, Vec<JsonValue>>,
     field_name: &str,
 ) -> Vec<JsonValue> {
-    let wrapper_vec = results
+    results
         .get(field_name)
-        .unwrap_or_else(|| panic!("Results should contain '{}' field", field_name));
-
-    if wrapper_vec.is_empty() {
-        return Vec::new();
-    }
-
-    let wrapper = &wrapper_vec[0];
-    if let Some(obj) = wrapper.as_object() {
-        if let Some(arr) = obj.get(field_name).and_then(|v| v.as_array()) {
-            return arr.clone();
-        }
-    }
-
-    // Fallback: if it's already an array (shouldn't happen with current SQL)
-    if let Some(arr) = wrapper.as_array() {
-        return arr.clone();
-    }
-
-    panic!(
-        "Expected wrapper object with '{}' key or array, got: {:#}",
-        field_name, wrapper
-    );
+        .cloned()
+        .unwrap_or_else(|| panic!("Results should contain '{}' field", field_name))
 }
 
 /// Test that insert mutations return typed response data

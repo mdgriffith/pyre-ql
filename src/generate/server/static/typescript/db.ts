@@ -157,15 +157,23 @@ export const to_runner = <Session, Input, Output>(options: ToRunnerArgs<Session,
 
           if (result_set.columns.length < 1) { continue }
           const col_name = result_set.columns[0];
-          const gathered_rows: any[] = [];
 
+          // SQL now returns arrays directly (not wrapped in objects)
+          // Parse the JSON string and use it directly
           for (const row of result_set.rows) {
             console.log(row);
             if (col_name in row && typeof row[col_name] == 'string') {
-              gathered_rows.push(JSON.parse(row[col_name]));
+              const parsed = JSON.parse(row[col_name]);
+              // The parsed value should be an array
+              if (Array.isArray(parsed)) {
+                formatted_return_data[col_name] = parsed;
+              } else {
+                // Fallback: if it's not an array, wrap it (shouldn't happen with new format)
+                formatted_return_data[col_name] = [parsed];
+              }
+              break; // Only process first row (queries/mutations return single row)
             }
           }
-          formatted_return_data[col_name] = gathered_rows;
         }
 
 

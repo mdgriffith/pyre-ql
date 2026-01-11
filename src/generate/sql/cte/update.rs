@@ -63,12 +63,8 @@ pub fn update_to_string(
     // Always generate the typed response query - mutations must return typed data
     let query_field_name = &query_field.name;
     // Use the same table_name as the UPDATE statement for consistency
-    let typed_response_sql = generate_typed_response_query(
-        table,
-        query_field,
-        &table_name,
-        &where_clause,
-    );
+    let typed_response_sql =
+        generate_typed_response_query(table, query_field, &table_name, &where_clause);
     statements.push(to_sql::include(typed_response_sql));
 
     // Generate affected rows query if requested
@@ -92,7 +88,7 @@ fn generate_typed_response_query(
 ) -> String {
     let query_field_name = &query_field.name;
     let quoted_table_name = string::quote(table_name);
-    
+
     // Replace table name in WHERE clause with alias 't'
     // Use the exact same replacement logic as generate_affected_rows_query
     // quoted_table_name is already "users" (with quotes), so we need to match "users"."column"
@@ -104,11 +100,8 @@ fn generate_typed_response_query(
 
     let mut sql = String::new();
     sql.push_str("select\n");
-    sql.push_str("  json_object(\n");
-    sql.push_str(&format!(
-        "    '{}', coalesce(json_group_array(\n      json_object(\n",
-        query_field_name
-    ));
+    sql.push_str("  coalesce(json_group_array(\n");
+    sql.push_str("    json_object(\n");
 
     // Generate JSON object fields directly from table
     let mut first_field = true;
@@ -129,7 +122,7 @@ fn generate_typed_response_query(
                                 sql.push_str(",\n");
                             }
                             sql.push_str(&format!(
-                                "        '{}', t.{}",
+                                "      '{}', t.{}",
                                 aliased_field_name,
                                 string::quote(&query_field.name)
                             ));
@@ -143,7 +136,7 @@ fn generate_typed_response_query(
         }
     }
 
-    sql.push_str("\n      )\n    ), json('[]'))\n  ) as ");
+    sql.push_str("\n    )\n  ), json('[]')) as ");
     sql.push_str(query_field_name);
     sql.push_str("\nfrom ");
     sql.push_str(&quoted_table_name);

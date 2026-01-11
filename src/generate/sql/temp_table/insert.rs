@@ -121,11 +121,8 @@ pub fn insert_to_string(
 
     let mut final_statement = String::new();
     final_statement.push_str("select\n");
-    final_statement.push_str("  json_object(\n");
-    final_statement.push_str(&format!(
-        "    '{}', coalesce(json_group_array(\n      json_object(\n",
-        query_field_name
-    ));
+    final_statement.push_str("  coalesce(json_group_array(\n");
+    final_statement.push_str("    json_object(\n");
 
     // Generate JSON object fields directly from table
     let mut first_field = true;
@@ -146,7 +143,7 @@ pub fn insert_to_string(
                                 final_statement.push_str(",\n");
                             }
                             final_statement.push_str(&format!(
-                                "        '{}', t.{}",
+                                "      '{}', t.{}",
                                 aliased_field_name,
                                 string::quote(&query_field.name)
                             ));
@@ -160,7 +157,7 @@ pub fn insert_to_string(
         }
     }
 
-    final_statement.push_str("\n      )\n    ), json('[]'))\n  ) as ");
+    final_statement.push_str("\n    )\n  ), json('[]')) as ");
     final_statement.push_str(query_field_name);
     final_statement.push_str("\nfrom ");
     final_statement.push_str(&primary_table_name);
@@ -574,13 +571,13 @@ fn to_table_fieldname(
             if ast::is_primary_key(col) {
                 return vec![];
             }
-            
+
             // Check if this is a union type column
             match &col.serialization_type {
                 ast::SerializationType::FromType(typename) => {
                     // Union type column - need discriminator + variant-specific columns
                     let mut result = vec![query_field.name.clone()]; // discriminator column
-                    
+
                     // Get variant-specific columns based on the value being set
                     if let Some(set_value) = &query_field.set {
                         if let ast::QueryValue::LiteralTypeValue((_, details)) = set_value {
@@ -588,14 +585,19 @@ fn to_table_fieldname(
                             if let Some((_, type_)) = context.types.get(typename) {
                                 if let typecheck::Type::OneOf { variants } = type_ {
                                     // Find the variant being used
-                                    if let Some(variant) = variants.iter().find(|v| v.name == details.name) {
+                                    if let Some(variant) =
+                                        variants.iter().find(|v| v.name == details.name)
+                                    {
                                         // Add variant-specific field columns
                                         if let Some(variant_fields) = &variant.fields {
                                             let base_name = format!("{}__", query_field.name);
                                             for variant_field in variant_fields {
                                                 match variant_field {
                                                     ast::Field::Column(variant_col) => {
-                                                        let column_name = format!("{}{}", base_name, variant_col.name);
+                                                        let column_name = format!(
+                                                            "{}{}",
+                                                            base_name, variant_col.name
+                                                        );
                                                         result.push(column_name);
                                                     }
                                                     _ => {}
@@ -607,7 +609,7 @@ fn to_table_fieldname(
                             }
                         }
                     }
-                    
+
                     return result;
                 }
                 _ => {
@@ -637,14 +639,14 @@ fn to_field_insert_values(
             .fields
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &field.name));
-        
+
         // Skip primary keys - they're auto-generated and shouldn't be in INSERT values
         if let Some(ast::Field::Column(col)) = table_field {
             if ast::is_primary_key(col) {
                 continue;
             }
         }
-        
+
         match &field.set {
             None => (),
             Some(val) => {
@@ -652,28 +654,44 @@ fn to_field_insert_values(
                 if let ast::QueryValue::LiteralTypeValue((_, details)) = val {
                     // Find the table field to check if it's a union type
                     if let Some(ast::Field::Column(col)) = table_field {
-                        if let ast::SerializationType::FromType(_typename) = &col.serialization_type {
+                        if let ast::SerializationType::FromType(_typename) = &col.serialization_type
+                        {
                             // This is a union type - need discriminator + variant field values
                             // Add discriminator value (variant name)
                             result.push(format!("'{}'", details.name));
-                            
+
                             // Add variant field values in order
                             if let Some(variant_fields) = &details.fields {
                                 // Get the union type definition to find variant field order
-                                if let ast::SerializationType::FromType(typename) = &col.serialization_type {
+                                if let ast::SerializationType::FromType(typename) =
+                                    &col.serialization_type
+                                {
                                     if let Some((_, type_)) = context.types.get(typename) {
                                         if let typecheck::Type::OneOf { variants } = type_ {
-                                            if let Some(variant) = variants.iter().find(|v| v.name == details.name) {
+                                            if let Some(variant) =
+                                                variants.iter().find(|v| v.name == details.name)
+                                            {
                                                 if let Some(variant_field_defs) = &variant.fields {
                                                     // Create a map of field names to values for quick lookup
-                                                    let field_map: std::collections::HashMap<&String, &ast::QueryValue> = 
-                                                        variant_fields.iter().map(|(name, val)| (name, val)).collect();
-                                                    
+                                                    let field_map: std::collections::HashMap<
+                                                        &String,
+                                                        &ast::QueryValue,
+                                                    > = variant_fields
+                                                        .iter()
+                                                        .map(|(name, val)| (name, val))
+                                                        .collect();
+
                                                     // Add values in the order they appear in the variant definition
                                                     for variant_field_def in variant_field_defs {
-                                                        if let ast::Field::Column(variant_col) = variant_field_def {
-                                                            if let Some(value) = field_map.get(&variant_col.name) {
-                                                                result.push(to_sql::render_value(value));
+                                                        if let ast::Field::Column(variant_col) =
+                                                            variant_field_def
+                                                        {
+                                                            if let Some(value) =
+                                                                field_map.get(&variant_col.name)
+                                                            {
+                                                                result.push(to_sql::render_value(
+                                                                    value,
+                                                                ));
                                                             }
                                                         }
                                                     }
@@ -683,12 +701,12 @@ fn to_field_insert_values(
                                     }
                                 }
                             }
-                            
+
                             continue; // Skip the regular render_value call
                         }
                     }
                 }
-                
+
                 // Regular value (not a union type or union type without fields)
                 let str = to_sql::render_value(&val);
                 result.push(str);

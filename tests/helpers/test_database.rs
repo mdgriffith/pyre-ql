@@ -695,67 +695,33 @@ impl TestDatabase {
                 continue;
             }
 
-            // Process rows - queries return JSON in a column named "result"
+            // Process rows - queries return JSON in columns named after field names
             while let Some(row) = rows_set.next().await.map_err(TestError::Database)? {
-                // Look for a column named "result" (or use the first column if "result" doesn't exist)
-                let mut found_result = false;
                 for i in 0..column_count {
                     let col_name = rows_set.column_name(i).ok_or(TestError::NoQueryFound)?;
 
                     // Get the JSON value from the column
                     if let Ok(json_str) = row.get::<String>(i as i32) {
                         if let Ok(json_value) = serde_json::from_str::<JsonValue>(&json_str) {
-                            // If this is the "result" column, it contains an object with query field names as keys
-                            if col_name == "result" {
-                                if let JsonValue::Object(obj) = json_value {
-                                    // Extract each field from the result object
-                                    for (key, value) in obj {
-                                        match value {
-                                            JsonValue::Array(arr) => {
-                                                result
-                                                    .entry(key.clone())
-                                                    .or_insert_with(Vec::new)
-                                                    .extend(arr);
-                                            }
-                                            JsonValue::Object(_) => {
-                                                result
-                                                    .entry(key.clone())
-                                                    .or_insert_with(Vec::new)
-                                                    .push(value);
-                                            }
-                                            _ => {
-                                                result
-                                                    .entry(key.clone())
-                                                    .or_insert_with(Vec::new)
-                                                    .push(value);
-                                            }
-                                        }
-                                    }
-                                    found_result = true;
-                                    break; // Found result column, no need to check other columns
+                            // Column name is the field name, value is already an array
+                            match json_value {
+                                JsonValue::Array(arr) => {
+                                    result
+                                        .entry(col_name.to_string())
+                                        .or_insert_with(Vec::new)
+                                        .extend(arr);
                                 }
-                            } else if !found_result && i == column_count - 1 {
-                                // Fallback: if we've checked all columns and no "result" column found,
-                                // treat the column name as field name (for backwards compatibility)
-                                match json_value {
-                                    JsonValue::Array(arr) => {
-                                        result
-                                            .entry(col_name.to_string())
-                                            .or_insert_with(Vec::new)
-                                            .extend(arr);
-                                    }
-                                    JsonValue::Object(_) => {
-                                        result
-                                            .entry(col_name.to_string())
-                                            .or_insert_with(Vec::new)
-                                            .push(json_value);
-                                    }
-                                    _ => {
-                                        result
-                                            .entry(col_name.to_string())
-                                            .or_insert_with(Vec::new)
-                                            .push(json_value);
-                                    }
+                                JsonValue::Object(_) => {
+                                    result
+                                        .entry(col_name.to_string())
+                                        .or_insert_with(Vec::new)
+                                        .push(json_value);
+                                }
+                                _ => {
+                                    result
+                                        .entry(col_name.to_string())
+                                        .or_insert_with(Vec::new)
+                                        .push(json_value);
                                 }
                             }
                         }
