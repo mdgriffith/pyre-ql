@@ -186,6 +186,24 @@ async fn test_update_affected_rows() -> Result<(), TestError> {
         libsql::Value::Text("Updated Name".to_string()),
     );
 
+    // Print the generated SQL for debugging
+    let sql_statements = db.generate_query_sql(update_query)?;
+    eprintln!("\n=== Generated SQL for test_update_affected_rows ===");
+    for (idx, (include, sql_stmt)) in sql_statements.iter().enumerate() {
+        match sql_stmt {
+            pyre::generate::sql::to_sql::SqlAndParams::Sql(sql) => {
+                eprintln!("\n[Statement {}] (include: {})", idx + 1, include);
+                eprintln!("{}", sql);
+            }
+            pyre::generate::sql::to_sql::SqlAndParams::SqlWithParams { sql, args } => {
+                eprintln!("\n[Statement {}] (include: {})", idx + 1, include);
+                eprintln!("{}", sql);
+                eprintln!("Args: {:?}", args);
+            }
+        }
+    }
+    eprintln!("\n=== End Generated SQL ===\n");
+
     let rows = db.execute_query_with_params(update_query, params).await?;
 
     // Check that we have result sets

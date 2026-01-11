@@ -48,8 +48,6 @@ pub fn insert_to_string(
     )));
 
     let parent_temp_table_name = &get_temp_table_name(&query_table_field);
-    let mut temp_table_created = false;
-    let mut multiple_table_inserts = false;
     let mut affected_tables: Vec<AffectedTable> = Vec::new();
 
     // Track parent table
@@ -61,14 +59,13 @@ pub fn insert_to_string(
             column_names,
             temp_table_name: parent_temp_table_name.clone(),
         });
-
-        // Create temp table for single-table inserts to track affected rows
-        statements.push(to_sql::ignore(format!(
-            "create temp table {} as\n  select last_insert_rowid() as id",
-            parent_temp_table_name
-        )));
-        temp_table_created = true;
     }
+
+    // Always create temp table - we need it for the typed response query
+    statements.push(to_sql::ignore(format!(
+        "create temp table {} as\n  select last_insert_rowid() as id",
+        parent_temp_table_name
+    )));
 
     for query_field in all_query_fields.iter() {
         let table_field = &table
@@ -82,16 +79,6 @@ pub fn insert_to_string(
             ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                 // We are inserting a link, so we need to do a nested insert
                 let linked_table = typecheck::get_linked_table(context, &link).unwrap();
-                multiple_table_inserts = true;
-
-                if !temp_table_created {
-                    statements.push(to_sql::ignore(format!(
-                        "create temp table {} as\n  select last_insert_rowid() as id",
-                        parent_temp_table_name
-                    )));
-
-                    temp_table_created = true;
-                }
 
                 // Track nested table
                 if include_affected_rows {
@@ -124,159 +111,82 @@ pub fn insert_to_string(
         }
     }
 
-    // The final selection - wrap in JSON format
-    if multiple_table_inserts {
-        let mut final_statement = String::new();
-        let query_field_name = &query_table_field.name;
-        let primary_table_name = select::get_tablename(
-            &select::TableAliasKind::Normal,
-            table,
-            &ast::get_aliased_name(&query_table_field),
-        );
-        
-        // Create a CTE that selects the data we need, filtered by the temp table
-        let table_alias = format!("selected__{}", ast::get_aliased_name(&query_table_field));
-        final_statement.push_str("with ");
-        final_statement.push_str(&table_alias);
-        final_statement.push_str(" as (\n");
-        final_statement.push_str("  select\n");
-        
-        // Select columns with explicit aliases so we can reference them in JSON generation
-        let mut column_selections = Vec::new();
-        for field in &query_table_field.fields {
-            match field {
-                ast::ArgField::Field(query_field) => {
-                    if let Some(table_field) = table
-                        .record
-                        .fields
-                        .iter()
-                        .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-                    {
-                        match table_field {
-                            ast::Field::Column(_) => {
-                                // Use the table alias 't' to reference columns
-                                column_selections.push(format!(
-                                    "    t.{} as {}",
-                                    string::quote(&query_field.name),
-                                    string::quote(&query_field.name)
-                                ));
+    // Always generate the final selection query - mutations must return typed data
+    let query_field_name = &query_table_field.name;
+    let primary_table_name = select::get_tablename(
+        &select::TableAliasKind::Normal,
+        table,
+        &ast::get_aliased_name(&query_table_field),
+    );
+
+    let mut final_statement = String::new();
+    final_statement.push_str("select\n");
+    final_statement.push_str("  json_object(\n");
+    final_statement.push_str(&format!(
+        "    '{}', coalesce(json_group_array(\n      json_object(\n",
+        query_field_name
+    ));
+
+    // Generate JSON object fields directly from table
+    let mut first_field = true;
+    for field in &query_table_field.fields {
+        match field {
+            ast::ArgField::Field(query_field) => {
+                if let Some(table_field) = table
+                    .record
+                    .fields
+                    .iter()
+                    .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
+                {
+                    let aliased_field_name = ast::get_aliased_name(query_field);
+
+                    match table_field {
+                        ast::Field::Column(_) => {
+                            if !first_field {
+                                final_statement.push_str(",\n");
                             }
-                            _ => {
-                                // Skip links - they'll be handled in JSON generation
-                            }
+                            final_statement.push_str(&format!(
+                                "        '{}', t.{}",
+                                aliased_field_name,
+                                string::quote(&query_field.name)
+                            ));
+                            first_field = false;
                         }
+                        _ => continue,
                     }
                 }
-                _ => continue,
             }
+            _ => continue,
         }
-        final_statement.push_str(&column_selections.join(",\n"));
-        final_statement.push_str("\n  from ");
-        final_statement.push_str(&primary_table_name);
-        final_statement.push_str(" t");
-
-        final_statement.push_str(&format!(
-            "\n  where\n    t.rowid in (select id from {})\n",
-            parent_temp_table_name
-        ));
-        final_statement.push_str(")\n");
-        
-        // Now wrap it in JSON format similar to final_select_formatted_as_json
-        final_statement.push_str("select\n");
-        final_statement.push_str("  json_object(\n");
-        final_statement.push_str(&format!(
-            "    '{}', coalesce(json_group_array(\n      json_object(\n",
-            query_field_name
-        ));
-        
-        // Generate JSON object fields - use actual field names from the selection
-        let mut first_field = true;
-        for field in &query_table_field.fields {
-            match field {
-                ast::ArgField::Field(query_field) => {
-                    if let Some(table_field) = table
-                        .record
-                        .fields
-                        .iter()
-                        .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-                    {
-                        let aliased_field_name = ast::get_aliased_name(query_field);
-                        
-                        match table_field {
-                            ast::Field::Column(_) => {
-                                if !first_field {
-                                    final_statement.push_str(",\n");
-                                }
-                                // The CTE columns are selected by their field names
-                                // Use the field name directly from the CTE
-                                final_statement.push_str(&format!(
-                                    "        '{}', {}.{}",
-                                    aliased_field_name, table_alias, query_field.name
-                                ));
-                                first_field = false;
-                            }
-                            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                                // For links, we need to aggregate them properly
-                                // Use the link name to reference the joined data
-                                if !first_field {
-                                    final_statement.push_str(",\n");
-                                }
-                                let linked_to_unique = if let Some(linked_table) =
-                                    typecheck::get_linked_table(context, link)
-                                {
-                                    ast::linked_to_unique_field_with_record(link, &linked_table.record)
-                                } else {
-                                    ast::linked_to_unique_field(link)
-                                };
-                                if linked_to_unique {
-                                    // Singular result - would need proper join handling
-                                    final_statement.push_str(&format!(
-                                        "        '{}', json('null')",
-                                        aliased_field_name
-                                    ));
-                                } else {
-                                    // Array result - would need proper aggregation
-                                    final_statement.push_str(&format!(
-                                        "        '{}', json('[]')",
-                                        aliased_field_name
-                                    ));
-                                }
-                                first_field = false;
-                            }
-                            _ => continue,
-                        }
-                    }
-                }
-                _ => continue,
-            }
-        }
-        
-        final_statement.push_str("\n      )\n    ), json('[]'))\n  ) as result\n");
-        final_statement.push_str(&format!("from {}\n", table_alias));
-
-        statements.push(to_sql::include(final_statement));
     }
+
+    final_statement.push_str("\n      )\n    ), json('[]'))\n  ) as ");
+    final_statement.push_str(query_field_name);
+    final_statement.push_str("\nfrom ");
+    final_statement.push_str(&primary_table_name);
+    final_statement.push_str(" t\n");
+    final_statement.push_str(&format!(
+        "join {} temp_table on t.rowid = temp_table.id",
+        parent_temp_table_name
+    ));
+
+    statements.push(to_sql::include(final_statement));
 
     // Generate affected rows query if requested
     // Execute this BEFORE the final selection to avoid lock conflicts
     if include_affected_rows && !affected_tables.is_empty() {
         let affected_rows_sql =
             generate_affected_rows_query_for_inserts(context, query_info, &affected_tables);
-        // Insert before the final selection if it exists
-        if multiple_table_inserts {
-            // Insert before the final selection (which is the last statement before this)
-            let final_idx = statements.len() - 1;
-            statements.insert(final_idx, to_sql::include(affected_rows_sql));
-        } else {
-            statements.push(to_sql::include(affected_rows_sql));
-        }
+        // Always insert before the final selection (which now always exists)
+        let final_idx = statements.len() - 1;
+        statements.insert(final_idx, to_sql::include(affected_rows_sql));
     }
 
     // Drop temp tables when not tracking affected rows (no result sets = safe to drop).
     // When tracking affected rows, temp tables are automatically cleaned up when the batch's
     // logical connection closes (see docs/sql_remote.md). We don't drop them explicitly to
     // avoid lock errors from dropping while result sets are active.
-    if multiple_table_inserts && !include_affected_rows {
+    if !include_affected_rows {
         drop_temp_tables(query_table_field, &mut statements);
     }
 
@@ -519,11 +429,7 @@ fn generate_affected_rows_query_for_inserts(
         for col in &affected_table.column_names {
             // Quote both table and column to handle special characters like __
             // Column names with __ are valid unquoted identifiers in SQLite, but we quote them for safety
-            row_value_parts.push(format!(
-                "{}.{}",
-                quoted_table_name,
-                string::quote(col)
-            ));
+            row_value_parts.push(format!("{}.{}", quoted_table_name, string::quote(col)));
         }
 
         // Build json_array call for headers
@@ -663,9 +569,53 @@ fn to_table_fieldname(
     query_field: &ast::QueryField,
 ) -> Vec<String> {
     match table_field {
-        ast::Field::Column(_) => {
-            let str = query_field.name.to_string();
-            return vec![str];
+        ast::Field::Column(col) => {
+            // Skip @id fields - they're auto-generated and shouldn't be in INSERT
+            if ast::is_primary_key(col) {
+                return vec![];
+            }
+            
+            // Check if this is a union type column
+            match &col.serialization_type {
+                ast::SerializationType::FromType(typename) => {
+                    // Union type column - need discriminator + variant-specific columns
+                    let mut result = vec![query_field.name.clone()]; // discriminator column
+                    
+                    // Get variant-specific columns based on the value being set
+                    if let Some(set_value) = &query_field.set {
+                        if let ast::QueryValue::LiteralTypeValue((_, details)) = set_value {
+                            // Get the union type definition
+                            if let Some((_, type_)) = context.types.get(typename) {
+                                if let typecheck::Type::OneOf { variants } = type_ {
+                                    // Find the variant being used
+                                    if let Some(variant) = variants.iter().find(|v| v.name == details.name) {
+                                        // Add variant-specific field columns
+                                        if let Some(variant_fields) = &variant.fields {
+                                            let base_name = format!("{}__", query_field.name);
+                                            for variant_field in variant_fields {
+                                                match variant_field {
+                                                    ast::Field::Column(variant_col) => {
+                                                        let column_name = format!("{}{}", base_name, variant_col.name);
+                                                        result.push(column_name);
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    return result;
+                }
+                _ => {
+                    // Regular column
+                    let str = query_field.name.to_string();
+                    return vec![str];
+                }
+            }
         }
         _ => vec![],
     }
@@ -681,9 +631,65 @@ fn to_field_insert_values(
     let mut result = vec![];
 
     for field in fields {
+        // Find the table field to check if it's a primary key or union type
+        let table_field = table
+            .record
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(&f, &field.name));
+        
+        // Skip primary keys - they're auto-generated and shouldn't be in INSERT values
+        if let Some(ast::Field::Column(col)) = table_field {
+            if ast::is_primary_key(col) {
+                continue;
+            }
+        }
+        
         match &field.set {
             None => (),
             Some(val) => {
+                // Check if this is a union type value
+                if let ast::QueryValue::LiteralTypeValue((_, details)) = val {
+                    // Find the table field to check if it's a union type
+                    if let Some(ast::Field::Column(col)) = table_field {
+                        if let ast::SerializationType::FromType(_typename) = &col.serialization_type {
+                            // This is a union type - need discriminator + variant field values
+                            // Add discriminator value (variant name)
+                            result.push(format!("'{}'", details.name));
+                            
+                            // Add variant field values in order
+                            if let Some(variant_fields) = &details.fields {
+                                // Get the union type definition to find variant field order
+                                if let ast::SerializationType::FromType(typename) = &col.serialization_type {
+                                    if let Some((_, type_)) = context.types.get(typename) {
+                                        if let typecheck::Type::OneOf { variants } = type_ {
+                                            if let Some(variant) = variants.iter().find(|v| v.name == details.name) {
+                                                if let Some(variant_field_defs) = &variant.fields {
+                                                    // Create a map of field names to values for quick lookup
+                                                    let field_map: std::collections::HashMap<&String, &ast::QueryValue> = 
+                                                        variant_fields.iter().map(|(name, val)| (name, val)).collect();
+                                                    
+                                                    // Add values in the order they appear in the variant definition
+                                                    for variant_field_def in variant_field_defs {
+                                                        if let ast::Field::Column(variant_col) = variant_field_def {
+                                                            if let Some(value) = field_map.get(&variant_col.name) {
+                                                                result.push(to_sql::render_value(value));
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            continue; // Skip the regular render_value call
+                        }
+                    }
+                }
+                
+                // Regular value (not a union type or union type without fields)
                 let str = to_sql::render_value(&val);
                 result.push(str);
             }

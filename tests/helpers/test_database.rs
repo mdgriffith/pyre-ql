@@ -241,12 +241,6 @@ impl TestDatabase {
         // Extract parameter names in order
         let param_names: Vec<String> = query.args.iter().map(|arg| arg.name.clone()).collect();
 
-        // Build parameter values in order
-        let param_values: Vec<libsql::Value> = param_names
-            .iter()
-            .map(|name| params.get(name).cloned().unwrap_or(libsql::Value::Null))
-            .collect();
-
         let sql_statements = self.generate_query_sql(query_source)?;
 
         let conn = self.db.connect().map_err(TestError::Database)?;
@@ -256,6 +250,31 @@ impl TestDatabase {
         for (include, sql_stmt) in sql_statements {
             match sql_stmt {
                 SqlAndParams::Sql(sql) => {
+                    // Build parameter values in the order they appear in THIS SQL statement
+                    let mut param_values_for_stmt = Vec::new();
+                    let mut seen_params = std::collections::HashSet::new();
+                    
+                    // Find parameters in the order they appear in SQL
+                    let mut chars = sql.chars().peekable();
+                    while let Some(ch) = chars.next() {
+                        if ch == '$' {
+                            let mut param_name = String::new();
+                            while let Some(&next_ch) = chars.peek() {
+                                if next_ch.is_alphanumeric() || next_ch == '_' {
+                                    param_name.push(chars.next().unwrap());
+                                } else {
+                                    break;
+                                }
+                            }
+                            if param_names.contains(&param_name) && !seen_params.contains(&param_name) {
+                                seen_params.insert(param_name.clone());
+                                param_values_for_stmt.push(
+                                    params.get(&param_name).cloned().unwrap_or(libsql::Value::Null)
+                                );
+                            }
+                        }
+                    }
+
                     let sql_with_params = if param_names.is_empty() {
                         sql.clone()
                     } else {
@@ -266,7 +285,7 @@ impl TestDatabase {
                         // This statement returns results - use query()
                         // Note: Rows objects may hold locks until consumed, but we need to return them
                         // The caller is responsible for consuming rows before executing more statements
-                        if param_values.is_empty() {
+                        if param_values_for_stmt.is_empty() {
                             let rows = conn
                                 .query(&sql_with_params, ())
                                 .await
@@ -276,7 +295,7 @@ impl TestDatabase {
                             let rows = conn
                                 .query(
                                     &sql_with_params,
-                                    libsql::params_from_iter(param_values.clone()),
+                                    libsql::params_from_iter(param_values_for_stmt.clone()),
                                 )
                                 .await
                                 .map_err(TestError::Database)?;
@@ -289,7 +308,7 @@ impl TestDatabase {
                         let has_returning = sql_with_params.to_uppercase().contains("RETURNING");
                         if has_returning {
                             // Statement has RETURNING, so it returns rows - use query() but don't add to results
-                            if param_values.is_empty() {
+                            if param_values_for_stmt.is_empty() {
                                 let mut rows = conn
                                     .query(&sql_with_params, ())
                                     .await
@@ -300,7 +319,7 @@ impl TestDatabase {
                                 let mut rows = conn
                                     .query(
                                         &sql_with_params,
-                                        libsql::params_from_iter(param_values.clone()),
+                                        libsql::params_from_iter(param_values_for_stmt.clone()),
                                     )
                                     .await
                                     .map_err(TestError::Database)?;
@@ -309,14 +328,14 @@ impl TestDatabase {
                             }
                         } else {
                             // No RETURNING, safe to use execute()
-                            if param_values.is_empty() {
+                            if param_values_for_stmt.is_empty() {
                                 conn.execute(&sql_with_params, ())
                                     .await
                                     .map_err(TestError::Database)?;
                             } else {
                                 conn.execute(
                                     &sql_with_params,
-                                    libsql::params_from_iter(param_values.clone()),
+                                    libsql::params_from_iter(param_values_for_stmt.clone()),
                                 )
                                 .await
                                 .map_err(TestError::Database)?;
@@ -325,9 +344,34 @@ impl TestDatabase {
                     }
                 }
                 SqlAndParams::SqlWithParams { sql, args } => {
+                    // Build parameter values in the order they appear in THIS SQL statement
+                    let mut param_values_for_stmt = Vec::new();
+                    let mut seen_params = std::collections::HashSet::new();
+                    
+                    // Find parameters in the order they appear in SQL
+                    let mut chars = sql.chars().peekable();
+                    while let Some(ch) = chars.next() {
+                        if ch == '$' {
+                            let mut param_name = String::new();
+                            while let Some(&next_ch) = chars.peek() {
+                                if next_ch.is_alphanumeric() || next_ch == '_' {
+                                    param_name.push(chars.next().unwrap());
+                                } else {
+                                    break;
+                                }
+                            }
+                            if param_names.contains(&param_name) && !seen_params.contains(&param_name) {
+                                seen_params.insert(param_name.clone());
+                                param_values_for_stmt.push(
+                                    params.get(&param_name).cloned().unwrap_or(libsql::Value::Null)
+                                );
+                            }
+                        }
+                    }
+
                     let mut values: Vec<libsql::Value> =
                         args.into_iter().map(|s| libsql::Value::Text(s)).collect();
-                    values.extend(param_values.clone());
+                    values.extend(param_values_for_stmt);
                     let sql_with_params = if param_names.is_empty() {
                         sql.clone()
                     } else {

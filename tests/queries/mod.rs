@@ -2,6 +2,7 @@ mod affected_rows;
 mod basic;
 mod limit;
 mod multiple_inserts;
+mod mutation_responses;
 mod permissions;
 mod relationship;
 mod union_types;

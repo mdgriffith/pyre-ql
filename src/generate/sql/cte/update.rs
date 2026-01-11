@@ -54,21 +54,107 @@ pub fn update_to_string(
     );
     result.push_str(&where_clause);
 
+    // Always execute UPDATE (with or without RETURNING)
     if include_affected_rows {
-        // Execute UPDATE with RETURNING
         result.push_str(" returning *");
-        statements.push(to_sql::ignore(result.clone()));
+    }
+    statements.push(to_sql::ignore(result));
 
-        // Generate the affected rows query - select rows matching the WHERE conditions
-        // Note: For UPDATE, this selects the updated rows (after update)
+    // Always generate the typed response query - mutations must return typed data
+    let query_field_name = &query_field.name;
+    // Use the same table_name as the UPDATE statement for consistency
+    let typed_response_sql = generate_typed_response_query(
+        table,
+        query_field,
+        &table_name,
+        &where_clause,
+    );
+    statements.push(to_sql::include(typed_response_sql));
+
+    // Generate affected rows query if requested
+    // Execute this BEFORE the final selection to avoid lock conflicts
+    if include_affected_rows {
         let affected_rows_sql =
             generate_affected_rows_query(context, query_info, table, query_field, &where_clause);
-        statements.push(to_sql::include(affected_rows_sql));
-    } else {
-        statements.push(to_sql::ignore(result));
+        // Insert before the final selection (which now always exists)
+        let final_idx = statements.len() - 1;
+        statements.insert(final_idx, to_sql::include(affected_rows_sql));
     }
 
     statements
+}
+
+fn generate_typed_response_query(
+    table: &typecheck::Table,
+    query_field: &ast::QueryField,
+    table_name: &str,
+    where_clause: &str,
+) -> String {
+    let query_field_name = &query_field.name;
+    let quoted_table_name = string::quote(table_name);
+    
+    // Replace table name in WHERE clause with alias 't'
+    // Use the exact same replacement logic as generate_affected_rows_query
+    // quoted_table_name is already "users" (with quotes), so we need to match "users"."column"
+    let mut where_with_alias = where_clause.to_string();
+    // Pattern 1: "users"."id" -> t."id" (most common)
+    where_with_alias = where_with_alias.replace(&format!("{}.\"", quoted_table_name), "t.\"");
+    // Pattern 2: users.id -> t.id (unquoted, shouldn't happen but be safe)
+    where_with_alias = where_with_alias.replace(&format!("{}.", table_name), "t.");
+
+    let mut sql = String::new();
+    sql.push_str("select\n");
+    sql.push_str("  json_object(\n");
+    sql.push_str(&format!(
+        "    '{}', coalesce(json_group_array(\n      json_object(\n",
+        query_field_name
+    ));
+
+    // Generate JSON object fields directly from table
+    let mut first_field = true;
+    for field in &query_field.fields {
+        match field {
+            ast::ArgField::Field(query_field) => {
+                if let Some(table_field) = table
+                    .record
+                    .fields
+                    .iter()
+                    .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
+                {
+                    let aliased_field_name = ast::get_aliased_name(query_field);
+
+                    match table_field {
+                        ast::Field::Column(_) => {
+                            if !first_field {
+                                sql.push_str(",\n");
+                            }
+                            sql.push_str(&format!(
+                                "        '{}', t.{}",
+                                aliased_field_name,
+                                string::quote(&query_field.name)
+                            ));
+                            first_field = false;
+                        }
+                        _ => continue,
+                    }
+                }
+            }
+            _ => continue,
+        }
+    }
+
+    sql.push_str("\n      )\n    ), json('[]'))\n  ) as ");
+    sql.push_str(query_field_name);
+    sql.push_str("\nfrom ");
+    sql.push_str(&quoted_table_name);
+    sql.push_str(" t");
+    if !where_with_alias.trim().is_empty() {
+        // WHERE clause already includes "where\n" prefix, so just append it
+        sql.push_str("\n");
+        sql.push_str(&where_with_alias);
+    }
+
+    sql
 }
 
 fn generate_affected_rows_query(
@@ -101,8 +187,18 @@ fn generate_affected_rows_query(
     // Note: For UPDATE, this selects rows after the update, so the WHERE conditions
     // should still match the updated rows
     // Replace table name in WHERE clause with alias 't'
+    // WHERE clauses use format: "users"."id" so we need to replace "users"." with t."
     let quoted_table_name = string::quote(&table_name);
-    let where_with_alias = where_clause.replace(&format!("{}.", quoted_table_name), "t.");
+    // Replace quoted table name references: "users"."column" -> t."column"
+    // The WHERE clause format is: "where\n "users"."id" = $id\n"
+    // We need to replace "users"." with t." to use the alias
+    // quoted_table_name is already "users" (with quotes), so we need to match "users"."column"
+    let mut where_with_alias = where_clause.to_string();
+    // Pattern 1: "users"."id" -> t."id" (most common)
+    // quoted_table_name is "users", so we match {quoted_table_name}." which is "users"."
+    where_with_alias = where_with_alias.replace(&format!("{}.\"", quoted_table_name), "t.\"");
+    // Pattern 2: users.id -> t.id (unquoted, shouldn't happen but be safe)
+    where_with_alias = where_with_alias.replace(&format!("{}.", table_name), "t.");
     // Format: { table_name, headers, rows: [[...], [...]] }
     format!(
         "select json_group_array(json(affected_row)) as _affectedRows\nfrom (\n  select json_object(\n    'table_name', '{}',\n    'headers', json_array({}),\n    'rows', json_group_array(json_array({}))\n  ) as affected_row\n  from {} t\n{}\n)",
