@@ -71,8 +71,9 @@ export default function Clients({
                     <div className="clients-empty">No posts</div>
                   ) : (
                     posts.map((post) => (
-                      <div key={post.id} className="clients-post-card">
+                      <div key={post.id} className={`clients-post-card ${!post.published ? 'unpublished' : ''}`}>
                         <div className="clients-post-title">{post.title || 'Untitled'}</div>
+                        <div className="clients-post-content">{post.content || ''}</div>
                       </div>
                     ))
                   )}
