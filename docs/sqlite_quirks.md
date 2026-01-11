@@ -218,13 +218,15 @@ SQLite temporary tables (`CREATE TEMP TABLE`) are:
 
 **Cleanup Behavior:**
 - **Local SQLite**: Temp tables persist until the connection closes. Pyre drops them explicitly when safe (no active result sets).
-- **Remote libsql**: When using `@libsql/client` with `batch()`, temp tables are automatically cleaned up when the batch's logical connection closes. See [sql_remote.md](./sql_remote.md) for details.
+- **Remote libsql**: When using `@libsql/client` with `batch()`, temp tables **persist across batches** when reusing the same client connection. They are only dropped when the connection closes. See [sql_remote.md](./sql_remote.md) for details.
 - Temp tables are connection-specific, so they don't interfere with other connections
+- **Important**: When tracking affected rows, Pyre does NOT drop temp tables explicitly (to avoid lock errors), which means they persist across batches and can cause `table already exists` errors
 
 **Best Practices:**
 - Use descriptive names to avoid conflicts: `inserted_post`, `deleted_user`, etc.
-- When using libsql remotely, rely on automatic cleanup (no explicit DROP needed)
+- **When reusing the same client**: Either drop temp tables explicitly after each batch, use unique names per execution, or use `CREATE TEMP TABLE IF NOT EXISTS` / `DROP TABLE IF EXISTS` patterns
 - For local SQLite, drop temp tables explicitly only when no result sets are active
+- Consider using unique temp table names (e.g., with timestamps or UUIDs) if you need to avoid conflicts across batches
 
 ## JSON Functions
 

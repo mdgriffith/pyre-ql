@@ -7,7 +7,6 @@
 
 export * from "./init";
 export * from "./schema";
-export * from "./mutations";
 export * from "./query";
 export * from "./sync";
 
@@ -18,6 +17,11 @@ export type {
     Session,
     ConnectedSession,
     SessionValue,
+    AffectedRow,
+    QueryMetadata,
+    QueryMap,
+    SqlInfo,
+    Schema,
 } from "./query";
 
 export type {
@@ -25,7 +29,3 @@ export type {
     SyncPageResult,
     SyncSession,
 } from "./sync";
-
-export type {
-    AffectedRow,
-} from "./mutations";

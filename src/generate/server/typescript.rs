@@ -272,7 +272,6 @@ pub fn generate_queries(
         );
     }
 
-    let formatter = to_formatter();
     let is_multidb = database.schemas.len() > 1;
 
     // Generate individual query files
@@ -282,7 +281,7 @@ pub fn generate_queries(
                 match all_query_info.get(&q.name) {
                     Some(query_info) => {
                         let filename = base_out_dir.join("query").join(format!("{}.ts", crate::ext::string::decapitalize(&q.name)));
-                        let content = to_query_file(context, query_info, q, &formatter, is_multidb);
+                        let content = to_query_file(context, query_info, q, is_multidb);
                         files.push(generate_text_file(filename, content));
                     }
                     None => {
@@ -298,8 +297,7 @@ pub fn generate_queries(
 fn generate_runner(_context: &typecheck::Context, base_out_dir: &Path, query_list: &ast::QueryList) -> filesystem::GeneratedFile<String> {
     let mut content = String::new();
 
-    content.push_str("import * as Env from \"./db/env\";\n");
-    content.push_str("import * as Db from \"./db\";\n");
+    content.push_str("import type { QueryMap } from '../../../../../../wasm/server';\n");
     
     // Import all query modules
     for operation in &query_list.queries {
@@ -315,36 +313,25 @@ fn generate_runner(_context: &typecheck::Context, base_out_dir: &Path, query_lis
         }
     }
 
-    // Generate the run function
-    content.push_str("\nexport const run = async (\n");
-    content.push_str("  env: Env.Config,\n");
-    content.push_str("  id: string,\n");
-    content.push_str("  session: Env.Session,\n");
-    content.push_str("  args: any,\n");
-    content.push_str("): Promise<Db.ExecuteResult> => {\n");
-    content.push_str("    switch (id) {\n");
+    // Generate the query map
+    content.push_str("\nexport const queries: QueryMap = {\n");
 
-    // Add case for each query
+    // Add entry for each query
+    let mut first = true;
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
-                content.push_str(&format!("        case \"{}\":\n", q.interface_hash));
-                content.push_str(&format!(
-                    "            return {}.query.run(env, session, args);\n",
-                    &q.name
-                ));
+                if !first {
+                    content.push_str(",\n");
+                }
+                content.push_str(&format!("  \"{}\": {}.query", q.interface_hash, &q.name));
+                first = false;
             }
             _ => continue,
         }
     }
 
-    // Add default case
-    content.push_str("        default:\n");
-    content.push_str(
-        "            return { kind: \"error\", errorType: Db.ErrorType.UnknownQuery, message: `Unknown query ID: ${id}` }\n"
-    );
-    content.push_str("    }\n");
-    content.push_str("};\n");
+    content.push_str("\n};\n");
 
     generate_text_file(
         base_out_dir.join("query.ts"),
@@ -470,42 +457,13 @@ fn to_query_file(
     context: &typecheck::Context,
     query_info: &typecheck::QueryInfo,
     query: &ast::Query,
-    formatter: &typealias::TypeFormatter,
-    is_multidb: bool,
+    _is_multidb: bool,
 ) -> String {
     let mut result = "".to_string();
     
-    // Collect watchers first to determine if Watched import is needed
-    let mut watchers = vec![];
-    for field in &query.fields {
-        match field {
-            ast::TopLevelQueryField::Field(query_field) => {
-                if let Some(table) = context.tables.get(&query_field.name) {
-                    for watched_operation in ast::to_watched_operations(&table.record) {
-                        let name = format!(
-                            "{}{}",
-                            table.record.name,
-                            watched::operation_name(&watched_operation)
-                        );
-                        watchers.push(format!(
-                            "{{ kind: Watched.WatchedKind.{}, data: {{}} }}",
-                            name
-                        ));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    
     // Add imports
-    result.push_str("import * as Ark from 'arktype';\n");
-    result.push_str("import * as Db from '../db';\n");
-    if !watchers.is_empty() {
-        result.push_str("import * as Watched from '../watched';\n");
-    }
-    result.push_str("import * as Decode from '../db/decode';\n");
-    result.push_str("import * as Env from '../db/env';\n\n");
+    result.push_str("import * as Env from '../db/env';\n");
+    result.push_str("import type { QueryMetadata } from '../../../../../../wasm/server';\n\n");
 
     // Input args decoder
     to_query_input_decoder(context, &query, &mut result);
@@ -550,10 +508,6 @@ fn to_query_file(
 
     result.push_str("];\n\n\n");
 
-    // return_data_aliases(context, query, &mut result);
-
-    typealias::return_data_aliases(context, query, &mut result, formatter);
-
     // Rectangle data decoder
     // result.push_str("export const ReturnRectangle = Ark.type({\n");
     // for field in &query.fields {
@@ -576,45 +530,70 @@ fn to_query_file(
     // result.push_str("});\n\n");
 
     let session_args = get_session_args(&query_info.variables);
-
-    let primary_db_expr = if is_multidb {
-        format!("Env.DatabaseKey.{}", query_info.primary_db)
+    
+    // Generate session schema based on session args used
+    result.push_str("\nexport const session_schema: Record<string, string> = {\n");
+    let session = context
+        .session
+        .clone()
+        .unwrap_or_else(|| ast::default_session_details());
+    
+    // Extract session arg names from query_info.variables
+    let mut session_arg_names: Vec<String> = Vec::new();
+    for (_name, info) in &query_info.variables {
+        match info {
+            typecheck::ParamInfo::Defined {
+                from_session,
+                used,
+                session_name,
+                ..
+            } => {
+                if *from_session && *used {
+                    if let Some(session_name_string) = session_name {
+                        session_arg_names.push(session_name_string.clone());
+                    }
+                }
+            }
+            _ => continue,
+        }
+    }
+    
+    if session_arg_names.is_empty() {
+        result.push_str("};\n");
     } else {
-        format!("\"{}\"", query_info.primary_db)
-    };
+        let mut first_session_field = true;
+        for field_name in &session_arg_names {
+            if let Some(column) = session.fields.iter().find_map(|f| match f {
+                ast::Field::Column(col) if &col.name == field_name => Some(col),
+                _ => None,
+            }) {
+                if !first_session_field {
+                    result.push_str(",\n");
+                }
+                let type_str = to_ts_type_string(column.nullable, &column.type_);
+                result.push_str(&format!("  {}: {}", crate::ext::string::quote(field_name), crate::ext::string::quote(&type_str)));
+                first_session_field = false;
+            }
+        }
+        result.push_str("\n};\n");
+    }
 
-    let validate = format!(
+    // Export query metadata
+    let metadata = format!(
         r#"
-export const query = Db.to_runner({{
+export const query: QueryMetadata = {{
   id: "{}",
-  primary_db: {},
-  attached_dbs: {},
   sql: sql,
-  session: Env.Session,
   session_args: {},
-  input: Input,
-  output: ReturnData,
-  watch_triggers: {}
-}});
-
-type Input = typeof Input.infer
+  input_schema: input_schema,
+  session_schema: session_schema
+}};
 "#,
         query.interface_hash,
-        primary_db_expr,
-        format!(
-            "[{}]",
-            query_info
-                .attached_dbs
-                .iter()
-                .map(|db| format!("Env.DatabaseKey.{}", db))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        session_args,
-        format_ts_list(watchers)
+        session_args
     );
 
-    result.push_str(&validate);
+    result.push_str(&metadata);
 
     // // Type Alisaes
     // result.push_str("// Return data\n");
@@ -687,19 +666,32 @@ fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
 }
 
 fn to_query_input_decoder(_context: &typecheck::Context, query: &ast::Query, result: &mut String) {
-    result.push_str("export const Input = Ark.type({");
+    result.push_str("export const input_schema: Record<string, string> = {");
     for arg in &query.args {
+        let type_str = to_ts_type_string(false, &arg.type_.clone().unwrap_or("unknown".to_string()));
         result.push_str(&format!(
             "\n  {}: {},",
             crate::ext::string::quote(&arg.name),
-            to_ts_type_decoder(
-                true,
-                false,
-                &arg.type_.clone().unwrap_or("unknown".to_string())
-            )
+            crate::ext::string::quote(&type_str)
         ));
     }
-    result.push_str("\n});\n");
+    result.push_str("\n};\n");
+}
+
+fn to_ts_type_string(nullable: bool, type_: &str) -> String {
+    let base_type = match type_ {
+        "String" => "string",
+        "Int" => "number",
+        "Float" => "number",
+        "Bool" => "boolean",
+        "DateTime" => "number",
+        _ => "unknown",
+    };
+    if nullable {
+        format!("{}?", base_type)
+    } else {
+        base_type.to_string()
+    }
 }
 
 fn to_flat_query_decoder(

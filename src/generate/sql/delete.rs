@@ -48,6 +48,13 @@ pub fn delete_to_string(
         ""
     };
 
+    // Drop temp table if it exists (from previous batch) before creating a new one
+    // This prevents "table already exists" errors when reusing the same client connection
+    statements.push(to_sql::ignore(format!(
+        "drop table if exists {}",
+        temp_table_name
+    )));
+    
     // Always create temp table - we need it for the typed response query
     statements.push(to_sql::ignore(format!(
         "create temp table {} as select * from {} {}",

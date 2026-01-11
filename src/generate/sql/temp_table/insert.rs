@@ -61,6 +61,13 @@ pub fn insert_to_string(
         });
     }
 
+    // Drop temp table if it exists (from previous batch) before creating a new one
+    // This prevents "table already exists" errors when reusing the same client connection
+    statements.push(to_sql::ignore(format!(
+        "drop table if exists {}",
+        parent_temp_table_name
+    )));
+    
     // Always create temp table - we need it for the typed response query
     statements.push(to_sql::ignore(format!(
         "create temp table {} as\n  select last_insert_rowid() as id",
@@ -187,9 +194,10 @@ pub fn insert_to_string(
     }
 
     // Drop temp tables when not tracking affected rows (no result sets = safe to drop).
-    // When tracking affected rows, temp tables are automatically cleaned up when the batch's
-    // logical connection closes (see docs/sql_remote.md). We don't drop them explicitly to
-    // avoid lock errors from dropping while result sets are active.
+    // When tracking affected rows, temp tables persist across batches when reusing the same
+    // client connection. We don't drop them explicitly to avoid lock errors from dropping
+    // while result sets are active, but this means temp tables will persist and can cause
+    // "table already exists" errors in subsequent batches. See docs/sql_remote.md for details.
     if !include_affected_rows {
         drop_temp_tables(query_table_field, &mut statements);
     }
@@ -356,6 +364,12 @@ pub fn insert_linked(
     // Create temp table for nested inserts if tracking affected rows
     // This must happen AFTER the insert to capture the inserted rowids
     if include_affected_rows {
+        // Drop temp table if it exists (from previous batch) before creating a new one
+        statements.push(to_sql::ignore(format!(
+            "drop table if exists {}",
+            temp_table_name
+        )));
+        
         // Create temp table with rowids of inserted rows by joining on foreign key
         let foreign_key = &link.foreign.fields[0];
         let local_key = &link.local_ids[0];

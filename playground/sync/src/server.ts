@@ -22,11 +22,20 @@ interface ConnectedClient {
 
 const DB_PATH = join(process.cwd(), "test.db");
 const DB_URL = `file:${DB_PATH}`;
-const QUERY_MODULE_PATH = join(process.cwd(), "pyre", "generated", "server", "typescript", "query");
 const connectedClients = new Map<string, ConnectedClient>();
 let nextSessionId = 1;
 
 const db = createClient({ url: DB_URL });
+
+// Import query map
+let queries: any;
+async function loadQueries() {
+    if (!queries) {
+        const queryModule = await import(join(process.cwd(), "pyre", "generated", "server", "typescript", "query"));
+        queries = queryModule.queries;
+    }
+    return queries;
+}
 
 // Routes
 app.get("/", (c) => {
@@ -135,11 +144,13 @@ app.post("/db/:req", async (c) => {
             ])
         );
 
+        // Load query map
+        const queryMap = await loadQueries();
+
         // Execute query with all connected sessions for sync delta calculation
         const result = await Pyre.runQuery(
             db,
-            QUERY_MODULE_PATH,
-            DB_URL,
+            queryMap,
             req,
             args,
             executingSession,
