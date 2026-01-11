@@ -120,7 +120,7 @@ pub fn render_value(value: &ast::QueryValue) -> String {
         }
         ast::QueryValue::Int((_, i)) => i.to_string(),
         ast::QueryValue::Float((_, f)) => f.to_string(),
-        ast::QueryValue::Bool((_, b)) => b.to_string(),
+        ast::QueryValue::Bool((_, b)) => if *b { "1" } else { "0" }.to_string(),
         ast::QueryValue::Null(_) => "null".to_string(),
         ast::QueryValue::LiteralTypeValue((_, details)) => {
             // Escape single quotes by doubling them (SQL standard)
