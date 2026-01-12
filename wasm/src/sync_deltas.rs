@@ -8,6 +8,15 @@ use std::collections::{HashMap, HashSet};
 use wasm_bindgen::prelude::*;
 
 // WASM-compatible types for sync deltas
+// Grouped format matching SQL output: one entry per table with multiple rows
+#[derive(Serialize, Deserialize)]
+pub struct AffectedRowTableGroupWasm {
+    pub table_name: String,
+    pub headers: Vec<String>,
+    pub rows: Vec<Vec<serde_json::Value>>, // Array of row arrays, each row array has values matching headers order
+}
+
+// Flat format for result output (one entry per row)
 #[derive(Serialize, Deserialize)]
 pub struct AffectedRowWasm {
     pub table_name: String,
@@ -16,9 +25,8 @@ pub struct AffectedRowWasm {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct ConnectedSessionWasm {
-    pub session_id: String,
-    pub fields: HashMap<String, SessionValueWasm>,
+pub struct SessionDataWasm {
+    pub session: HashMap<String, SessionValueWasm>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -55,22 +63,13 @@ pub struct SyncDeltasResultWasm {
     pub groups: Vec<AffectedRowGroupWasm>,
 }
 
-fn convert_session_wasm_to_rust(
-    session: &ConnectedSessionWasm,
-) -> (String, HashMap<String, RustSessionValue>) {
-    let session_rust = session
-        .fields
-        .iter()
-        .map(|(k, v)| (k.clone(), RustSessionValue::from((*v).clone())))
-        .collect();
-    (session.session_id.clone(), session_rust)
-}
-
-fn convert_affected_row_wasm_to_rust(row: &AffectedRowWasm) -> sync_deltas::AffectedRow {
-    sync_deltas::AffectedRow {
-        table_name: row.table_name.clone(),
-        row: row.row.clone(),
-        headers: row.headers.clone(),
+fn convert_table_group_wasm_to_rust(
+    group: &AffectedRowTableGroupWasm,
+) -> sync_deltas::AffectedRowTableGroup {
+    sync_deltas::AffectedRowTableGroup {
+        table_name: group.table_name.clone(),
+        headers: group.headers.clone(),
+        rows: group.rows.clone(),
     }
 }
 
@@ -97,8 +96,9 @@ fn convert_result_rust_to_wasm(result: sync_deltas::SyncDeltasResult) -> SyncDel
 }
 
 /// Calculate sync deltas for connected sessions based on affected rows from a mutation
+/// Accepts grouped format directly from SQL (no transformation needed)
 pub fn calculate_sync_deltas_wasm(
-    affected_rows: JsValue,
+    affected_row_groups: JsValue,
     connected_sessions: JsValue,
 ) -> Result<SyncDeltasResultWasm, String> {
     let introspection = match cache::get() {
@@ -106,36 +106,43 @@ pub fn calculate_sync_deltas_wasm(
         None => return Err("No schema found".to_string()),
     };
 
-    let affected_rows_wasm: Vec<AffectedRowWasm> = serde_wasm_bindgen::from_value(affected_rows)
-        .map_err(|_e| "Failed to parse affected rows".to_string())?;
+    // Parse grouped format directly from JavaScript
+    let affected_row_groups_wasm: Vec<AffectedRowTableGroupWasm> =
+        serde_wasm_bindgen::from_value(affected_row_groups)
+            .map_err(|_e| "Failed to parse affected row groups".to_string())?;
 
-    let connected_sessions_wasm: Vec<ConnectedSessionWasm> =
+    // Accept Map as HashMap<String, SessionDataWasm> where session_id comes from the map key
+    let connected_sessions_map: HashMap<String, SessionDataWasm> =
         serde_wasm_bindgen::from_value(connected_sessions)
             .map_err(|_e| "Failed to parse connected sessions".to_string())?;
 
     match &introspection.schema {
         introspect::SchemaResult::Success { context, .. } => {
-            // Convert WASM types to Rust types
-            let affected_rows_rust: Vec<sync_deltas::AffectedRow> = affected_rows_wasm
-                .iter()
-                .map(convert_affected_row_wasm_to_rust)
-                .collect();
-
-            let connected_sessions_rust: Vec<sync_deltas::ConnectedSession> =
-                connected_sessions_wasm
+            // Convert WASM types to Rust types (grouped format)
+            let affected_row_groups_rust: Vec<sync_deltas::AffectedRowTableGroup> =
+                affected_row_groups_wasm
                     .iter()
-                    .map(|s| {
-                        let (session_id, session_values) = convert_session_wasm_to_rust(s);
-                        sync_deltas::ConnectedSession {
-                            session_id,
-                            session: session_values,
-                        }
+                    .map(convert_table_group_wasm_to_rust)
+                    .collect();
+
+            // Convert HashMap<String, SessionDataWasm> directly to HashMap<String, HashMap<String, SessionValue>>
+            // Single pass conversion - extract session_id from map key, convert SessionValueWasm to SessionValue
+            let connected_sessions_rust: HashMap<String, HashMap<String, RustSessionValue>> =
+                connected_sessions_map
+                    .into_iter()
+                    .map(|(session_id, data)| {
+                        let session: HashMap<String, RustSessionValue> = data
+                            .session
+                            .into_iter()
+                            .map(|(k, v)| (k, RustSessionValue::from(v)))
+                            .collect();
+                        (session_id, session)
                     })
                     .collect();
 
-            // Calculate deltas
+            // Calculate deltas (now accepts grouped format directly)
             let result = sync_deltas::calculate_sync_deltas(
-                &affected_rows_rust,
+                &affected_row_groups_rust,
                 &connected_sessions_rust,
                 context,
             )

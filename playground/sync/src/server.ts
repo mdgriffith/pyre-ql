@@ -14,9 +14,7 @@ interface WebSocketData {
 
 interface ConnectedClient {
     sessionId: string;
-    session: {
-        fields: Record<string, any>;
-    };
+    session: Record<string, any>;
     ws: any; // Bun WebSocket
 }
 
@@ -27,15 +25,9 @@ let nextSessionId = 1;
 
 const db = createClient({ url: DB_URL });
 
-// Import query map
-let queries: any;
-async function loadQueries() {
-    if (!queries) {
-        const queryModule = await import(join(process.cwd(), "pyre", "generated", "server", "typescript", "query"));
-        queries = queryModule.queries;
-    }
-    return queries;
-}
+// Import query map - loaded once at startup
+const queryModule = await import(join(process.cwd(), "pyre", "generated", "server", "typescript", "query"));
+const queries = queryModule.queries;
 
 // Routes
 app.get("/", (c) => {
@@ -75,112 +67,77 @@ app.get("/queries", async (c) => {
 
 // Sync endpoint - Much simpler with helpers!
 app.get("/sync", async (c) => {
-    try {
-        // Get sessionId from query params
-        const sessionId = c.req.query("sessionId");
-        if (!sessionId) {
-            c.status(400);
-            return c.json({ error: "sessionId query parameter is required" });
-        }
 
-        // Look up client session from connected clients
-        const client = connectedClients.get(sessionId);
-        if (!client) {
-            c.status(404);
-            return c.json({ error: "Session not found. Client must be connected via WebSocket first." });
-        }
-
-        // Get syncCursor from query params (optional, defaults to empty)
-        const syncCursorParam = c.req.query("syncCursor");
-        let syncCursor: any = { tables: {} };
-        if (syncCursorParam) {
-            try {
-                syncCursor = JSON.parse(syncCursorParam);
-            } catch (e) {
-                c.status(400);
-                return c.json({ error: "Invalid syncCursor format. Must be valid JSON." });
-            }
-        }
-
-        // Use the sync handler - all the complex logic is abstracted!
-        const result = await Pyre.handleSync(db, syncCursor, client.session, 1000);
-        return c.json(result);
-    } catch (error: any) {
-        console.error("[Sync] Sync error:", error);
-        console.error("[Sync] Error stack:", error.stack);
-        c.status(500);
-        return c.json({ error: error.message || "Internal server error" });
+    // Get sessionId from query params
+    const sessionId = c.req.query("sessionId");
+    if (!sessionId) {
+        c.status(400);
+        return c.json({ error: "sessionId query parameter is required" });
     }
+
+    // Look up client session from connected clients
+    const client = connectedClients.get(sessionId);
+    if (!client) {
+        c.status(404);
+        return c.json({ error: "Session not found. Client must be connected via WebSocket first." });
+    }
+
+    // Get syncCursor from query params (optional, defaults to empty)
+    const syncCursorParam = c.req.query("syncCursor");
+    let syncCursor: any = { tables: {} };
+    if (syncCursorParam) {
+        try {
+            syncCursor = JSON.parse(syncCursorParam);
+        } catch (e) {
+            c.status(400);
+            return c.json({ error: "Invalid syncCursor format. Must be valid JSON." });
+        }
+    }
+
+    // Use the sync handler - all the complex logic is abstracted!
+    const result = await Pyre.handleSync(db, syncCursor, client.session, 1000);
+    return c.json(result);
+
 });
 
-// Query endpoint - Much simpler with helpers!
+
 app.post("/db/:req", async (c) => {
     const { req } = c.req.param();
     const args = await c.req.json();
     const sessionId = c.req.query("sessionId");
 
-    try {
-        // Get executing session from connected client or use default
-        let executingSession: { userId: number; role: string };
-        if (sessionId) {
-            const client = connectedClients.get(sessionId);
-            if (client) {
-                executingSession = {
-                    userId: client.session.fields.userId as number,
-                    role: client.session.fields.role as string,
-                };
-            } else {
-                executingSession = { userId: 1, role: "user" };
-            }
-        } else {
-            executingSession = { userId: 1, role: "user" };
-        }
+    // Get executing session from connected client or use default
+    // Pyre.runQuery accepts Session which is { [key: string]: any }, so we can pass session directly
+    const client = sessionId ? connectedClients.get(sessionId) : null;
+    const executingSession = client?.session ?? { userId: 1, role: "user" };
 
-        // Transform connectedClients to the format expected by runQuery
-        const connectedSessionsMap = new Map(
-            Array.from(connectedClients.entries()).map(([sessionId, client]) => [
-                sessionId,
-                { fields: client.session.fields as Record<string, any> },
-            ])
-        );
+    // Execute query with all connected clients for sync delta calculation
+    // Pyre.runQuery can extract session.fields from ConnectedClient objects
+    const result = await Pyre.runQuery(
+        db,
+        queries,
+        req,
+        args,
+        executingSession,
+        connectedClients
+    );
 
-        // Load query map
-        const queryMap = await loadQueries();
-
-        // Execute query with all connected sessions for sync delta calculation
-        const result = await Pyre.runQuery(
-            db,
-            queryMap,
-            req,
-            args,
-            executingSession,
-            connectedSessionsMap
-        );
-
-        if (result.kind === "error") {
-            c.status(500);
-            return c.json({ error: result.error?.message || "Query execution failed" });
-        }
-
-        // Broadcast sync deltas in background (fire-and-forget)
-        result.syncDeltas.sync((sessionId, message) => {
-            const client = connectedClients.get(sessionId);
-            if (client && client.ws.readyState === 1) {
-                client.ws.send(JSON.stringify(message));
-            }
-        }).catch((error) => {
-            // Log errors but don't block response
-            console.error("[SyncDeltas] Error broadcasting:", error);
-        });
-
-        // Return response immediately
-        return c.json(result.response);
-    } catch (error: any) {
-        console.error("[Query] Query execution error:", error);
-        console.error("[Query] Error stack:", error.stack);
+    if (result.kind === "error") {
         c.status(500);
-        return c.json({ error: error.message || "Internal server error" });
+        return c.json({ error: result.error?.message || "Query execution failed" });
     }
+
+    // Broadcast sync deltas in background (fire-and-forget, we're not awaiting it)
+    result.sync((sessionId, message) => {
+        const client = connectedClients.get(sessionId);
+        if (client && client.ws.readyState === 1) {
+            client.ws.send(JSON.stringify(message));
+        }
+    })
+
+    // Return response immediately
+    return c.json(result.response);
+
 });
 
 // Start server function
@@ -248,10 +205,8 @@ export default async function startServer() {
                 // Generate session ID
                 const sessionId = `session_${nextSessionId++}`;
                 const session = {
-                    fields: {
-                        userId: userId,
-                        role: "user",
-                    },
+                    userId: userId,
+                    role: "user",
                 };
 
                 const client: ConnectedClient = {
@@ -266,10 +221,7 @@ export default async function startServer() {
                 ws.send(JSON.stringify({
                     type: "connected",
                     sessionId,
-                    session: {
-                        userId: userId,
-                        role: "user",
-                    },
+                    session,
                 }));
             },
             close: (ws) => {

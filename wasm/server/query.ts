@@ -4,15 +4,6 @@ import * as wasm from "../pkg/pyre_wasm.js";
 export type SessionValue = null | number | string | Uint8Array;
 
 /**
- * Represents a row that was affected by a mutation.
- */
-export interface AffectedRow {
-    table_name: string;
-    row: Record<string, any>;
-    headers: string[];
-}
-
-/**
  * SQL statement information for a query.
  */
 export interface SqlInfo {
@@ -74,24 +65,14 @@ export interface QueryResult {
         errorType: string;
         message: string;
     };
-    /** Sync deltas handler - always present, no-op if there's nothing to sync */
-    syncDeltas: SyncDeltas;
-}
-
-/**
- * Handler for broadcasting sync deltas to connected clients.
- * Always present on QueryResult, but will be a no-op if there are no affected rows
- * or no connected sessions.
- */
-export interface SyncDeltas {
     /**
      * Broadcast sync deltas to connected clients.
-     * If there are no affected rows or no connected sessions, this is a no-op.
+     * Always present, but will be a no-op if there are no affected rows or no connected sessions.
      * 
      * @param sendToSession - Callback to send a message to a specific session
      * @example
      * ```typescript
-     * await result.syncDeltas.sync((sessionId, message) => {
+     * await result.sync((sessionId, message) => {
      *   const client = connectedClients.get(sessionId);
      *   if (client?.ws.readyState === 1) {
      *     client.ws.send(JSON.stringify(message));
@@ -102,67 +83,6 @@ export interface SyncDeltas {
     sync(sendToSession: (sessionId: string, message: any) => void): Promise<void>;
 }
 
-/**
- * Extract affected rows from a mutation result.
- * Mutations return affected rows in the `_affectedRows` field of the result data.
- */
-export function extractAffectedRows(resultData: any): AffectedRow[] {
-    const affectedRows: AffectedRow[] = [];
-
-    if (!resultData || !resultData._affectedRows) {
-        return affectedRows;
-    }
-
-    const affectedRowsValue = resultData._affectedRows;
-
-    let affectedRowsArray: any[];
-    if (typeof affectedRowsValue === "string") {
-        affectedRowsArray = JSON.parse(affectedRowsValue);
-    } else if (Array.isArray(affectedRowsValue)) {
-        affectedRowsArray = affectedRowsValue;
-    } else {
-        return affectedRows;
-    }
-
-    for (const tableGroup of affectedRowsArray) {
-        let groupData: any;
-        if (typeof tableGroup === "string") {
-            groupData = JSON.parse(tableGroup);
-        } else {
-            groupData = tableGroup;
-        }
-
-        // New format: { table_name, headers, rows: [[...], [...]] }
-        if (groupData.table_name && groupData.headers && groupData.rows) {
-            const tableName = groupData.table_name;
-            const headers = groupData.headers;
-            const rows = groupData.rows;
-
-            for (const rowArray of rows) {
-                const rowObject: Record<string, any> = {};
-                for (let i = 0; i < headers.length && i < rowArray.length; i++) {
-                    rowObject[headers[i]] = rowArray[i];
-                }
-
-                affectedRows.push({
-                    table_name: tableName,
-                    row: rowObject,
-                    headers: headers,
-                });
-            }
-        }
-        // Legacy format: { table_name, row: {...}, headers } (for backwards compatibility)
-        else if (groupData.table_name && groupData.row && groupData.headers) {
-            affectedRows.push({
-                table_name: groupData.table_name,
-                row: groupData.row,
-                headers: groupData.headers,
-            });
-        }
-    }
-
-    return affectedRows;
-}
 
 /**
  * Parse a type string (e.g., "string", "number?", "boolean[]") into type info.
@@ -349,12 +269,13 @@ function formatResultData(sqlItems: SqlInfo[], resultSets: any[]): any {
  * @param args - Query arguments
  * @param executingSession - The session executing the query
  * @param connectedSessions - Map of all connected sessions (for sync delta calculation)
- * @returns Query result with response and syncDeltas (always present)
+ * @returns Query result with response and sync function (always present)
  * @example
  * ```typescript
  * import { runQuery } from "pyre-wasm/server";
  * import { queries } from "./generated/server/typescript/query";
  * const result = await runQuery(db, queries, "createPost", args, session, connectedClients);
+ * await result.sync((sessionId, message) => { ... });
  * ```
  */
 export async function runQuery(
@@ -363,7 +284,7 @@ export async function runQuery(
     queryId: string,
     args: any,
     executingSession: Session,
-    connectedSessions?: Map<string, { fields: Record<string, SessionValue> }>
+    connectedSessions?: Map<string, { session: Record<string, SessionValue>;[key: string]: any }>
 ): Promise<QueryResult> {
     // Look up query metadata
     const query = queryMap[queryId];
@@ -374,9 +295,7 @@ export async function runQuery(
                 errorType: "UnknownQuery",
                 message: `Unknown query ID: ${queryId}`,
             },
-            syncDeltas: {
-                async sync() { },
-            },
+            async sync() { },
         };
     }
 
@@ -389,9 +308,7 @@ export async function runQuery(
                 errorType: "InvalidInput",
                 message: inputValidation.error || "Invalid input",
             },
-            syncDeltas: {
-                async sync() { },
-            },
+            async sync() { },
         };
     }
 
@@ -404,9 +321,7 @@ export async function runQuery(
                 errorType: "InvalidSession",
                 message: sessionValidation.error || "Invalid session",
             },
-            syncDeltas: {
-                async sync() { },
-            },
+            async sync() { },
         };
     }
 
@@ -429,57 +344,44 @@ export async function runQuery(
     const resultSets = await db.batch(sqlStatements);
     const response = formatResultData(query.sql, resultSets);
 
-    // Extract affected rows (may be empty for queries)
-    const affectedRows = extractAffectedRows(response);
+    const affectedRowGroups: any[] = response?._affectedRows ?? [];
 
-    // Convert connected sessions to format expected by calculate_sync_deltas
-    const connectedSessionsArray: ConnectedSession[] = connectedSessions
-        ? Array.from(connectedSessions.entries()).map(
-            ([sessionId, client]) => ({
-                session_id: sessionId,
-                fields: client.fields,
-            })
-        )
-        : [];
+    // Always create sync function - it will be a no-op if there's nothing to send
+    async function sync(sendToSession: (sessionId: string, message: any) => void): Promise<void> {
+        // Early return if nothing to sync
+        if (affectedRowGroups.length === 0 || !connectedSessions || connectedSessions.size === 0) {
+            return;
+        }
 
-    // Always create syncDeltas - it will be a no-op if there's nothing to send
-    const syncDeltas: SyncDeltas = {
-        async sync(sendToSession: (sessionId: string, message: any) => void): Promise<void> {
-            // Early return if nothing to sync
-            if (affectedRows.length === 0 || connectedSessionsArray.length === 0) {
-                return;
+        // Pass grouped format directly - WASM will handle conversion during iteration
+        const deltasResult = wasm.calculate_sync_deltas(affectedRowGroups, connectedSessions);
+
+        if (typeof deltasResult === "string" && deltasResult.startsWith("Error:")) {
+            console.error("[SyncDeltas] Failed to calculate sync deltas:", deltasResult);
+            return;
+        }
+
+        const result = typeof deltasResult === "string" ? JSON.parse(deltasResult) : deltasResult;
+
+        // Broadcast to each group
+        for (const group of result.groups) {
+            const deltaMessage = {
+                type: "delta",
+                data: {
+                    all_affected_rows: result.all_affected_rows,
+                    affected_row_indices: group.affected_row_indices,
+                },
+            };
+
+            for (const sessionId of group.session_ids) {
+                sendToSession(sessionId, deltaMessage);
             }
-
-            // Calculate sync deltas
-            const deltasResult = wasm.calculate_sync_deltas(affectedRows, connectedSessionsArray);
-
-            if (typeof deltasResult === "string" && deltasResult.startsWith("Error:")) {
-                console.error("[SyncDeltas] Failed to calculate sync deltas:", deltasResult);
-                return;
-            }
-
-            const result = typeof deltasResult === "string" ? JSON.parse(deltasResult) : deltasResult;
-
-            // Broadcast to each group
-            for (const group of result.groups) {
-                const deltaMessage = {
-                    type: "delta",
-                    data: {
-                        all_affected_rows: result.all_affected_rows,
-                        affected_row_indices: group.affected_row_indices,
-                    },
-                };
-
-                for (const sessionId of group.session_ids) {
-                    sendToSession(sessionId, deltaMessage);
-                }
-            }
-        },
-    };
+        }
+    }
 
     return {
         kind: "success",
         response,
-        syncDeltas,
+        sync,
     };
 }
