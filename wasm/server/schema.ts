@@ -63,11 +63,11 @@ export async function getPyreSchemaSource(db: Client): Promise<string> {
         const result = await db.execute(
             "SELECT schema FROM _pyre_schema ORDER BY created_at DESC LIMIT 1"
         );
-        
+
         if (result.rows.length === 0) {
             return "";
         }
-        
+
         const schema = result.rows[0].schema;
         return typeof schema === "string" ? schema : "";
     } catch (error) {
