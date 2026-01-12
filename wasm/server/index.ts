@@ -5,23 +5,19 @@
  * mutation handling, and permission-aware syncing.
  */
 
-export * from "./init";
-export * from "./schema";
-export * from "./query";
-export * from "./sync";
+// Export only the functions that are actually used
+export { init } from "./init";
+export { loadSchemaFromDatabase } from "./schema";
+export { run } from "./query";
+export { catchup } from "./sync";
 
-// Re-export types for convenience
+// Export only the types that are part of the public API for the functions above
 export type {
     QueryResult,
-    SyncDeltas,
-    Session,
-    ConnectedSession,
-    SessionValue,
-    AffectedRow,
-    QueryMetadata,
     QueryMap,
-    SqlInfo,
-    Schema,
+    QueryMetadata,
+    Session,
+    SessionValue,
 } from "./query";
 
 export type {

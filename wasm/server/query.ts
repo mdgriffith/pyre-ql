@@ -272,13 +272,13 @@ function formatResultData(sqlItems: SqlInfo[], resultSets: any[]): any {
  * @returns Query result with response and sync function (always present)
  * @example
  * ```typescript
- * import { runQuery } from "pyre-wasm/server";
+ * import { run } from "pyre-wasm/server";
  * import { queries } from "./generated/server/typescript/query";
- * const result = await runQuery(db, queries, "createPost", args, session, connectedClients);
+ * const result = await run(db, queries, "createPost", args, session, connectedClients);
  * await result.sync((sessionId, message) => { ... });
  * ```
  */
-export async function runQuery(
+export async function run(
     db: Client,
     queryMap: QueryMap,
     queryId: string,

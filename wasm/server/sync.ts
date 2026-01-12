@@ -46,11 +46,11 @@ export interface SyncSession {
  * @returns Sync page result with data to sync
  * @example
  * ```typescript
- * import { handleSync } from "pyre-wasm/server";
- * const result = await handleSync(db, syncCursor, session, 1000);
+ * import { catchup } from "pyre-wasm/server";
+ * const result = await catchup(db, syncCursor, session, 1000);
  * ```
  */
-export async function handleSync(
+export async function catchup(
     db: Client,
     syncCursor: SyncCursor,
     session: SyncSession,

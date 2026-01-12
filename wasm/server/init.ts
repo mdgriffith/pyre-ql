@@ -9,11 +9,11 @@ import * as wasmModule from "../pkg/pyre_wasm.js";
  * @param wasmPath - Optional path to the WASM file. If not provided, will look for it in the pkg directory.
  * @example
  * ```typescript
- * import { initPyre } from "pyre-wasm/server";
- * await initPyre();
+ * import { init } from "pyre-wasm/server";
+ * await init();
  * ```
  */
-export async function initPyre(wasmPath?: string): Promise<void> {
+export async function init(wasmPath?: string): Promise<void> {
     // Default path assumes pyre_wasm_bg.wasm is in the pkg directory (same directory as pyre_wasm.js)
     // This can be overridden if the WASM file is in a different location
     const defaultPath = wasmPath || join(__dirname, "..", "pkg", "pyre_wasm_bg.wasm");
