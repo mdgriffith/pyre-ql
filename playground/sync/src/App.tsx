@@ -140,16 +140,16 @@ function App() {
     })
 
     try {
-      // Initialize client (connects WebSocket and syncs)
+      // Initialize client (connects SSE and syncs)
       await pyreClient.init()
 
-      // Get session ID from WebSocket manager (for query execution)
-      const wsManager = (pyreClient as any).wsManager
-      const sessionId = wsManager?.getSessionId() || null
+      // Get session ID from SSE manager (for query execution)
+      const sseManager = (pyreClient as any).sseManager
+      const sessionId = sseManager?.getSessionId() || null
 
-      // Note: We don't set up a custom WebSocket message handler here because
-      // PyreClient already has its own handler in setupWebSocketHandlers() that
-      // processes deltas and updates queries. If we call wsManager.onMessage() here,
+      // Note: We don't set up a custom SSE message handler here because
+      // PyreClient already has its own handler in setupSSEHandlers() that
+      // processes deltas and updates queries. If we call sseManager.onMessage() here,
       // it would replace PyreClient's handler and break delta processing.
 
       setClients((prev) =>
@@ -183,7 +183,7 @@ function App() {
     }
   }, [addEvent])
 
-  // Connect WebSocket for initial client (only once, even in StrictMode)
+  // Connect SSE for initial client (only once, even in StrictMode)
   useEffect(() => {
     if (!initialClientConnectedRef.current) {
       initialClientConnectedRef.current = true
@@ -337,7 +337,7 @@ function App() {
     try {
       await Promise.all(deletePromises)
       console.log('[Reset] All client databases deleted via PyreClient')
-      
+
       // Also try to delete databases directly by name as a fallback
       console.log('[Reset] Attempting direct deletion of databases:', dbNames)
       for (const dbName of dbNames) {

@@ -27,7 +27,7 @@ export interface SyncPageResult {
 export interface ClientConfigInput {
   /** Base URL for the server (e.g., "http://localhost:3000") */
   baseUrl: string;
-  /** User ID for WebSocket connection */
+  /** User ID for SSE connection */
   userId: number;
   /** Database name for IndexedDB (default: "pyre-client") */
   dbName?: string;
@@ -44,7 +44,7 @@ export interface ClientConfigInput {
     /** Multiplier for exponential backoff (default: 2) */
     backoffMultiplier?: number;
   };
-  /** WebSocket reconnection configuration */
+  /** SSE reconnection configuration (SSE handles reconnection automatically, but this config is kept for compatibility) */
   reconnect?: {
     /** Initial delay in ms before first reconnect attempt (default: 1000) */
     initialDelay?: number;
@@ -61,7 +61,7 @@ export interface ClientConfigInput {
 export interface ClientConfig {
   /** Base URL for the server */
   baseUrl: string;
-  /** User ID for WebSocket connection */
+  /** User ID for SSE connection */
   userId: number;
   /** Database name for IndexedDB */
   dbName: string;
@@ -78,7 +78,7 @@ export interface ClientConfig {
     /** Multiplier for exponential backoff */
     backoffMultiplier: number;
   };
-  /** WebSocket reconnection configuration */
+  /** SSE reconnection configuration (SSE handles reconnection automatically, but this config is kept for compatibility) */
   reconnect: {
     /** Initial delay in ms before first reconnect attempt */
     initialDelay: number;

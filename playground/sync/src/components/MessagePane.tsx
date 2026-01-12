@@ -21,7 +21,7 @@ interface MessagePaneProps {
 
 type GroupedMessage = 
   | { type: 'request_response'; request: Event; response: Event }
-  | { type: 'websocket'; event: Event }
+  | { type: 'sse'; event: Event }
 
 export default function MessagePane({ events, clients }: MessagePaneProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -88,19 +88,19 @@ export default function MessagePane({ events, clients }: MessagePaneProps) {
             pendingRequests.delete(key)
           }
         } else {
-          // No matching request, show response alone as websocket message
-          grouped.push({ type: 'websocket', event })
+          // No matching request, show response alone as SSE message
+          grouped.push({ type: 'sse', event })
         }
       } else {
-        // sync_delta or other websocket messages - keep separate
-        grouped.push({ type: 'websocket', event })
+        // sync_delta or other SSE messages - keep separate
+        grouped.push({ type: 'sse', event })
       }
     }
 
-    // Add any unpaired requests as websocket messages
+    // Add any unpaired requests as SSE messages
     for (const requests of pendingRequests.values()) {
       for (const request of requests) {
-        grouped.push({ type: 'websocket', event: request })
+        grouped.push({ type: 'sse', event: request })
       }
     }
 
@@ -244,7 +244,7 @@ export default function MessagePane({ events, clients }: MessagePaneProps) {
                 </div>
               )
             } else {
-              // WebSocket message
+              // SSE message
               const event = group.event
               const color = event.type === 'sync_delta' ? '#ffc107' : '#666'
               const messageId = event.id

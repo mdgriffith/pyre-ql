@@ -5,8 +5,8 @@
 import type { ClientConfigInput, ClientConfig, QueryShape, SyncProgressCallback, SyncStatus, Unsubscribe } from './types';
 import { Storage } from './storage';
 import { SyncManager } from './sync';
-import { WebSocketManager } from './websocket';
-import type { WebSocketMessage } from './websocket';
+import { SSEManager } from './sse';
+import type { SSEMessage } from './sse';
 import { QueryManager } from './query';
 import { SchemaManager } from './schema';
 
@@ -52,7 +52,7 @@ export class PyreClient {
   private config: ClientConfig;
   private storage: Storage;
   private syncManager: SyncManager;
-  private wsManager: WebSocketManager;
+  private sseManager: SSEManager;
   private queryManager: QueryManager;
   private schemaManager: SchemaManager;
   private syncProgressCallbacks: Set<SyncProgressCallback> = new Set();
@@ -67,18 +67,18 @@ export class PyreClient {
     this.storage = new Storage(this.config.dbName);
     this.schemaManager = new SchemaManager();
     this.syncManager = new SyncManager(this.storage, this.config);
-    this.wsManager = new WebSocketManager(this.config);
+    this.sseManager = new SSEManager(this.config);
     this.queryManager = new QueryManager(this.storage, this.schemaManager);
 
-    // Set up WebSocket message handlers
-    this.setupWebSocketHandlers();
+    // Set up SSE message handlers
+    this.setupSSEHandlers();
 
     // Start quota monitoring
     this.startQuotaMonitoring();
   }
 
   /**
-   * Initialize the client - fetches schema, connects WebSocket and performs initial sync
+   * Initialize the client - fetches schema, connects SSE and performs initial sync
    */
   async init(onProgress?: SyncProgressCallback): Promise<void> {
     if (this.initialized) {
@@ -121,8 +121,8 @@ export class PyreClient {
         this.onSyncProgress(onProgress);
       }
 
-      // Connect WebSocket
-      const sessionId = await this.wsManager.connect();
+      // Connect SSE
+      const sessionId = await this.sseManager.connect();
       this.syncManager.setSessionId(sessionId);
 
       // Perform initial sync (resumes from cursor if available)
@@ -212,7 +212,7 @@ export class PyreClient {
    * Disconnect and cleanup
    */
   disconnect(): void {
-    this.wsManager.disconnect();
+    this.sseManager.disconnect();
     this.syncProgressCallbacks.clear();
     if (this.quotaCheckInterval !== null) {
       clearInterval(this.quotaCheckInterval);
@@ -247,9 +247,9 @@ export class PyreClient {
     }, 30000);
   }
 
-  private setupWebSocketHandlers(): void {
-    // Handle WebSocket messages
-    this.wsManager.onMessage((message: WebSocketMessage) => {
+  private setupSSEHandlers(): void {
+    // Handle SSE messages
+    this.sseManager.onMessage((message: SSEMessage) => {
       if (message.type === 'delta') {
         // Apply delta and notify queries
         this.syncManager.applyDelta(message.data).then(() => {
@@ -271,10 +271,10 @@ export class PyreClient {
       }
     });
 
-    // Handle reconnection - resume sync from cursor (not full resync)
-    this.wsManager.onConnect((sessionId: string) => {
+    // Handle connection - resume sync from cursor (not full resync)
+    this.sseManager.onConnect((sessionId: string) => {
       this.syncManager.setSessionId(sessionId);
-      // Resume sync from cursor after reconnection (not full resync)
+      // Resume sync from cursor after connection (not full resync)
       this.syncManager.sync((progress) => {
         this.syncProgressCallbacks.forEach(cb => {
           try {
@@ -284,7 +284,7 @@ export class PyreClient {
           }
         });
       }).catch(error => {
-        console.error('[PyreClient] Failed to sync after reconnection:', error);
+        console.error('[PyreClient] Failed to sync after connection:', error);
       });
     });
   }

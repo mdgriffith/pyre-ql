@@ -12,7 +12,8 @@
     "database",
     "sync",
     "indexeddb",
-    "websocket"
+    "sse",
+    "server-sent-events"
   ],
   "author": "",
   "license": "MIT",

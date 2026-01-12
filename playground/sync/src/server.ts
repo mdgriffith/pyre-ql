@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { createClient } from "@libsql/client";
 import { join } from "path";
 import * as Pyre from "../../../wasm/server";
@@ -8,19 +9,17 @@ await Pyre.init();
 const app = new Hono();
 
 // Types
-interface WebSocketData {
-    userId: string;
-}
-
 interface ConnectedClient {
     sessionId: string;
     session: Record<string, any>;
-    ws: any; // Bun WebSocket
+    writeSSE: (data: { event?: string; data: any; id?: string }) => Promise<void>;
 }
 
 const DB_PATH = join(process.cwd(), "test.db");
 const DB_URL = `file:${DB_PATH}`;
 const connectedClients = new Map<string, ConnectedClient>();
+// Track sessions by userId+clientId to reuse on reconnection
+const sessionsByClient = new Map<string, string>(); // "userId_clientId" -> sessionId
 let nextSessionId = 1;
 
 const db = createClient({ url: DB_URL });
@@ -67,6 +66,114 @@ app.get("/schema", async (c) => {
     return c.json(introspection);
 });
 
+// SSE endpoint for real-time delta updates
+app.get("/sync/events", async (c) => {
+    const userId = c.req.query("userId");
+    const clientId = c.req.query("clientId");
+    
+    if (!userId) {
+        c.status(400);
+        return c.json({ error: "userId query parameter is required" });
+    }
+
+    let parsedUserId: number;
+    try {
+        parsedUserId = parseInt(userId, 10);
+        if (isNaN(parsedUserId) || parsedUserId < 1) {
+            console.error(`Invalid userId provided: ${userId}, defaulting to 1`);
+            parsedUserId = 1;
+        }
+    } catch {
+        parsedUserId = 1;
+    }
+
+    // Use userId + clientId as the session key to distinguish between tabs/browsers
+    const sessionKey = clientId ? `${parsedUserId}_${clientId}` : `${parsedUserId}_${Date.now()}`;
+    
+    // Check if we have an existing session for this userId+clientId (reconnection)
+    let sessionId = sessionsByClient.get(sessionKey);
+    let isReconnection = false;
+    
+    if (sessionId && connectedClients.has(sessionId)) {
+        // Reusing existing session (reconnection from same client)
+        isReconnection = true;
+        const timeSinceLastConnection = Date.now(); // Could track this better
+        console.log(`[RECONNECT] Client reconnected via SSE: ${sessionId} (userId: ${parsedUserId}, clientId: ${clientId || 'none'})`);
+    } else {
+        // New session
+        sessionId = `session_${nextSessionId++}`;
+        sessionsByClient.set(sessionKey, sessionId);
+        console.log(`[NEW] Client connected via SSE: ${sessionId} (userId: ${parsedUserId}, clientId: ${clientId || 'none'})`);
+    }
+
+    const session = {
+        userId: parsedUserId,
+        role: "user",
+    };
+
+    return streamSSE(c, async (stream) => {
+        const client: ConnectedClient = {
+            sessionId: sessionId!,
+            session,
+            writeSSE: async (data) => {
+                await stream.writeSSE(data);
+            },
+        };
+
+        // Update or set the client (in case of reconnection, update the writeSSE function)
+        connectedClients.set(sessionId!, client);
+
+        // Only send "connected" message on initial connection, not reconnection
+        if (!isReconnection) {
+            await stream.writeSSE({
+                event: "connected",
+                data: JSON.stringify({
+                    type: "connected",
+                    sessionId,
+                    session,
+                }),
+            });
+        }
+
+        // Keep connection alive and handle disconnect
+        // The stream will be closed when the client disconnects
+        try {
+            // Send periodic keep-alive comments to prevent proxy/timeout issues
+            // Many proxies timeout idle connections after 30-60 seconds
+            // Sending a comment every 15 seconds keeps the connection alive more reliably
+            let keepAliveCount = 0;
+            while (true) {
+                await stream.sleep(15000); // Every 15 seconds (more frequent to prevent timeouts)
+                keepAliveCount++;
+                // Send SSE comment (starts with ':') - this is a keep-alive that doesn't trigger events
+                // Format: ": comment\n\n" (two newlines required for SSE)
+                try {
+                    await stream.writeSSE({ data: ": keep-alive\n\n" });
+                    if (keepAliveCount % 4 === 0) { // Log every minute
+                        console.log(`SSE keep-alive sent for ${sessionId} (count: ${keepAliveCount})`);
+                    }
+                } catch (writeError) {
+                    // If write fails, connection is likely closed
+                    console.error(`Failed to send keep-alive for ${sessionId}:`, writeError);
+                    throw writeError; // Break the loop
+                }
+            }
+        } catch (error) {
+            // Client disconnected or stream closed
+            console.log(`SSE stream ended for ${sessionId} (userId: ${parsedUserId}, clientId: ${clientId || 'none'}):`, error instanceof Error ? error.message : String(error));
+            // Don't delete the session immediately - EventSource will reconnect
+            // Only remove if the client is explicitly disconnected
+            const currentClient = connectedClients.get(sessionId!);
+            if (currentClient === client) {
+                // Only remove if this is still the active client (not replaced by reconnection)
+                connectedClients.delete(sessionId!);
+                sessionsByClient.delete(sessionKey);
+                console.log(`Client session removed: ${sessionId} (userId: ${parsedUserId}, clientId: ${clientId || 'none'})`);
+            }
+        }
+    });
+});
+
 // Sync endpoint - Much simpler with helpers!
 app.get("/sync", async (c) => {
 
@@ -81,7 +188,7 @@ app.get("/sync", async (c) => {
     const client = connectedClients.get(sessionId);
     if (!client) {
         c.status(404);
-        return c.json({ error: "Session not found. Client must be connected via WebSocket first." });
+        return c.json({ error: "Session not found. Client must be connected via SSE first." });
     }
 
     // Get syncCursor from query params (optional, defaults to empty)
@@ -129,10 +236,20 @@ app.post("/db/:req", async (c) => {
     }
 
     // Broadcast sync deltas in background (fire-and-forget, we're not awaiting it)
-    result.sync((sessionId, message) => {
+    result.sync(async (sessionId, message) => {
         const client = connectedClients.get(sessionId);
-        if (client && client.ws.readyState === 1) {
-            client.ws.send(JSON.stringify(message));
+        if (client) {
+            try {
+                // Send SSE event with delta data
+                await client.writeSSE({
+                    event: "delta",
+                    data: JSON.stringify(message),
+                });
+            } catch (error) {
+                console.error(`Failed to send delta to client ${sessionId}:`, error);
+                // Remove client if stream is closed
+                connectedClients.delete(sessionId);
+            }
         }
     })
 
@@ -148,98 +265,24 @@ export default async function startServer() {
 
     const port = 3000;
 
-    // Bun server with WebSocket support
+    // Bun server with SSE support
+    // Production considerations:
+    // - idleTimeout: Bun's maximum is 255s (~4.25 minutes) - this is sufficient with keep-alive
+    // - Keep-alive messages every 15s prevent proxy timeouts (most proxies timeout at 60-120s)
+    // - Reverse proxies (nginx, cloudflare) may need additional timeout configuration
+    // - The keep-alive ensures connections stay alive even if idleTimeout triggers
+    const SSE_IDLE_TIMEOUT = 255; // Bun's maximum - ~4.25 minutes (sufficient with 15s keep-alive)
+    
     const server = Bun.serve({
         port,
-        fetch: async (req) => {
-            // Handle WebSocket upgrade
-            const url = new URL(req.url);
-            if (url.pathname === "/sync" && req.headers.get("upgrade") === "websocket") {
-                const userId = url.searchParams.get("userId");
-                if (!userId) {
-                    return new Response("userId query parameter is required", { status: 400 });
-                }
-                const upgradeData: WebSocketData = {
-                    userId: userId,
-                };
-                const success = server.upgrade(req, {
-                    // @ts-expect-error - Bun's types don't properly support the data property, but it works at runtime
-                    data: upgradeData,
-                });
-                if (success) {
-                    return undefined as any;
-                }
-                return new Response("WebSocket upgrade failed", { status: 500 });
-            }
-
-            // Handle regular HTTP requests
-            return app.fetch(req);
-        },
-        websocket: {
-            message: (ws, message) => {
-                const data = typeof message === "string" ? message : message.toString();
-                const parsed = JSON.parse(data);
-                if (parsed.type === "ping") {
-                    ws.send(JSON.stringify({ type: "pong" }));
-                }
-
-            },
-            open: (ws) => {
-                // Get userId from upgrade data (passed via query parameter)
-                // @ts-expect-error - Bun's types don't properly support the data property, but it works at runtime
-                const userIdParam = (ws.data as WebSocketData)?.userId;
-                let userId: number;
-
-                if (userIdParam) {
-                    const parsedUserId = parseInt(userIdParam, 10);
-                    if (isNaN(parsedUserId) || parsedUserId < 1) {
-                        console.error(`Invalid userId provided: ${userIdParam}, defaulting to 1`);
-                        userId = 1;
-                    } else {
-                        userId = parsedUserId;
-                    }
-                } else {
-                    console.warn("No userId provided in WebSocket connection, defaulting to 1");
-                    userId = 1;
-                }
-
-                // Generate session ID
-                const sessionId = `session_${nextSessionId++}`;
-                const session = {
-                    userId: userId,
-                    role: "user",
-                };
-
-                const client: ConnectedClient = {
-                    sessionId,
-                    session,
-                    ws,
-                };
-
-                connectedClients.set(sessionId, client);
-                console.log(`Client connected: ${sessionId} (userId: ${userId})`);
-
-                ws.send(JSON.stringify({
-                    type: "connected",
-                    sessionId,
-                    session,
-                }));
-            },
-            close: (ws) => {
-                // Find and remove client
-                for (const [sessionId, client] of connectedClients.entries()) {
-                    if (client.ws === ws) {
-                        connectedClients.delete(sessionId);
-                        console.log(`Client disconnected: ${sessionId}`);
-                        break;
-                    }
-                }
-            },
-        },
+        fetch: app.fetch,
+        idleTimeout: SSE_IDLE_TIMEOUT, // Bun's maximum - keep-alive prevents actual disconnection
     });
 
     console.log(`Server starting on http://localhost:${port}`);
-    console.log(`WebSocket endpoint: ws://localhost:${port}/sync`);
+    console.log(`SSE endpoint: http://localhost:${port}/sync/events`);
+    console.log(`SSE idleTimeout: ${SSE_IDLE_TIMEOUT}s (~4.25 minutes, Bun's maximum)`);
+    console.log(`Keep-alive interval: 15s (prevents idle timeout and proxy timeouts)`);
 
     return server;
 }

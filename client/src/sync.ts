@@ -34,7 +34,7 @@ export class SyncManager {
 
   async sync(onProgress?: SyncProgressCallback): Promise<void> {
     if (!this.sessionId) {
-      const error = new Error('Session ID not set. WebSocket must be connected first.');
+      const error = new Error('Session ID not set. SSE must be connected first.');
       console.error('[PyreClient]', error.message);
       throw error;
     }
