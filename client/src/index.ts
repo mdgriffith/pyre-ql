@@ -58,6 +58,7 @@ export class PyreClient {
   private syncProgressCallbacks: Set<SyncProgressCallback> = new Set();
   private initialized = false;
   private quotaCheckInterval: number | null = null;
+  private lastSyncedTables: Set<string> = new Set();
 
   constructor(config: ClientConfigInput) {
     // Convert input config to normalized config with all defaults applied
@@ -135,6 +136,23 @@ export class PyreClient {
         });
       });
 
+      // Get synced tables from sync manager
+      const syncedTables = this.syncManager.getSyncedTables();
+
+      // Store synced tables for queries created after sync
+      this.lastSyncedTables = syncedTables;
+
+      // After sync completes, notify all queries so they pick up new data
+      // Use a small delay to ensure queries have been set up
+      if (syncedTables.size > 0) {
+        // Use requestAnimationFrame to ensure DOM is ready, then notify
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            this.queryManager.notifyQueries(Array.from(syncedTables));
+          }, 100);
+        });
+      }
+
       this.initialized = true;
     } catch (error) {
       console.error('[PyreClient] Initialization failed:', error);
@@ -166,7 +184,28 @@ export class PyreClient {
    * @returns Unsubscribe function
    */
   query(shape: QueryShape, callback: (data: any) => void): Unsubscribe {
-    return this.queryManager.query(shape, callback);
+    const unsubscribe = this.queryManager.query(shape, callback);
+    
+    // If sync has already completed, notify this query immediately
+    // so it picks up data that was synced before the query was created
+    if (this.initialized && this.lastSyncedTables.size > 0) {
+      // Extract table dependencies from query shape
+      const queryTables = new Set<string>();
+      for (const tableName of Object.keys(shape)) {
+        queryTables.add(tableName);
+      }
+      
+      // Check if any of the query's tables were synced
+      const hasSyncedTables = Array.from(queryTables).some(table => this.lastSyncedTables.has(table));
+      if (hasSyncedTables) {
+        // Notify immediately so the query picks up synced data
+        setTimeout(() => {
+          this.queryManager.notifyQueries(Array.from(queryTables));
+        }, 0);
+      }
+    }
+    
+    return unsubscribe;
   }
 
   /**
@@ -179,6 +218,15 @@ export class PyreClient {
       clearInterval(this.quotaCheckInterval);
       this.quotaCheckInterval = null;
     }
+    this.initialized = false;
+  }
+
+  /**
+   * Delete the IndexedDB database and reset state
+   */
+  async deleteDatabase(): Promise<void> {
+    this.disconnect();
+    await this.storage.deleteDatabase();
     this.initialized = false;
   }
 

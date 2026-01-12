@@ -92,10 +92,9 @@ export class QueryManager {
     const affectedTableSet = new Set(tableNames);
     
     // Only notify queries that depend on the affected tables
-    for (const queryInfo of this.activeQueries.values()) {
-      const hasDependency = Array.from(queryInfo.tableDependencies).some(
-        dep => affectedTableSet.has(dep)
-      );
+    for (const [queryId, queryInfo] of this.activeQueries.entries()) {
+      const dependencies = Array.from(queryInfo.tableDependencies);
+      const hasDependency = dependencies.some(dep => affectedTableSet.has(dep));
       
       if (hasDependency) {
         for (const callback of queryInfo.callbacks) {

@@ -13,6 +13,7 @@ export class SyncManager {
   private synced = false;
   private syncError: Error | null = null;
   private syncPromise: Promise<void> | null = null;
+  private lastSyncedTables: Set<string> = new Set();
 
   constructor(storage: Storage, config: ClientConfig) {
     this.storage = storage;
@@ -87,6 +88,9 @@ export class SyncManager {
             seenTables.add(tableName);
           }
 
+          // Track this table as synced
+          this.lastSyncedTables.add(tableName);
+
           // Update cursor for this table
           cursor.tables[tableName] = {
             last_seen_updated_at: tableData.last_seen_updated_at,
@@ -133,6 +137,10 @@ export class SyncManager {
         complete: true,
       });
     }
+  }
+
+  getSyncedTables(): Set<string> {
+    return new Set(this.lastSyncedTables);
   }
 
   private async fetchSyncPage(cursor: SyncCursor): Promise<SyncPageResult> {

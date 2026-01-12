@@ -83,8 +83,13 @@ export class Storage {
       const request = store.get(CURSOR_KEY);
 
       request.onsuccess = () => {
-        const cursor = request.result || { tables: {} };
-        resolve(cursor);
+        const cursor = request.result;
+        if (cursor && typeof cursor === 'object' && cursor.tables) {
+          resolve(cursor);
+        } else {
+          // No cursor found or invalid format, return empty cursor
+          resolve({ tables: {} });
+        }
       };
 
       request.onerror = () => {
@@ -116,11 +121,12 @@ export class Storage {
       const tx = db.transaction(['tables'], 'readonly');
       const store = tx.objectStore('tables');
       const index = store.index('byTable');
-      const range = IDBKeyRange.bound([tableName, ''], [tableName, '\uffff']);
+      const range = IDBKeyRange.only(tableName);
       const request = index.getAll(range);
 
       request.onsuccess = () => {
-        resolve(request.result || []);
+        const result = request.result || [];
+        resolve(result);
       };
 
       request.onerror = () => {
@@ -162,6 +168,21 @@ export class Storage {
       let writesCompleted = 0;
       let writesStarted = 0;
 
+      // Wait for transaction to complete, not just individual requests
+      tx.oncomplete = () => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      };
+
+      // Handle transaction errors
+      tx.onerror = () => {
+        console.error(`[PyreClient] Transaction error for putRows('${tableName}'):`, tx.error);
+        reject(new Error(`Transaction failed: ${tx.error}`));
+      };
+
       // First, read all existing rows
       rows.forEach((row, index) => {
         const request = store.get([tableName, row.id]);
@@ -200,13 +221,11 @@ export class Storage {
             if (existingTime > newTime) {
               // Existing is newer, skip this row
               writesCompleted++;
-              checkComplete();
               return;
             }
           } else if (existing && existing.updatedAt != null && row.updatedAt == null) {
             // Existing has updatedAt but new row doesn't - keep existing
             writesCompleted++;
-            checkComplete();
             return;
           } else if (existing && existing.updatedAt == null && row.updatedAt != null) {
             // New row has updatedAt but existing doesn't - use new row (continue below)
@@ -221,36 +240,19 @@ export class Storage {
 
           request.onsuccess = () => {
             writesCompleted++;
-            checkComplete();
           };
 
           request.onerror = () => {
             error = new Error(`Failed to write row: ${request.error}`);
             writesCompleted++;
-            checkComplete();
           };
         });
         
-        // If no writes were started (all skipped), check completion
+        // If no writes were started (all skipped), transaction will complete naturally
         if (writesStarted === 0) {
-          checkComplete();
+          // All rows were skipped, transaction will complete
         }
       }
-
-      function checkComplete() {
-        if (writesCompleted === rows.length) {
-          if (error) {
-            reject(error);
-          } else {
-            resolve();
-          }
-        }
-      }
-
-      // Handle transaction errors
-      tx.onerror = () => {
-        reject(new Error(`Transaction failed: ${tx.error}`));
-      };
     });
   }
 
@@ -277,7 +279,7 @@ export class Storage {
       const tx = db.transaction(['tables'], 'readwrite');
       const store = tx.objectStore('tables');
       const index = store.index('byTable');
-      const range = IDBKeyRange.bound([tableName, ''], [tableName, '\uffff']);
+      const range = IDBKeyRange.only(tableName);
       const request = index.openCursor(range);
 
       request.onsuccess = (event) => {
@@ -374,5 +376,42 @@ export class Storage {
       }
     }
     return { usage: 0, quota: 0, percentage: 0 };
+  }
+
+  async deleteDatabase(): Promise<void> {
+    // Close existing connection if open (this will abort any pending transactions)
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+    }
+    this.initPromise = null;
+
+    // Wait a bit for the connection to fully close
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    return new Promise((resolve, reject) => {
+      const deleteRequest = indexedDB.deleteDatabase(this.dbName);
+
+      deleteRequest.onsuccess = () => {
+        // Small delay to ensure deletion is fully processed
+        setTimeout(() => {
+          resolve();
+        }, 100);
+      };
+
+      deleteRequest.onerror = () => {
+        console.error(`[PyreClient] Failed to delete database: ${deleteRequest.error}`, deleteRequest.error);
+        reject(new Error(`Failed to delete database: ${deleteRequest.error}`));
+      };
+
+      deleteRequest.onblocked = () => {
+        // Database is blocked (probably open in another tab)
+        console.warn(`[PyreClient] Database deletion blocked for: ${this.dbName} - this usually means it's open in another tab`);
+        // Don't reject, just warn - the deletion will proceed when unblocked
+        setTimeout(() => {
+          resolve();
+        }, 1000);
+      };
+    });
   }
 }
