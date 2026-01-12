@@ -109,7 +109,8 @@ SELECT json_object(
   'schema_source', COALESCE(
     (SELECT schema FROM _pyre_schema ORDER BY created_at DESC LIMIT 1),
     ''
-  )
+  ),
+  'links', jsonb('[]')
 ) as result
 FROM table_info ti
 LEFT JOIN foreign_keys fk ON ti.table_name = fk.table_name;
@@ -175,7 +176,8 @@ SELECT json_object(
     )
   ),
   'migration_state', json('{"NoMigrationTable": null}'),
-  'schema_source', ''
+  'schema_source', '',
+  'links', json('[]')
 ) as result
 FROM table_info ti
 LEFT JOIN foreign_keys fk ON ti.table_name = fk.table_name;
@@ -221,10 +223,20 @@ pub enum SchemaResult {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct Link {
+    pub table_name: String,
+    pub field_name: String,
+    pub foreign_key_field: String,
+    pub related_table: String,
+    pub link_type: String, // "many-to-one" or "one-to-many"
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct IntrospectionRaw {
     pub tables: Vec<Table>,
     pub migration_state: MigrationState,
     pub schema_source: String,
+    pub links: Vec<Link>,
 }
 
 #[derive(Debug)]
@@ -413,7 +425,7 @@ where
     }
 }
 
-pub fn from_raw(raw: IntrospectionRaw) -> Introspection {
+pub fn from_raw(mut raw: IntrospectionRaw) -> Introspection {
     if raw.schema_source.is_empty() {
         let context = typecheck::empty_context();
         return Introspection {
@@ -442,7 +454,11 @@ pub fn from_raw(raw: IntrospectionRaw) -> Introspection {
 
             // Typecheck the schema
             match typecheck::check_schema(&database) {
-                Ok(context) => SchemaResult::Success { schema, context },
+                Ok(context) => {
+                    // Extract links from parsed schema
+                    raw.links = extract_links(&schema, &raw.tables);
+                    SchemaResult::Success { schema, context }
+                }
                 Err(errors) => SchemaResult::FailedToTypecheck { schema, errors },
             }
         }
@@ -473,4 +489,76 @@ pub fn from_raw(raw: IntrospectionRaw) -> Introspection {
         migration_state: raw.migration_state,
         schema: schema_result,
     }
+}
+
+fn extract_links(schema: &ast::Schema, tables: &[Table]) -> Vec<Link> {
+    let mut links = Vec::new();
+    let table_map: std::collections::HashMap<String, &Table> = tables
+        .iter()
+        .map(|t| (t.name.clone(), t))
+        .collect();
+
+    // Extract links from all records in the schema
+    for file in &schema.files {
+        for def in &file.definitions {
+            if let ast::Definition::Record { name, fields, .. } = def {
+                let table_name = ast::get_tablename(name, fields);
+                let record_links = ast::collect_links(fields);
+                
+                // Get primary key field name for this record
+                let primary_key_name = ast::get_primary_id_field_name(fields);
+
+                for link in record_links {
+                    // Get the actual table name for the foreign table
+                    let foreign_table_name = ast::get_foreign_tablename(schema, &link);
+                    
+                    // Determine link type: if local_ids contains non-primary-key fields, it's many-to-one
+                    // Otherwise (all local_ids are primary keys), it's one-to-many (reverse link)
+                    let is_many_to_one = link.local_ids.iter().any(|id| {
+                        primary_key_name.as_ref().map(|pk| id != pk).unwrap_or(true)
+                    });
+                    
+                    let link_type = if is_many_to_one {
+                        "many-to-one"
+                    } else {
+                        "one-to-many"
+                    };
+
+                    // For many-to-one, the foreign_key_field is the first local_id (the FK field)
+                    // For one-to-many, we need to find the FK field in the related table
+                    let foreign_key_field = if is_many_to_one {
+                        link.local_ids[0].clone()
+                    } else {
+                        // For one-to-many, find the FK field in the related table that points to this table
+                        // Look for a FK in the related table that points to this table's id
+                        if let Some(related_table) = table_map.get(&foreign_table_name) {
+                            related_table
+                                .foreign_keys
+                                .iter()
+                                .find(|fk| {
+                                    fk.table == table_name && fk.to == "id"
+                                })
+                                .map(|fk| fk.from.clone())
+                                .unwrap_or_else(|| {
+                                    // Fallback: use first local_id (should be "id" for one-to-many)
+                                    link.local_ids[0].clone()
+                                })
+                        } else {
+                            link.local_ids[0].clone()
+                        }
+                    };
+
+                    links.push(Link {
+                        table_name: table_name.clone(),
+                        field_name: link.link_name.clone(),
+                        foreign_key_field,
+                        related_table: foreign_table_name,
+                        link_type: link_type.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    links
 }

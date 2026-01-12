@@ -29,10 +29,19 @@ export interface Table {
   foreign_keys: ForeignKey[];
 }
 
+export interface LinkJson {
+  table_name: string;
+  field_name: string;
+  foreign_key_field: string;
+  related_table: string;
+  link_type: 'many-to-one' | 'one-to-many';
+}
+
 export interface IntrospectionJson {
   tables: Table[];
   migration_state: any;
   schema_source: string;
+  links: LinkJson[]; // Parsed link information from server
 }
 
 export interface LinkInfo {
@@ -90,51 +99,34 @@ export class SchemaManager {
 
   parseIntrospection(introspection: IntrospectionJson): Schema {
     const records: RecordInfo[] = [];
-    const tableMap = new Map<string, Table>();
+    const tableSet = new Set<string>();
 
-    // Build table map for quick lookup
+    // Build table set for quick lookup
     for (const table of introspection.tables) {
-      tableMap.set(table.name.toLowerCase(), table);
+      tableSet.add(table.name.toLowerCase());
     }
 
-    // Process each table to build relationships
+    // Group links by table name
+    const linksByTable = new Map<string, LinkInfo[]>();
+    for (const link of introspection.links) {
+      const tableName = link.table_name.toLowerCase();
+      if (!linksByTable.has(tableName)) {
+        linksByTable.set(tableName, []);
+      }
+      linksByTable.get(tableName)!.push({
+        fieldName: link.field_name,
+        relatedTable: link.related_table,
+        foreignKeyField: link.foreign_key_field,
+        type: link.link_type as 'many-to-one' | 'one-to-many',
+      });
+    }
+
+    // Process each table to build records
     for (const table of introspection.tables) {
-      const links: LinkInfo[] = [];
+      const links = linksByTable.get(table.name.toLowerCase()) || [];
 
-      // Process foreign keys for many-to-one relationships
-      // If table has FK pointing to another table, that's a many-to-one relationship
-      for (const fk of table.foreign_keys) {
-        // The FK field name is fk.from, pointing to fk.table
-        // This creates a many-to-one relationship: currentTable -> relatedTable
-        links.push({
-          fieldName: this.singularize(fk.table), // Field name is singular of related table
-          relatedTable: fk.table,
-          foreignKeyField: fk.from,
-          type: 'many-to-one',
-        });
-      }
-
-      // Find reverse relationships (one-to-many)
-      // Look for other tables that have FKs pointing to this table
-      for (const otherTable of introspection.tables) {
-        if (otherTable.name === table.name) continue;
-
-        for (const fk of otherTable.foreign_keys) {
-          if (fk.table.toLowerCase() === table.name.toLowerCase() && fk.to === 'id') {
-            // This other table has a FK pointing to our table
-            // Create a one-to-many relationship
-            links.push({
-              fieldName: otherTable.name, // Field name is the related table name
-              relatedTable: otherTable.name,
-              foreignKeyField: fk.from, // FK field on the related table
-              type: 'one-to-many',
-            });
-          }
-        }
-      }
-
-      // Infer record name from table name (singularize)
-      const recordName = this.singularize(table.name);
+      // Use table name as record name (singularized would be ideal but not critical)
+      const recordName = table.name;
 
       records.push({
         name: recordName,
@@ -149,28 +141,7 @@ export class SchemaManager {
     };
   }
 
-  private pluralize(word: string): string {
-    // Simple pluralization - in production you'd want a proper library
-    if (word.endsWith('y')) {
-      return word.slice(0, -1) + 'ies';
-    } else if (word.endsWith('s') || word.endsWith('x') || word.endsWith('z') || word.endsWith('ch') || word.endsWith('sh')) {
-      return word + 'es';
-    } else {
-      return word + 's';
-    }
-  }
 
-  private singularize(word: string): string {
-    // Simple singularization - reverse of pluralization
-    if (word.endsWith('ies')) {
-      return word.slice(0, -3) + 'y';
-    } else if (word.endsWith('es') && (word.endsWith('ses') || word.endsWith('xes') || word.endsWith('zes') || word.endsWith('ches') || word.endsWith('shes'))) {
-      return word.slice(0, -2);
-    } else if (word.endsWith('s')) {
-      return word.slice(0, -1);
-    }
-    return word;
-  }
 
   private buildRecordMap() {
     this.recordMap.clear();
