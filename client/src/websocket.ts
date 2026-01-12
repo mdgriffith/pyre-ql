@@ -12,9 +12,10 @@ export interface WebSocketMessage {
 }
 
 export class WebSocketManager {
-  private config: Required<ClientConfig>;
+  private config: ClientConfig;
   private ws: WebSocket | null = null;
   private reconnectTimer: number | null = null;
+  private pingInterval: number | null = null;
   private reconnectAttempts = 0;
   private sessionId: string | null = null;
   private onMessageCallback: ((message: WebSocketMessage) => void) | null = null;
@@ -22,7 +23,7 @@ export class WebSocketManager {
   private onDisconnectCallback: (() => void) | null = null;
   private shouldReconnect = true;
 
-  constructor(config: Required<ClientConfig>) {
+  constructor(config: ClientConfig) {
     this.config = config;
   }
 
@@ -91,6 +92,7 @@ export class WebSocketManager {
       ws.onclose = () => {
         this.ws = null;
         this.sessionId = null;
+        this.stopPingInterval();
         
         if (this.onDisconnectCallback) {
           this.onDisconnectCallback();
@@ -127,17 +129,28 @@ export class WebSocketManager {
   }
 
   private startPingInterval() {
-    const pingInterval = setInterval(() => {
+    // Clear any existing interval first
+    this.stopPingInterval();
+    
+    this.pingInterval = window.setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: 'ping' }));
       } else {
-        clearInterval(pingInterval);
+        this.stopPingInterval();
       }
     }, 30000); // Ping every 30 seconds
   }
 
+  private stopPingInterval() {
+    if (this.pingInterval !== null) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+  }
+
   disconnect() {
     this.shouldReconnect = false;
+    this.stopPingInterval();
     
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);

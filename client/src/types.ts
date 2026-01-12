@@ -21,7 +21,10 @@ export interface SyncPageResult {
   has_more: boolean;
 }
 
-export interface ClientConfig {
+/**
+ * Input configuration for PyreClient (all optional except required fields)
+ */
+export interface ClientConfigInput {
   /** Base URL for the server (e.g., "http://localhost:3000") */
   baseUrl: string;
   /** User ID for WebSocket connection */
@@ -49,6 +52,40 @@ export interface ClientConfig {
     maxDelay?: number;
     /** Multiplier for exponential backoff (default: 2) */
     backoffMultiplier?: number;
+  };
+}
+
+/**
+ * Internal configuration with all defaults applied (nothing optional unless truly optional)
+ */
+export interface ClientConfig {
+  /** Base URL for the server */
+  baseUrl: string;
+  /** User ID for WebSocket connection */
+  userId: number;
+  /** Database name for IndexedDB */
+  dbName: string;
+  /** Page size for catchup requests */
+  pageSize: number;
+  /** Retry configuration */
+  retry: {
+    /** Maximum number of retries for catchup */
+    maxRetries: number;
+    /** Initial delay in ms before first retry */
+    initialDelay: number;
+    /** Maximum delay in ms between retries */
+    maxDelay: number;
+    /** Multiplier for exponential backoff */
+    backoffMultiplier: number;
+  };
+  /** WebSocket reconnection configuration */
+  reconnect: {
+    /** Initial delay in ms before first reconnect attempt */
+    initialDelay: number;
+    /** Maximum delay in ms between reconnect attempts */
+    maxDelay: number;
+    /** Multiplier for exponential backoff */
+    backoffMultiplier: number;
   };
 }
 

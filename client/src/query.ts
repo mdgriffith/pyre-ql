@@ -5,36 +5,55 @@
 import type { QueryShape, WhereClause, SortClause, Unsubscribe } from './types';
 import { Storage } from './storage';
 import { evaluateFilter, sortRows } from './filter';
+import { SchemaManager } from './schema';
 
 export interface QuerySubscription {
   data: any;
   unsubscribe: Unsubscribe;
 }
 
+interface QueryInfo {
+  callbacks: Set<() => void>;
+  tableDependencies: Set<string>;
+}
+
 export class QueryManager {
   private storage: Storage;
-  private activeQueries = new Map<number, Set<() => void>>();
+  private schemaManager: SchemaManager;
+  private activeQueries = new Map<number, QueryInfo>();
   private nextQueryId = 0;
 
-  constructor(storage: Storage) {
+  constructor(storage: Storage, schemaManager: SchemaManager) {
     this.storage = storage;
+    this.schemaManager = schemaManager;
   }
 
   query(shape: QueryShape, callback: (data: any) => void): Unsubscribe {
     const queryId = this.nextQueryId++;
-    const updateCallbacks = new Set<() => void>();
+    const tableDependencies = new Set<string>();
+
+    // Extract table dependencies from query shape
+    this.extractTableDependencies(shape, tableDependencies);
 
     // Initial execution
     const executeQuery = async () => {
-      const result = await this.executeQueryShape(shape);
-      callback(result);
+      try {
+        const result = await this.executeQueryShape(shape);
+        callback(result);
+      } catch (error) {
+        console.error('[PyreClient] Query execution failed:', error);
+        callback(null); // Return null on error
+      }
     };
 
     executeQuery();
-    updateCallbacks.add(executeQuery);
 
-    // Store query for live updates
-    this.activeQueries.set(queryId, updateCallbacks);
+    // Store query info for live updates
+    const queryInfo: QueryInfo = {
+      callbacks: new Set([executeQuery]),
+      tableDependencies,
+    };
+    this.activeQueries.set(queryId, queryInfo);
 
     // Return unsubscribe function
     return () => {
@@ -42,11 +61,50 @@ export class QueryManager {
     };
   }
 
+  private extractTableDependencies(shape: QueryShape, dependencies: Set<string>) {
+    for (const [tableName, fieldSpec] of Object.entries(shape)) {
+      dependencies.add(tableName);
+      this.extractDependenciesFromFieldSpec(tableName, fieldSpec, dependencies);
+    }
+  }
+
+  private extractDependenciesFromFieldSpec(tableName: string, fieldSpec: any, dependencies: Set<string>) {
+    for (const [field, selection] of Object.entries(fieldSpec)) {
+      if (field.startsWith('@')) {
+        continue; // Skip special directives
+      }
+      if (selection === true) {
+        continue; // Simple field selection
+      }
+      if (typeof selection === 'object' && selection !== null) {
+        // Check if this is a relationship
+        const relInfo = this.schemaManager.getRelationshipInfo(tableName, field);
+        if (relInfo.relatedTable) {
+          dependencies.add(relInfo.relatedTable);
+          // Recursively extract dependencies from nested selections
+          this.extractDependenciesFromFieldSpec(relInfo.relatedTable, selection, dependencies);
+        }
+      }
+    }
+  }
+
   notifyQueries(tableNames: string[]) {
-    // Notify all queries that might be affected by changes to these tables
-    for (const callbacks of this.activeQueries.values()) {
-      for (const callback of callbacks) {
-        callback();
+    const affectedTableSet = new Set(tableNames);
+    
+    // Only notify queries that depend on the affected tables
+    for (const queryInfo of this.activeQueries.values()) {
+      const hasDependency = Array.from(queryInfo.tableDependencies).some(
+        dep => affectedTableSet.has(dep)
+      );
+      
+      if (hasDependency) {
+        for (const callback of queryInfo.callbacks) {
+          try {
+            callback();
+          } catch (error) {
+            console.error('[PyreClient] Query callback failed:', error);
+          }
+        }
       }
     }
   }
@@ -120,7 +178,7 @@ export class QueryManager {
         projected[field] = row[field];
       } else if (typeof selection === 'object' && selection !== null) {
         // Nested selection or relationship
-        if (this.isRelationshipField(field, row)) {
+        if (this.isRelationshipField(currentTableName, field)) {
           // This is a relationship field - resolve it
           projected[field] = await this.resolveRelationship(field, row, selection, currentTableName);
         } else {
@@ -133,100 +191,29 @@ export class QueryManager {
     return projected;
   }
 
-  private isRelationshipField(fieldName: string, row: any): boolean {
-    // Check if this field name matches a foreign key pattern
-    // Common patterns: fieldId, field_id, or fieldNameId
-    // Also check for reverse relationships (e.g., "users" field with "authorUserId" in row)
-    
-    // Direct foreign key check
-    const idField = `${fieldName}Id`;
-    const idFieldSnake = `${fieldName}_id`;
-    if (idField in row || idFieldSnake in row) {
-      return true;
-    }
-    
-    // Check for reverse relationship patterns
-    // e.g., "users" field when row has "authorUserId" -> look for "user" table
-    const possibleIdFields = Object.keys(row).filter(key => 
-      key.toLowerCase().includes(fieldName.toLowerCase()) || 
-      fieldName.toLowerCase().includes(key.toLowerCase().replace(/id$/, '').replace(/_id$/, ''))
-    );
-    
-    return possibleIdFields.length > 0;
+  private isRelationshipField(tableName: string, fieldName: string): boolean {
+    const relInfo = this.schemaManager.getRelationshipInfo(tableName, fieldName);
+    return relInfo.type !== null;
   }
 
   private async resolveRelationship(fieldName: string, row: any, selection: any, currentTableName: string): Promise<any> {
-    // Try to find the foreign key field
-    // Common patterns: fieldNameId, fieldName_id, or reverse (e.g., "users" -> "authorUserId")
+    const relInfo = this.schemaManager.getRelationshipInfo(currentTableName, fieldName);
     
-    let foreignKeyId: any = null;
-    let relatedTableName: string | null = null;
-    let isOneToMany = false;
-    
-    // Try direct patterns first (many-to-one: row has foreignKeyId pointing to related table)
-    const idField = `${fieldName}Id`;
-    const idFieldSnake = `${fieldName}_id`;
-    
-    if (idField in row) {
-      foreignKeyId = row[idField];
-      relatedTableName = this.inferTableNameFromField(fieldName);
-    } else if (idFieldSnake in row) {
-      foreignKeyId = row[idFieldSnake];
-      relatedTableName = this.inferTableNameFromField(fieldName);
-    } else {
-      // Try reverse relationship - one-to-many (related table has foreignKeyId pointing to this row)
-      // e.g., if fieldName is "posts" and this is a User row, then Post.authorUserId -> User.id
-      
-      // Check if this might be a one-to-many relationship
-      // The related table would have a foreign key pointing to this row's id
-      const possibleFkFields = this.inferForeignKeyFields(fieldName, currentTableName);
-      
-      if (possibleFkFields.length > 0) {
-        // This is likely a one-to-many relationship
-        isOneToMany = true;
-        relatedTableName = this.inferTableNameFromField(fieldName);
-      } else {
-        // Try to find a foreign key in this row that matches the field name
-        for (const [key, value] of Object.entries(row)) {
-          if (key.toLowerCase().endsWith('id') || key.toLowerCase().endsWith('_id')) {
-            const baseName = key.toLowerCase().replace(/id$/, '').replace(/_id$/, '');
-            const singularFieldName = fieldName.toLowerCase().replace(/s$/, '');
-            
-            if (baseName === singularFieldName || baseName.includes(singularFieldName) || singularFieldName.includes(baseName)) {
-              foreignKeyId = value;
-              relatedTableName = this.inferTableNameFromForeignKey(key);
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    if (!relatedTableName) {
+    if (!relInfo.type || !relInfo.relatedTable) {
       return null;
     }
 
-    if (isOneToMany) {
+    if (relInfo.type === 'one-to-many') {
       // One-to-many: get all rows from related table where foreignKeyId matches this row's id
-      const allRelatedRows = await this.storage.getAllRows(relatedTableName);
-      const fkFields = this.inferForeignKeyFields(fieldName, currentTableName);
-      
-      if (fkFields.length === 0) {
+      if (!relInfo.foreignKeyField) {
         return [];
       }
 
-      // Try each possible foreign key field
-      let matchingRows: any[] = [];
-      for (const fkField of fkFields) {
-        matchingRows = allRelatedRows.filter(relatedRow => {
-          const fkValue = relatedRow[fkField];
-          return fkValue === row.id || fkValue === String(row.id) || String(fkValue) === String(row.id);
-        });
-        
-        if (matchingRows.length > 0) {
-          break; // Found matches with this FK field
-        }
-      }
+      const matchingRows = await this.storage.getRowsByForeignKey(
+        relInfo.relatedTable,
+        relInfo.foreignKeyField,
+        row.id
+      );
 
       // Apply selection to each row
       if (selection === true) {
@@ -234,17 +221,22 @@ export class QueryManager {
       } else {
         // Need to project fields for each matching row
         const projected = await Promise.all(matchingRows.map(r => 
-          this.projectFields(r, selection, relatedTableName!)
+          this.projectFields(r, selection, relInfo.relatedTable!)
         ));
         return projected;
       }
     } else {
       // Many-to-one: get single related row
+      if (!relInfo.foreignKeyField) {
+        return null;
+      }
+
+      const foreignKeyId = row[relInfo.foreignKeyField];
       if (foreignKeyId === null || foreignKeyId === undefined) {
         return null;
       }
 
-      const relatedRow = await this.storage.getRow(relatedTableName, foreignKeyId);
+      const relatedRow = await this.storage.getRow(relInfo.relatedTable, foreignKeyId);
 
       if (!relatedRow) {
         return null;
@@ -256,49 +248,8 @@ export class QueryManager {
       }
 
       // Otherwise, project the selected fields
-      return this.projectFields(relatedRow, selection, relatedTableName);
+      return this.projectFields(relatedRow, selection, relInfo.relatedTable);
     }
-  }
-
-  private inferForeignKeyFields(fieldName: string, currentTableName: string): string[] {
-    // Infer possible foreign key field names in the related table
-    // e.g., if fieldName is "posts" and currentTableName is "user", then Post.authorUserId or Post.userId
-    
-    const singularFieldName = fieldName.toLowerCase().replace(/s$/, '');
-    const currentTableSingular = currentTableName.toLowerCase().replace(/s$/, '');
-    
-    // Common patterns for foreign keys pointing to current table
-    const patterns = [
-      `author${this.capitalize(currentTableSingular)}Id`,
-      `${currentTableSingular}Id`,
-      `${currentTableSingular}_id`,
-      `owner${this.capitalize(currentTableSingular)}Id`,
-      `parent${this.capitalize(currentTableSingular)}Id`,
-    ];
-    
-    return patterns;
-  }
-
-  private capitalize(str: string): string {
-    return str.charAt(0).toUpperCase() + str.slice(1);
-  }
-
-  private inferTableNameFromField(fieldName: string): string {
-    // Infer table name from relationship field name
-    // e.g., "users" -> "user", "posts" -> "post"
-    const singular = fieldName.toLowerCase().replace(/s$/, '');
-    return singular;
-  }
-
-  private inferTableNameFromForeignKey(fkField: string): string {
-    // Infer table name from foreign key field name
-    // e.g., "authorUserId" -> "user", "postId" -> "post"
-    const base = fkField.toLowerCase().replace(/id$/, '').replace(/_id$/, '');
-    
-    // Remove common prefixes
-    const withoutPrefix = base.replace(/^(author|owner|parent|child)/, '');
-    
-    return withoutPrefix || base;
   }
 
   private removeTableName(row: any): any {

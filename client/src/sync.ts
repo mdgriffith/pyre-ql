@@ -7,13 +7,14 @@ import { Storage } from './storage';
 
 export class SyncManager {
   private storage: Storage;
-  private config: Required<ClientConfig>;
+  private config: ClientConfig;
   private sessionId: string | null = null;
   private syncing = false;
   private synced = false;
   private syncError: Error | null = null;
+  private syncPromise: Promise<void> | null = null;
 
-  constructor(storage: Storage, config: Required<ClientConfig>) {
+  constructor(storage: Storage, config: ClientConfig) {
     this.storage = storage;
     this.config = config;
   }
@@ -32,78 +33,98 @@ export class SyncManager {
 
   async sync(onProgress?: SyncProgressCallback): Promise<void> {
     if (!this.sessionId) {
-      throw new Error('Session ID not set. WebSocket must be connected first.');
+      const error = new Error('Session ID not set. WebSocket must be connected first.');
+      console.error('[PyreClient]', error.message);
+      throw error;
     }
 
-    if (this.syncing) {
-      // Already syncing, wait for it
-      return new Promise((resolve, reject) => {
-        const checkInterval = setInterval(() => {
-          if (!this.syncing) {
-            clearInterval(checkInterval);
-            if (this.syncError) {
-              reject(this.syncError);
-            } else {
-              resolve();
-            }
-          }
-        }, 100);
-      });
+    // If already syncing, wait for the existing sync to complete
+    if (this.syncing && this.syncPromise) {
+      return this.syncPromise;
     }
 
+    // Start new sync
     this.syncing = true;
     this.syncError = null;
 
-    try {
-      await this.performSync(onProgress);
-      this.synced = true;
-    } catch (error) {
-      this.syncError = error instanceof Error ? error : new Error(String(error));
-      throw this.syncError;
-    } finally {
-      this.syncing = false;
-    }
+    this.syncPromise = (async () => {
+      try {
+        await this.performSync(onProgress);
+        this.synced = true;
+      } catch (error) {
+        this.syncError = error instanceof Error ? error : new Error(String(error));
+        console.error('[PyreClient] Sync failed:', this.syncError);
+        throw this.syncError;
+      } finally {
+        this.syncing = false;
+        this.syncPromise = null;
+      }
+    })();
+
+    return this.syncPromise;
   }
 
   private async performSync(onProgress?: SyncProgressCallback): Promise<void> {
     let cursor = await this.storage.getSyncCursor();
+
+    // Validate cursor structure
+    if (!cursor || typeof cursor !== 'object' || !cursor.tables) {
+      console.warn('[PyreClient] Invalid sync cursor, resetting to empty');
+      cursor = { tables: {} };
+    }
+
     let hasMore = true;
     let tablesSynced = 0;
     const seenTables = new Set<string>();
 
     while (hasMore) {
-      const result = await this.fetchSyncPage(cursor);
-      
-      // Process each table
-      for (const [tableName, tableData] of Object.entries(result.tables)) {
-        if (!seenTables.has(tableName)) {
-          seenTables.add(tableName);
+      try {
+        const result = await this.fetchSyncPage(cursor);
+
+        // Process each table
+        for (const [tableName, tableData] of Object.entries(result.tables)) {
+          if (!seenTables.has(tableName)) {
+            seenTables.add(tableName);
+          }
+
+          // Update cursor for this table
+          cursor.tables[tableName] = {
+            last_seen_updated_at: tableData.last_seen_updated_at,
+            permission_hash: tableData.permission_hash,
+          };
+
+          // Store rows
+          try {
+            await this.storage.putRows(tableName, tableData.rows);
+          } catch (error) {
+            console.error(`[PyreClient] Failed to store rows for table ${tableName}:`, error);
+            throw error;
+          }
+
+          tablesSynced++;
+
+          if (onProgress) {
+            onProgress({
+              table: tableName,
+              tablesSynced,
+              complete: false,
+            });
+          }
         }
 
-        // Update cursor for this table
-        cursor.tables[tableName] = {
-          last_seen_updated_at: tableData.last_seen_updated_at,
-          permission_hash: tableData.permission_hash,
-        };
-
-        // Store rows
-        await this.storage.putRows(tableName, tableData.rows);
-
-        tablesSynced++;
-
-        if (onProgress) {
-          onProgress({
-            table: tableName,
-            tablesSynced,
-            complete: false,
-          });
+        // Save cursor after each page
+        try {
+          await this.storage.saveSyncCursor(cursor);
+        } catch (error) {
+          console.error('[PyreClient] Failed to save sync cursor:', error);
+          // Continue syncing even if cursor save fails
         }
+
+        hasMore = result.has_more;
+      } catch (error) {
+        console.error('[PyreClient] Failed to fetch sync page:', error);
+        throw error;
       }
-
-      // Save cursor after each page
-      await this.storage.saveSyncCursor(cursor);
-
-      hasMore = result.has_more;
     }
 
     if (onProgress) {
@@ -126,24 +147,30 @@ export class SyncManager {
       try {
         const syncCursorParam = encodeURIComponent(JSON.stringify(cursor));
         const url = `${this.config.baseUrl}/sync?sessionId=${encodeURIComponent(this.sessionId!)}&syncCursor=${syncCursorParam}`;
-        
+
         const response = await fetch(url);
-        
+
         if (!response.ok) {
-          throw new Error(`Sync request failed: ${response.status} ${response.statusText}`);
+          const errorText = await response.text().catch(() => '');
+          const error = new Error(`Sync request failed: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ''}`);
+          console.error('[PyreClient]', error.message);
+          throw error;
         }
 
         const result: SyncPageResult = await response.json();
         return result;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        
+
         if (attempt < maxRetries) {
           const delay = Math.min(
             initialDelay * Math.pow(backoffMultiplier, attempt),
             maxDelay
           );
+          console.warn(`[PyreClient] Sync attempt ${attempt + 1} failed, retrying in ${delay}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
+        } else {
+          console.error('[PyreClient] Sync failed after all retries');
         }
       }
     }
@@ -160,10 +187,16 @@ export class SyncManager {
     for (const index of delta.affected_row_indices) {
       const affectedRow = delta.all_affected_rows[index];
       if (!affectedRow) {
+        console.warn(`[PyreClient] Delta index ${index} out of bounds`);
         continue;
       }
 
       const tableName = affectedRow.table_name;
+      if (!tableName) {
+        console.warn('[PyreClient] Delta row missing table_name');
+        continue;
+      }
+
       if (!rowsToUpdate[tableName]) {
         rowsToUpdate[tableName] = [];
       }
@@ -184,7 +217,12 @@ export class SyncManager {
 
     // Apply updates with conflict resolution
     for (const [tableName, rows] of Object.entries(rowsToUpdate)) {
-      await this.storage.putRows(tableName, rows);
+      try {
+        await this.storage.putRows(tableName, rows);
+      } catch (error) {
+        console.error(`[PyreClient] Failed to apply delta for table ${tableName}:`, error);
+        throw error;
+      }
     }
   }
 }

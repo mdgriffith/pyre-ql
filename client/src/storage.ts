@@ -47,11 +47,17 @@ export class Storage {
           const tablesStore = db.createObjectStore('tables', { keyPath: ['tableName', 'id'] });
           tablesStore.createIndex('byTable', 'tableName', { unique: false });
           tablesStore.createIndex('byUpdatedAt', 'updatedAt', { unique: false });
+          // Index for foreign keys - we'll create these dynamically based on schema
         }
 
         // Create syncCursor object store if it doesn't exist
         if (!db.objectStoreNames.contains('syncCursor')) {
           db.createObjectStore('syncCursor');
+        }
+
+        // Create schema object store if it doesn't exist
+        if (!db.objectStoreNames.contains('schema')) {
+          db.createObjectStore('schema');
         }
       };
     });
@@ -63,7 +69,10 @@ export class Storage {
     if (!this.db) {
       await this.init();
     }
-    return this.db!;
+    if (!this.db) {
+      throw new Error('Failed to initialize database');
+    }
+    return this.db;
   }
 
   async getSyncCursor(): Promise<SyncCursor> {
@@ -146,25 +155,41 @@ export class Storage {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(['tables'], 'readwrite');
       const store = tx.objectStore('tables');
+      
+      let error: Error | null = null;
+      const existingRows: (any | null)[] = new Array(rows.length);
+      let readsCompleted = 0;
+      let writesCompleted = 0;
+      let writesStarted = 0;
 
-      // Get existing rows to check updatedAt for conflict resolution
-      const existingPromises = rows.map(row => {
-        return new Promise<any | null>((resolve) => {
-          const request = store.get([tableName, row.id]);
-          request.onsuccess = () => resolve(request.result || null);
-          request.onerror = () => resolve(null);
-        });
+      // First, read all existing rows
+      rows.forEach((row, index) => {
+        const request = store.get([tableName, row.id]);
+        request.onsuccess = () => {
+          existingRows[index] = request.result || null;
+          readsCompleted++;
+          
+          // Once all reads are done, process writes
+          if (readsCompleted === rows.length) {
+            processWrites();
+          }
+        };
+        request.onerror = () => {
+          existingRows[index] = null;
+          readsCompleted++;
+          
+          if (readsCompleted === rows.length) {
+            processWrites();
+          }
+        };
       });
 
-      Promise.all(existingPromises).then(existingRows => {
-        let error: Error | null = null;
-        let completed = 0;
-
+      function processWrites() {
         rows.forEach((row, index) => {
           const existing = existingRows[index];
           
-          // Conflict resolution: newer updatedAt wins
-          if (existing && existing.updatedAt && row.updatedAt) {
+          // Conflict resolution: newer updatedAt wins (assumes all tables have updatedAt)
+          if (existing && existing.updatedAt != null && row.updatedAt != null) {
             const existingTime = typeof existing.updatedAt === 'number' 
               ? existing.updatedAt 
               : new Date(existing.updatedAt).getTime() / 1000;
@@ -174,36 +199,58 @@ export class Storage {
             
             if (existingTime > newTime) {
               // Existing is newer, skip this row
-              completed++;
-              if (completed === rows.length) {
-                if (error) reject(error);
-                else resolve();
-              }
+              writesCompleted++;
+              checkComplete();
               return;
             }
+          } else if (existing && existing.updatedAt != null && row.updatedAt == null) {
+            // Existing has updatedAt but new row doesn't - keep existing
+            writesCompleted++;
+            checkComplete();
+            return;
+          } else if (existing && existing.updatedAt == null && row.updatedAt != null) {
+            // New row has updatedAt but existing doesn't - use new row (continue below)
+          } else if (existing && existing.updatedAt == null && row.updatedAt == null) {
+            // Neither has updatedAt - use new row (continue below)
           }
 
           // Add tableName to row for composite key
           const rowWithTable = { ...row, tableName };
           const request = store.put(rowWithTable);
+          writesStarted++;
 
           request.onsuccess = () => {
-            completed++;
-            if (completed === rows.length) {
-              if (error) reject(error);
-              else resolve();
-            }
+            writesCompleted++;
+            checkComplete();
           };
 
           request.onerror = () => {
             error = new Error(`Failed to write row: ${request.error}`);
-            completed++;
-            if (completed === rows.length) {
-              reject(error);
-            }
+            writesCompleted++;
+            checkComplete();
           };
         });
-      });
+        
+        // If no writes were started (all skipped), check completion
+        if (writesStarted === 0) {
+          checkComplete();
+        }
+      }
+
+      function checkComplete() {
+        if (writesCompleted === rows.length) {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        }
+      }
+
+      // Handle transaction errors
+      tx.onerror = () => {
+        reject(new Error(`Transaction failed: ${tx.error}`));
+      };
     });
   }
 
@@ -247,5 +294,85 @@ export class Storage {
         reject(new Error(`Failed to clear table: ${request.error}`));
       };
     });
+  }
+
+  async saveSchema(schemaSource: string): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['schema'], 'readwrite');
+      const store = tx.objectStore('schema');
+      const request = store.put(schemaSource, 'schema');
+
+      request.onsuccess = () => {
+        resolve();
+      };
+
+      request.onerror = () => {
+        reject(new Error(`Failed to save schema: ${request.error}`));
+      };
+    });
+  }
+
+  async getSchema(): Promise<string | null> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['schema'], 'readonly');
+      const store = tx.objectStore('schema');
+      const request = store.get('schema');
+
+      request.onsuccess = () => {
+        const result = request.result;
+        resolve(typeof result === 'string' ? result : null);
+      };
+
+      request.onerror = () => {
+        reject(new Error(`Failed to read schema: ${request.error}`));
+      };
+    });
+  }
+
+  async createForeignKeyIndex(tableName: string, foreignKeyField: string): Promise<void> {
+    const db = await this.getDB();
+    // Note: IndexedDB doesn't support creating indexes after object store creation in the same transaction
+    // This would need to be done during upgrade, but we can't dynamically add indexes easily
+    // For now, we'll rely on the byTable index and filter in memory
+    // In a production system, you'd want to create all indexes during the initial schema setup
+  }
+
+  async getRowsByForeignKey(
+    tableName: string,
+    foreignKeyField: string,
+    foreignKeyValue: any
+  ): Promise<any[]> {
+    // Since we can't easily create dynamic indexes, we'll fetch all rows and filter
+    // This is acceptable for now, but could be optimized with proper index setup
+    // WARNING: This is inefficient for large tables - consider creating indexes during schema setup
+    const allRows = await this.getAllRows(tableName);
+    if (allRows.length > 1000) {
+      console.warn(
+        `[PyreClient] getRowsByForeignKey: Filtering ${allRows.length} rows for ${tableName}.${foreignKeyField}. ` +
+        `Consider creating an index for better performance.`
+      );
+    }
+    return allRows.filter(row => {
+      const fkValue = row[foreignKeyField];
+      return fkValue === foreignKeyValue || String(fkValue) === String(foreignKeyValue);
+    });
+  }
+
+  async checkStorageQuota(): Promise<{ usage: number; quota: number; percentage: number }> {
+    if ('storage' in navigator && 'estimate' in navigator.storage) {
+      try {
+        const estimate = await navigator.storage.estimate();
+        const usage = estimate.usage || 0;
+        const quota = estimate.quota || 0;
+        const percentage = quota > 0 ? (usage / quota) * 100 : 0;
+        return { usage, quota, percentage };
+      } catch (error) {
+        console.warn('[PyreClient] Failed to check storage quota:', error);
+        return { usage: 0, quota: 0, percentage: 0 };
+      }
+    }
+    return { usage: 0, quota: 0, percentage: 0 };
   }
 }

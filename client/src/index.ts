@@ -2,14 +2,15 @@
  * Pyre Client - Browser-side data synchronization and querying
  */
 
-import type { ClientConfig, QueryShape, SyncProgressCallback, SyncStatus, Unsubscribe } from './types';
+import type { ClientConfigInput, ClientConfig, QueryShape, SyncProgressCallback, SyncStatus, Unsubscribe } from './types';
 import { Storage } from './storage';
 import { SyncManager } from './sync';
 import { WebSocketManager } from './websocket';
 import type { WebSocketMessage } from './websocket';
 import { QueryManager } from './query';
+import { SchemaManager } from './schema';
 
-const DEFAULT_CONFIG: Required<ClientConfig> = {
+const DEFAULT_CONFIG: ClientConfig = {
   baseUrl: '',
   userId: 0,
   dbName: 'pyre-client',
@@ -27,65 +28,118 @@ const DEFAULT_CONFIG: Required<ClientConfig> = {
   },
 };
 
+function normalizeConfig(input: ClientConfigInput): ClientConfig {
+  return {
+    baseUrl: input.baseUrl,
+    userId: input.userId,
+    dbName: input.dbName ?? DEFAULT_CONFIG.dbName,
+    pageSize: input.pageSize ?? DEFAULT_CONFIG.pageSize,
+    retry: {
+      maxRetries: input.retry?.maxRetries ?? DEFAULT_CONFIG.retry.maxRetries,
+      initialDelay: input.retry?.initialDelay ?? DEFAULT_CONFIG.retry.initialDelay,
+      maxDelay: input.retry?.maxDelay ?? DEFAULT_CONFIG.retry.maxDelay,
+      backoffMultiplier: input.retry?.backoffMultiplier ?? DEFAULT_CONFIG.retry.backoffMultiplier,
+    },
+    reconnect: {
+      initialDelay: input.reconnect?.initialDelay ?? DEFAULT_CONFIG.reconnect.initialDelay,
+      maxDelay: input.reconnect?.maxDelay ?? DEFAULT_CONFIG.reconnect.maxDelay,
+      backoffMultiplier: input.reconnect?.backoffMultiplier ?? DEFAULT_CONFIG.reconnect.backoffMultiplier,
+    },
+  };
+}
+
 export class PyreClient {
-  private config: Required<ClientConfig>;
+  private config: ClientConfig;
   private storage: Storage;
   private syncManager: SyncManager;
   private wsManager: WebSocketManager;
   private queryManager: QueryManager;
+  private schemaManager: SchemaManager;
   private syncProgressCallbacks: Set<SyncProgressCallback> = new Set();
   private initialized = false;
+  private quotaCheckInterval: number | null = null;
 
-  constructor(config: ClientConfig) {
-    // Merge with defaults
-    this.config = {
-      ...DEFAULT_CONFIG,
-      ...config,
-      retry: {
-        ...DEFAULT_CONFIG.retry,
-        ...config.retry,
-      },
-      reconnect: {
-        ...DEFAULT_CONFIG.reconnect,
-        ...config.reconnect,
-      },
-    };
+  constructor(config: ClientConfigInput) {
+    // Convert input config to normalized config with all defaults applied
+    this.config = normalizeConfig(config);
 
     this.storage = new Storage(this.config.dbName);
+    this.schemaManager = new SchemaManager();
     this.syncManager = new SyncManager(this.storage, this.config);
     this.wsManager = new WebSocketManager(this.config);
-    this.queryManager = new QueryManager(this.storage);
+    this.queryManager = new QueryManager(this.storage, this.schemaManager);
 
     // Set up WebSocket message handlers
     this.setupWebSocketHandlers();
+
+    // Start quota monitoring
+    this.startQuotaMonitoring();
   }
 
   /**
-   * Initialize the client - connects WebSocket and performs initial sync
+   * Initialize the client - fetches schema, connects WebSocket and performs initial sync
    */
   async init(onProgress?: SyncProgressCallback): Promise<void> {
     if (this.initialized) {
       return;
     }
 
-    // Initialize storage
-    await this.storage.init();
+    try {
+      // Initialize storage
+      await this.storage.init();
 
-    // Set up progress callback
-    if (onProgress) {
-      this.onSyncProgress(onProgress);
+      // Fetch and store schema
+      try {
+        const { schema, introspection } = await this.schemaManager.fetchSchema(this.config.baseUrl);
+        // Store the introspection JSON as a string
+        await this.storage.saveSchema(JSON.stringify(introspection));
+      } catch (error) {
+        console.error('[PyreClient] Failed to fetch schema, trying cached version:', error);
+        // Try to load cached schema
+        const cachedSchemaJson = await this.storage.getSchema();
+        if (cachedSchemaJson) {
+          try {
+            // Try to parse as introspection JSON
+            const introspection = JSON.parse(cachedSchemaJson);
+            if (introspection.tables) {
+              this.schemaManager.setIntrospectionJson(introspection);
+            } else {
+              throw new Error('Invalid cached schema format');
+            }
+          } catch (parseError) {
+            console.error('[PyreClient] Failed to parse cached schema:', parseError);
+            throw new Error('No valid schema available and failed to fetch');
+          }
+        } else {
+          throw new Error('No schema available and failed to fetch');
+        }
+      }
+
+      // Set up progress callback
+      if (onProgress) {
+        this.onSyncProgress(onProgress);
+      }
+
+      // Connect WebSocket
+      const sessionId = await this.wsManager.connect();
+      this.syncManager.setSessionId(sessionId);
+
+      // Perform initial sync (resumes from cursor if available)
+      await this.syncManager.sync((progress) => {
+        this.syncProgressCallbacks.forEach(cb => {
+          try {
+            cb(progress);
+          } catch (error) {
+            console.error('[PyreClient] Sync progress callback failed:', error);
+          }
+        });
+      });
+
+      this.initialized = true;
+    } catch (error) {
+      console.error('[PyreClient] Initialization failed:', error);
+      throw error;
     }
-
-    // Connect WebSocket
-    const sessionId = await this.wsManager.connect();
-    this.syncManager.setSessionId(sessionId);
-
-    // Perform initial sync
-    await this.syncManager.sync((progress) => {
-      this.syncProgressCallbacks.forEach(cb => cb(progress));
-    });
-
-    this.initialized = true;
   }
 
   /**
@@ -121,7 +175,28 @@ export class PyreClient {
   disconnect(): void {
     this.wsManager.disconnect();
     this.syncProgressCallbacks.clear();
+    if (this.quotaCheckInterval !== null) {
+      clearInterval(this.quotaCheckInterval);
+      this.quotaCheckInterval = null;
+    }
     this.initialized = false;
+  }
+
+  private startQuotaMonitoring(): void {
+    // Check quota every 30 seconds
+    this.quotaCheckInterval = window.setInterval(async () => {
+      try {
+        const { percentage } = await this.storage.checkStorageQuota();
+        if (percentage > 75) {
+          console.warn(
+            `[PyreClient] Storage usage is ${percentage.toFixed(1)}% full. ` +
+            `Consider cleaning up old data or increasing storage quota.`
+          );
+        }
+      } catch (error) {
+        console.error('[PyreClient] Failed to check storage quota:', error);
+      }
+    }, 30000);
   }
 
   private setupWebSocketHandlers(): void {
@@ -139,23 +214,29 @@ export class PyreClient {
               }
             }
           }
-          
-          // Notify all active queries
+
+          // Notify only queries that depend on affected tables
           this.queryManager.notifyQueries(Array.from(affectedTables));
         }).catch(error => {
-          console.error('Failed to apply delta:', error);
+          console.error('[PyreClient] Failed to apply delta:', error);
         });
       }
     });
 
-    // Handle reconnection - re-sync when reconnected
+    // Handle reconnection - resume sync from cursor (not full resync)
     this.wsManager.onConnect((sessionId: string) => {
       this.syncManager.setSessionId(sessionId);
-      // Re-sync after reconnection
+      // Resume sync from cursor after reconnection (not full resync)
       this.syncManager.sync((progress) => {
-        this.syncProgressCallbacks.forEach(cb => cb(progress));
+        this.syncProgressCallbacks.forEach(cb => {
+          try {
+            cb(progress);
+          } catch (error) {
+            console.error('[PyreClient] Sync progress callback failed:', error);
+          }
+        });
       }).catch(error => {
-        console.error('Failed to sync after reconnection:', error);
+        console.error('[PyreClient] Failed to sync after reconnection:', error);
       });
     });
   }
@@ -163,7 +244,7 @@ export class PyreClient {
 
 // Export types
 export type {
-  ClientConfig,
+  ClientConfigInput,
   QueryShape,
   WhereClause,
   SortClause,

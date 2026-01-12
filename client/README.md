@@ -4,16 +4,18 @@ Browser-side TypeScript client for Pyre data synchronization and querying. Store
 
 ## Features
 
-- ✅ **IndexedDB Storage** - Efficient local data storage
-- ✅ **Automatic Sync** - Catchup sync loop until all data is retrieved
-- ✅ **WebSocket Support** - Live updates via WebSocket connection
+- ✅ **IndexedDB Storage** - Efficient local data storage with quota monitoring
+- ✅ **Automatic Sync** - Catchup sync loop until all data is retrieved, resumes from cursor on reconnect
+- ✅ **WebSocket Support** - Live updates via WebSocket connection with automatic reconnection
+- ✅ **Schema-Based Relationships** - Uses server-provided schema for accurate relationship resolution
 - ✅ **GraphQL-like Queries** - Shape-based query syntax
 - ✅ **Filtering & Sorting** - Support for where clauses, sorting, and limits
 - ✅ **Relationship Resolution** - Automatic resolution of one-to-many and many-to-one relationships
-- ✅ **Conflict Resolution** - Newest `updatedAt` wins
-- ✅ **Live Updates** - Queries automatically update when data changes
+- ✅ **Conflict Resolution** - Newest `updatedAt` wins (all tables must have `updatedAt` field)
+- ✅ **Live Updates** - Queries automatically update when data changes (only affected queries notified)
 - ✅ **Retry Logic** - Configurable retry and reconnection strategies
 - ✅ **Sync Progress** - Hooks for tracking sync progress
+- ✅ **Error Handling** - Comprehensive error logging and handling
 
 ## Installation
 
@@ -283,6 +285,43 @@ See [IndexedDB Schema Documentation](./docs/indexeddb-schema.md) for details on 
 ### Conflict Resolution
 
 When the same row ID is received with different `updatedAt` values, the row with the newer `updatedAt` wins. This ensures clients always have the most recent data.
+
+## Server Requirements
+
+The Pyre server must expose a `/schema` endpoint that returns the database schema in the following format:
+
+```typescript
+{
+  tables: [
+    {
+      name: "table_name",
+      columns: [
+        { cid: 0, name: "id", type: "INTEGER", notnull: 1, dflt_value: null, pk: 1 },
+        { cid: 1, name: "updatedAt", type: "INTEGER", notnull: 1, dflt_value: null, pk: 0 },
+        // ...
+      ],
+      foreign_keys: [
+        { id: 0, seq: 0, table: "related_table", from: "foreign_key_field", to: "id", ... },
+        // ...
+      ]
+    },
+    // ...
+  ],
+  migration_state: { ... },
+  schema_source: "..."
+}
+```
+
+This schema is used for:
+- Relationship resolution (determining foreign key relationships)
+- Query optimization (tracking which tables queries depend on)
+
+## Notes
+
+- **All tables must have an `updatedAt` field** - This is required for conflict resolution
+- **Storage quota warnings** - The client monitors storage usage and warns when >75% full
+- **Sync cursor persistence** - Sync state is stored in IndexedDB and resumes on reconnect
+- **Query dependencies** - Only queries that depend on changed tables are re-executed
 
 ## License
 

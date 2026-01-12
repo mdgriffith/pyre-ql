@@ -60,6 +60,13 @@ app.get("/queries", async (c) => {
 
 });
 
+// Schema endpoint - returns introspection JSON
+app.get("/schema", async (c) => {
+    const { getIntrospectionJson } = await import("../../../wasm/server/schema.js");
+    const introspection = await getIntrospectionJson(db);
+    return c.json(introspection);
+});
+
 // Sync endpoint - Much simpler with helpers!
 app.get("/sync", async (c) => {
 
