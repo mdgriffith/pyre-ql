@@ -3,7 +3,7 @@ import { createClient } from "@libsql/client";
 import { join } from "path";
 import * as Pyre from "../../../wasm/server";
 
-await Pyre.initPyre();
+await Pyre.init();
 
 const app = new Hono();
 
@@ -54,15 +54,10 @@ app.use("*", async (c, next) => {
 
 // Query metadata endpoint
 app.get("/queries", async (c) => {
-    try {
-        const { discoverQueries } = await import("./client/queryDiscovery.js");
-        const queries = discoverQueries();
-        return c.json(queries);
-    } catch (error: any) {
-        console.error("Failed to discover queries:", error);
-        c.status(500);
-        return c.json({ error: error.message });
-    }
+    const { discoverQueries } = await import("./client/queryDiscovery.js");
+    const queries = discoverQueries();
+    return c.json(queries);
+
 });
 
 // Sync endpoint - Much simpler with helpers!
@@ -94,8 +89,8 @@ app.get("/sync", async (c) => {
         }
     }
 
-    // Use the sync handler - all the complex logic is abstracted!
-    const result = await Pyre.handleSync(db, syncCursor, client.session, 1000);
+    // Ask pyre to get any data that needs to be synced.
+    const result = await Pyre.catchup(db, syncCursor, client.session, 1000);
     return c.json(result);
 
 });
@@ -107,13 +102,12 @@ app.post("/db/:req", async (c) => {
     const sessionId = c.req.query("sessionId");
 
     // Get executing session from connected client or use default
-    // Pyre.runQuery accepts Session which is { [key: string]: any }, so we can pass session directly
     const client = sessionId ? connectedClients.get(sessionId) : null;
     const executingSession = client?.session ?? { userId: 1, role: "user" };
 
     // Execute query with all connected clients for sync delta calculation
-    // Pyre.runQuery can extract session.fields from ConnectedClient objects
-    const result = await Pyre.runQuery(
+    // Pyre.run can extract session.fields from ConnectedClient objects
+    const result = await Pyre.run(
         db,
         queries,
         req,
