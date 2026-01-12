@@ -3,29 +3,17 @@ import QueryForm from './components/QueryForm'
 import MessagePane from './components/MessagePane'
 import Clients from './components/Clients'
 import { discoverQueries, QueryMetadata } from './queryDiscovery'
+import { PyreClient } from '@pyre/client'
 import './App.css'
-
-interface SyncCursor {
-  tables: Record<string, {
-    last_seen_updated_at: number | null
-    permission_hash: string
-  }>
-}
-
-interface ClientData {
-  tables: Record<string, any[]>
-}
 
 interface Client {
   id: string
   name: string
-  ws: WebSocket | null
-  sessionId: string | null
+  pyreClient: PyreClient | null
   connected: boolean
-  syncCursor: SyncCursor
-  data: ClientData
   userId: number | null
   requestedUserId: number | null // User-specified userId for connection
+  sessionId: string | null
 }
 
 interface Event {
@@ -41,11 +29,9 @@ function App() {
     {
       id: '1',
       name: 'Client 1',
-      ws: null,
+      pyreClient: null,
       sessionId: null,
       connected: false,
-      syncCursor: { tables: {} },
-      data: { tables: {} },
       userId: null,
       requestedUserId: 1, // First client always starts as userId 1
     },
@@ -54,6 +40,7 @@ function App() {
   const clientsRef = useRef<Client[]>([])
   const initialClientConnectedRef = useRef(false)
   const nextUserIdRef = useRef<number>(2) // Next userId to assign (starts at 2 since 1 is taken)
+  const pyreClientsRef = useRef<Map<string, PyreClient>>(new Map())
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -87,139 +74,16 @@ function App() {
     ])
   }, [])
 
-  const performSyncCatchup = useCallback(
-    async (clientId: string, sessionId: string, session: any) => {
-      try {
-        // Get sync cursor from ref (latest state)
-        const client = clientsRef.current.find((c) => c.id === clientId)
-        const syncCursor = client?.syncCursor || { tables: {} }
-
-        // Build URL with query params
-        const syncCursorParam = encodeURIComponent(JSON.stringify(syncCursor))
-        const url = `http://localhost:3000/sync?sessionId=${sessionId}&syncCursor=${syncCursorParam}`
-        const method = 'GET'
-
-        addEvent({
-          type: 'query_sent',
-          data: { url, syncCursor, method },
-          clientId,
-        })
-
-        const response = await fetch(url, {
-          method,
-        })
-
-        if (!response.ok) {
-          throw new Error(`Sync failed: ${response.statusText}`)
-        }
-
-        const syncResult = await response.json()
-
-        // Update client data and sync cursor
-        setClients((prev) =>
-          prev.map((c) => {
-            if (c.id !== clientId) return c
-
-            const updatedCursor: SyncCursor = { ...c.syncCursor, tables: { ...c.syncCursor.tables } }
-            const newData: ClientData = { tables: { ...c.data.tables } }
-
-            // Process sync results - store all tables generically
-            for (const [tableName, tableData] of Object.entries(syncResult.tables)) {
-              const table = tableData as {
-                rows: any[]
-                permission_hash: string
-                last_seen_updated_at: number | null
-              }
-
-              // Update cursor (preserve existing cursor data, update this table)
-              updatedCursor.tables[tableName] = {
-                last_seen_updated_at: table.last_seen_updated_at,
-                permission_hash: table.permission_hash,
-              }
-
-              // Store table data generically - replace all rows for this table
-              newData.tables[tableName] = table.rows
-            }
-
-            return {
-              ...c,
-              syncCursor: updatedCursor,
-              data: newData,
-            }
-          })
-        )
-
-        addEvent({
-          type: 'query_response',
-          data: { message: 'Sync catchup completed', syncResult },
-          clientId,
-        })
-      } catch (error: any) {
-        addEvent({
-          type: 'query_response',
-          data: { error: error.message },
-          clientId,
-        })
-      }
-    },
-    [addEvent]
-  )
-
-  const handleSyncDelta = useCallback(
-    (clientId: string, deltaData: any) => {
-      setClients((prev) =>
-        prev.map((c) => {
-          if (c.id !== clientId) return c
-
-          const { all_affected_rows, affected_row_indices } = deltaData
-          const updatedData: ClientData = { tables: { ...c.data.tables } }
-
-          // Process affected rows - handle any table generically
-          for (const index of affected_row_indices) {
-            const affectedRow = all_affected_rows[index]
-            if (!affectedRow) continue
-
-            const { table_name, row } = affectedRow
-
-            // Ensure table exists in data structure
-            if (!updatedData.tables[table_name]) {
-              updatedData.tables[table_name] = []
-            }
-
-            // Find existing row by id (assuming all tables have an id field)
-            const rowIndex = updatedData.tables[table_name].findIndex((r: any) => r.id === row.id)
-            if (rowIndex >= 0) {
-              // Update existing row
-              updatedData.tables[table_name][rowIndex] = { ...updatedData.tables[table_name][rowIndex], ...row }
-            } else {
-              // Add new row
-              updatedData.tables[table_name].push(row)
-            }
-          }
-
-          return {
-            ...c,
-            data: updatedData,
-          }
-        })
-      )
-    },
-    []
-  )
-
-  const connectClient = useCallback((clientId: string) => {
+  const connectClient = useCallback(async (clientId: string) => {
     // Check current state from ref to avoid stale closures
     const client = clientsRef.current.find((c) => c.id === clientId)
-    if (!client || client.connected || client.ws) return
+    if (!client || client.connected || client.pyreClient) return
 
     // Use requestedUserId if set, otherwise use nextUserId
     let userId: number
     if (client.requestedUserId != null) {
-      // Client already has a requestedUserId, use it and don't increment
       userId = client.requestedUserId
     } else {
-      // Client doesn't have requestedUserId, assign next available and increment
-      // BUT: Never increment for the initial client (id '1') - it should always be 1
       if (clientId === '1') {
         userId = 1
         setClients((prev) =>
@@ -230,7 +94,6 @@ function App() {
       } else {
         userId = nextUserIdRef.current
         nextUserIdRef.current = userId + 1
-        // Update requestedUserId to match what we're using (for consistency)
         setClients((prev) =>
           prev.map((c) =>
             c.id === clientId ? { ...c, requestedUserId: userId } : c
@@ -239,84 +102,86 @@ function App() {
       }
     }
 
-    const wsUrl = `ws://localhost:3000/sync?userId=${userId}`
-    const ws = new WebSocket(wsUrl)
+    addEvent({
+      type: 'query_sent',
+      data: {
+        message: 'Connecting to server...',
+        url: `ws://localhost:3000/sync?userId=${userId}`,
+        method: 'WS',
+      },
+      clientId,
+    })
 
-    ws.onopen = () => {
+    // Create PyreClient instance
+    const pyreClient = new PyreClient({
+      baseUrl: 'http://localhost:3000',
+      userId: userId,
+      dbName: `pyre-sync-playground-${clientId}`,
+    })
+
+    // Store in ref for cleanup
+    pyreClientsRef.current.set(clientId, pyreClient)
+
+    // Set up sync progress callback
+    pyreClient.onSyncProgress((progress) => {
+      if (progress.complete) {
+        addEvent({
+          type: 'query_response',
+          data: { message: 'Sync complete', tablesSynced: progress.tablesSynced },
+          clientId,
+        })
+      } else {
+        addEvent({
+          type: 'query_response',
+          data: { message: `Syncing table: ${progress.table}`, tablesSynced: progress.tablesSynced },
+          clientId,
+        })
+      }
+    })
+
+    try {
+      // Initialize client (connects WebSocket and syncs)
+      await pyreClient.init()
+
+      // Get session ID from WebSocket manager (for query execution)
+      const wsManager = (pyreClient as any).wsManager
+      const sessionId = wsManager?.getSessionId() || null
+
+      // Note: We don't set up a custom WebSocket message handler here because
+      // PyreClient already has its own handler in setupWebSocketHandlers() that
+      // processes deltas and updates queries. If we call wsManager.onMessage() here,
+      // it would replace PyreClient's handler and break delta processing.
+
       setClients((prev) =>
         prev.map((c) =>
-          c.id === clientId ? { ...c, ws, connected: true } : c
+          c.id === clientId
+            ? {
+              ...c,
+              pyreClient,
+              connected: true,
+              userId: userId,
+              sessionId,
+            }
+            : c
         )
       )
-      addEvent({
-        type: 'query_sent',
-        data: { 
-          message: 'Connecting to server...',
-          url: wsUrl,
-          method: 'WS',
-        },
-        clientId,
-      })
-    }
 
-    ws.onmessage = (event: MessageEvent) => {
-      try {
-        const message = JSON.parse(event.data)
-
-        if (message.type === 'connected') {
-          const session = message.session || { userId: null, role: 'user' }
-          setClients((prev) =>
-            prev.map((c) =>
-              c.id === clientId
-                ? {
-                  ...c,
-                  sessionId: message.sessionId,
-                  connected: true,
-                  userId: session.userId || null,
-                }
-                : c
-            )
-          )
-          addEvent({
-            type: 'query_response',
-            data: { message: 'Connected', sessionId: message.sessionId },
-            clientId,
-          })
-          // Perform sync catchup after state update
-          setTimeout(() => {
-            performSyncCatchup(clientId, message.sessionId, session)
-          }, 0)
-        } else if (message.type === 'delta') {
-          addEvent({
-            type: 'sync_delta',
-            data: message.data,
-            clientId,
-          })
-          // Handle sync delta
-          handleSyncDelta(clientId, message.data)
-        }
-      } catch (error) {
-        console.error('Failed to parse WebSocket message:', error)
-      }
-    }
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error)
       addEvent({
         type: 'query_response',
-        data: { error: 'WebSocket connection error' },
+        data: { message: 'Connected', sessionId },
         clientId,
       })
+    } catch (error: any) {
+      console.error('Failed to initialize PyreClient:', error)
+      addEvent({
+        type: 'query_response',
+        data: { error: error.message || 'Failed to connect' },
+        clientId,
+      })
+      // Clean up on error
+      pyreClientsRef.current.delete(clientId)
     }
-
-    ws.onclose = () => {
-      setClients((prev) =>
-        prev.map((c) =>
-          c.id === clientId ? { ...c, connected: false, ws: null } : c
-        )
-      )
-    }
-  }, [performSyncCatchup, handleSyncDelta, addEvent])
+  }, [addEvent])
 
   // Connect WebSocket for initial client (only once, even in StrictMode)
   useEffect(() => {
@@ -331,17 +196,15 @@ function App() {
     // This ensures we don't have race conditions with React batching
     const newUserId = nextUserIdRef.current
     nextUserIdRef.current = newUserId + 1
-    
+
     setClients((prev) => {
       const newId = `${prev.length + 1}`
       const newClient: Client = {
         id: newId,
         name: `Client ${newId}`,
-        ws: null,
+        pyreClient: null,
         sessionId: null,
         connected: false,
-        syncCursor: { tables: {} },
-        data: { tables: {} },
         userId: null,
         requestedUserId: newUserId, // Assign next sequential userId
       }
@@ -419,10 +282,127 @@ function App() {
     [selectedClientId, clients, addEvent]
   )
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      // Disconnect all PyreClient instances
+      for (const pyreClient of pyreClientsRef.current.values()) {
+        pyreClient.disconnect()
+      }
+      pyreClientsRef.current.clear()
+    }
+  }, [])
+
+  const resetAllClients = useCallback(async () => {
+    if (!confirm('Are you sure you want to delete all clients and clear all IndexedDB data? This cannot be undone.')) {
+      return
+    }
+
+    // Disconnect all clients first
+    for (const [clientId, pyreClient] of pyreClientsRef.current.entries()) {
+      if (pyreClient) {
+        pyreClient.disconnect()
+      }
+    }
+
+    // Wait for connections to close
+    await new Promise(resolve => setTimeout(resolve, 200))
+
+    // Delete all client databases
+    const deletePromises: Promise<void>[] = []
+    const dbNames: string[] = []
+    for (const [clientId, pyreClient] of pyreClientsRef.current.entries()) {
+      if (pyreClient) {
+        // Get the database name from the client
+        const storage = (pyreClient as any).storage
+        if (storage) {
+          const dbName = (storage as any).dbName
+          dbNames.push(dbName)
+          console.log(`[Reset] Will delete database for client ${clientId}: ${dbName}`)
+        }
+        deletePromises.push(pyreClient.deleteDatabase().catch(err => {
+          console.error(`Error deleting database for client ${clientId}:`, err)
+        }))
+      }
+    }
+
+    // Also collect database names from client IDs (in case clients aren't in ref yet)
+    for (let i = 1; i <= 10; i++) {
+      const dbName = `pyre-sync-playground-${i}`
+      if (!dbNames.includes(dbName)) {
+        dbNames.push(dbName)
+      }
+    }
+
+    try {
+      await Promise.all(deletePromises)
+      console.log('[Reset] All client databases deleted via PyreClient')
+      
+      // Also try to delete databases directly by name as a fallback
+      console.log('[Reset] Attempting direct deletion of databases:', dbNames)
+      for (const dbName of dbNames) {
+        try {
+          const deleteRequest = indexedDB.deleteDatabase(dbName)
+          await new Promise<void>((resolve) => {
+            deleteRequest.onsuccess = () => {
+              console.log(`[Reset] Directly deleted database: ${dbName}`)
+              resolve()
+            }
+            deleteRequest.onerror = () => {
+              console.warn(`[Reset] Failed to directly delete ${dbName}:`, deleteRequest.error)
+              resolve() // Don't fail
+            }
+            deleteRequest.onblocked = () => {
+              console.warn(`[Reset] Database deletion blocked: ${dbName}`)
+              resolve() // Don't fail on blocked
+            }
+          })
+        } catch (err) {
+          console.warn(`[Reset] Exception deleting ${dbName}:`, err)
+        }
+      }
+      console.log('[Reset] Database deletion complete')
+    } catch (error) {
+      console.error('[Reset] Error deleting databases:', error)
+    }
+
+    // Clear the ref
+    pyreClientsRef.current.clear()
+
+    // Reset state to initial state
+    setClients([
+      {
+        id: '1',
+        name: 'Client 1',
+        pyreClient: null,
+        sessionId: null,
+        connected: false,
+        userId: null,
+        requestedUserId: 1,
+      },
+    ])
+    setSelectedClientId('1')
+    setEvents([])
+    nextUserIdRef.current = 2
+    initialClientConnectedRef.current = false
+
+    // Wait longer before reconnecting to ensure databases are fully deleted
+    setTimeout(() => {
+      connectClient('1')
+    }, 1000)
+  }, [connectClient])
+
   return (
     <div className="app">
       <header className="app-header">
         <h1>Pyre Sync Playground</h1>
+        <button
+          onClick={resetAllClients}
+          className="reset-button"
+          title="Delete all clients and clear IndexedDB"
+        >
+          Reset All
+        </button>
       </header>
       <div className="app-content">
         <div className="left-panel">

@@ -1,3 +1,5 @@
+import React, { useState, useEffect } from 'react'
+import { PyreClient } from '@pyre/client'
 import './Clients.css'
 
 interface Client {
@@ -6,9 +8,7 @@ interface Client {
   userId: number | null
   requestedUserId: number | null
   connected: boolean
-  data: {
-    tables: Record<string, any[]>
-  }
+  pyreClient: PyreClient | null
 }
 
 interface ClientsProps {
@@ -18,70 +18,111 @@ interface ClientsProps {
   onAddClient: () => void
 }
 
+interface ClientData {
+  user: any | null
+  posts: any[]
+}
+
+function ClientCard({
+  client,
+  isSelected,
+  onSelect,
+}: {
+  client: Client
+  isSelected: boolean
+  onSelect: () => void
+}) {
+  const [data, setData] = useState<ClientData>({ user: null, posts: [] })
+
+  useEffect(() => {
+    if (!client.pyreClient || !client.connected) {
+      setData({ user: null, posts: [] })
+      return
+    }
+
+    // Query for user and posts using SQL table names (not Pyre record names)
+    // The query will run immediately (may return empty), then re-run when sync completes
+    const unsubscribe = client.pyreClient.query(
+      {
+        users: {
+          id: true,
+          name: true,
+          email: true,
+          '@where': { id: client.userId || client.requestedUserId || 0 },
+          '@limit': 1,
+        },
+        posts: {
+          id: true,
+          title: true,
+          content: true,
+          published: true,
+        },
+      },
+      (result) => {
+        const user = result.users && result.users.length > 0 ? result.users[0] : null
+        const posts = result.posts || []
+        setData({ user, posts })
+      }
+    )
+
+    return unsubscribe
+  }, [client.pyreClient, client.connected, client.userId, client.requestedUserId])
+
+  const getUserName = (): string => {
+    if (data.user?.name) {
+      return data.user.name
+    }
+    if (data.user?.email) {
+      return data.user.email
+    }
+    return client.name
+  }
+
+  return (
+    <div className="clients-client-wrapper">
+      <div className="clients-client-name">
+        {getUserName()} <span className="clients-client-id">({client.userId ?? client.requestedUserId ?? client.id})</span>
+      </div>
+      <div
+        className={`clients-client-card ${isSelected ? 'selected' : ''}`}
+        onClick={onSelect}
+      >
+        <div className="clients-posts-grid">
+          {data.posts.length === 0 ? (
+            <div className="clients-empty">No posts</div>
+          ) : (
+            data.posts.map((post) => (
+              <div key={post.id} className={`clients-post-card ${!post.published ? 'unpublished' : ''}`}>
+                <div className="clients-post-title">{post.title || 'Untitled'}</div>
+                <div className="clients-post-content">{post.content || ''}</div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Clients({
   clients,
   selectedClientId,
   onSelectClient,
   onAddClient,
 }: ClientsProps) {
-  const getUserName = (client: Client): string => {
-    // Try to find user data in tables (handle both 'user' and 'users' table names)
-    if (!client.data?.tables) {
-      return client.name
-    }
-    const userTable = client.data.tables['user'] || client.data.tables['users']
-    if (userTable && userTable.length > 0) {
-      const user = userTable[0]
-      if (user?.name) {
-        return user.name
-      }
-      if (user?.email) {
-        return user.email
-      }
-    }
-    return client.name
-  }
-
-  const getPosts = (client: Client): any[] => {
-    // Try to find posts data in tables (handle both 'post' and 'posts' table names)
-    if (!client.data?.tables) {
-      return []
-    }
-    return client.data.tables['post'] || client.data.tables['posts'] || []
-  }
 
   return (
     <div className="clients">
       <h2>Clients</h2>
       <div className="clients-grid">
-        {clients.map((client) => {
-          const posts = getPosts(client)
-          const isSelected = selectedClientId === client.id
-          return (
-            <div key={client.id} className="clients-client-wrapper">
-              <div className="clients-client-name">
-                {getUserName(client)} <span className="clients-client-id">({client.userId ?? client.requestedUserId ?? client.id})</span>
-              </div>
-              <div
-                className={`clients-client-card ${isSelected ? 'selected' : ''}`}
-                onClick={() => onSelectClient(client.id)}
-              >
-                <div className="clients-posts-grid">
-                  {posts.length === 0 ? (
-                    <div className="clients-empty">No posts</div>
-                  ) : (
-                    posts.map((post) => (
-                      <div key={post.id} className={`clients-post-card ${!post.published ? 'unpublished' : ''}`}>
-                        <div className="clients-post-title">{post.title || 'Untitled'}</div>
-                        <div className="clients-post-content">{post.content || ''}</div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          )
-        })}
+        {clients.map((client) => (
+          <ClientCard
+            key={client.id}
+            client={client}
+            isSelected={selectedClientId === client.id}
+            onSelect={() => onSelectClient(client.id)}
+          />
+        ))}
         <div className="clients-client-wrapper clients-add-client-wrapper">
           <div className="clients-add-client-card" onClick={onAddClient}>
             <div className="clients-add-client-text">Add client</div>
