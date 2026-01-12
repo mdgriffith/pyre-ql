@@ -33,7 +33,7 @@ export interface SyncPageResult {
  * Session data for sync operations.
  */
 export interface SyncSession {
-    fields: Record<string, SessionValue>;
+    [key: string]: SessionValue;
 }
 
 /**

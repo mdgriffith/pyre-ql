@@ -31,10 +31,7 @@ pub struct TableSyncDataWasm {
     pub last_seen_updated_at: Option<i64>,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct SessionWasm {
-    pub fields: HashMap<String, SessionValueWasm>,
-}
+pub type SessionWasm = HashMap<String, SessionValueWasm>;
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(untagged)]
@@ -60,7 +57,6 @@ impl From<SessionValueWasm> for sync::SessionValue {
 
 fn convert_session_wasm_to_rust(session: &SessionWasm) -> HashMap<String, sync::SessionValue> {
     session
-        .fields
         .iter()
         .map(|(k, v)| (k.clone(), sync::SessionValue::from((*v).clone())))
         .collect()
@@ -163,7 +159,10 @@ pub fn get_sync_page_info_wasm(
             let wasm_result = convert_result_rust_to_wasm(result);
             Ok(wasm_result)
         }
-        introspect::SchemaResult::FailedToParse { source: _, errors: _ } => {
+        introspect::SchemaResult::FailedToParse {
+            source: _,
+            errors: _,
+        } => {
             // Avoid number formatting by using simple error message
             Err("Schema failed to parse".to_string())
         }
@@ -207,12 +206,13 @@ pub fn get_sync_status_sql_wasm(sync_cursor: JsValue, session: JsValue) -> Resul
 
     match &introspection.schema {
         introspect::SchemaResult::Success { context, .. } => {
-            sync::get_sync_status_sql(&cursor_rust, context, &session_rust)
-                .map_err(|e| match e {
-                    sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
-                    sync::SyncError::SqlGenerationError(msg) => "SQL generation error: ".to_string() + &msg,
-                    sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
-                })
+            sync::get_sync_status_sql(&cursor_rust, context, &session_rust).map_err(|e| match e {
+                sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
+                sync::SyncError::SqlGenerationError(msg) => {
+                    "SQL generation error: ".to_string() + &msg
+                }
+                sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
+            })
         }
         _ => Err("No schema found".to_string()),
     }
@@ -263,13 +263,19 @@ pub fn get_sync_sql_wasm(
     match &introspection.schema {
         introspect::SchemaResult::Success { context, .. } => {
             // Parse sync status internally
-            let status_rust =
-                sync::parse_sync_status(&cursor_rust, context, &session_rust, &rows_vec)
-                    .map_err(|e| match e {
-                        sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
-                        sync::SyncError::SqlGenerationError(msg) => "SQL generation error: ".to_string() + &msg,
-                        sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
-                    })?;
+            let status_rust = sync::parse_sync_status(
+                &cursor_rust,
+                context,
+                &session_rust,
+                &rows_vec,
+            )
+            .map_err(|e| match e {
+                sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
+                sync::SyncError::SqlGenerationError(msg) => {
+                    "SQL generation error: ".to_string() + &msg
+                }
+                sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
+            })?;
 
             // Generate sync SQL
             let result = sync::get_sync_sql(
@@ -281,7 +287,9 @@ pub fn get_sync_sql_wasm(
             )
             .map_err(|e| match e {
                 sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
-                sync::SyncError::SqlGenerationError(msg) => "SQL generation error: ".to_string() + &msg,
+                sync::SyncError::SqlGenerationError(msg) => {
+                    "SQL generation error: ".to_string() + &msg
+                }
                 sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
             })?;
 
