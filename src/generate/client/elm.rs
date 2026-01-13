@@ -10,18 +10,22 @@ mod rectangle;
 
 const ELM_DECODE_HELP: &str = include_str!("./static/elm/src/Json/Decode/Help.elm");
 
-pub fn generate(database: &ast::Database, files: &mut Vec<GeneratedFile<String>>) {
-    files.push(generate_text_file("Db.elm", write_schema(database)));
+pub fn generate(
+    base_path: &Path,
+    database: &ast::Database,
+    files: &mut Vec<GeneratedFile<String>>,
+) {
+    files.push(generate_text_file(base_path.join("Db.elm"), write_schema(database)));
     files.push(generate_text_file(
-        "Json/Decode/Help.elm",
+        base_path.join("Json/Decode/Help.elm"),
         ELM_DECODE_HELP.to_string(),
     ));
     files.push(generate_text_file(
-        "Db/Decode.elm",
+        base_path.join("Db/Decode.elm"),
         to_schema_decoders(database),
     ));
     files.push(generate_text_file(
-        "Db/Encode.elm",
+        base_path.join("Db/Encode.elm"),
         to_schema_encoders(database),
     ));
 }

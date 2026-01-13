@@ -41,10 +41,15 @@ fn write_client_schema(
     base_out_dir: &Path,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
-    let client_dir = base_out_dir.join("client");
+    // Target directory is
+    // {base_out_dir}/client/{lang}
+    // Use relative path to avoid duplication when joined with base_path in write_generated_files
+    let client_dir = Path::new("client");
     let out_dir = to_client_dir_path(client, &client_dir);
+    // out_dir is
+    // client/{lang} (relative path)
     match client {
-        Client::Elm => generate::client::elm::generate(database, files),
+        Client::Elm => generate::client::elm::generate(&out_dir, database, files),
         Client::Node => generate::client::node::generate(&out_dir, database, files),
     }
 }
@@ -138,8 +143,8 @@ fn write_client_queries(
     base_out_dir: &Path,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
-    let client_dir = base_out_dir.join("client");
-    // filesystem::create_dir_if_not_exists(&client_dir)?;
+    // Create relative path: client/{lang} (relative to base_out_dir)
+    let client_dir = Path::new("client");
     let out_dir = to_client_dir_path(client, &client_dir);
 
     match client {
