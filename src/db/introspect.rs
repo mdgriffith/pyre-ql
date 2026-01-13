@@ -493,10 +493,8 @@ pub fn from_raw(mut raw: IntrospectionRaw) -> Introspection {
 
 pub fn extract_links(schema: &ast::Schema, tables: &[Table]) -> Vec<Link> {
     let mut links = Vec::new();
-    let table_map: std::collections::HashMap<String, &Table> = tables
-        .iter()
-        .map(|t| (t.name.clone(), t))
-        .collect();
+    let table_map: std::collections::HashMap<String, &Table> =
+        tables.iter().map(|t| (t.name.clone(), t)).collect();
 
     // Extract links from all records in the schema
     for file in &schema.files {
@@ -504,20 +502,21 @@ pub fn extract_links(schema: &ast::Schema, tables: &[Table]) -> Vec<Link> {
             if let ast::Definition::Record { name, fields, .. } = def {
                 let table_name = ast::get_tablename(name, fields);
                 let record_links = ast::collect_links(fields);
-                
+
                 // Get primary key field name for this record
                 let primary_key_name = ast::get_primary_id_field_name(fields);
 
                 for link in record_links {
                     // Get the actual table name for the foreign table
                     let foreign_table_name = ast::get_foreign_tablename(schema, &link);
-                    
+
                     // Determine link type: if local_ids contains non-primary-key fields, it's many-to-one
                     // Otherwise (all local_ids are primary keys), it's one-to-many (reverse link)
-                    let is_many_to_one = link.local_ids.iter().any(|id| {
-                        primary_key_name.as_ref().map(|pk| id != pk).unwrap_or(true)
-                    });
-                    
+                    let is_many_to_one = link
+                        .local_ids
+                        .iter()
+                        .any(|id| primary_key_name.as_ref().map(|pk| id != pk).unwrap_or(true));
+
                     let link_type = if is_many_to_one {
                         "many-to-one"
                     } else {
@@ -535,9 +534,7 @@ pub fn extract_links(schema: &ast::Schema, tables: &[Table]) -> Vec<Link> {
                             related_table
                                 .foreign_keys
                                 .iter()
-                                .find(|fk| {
-                                    fk.table == table_name && fk.to == "id"
-                                })
+                                .find(|fk| fk.table == table_name && fk.to == "id")
                                 .map(|fk| fk.from.clone())
                                 .unwrap_or_else(|| {
                                     // Fallback: use first local_id (should be "id" for one-to-many)

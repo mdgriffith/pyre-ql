@@ -141,7 +141,8 @@ pub fn seed_database(schema_source: String, options: JsValue) -> JsValue {
             Ok(opts) => Some(opts),
             Err(_e) => {
                 // Avoid calling .to_string() on JsValue error
-                return serde_wasm_bindgen::to_value(&"Error: Failed to parse options".to_string()).unwrap();
+                return serde_wasm_bindgen::to_value(&"Error: Failed to parse options".to_string())
+                    .unwrap();
             }
         }
     };
