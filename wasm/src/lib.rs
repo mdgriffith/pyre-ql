@@ -22,6 +22,11 @@ pub fn set_schema(introspection: JsValue) -> Result<(), JsValue> {
 }
 
 #[wasm_bindgen]
+pub fn process_introspection(introspection: JsValue) -> Result<JsValue, JsValue> {
+    cache::process_introspection(introspection)
+}
+
+#[wasm_bindgen]
 pub fn migrate(name: String, schema_source: String) -> JsValue {
     let result = migrate::migrate_wasm(name, schema_source);
     serde_wasm_bindgen::to_value(&result).unwrap()

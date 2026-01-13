@@ -491,7 +491,7 @@ pub fn from_raw(mut raw: IntrospectionRaw) -> Introspection {
     }
 }
 
-fn extract_links(schema: &ast::Schema, tables: &[Table]) -> Vec<Link> {
+pub fn extract_links(schema: &ast::Schema, tables: &[Table]) -> Vec<Link> {
     let mut links = Vec::new();
     let table_map: std::collections::HashMap<String, &Table> = tables
         .iter()

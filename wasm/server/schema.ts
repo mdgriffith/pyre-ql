@@ -116,5 +116,9 @@ export async function getIntrospectionJson(db: Client): Promise<any> {
         introspection = JSON.parse(introspectionResult.rows[0].result as string);
     }
 
+    // Process introspection through WASM to populate links
+    introspection = wasm.process_introspection(introspection);
+
+
     return introspection;
 }

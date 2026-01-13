@@ -40,7 +40,7 @@ function ClientCard({
       return
     }
 
-    // Query for user and posts using SQL table names (not Pyre record names)
+    // Query for user and all visible posts (published posts are visible to all users)
     // The query will run immediately (may return empty), then re-run when sync completes
     const unsubscribe = client.pyreClient.query(
       {
@@ -50,12 +50,12 @@ function ClientCard({
           email: true,
           '@where': { id: client.userId || client.requestedUserId || 0 },
           '@limit': 1,
-        },
-        posts: {
-          id: true,
-          title: true,
-          content: true,
-          published: true,
+          posts: {
+            id: true,
+            title: true,
+            content: true,
+            published: true,
+          },
         },
       },
       (result) => {
