@@ -61,7 +61,7 @@ fn to_node_formatter() -> typealias::TypeFormatter {
                             // Reference the CoercedDate helper type
                             match (is_link, is_array_relationship, is_optional) {
                                 (true, true, _) => "CoercedDate.array()".to_string(), // One-to-many: array (not optional)
-                                (true, false, true) => "CoercedDate.optional()".to_string(), // Many-to-one/one-to-one: optional object
+                                (true, false, true) => "CoercedDate.or('null')".to_string(), // Many-to-one/one-to-one: optional object (can be null)
                                 (true, false, false) => "CoercedDate".to_string(), // Many-to-one/one-to-one: required object (shouldn't happen but handle it)
                                 (false, _, true) => "CoercedDate.optional()".to_string(), // Optional single
                                 (false, _, false) => "CoercedDate".to_string(), // Required single
@@ -71,7 +71,7 @@ fn to_node_formatter() -> typealias::TypeFormatter {
                             // Reference the CoercedBool helper type
                             match (is_link, is_array_relationship, is_optional) {
                                 (true, true, _) => "CoercedBool.array()".to_string(), // One-to-many: array (not optional)
-                                (true, false, true) => "CoercedBool.optional()".to_string(), // Many-to-one/one-to-one: optional object
+                                (true, false, true) => "CoercedBool.or('null')".to_string(), // Many-to-one/one-to-one: optional object (can be null)
                                 (true, false, false) => "CoercedBool".to_string(), // Many-to-one/one-to-one: required object (shouldn't happen but handle it)
                                 (false, _, true) => "CoercedBool.optional()".to_string(), // Optional single
                                 (false, _, false) => "CoercedBool".to_string(), // Required single
@@ -90,7 +90,7 @@ fn to_node_formatter() -> typealias::TypeFormatter {
                         (true, false, _, false) => format!("\"{}\"", base_type),
                         // Non-primitive types
                         (false, true, true, _) => format!("{}.array()", base_type), // One-to-many: array (not optional)
-                        (false, true, false, true) => format!("{}.optional()", base_type), // Many-to-one/one-to-one: optional object
+                        (false, true, false, true) => format!("{}.or('null')", base_type), // Many-to-one/one-to-one: optional object (can be null)
                         (false, true, false, false) => base_type.to_string(), // Many-to-one/one-to-one: required object (shouldn't happen)
                         (false, false, _, true) => format!("{}.optional()", base_type),
                         (false, false, _, false) => base_type.to_string(),
