@@ -22,6 +22,25 @@ export interface SyncPageResult {
 }
 
 /**
+ * Schema metadata for relationship information
+ */
+export interface RelationshipInfo {
+  type: 'many-to-one' | 'one-to-many' | null;
+  relatedTable: string | null;
+  foreignKeyField: string | null;
+}
+
+export interface TableMetadata {
+  name: string;
+  relationships: Record<string, RelationshipInfo>;
+}
+
+export interface SchemaMetadata {
+  tables: Record<string, TableMetadata>;
+  queryFieldToTable: Record<string, string>;
+}
+
+/**
  * Input configuration for PyreClient (all optional except required fields)
  */
 export interface ClientConfigInput {
@@ -29,10 +48,16 @@ export interface ClientConfigInput {
   baseUrl: string;
   /** User ID for SSE connection */
   userId: number;
+  /** Schema metadata for relationship information */
+  schemaMetadata: SchemaMetadata;
   /** Database name for IndexedDB (default: "pyre-client") */
   dbName?: string;
   /** Page size for catchup requests (default: 1000) */
   pageSize?: number;
+  /** Headers to include in mutation requests */
+  headers?: Record<string, string>;
+  /** Error handler callback */
+  onError?: (error: Error) => void;
   /** Retry configuration */
   retry?: {
     /** Maximum number of retries for catchup (default: 5) */
@@ -63,10 +88,16 @@ export interface ClientConfig {
   baseUrl: string;
   /** User ID for SSE connection */
   userId: number;
+  /** Schema metadata for relationship information */
+  schemaMetadata: SchemaMetadata;
   /** Database name for IndexedDB */
   dbName: string;
   /** Page size for catchup requests */
   pageSize: number;
+  /** Headers to include in mutation requests */
+  headers: Record<string, string>;
+  /** Error handler callback */
+  onError?: (error: Error) => void;
   /** Retry configuration */
   retry: {
     /** Maximum number of retries for catchup */

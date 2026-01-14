@@ -9,62 +9,119 @@ use std::path::Path;
 const NODE_REQUEST_MODULE: &str = include_str!("./static/node/db/request.ts");
 
 pub fn generate(
+    context: &typecheck::Context,
     base_path: &Path,
     database: &ast::Database,
     files: &mut Vec<filesystem::GeneratedFile<String>>,
 ) {
-    // let formatted_elm = write_schema(database);
-
-    // Top level Elm files
-    // let elm_db_path = base_path.join("Db.elm");
-    // let elm_file = Path::new(&elm_db_path);
-    // let mut output = fs::File::create(elm_file).expect("Failed to create file");
-    // output
-    //     .write_all(formatted_elm.as_bytes())
-    //     .expect("Failed to write to file");
-
     // Decode Helper file
     files.push(filesystem::GeneratedFile {
         path: base_path.join("db/request.ts"),
         contents: NODE_REQUEST_MODULE.to_string(),
     });
 
-    // Elm Decoders
-    // let elm_db_decode_path = elm_path.join("Db/Decode.elm");
-    // let elm_decoders = to_schema_decoders(database);
-    // let elm_decoder_file = Path::new(&elm_db_decode_path);
-    // let mut output = fs::File::create(elm_decoder_file).expect("Failed to create file");
-    // output
-    //     .write_all(elm_decoders.as_bytes())
-    //     .expect("Failed to write to file");
-
-    // Elm Encoders
-    // let elm_db_encode_path = elm_path.join("Db/Encode.elm");
-    // let elm_encoders = to_schema_encoders(database);
-    // let elm_encoder_file = Path::new(&elm_db_encode_path);
-    // let mut output = fs::File::create(elm_encoder_file).expect("Failed to create file");
-    // output
-    //     .write_all(elm_encoders.as_bytes())
-    //     .expect("Failed to write to file");
+    // Generate schema metadata file
+    files.push(filesystem::GeneratedFile {
+        path: base_path.join("schema.ts"),
+        contents: to_schema_metadata(context),
+    });
 }
 
-pub fn write_schema(database: &ast::Database) -> String {
-    let mut result = String::new();
+fn to_node_formatter() -> typealias::TypeFormatter {
+    typealias::TypeFormatter {
+        to_comment: Box::new(|s| format!("// {}\n", s)),
+        to_type_def_start: Box::new(|name| format!("export const {} = Ark.type({{\n", name)),
+        to_field: Box::new(
+            |name,
+             type_,
+             typealias::FieldMetadata {
+                 is_link,
+                 is_optional,
+             }| {
+                let (base_type, is_primitive, needs_coercion) = match type_ {
+                    "String" => ("string".to_string(), true, false),
+                    "Int" => ("number".to_string(), true, false),
+                    "Float" => ("number".to_string(), true, false),
+                    "Bool" => ("boolean".to_string(), true, true),
+                    "DateTime" => ("Date".to_string(), true, true),
+                    _ => {
+                        if is_link {
+                            (type_.to_string(), false, false)
+                        } else {
+                            (format!("Decode.{}", type_.to_string()), false, false)
+                        }
+                    }
+                };
 
-    result.push_str("module Db exposing (..)\n\nimport Time\n\n\n");
-
-    result.push_str("type alias DateTime =\n    Time.Posix\n\n\n");
-
-    for schema in &database.schemas {
-        for file in &schema.files {
-            for definition in &file.definitions {
-                result.push_str(&to_string_definition(definition));
+                // Generate validator with coercion for Date and Bool types
+                let type_str = if needs_coercion {
+                    match type_ {
+                        "DateTime" => {
+                            // Reference the CoercedDate helper type
+                            match (is_link, is_optional) {
+                                (true, true) => "CoercedDate.array().optional()".to_string(), // Optional array
+                                (true, false) => "CoercedDate.array()".to_string(), // Required array
+                                (false, true) => "CoercedDate.optional()".to_string(), // Optional single
+                                (false, false) => "CoercedDate".to_string(), // Required single
+                            }
+                        }
+                        "Bool" => {
+                            // Reference the CoercedBool helper type
+                            match (is_link, is_optional) {
+                                (true, true) => "CoercedBool.array().optional()".to_string(), // Optional array
+                                (true, false) => "CoercedBool.array()".to_string(), // Required array
+                                (false, true) => "CoercedBool.optional()".to_string(), // Optional single
+                                (false, false) => "CoercedBool".to_string(), // Required single
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                } else {
+                    // Standard type handling without coercion
+                    match (is_primitive, is_link, is_optional) {
+                        // Primitive types
+                        (true, true, true) => format!("\"{}?\"", base_type),
+                        (true, true, false) => format!("\"{}[]\"", base_type),
+                        (true, false, true) => format!("\"{}?\"", base_type),
+                        (true, false, false) => format!("\"{}\"", base_type),
+                        // Non-primitive types
+                        (false, true, true) => format!("{}.array().optional()", base_type),
+                        (false, true, false) => format!("{}.array()", base_type),
+                        (false, false, true) => format!("{}.optional()", base_type),
+                        (false, false, false) => base_type.to_string(),
+                    }
+                };
+                format!("  {}: {}", name, type_str)
+            },
+        ),
+        to_type_def_end: Box::new(|| "});\n".to_string()),
+        to_field_separator: Box::new(|is_last| {
+            if is_last {
+                "\n".to_string()
+            } else {
+                ",\n".to_string()
             }
-        }
+        }),
     }
-
-    result
 }
+
+// pub fn write_schema(database: &ast::Database) -> String {
+//     let mut result = String::new();
+
+//     result.push_str("module Db exposing (..)\n\nimport Time\n\n\n");
+
+//     result.push_str("type alias DateTime =\n    Time.Posix\n\n\n");
+
+//     for schema in &database.schemas {
+//         for file in &schema.files {
+//             for definition in &file.definitions {
+//                 result.push_str(&to_string_definition(definition));
+//             }
+//         }
+//     }
+
+//     result
+// }
 
 fn to_string_definition(definition: &ast::Definition) -> String {
     match definition {
@@ -449,7 +506,7 @@ pub fn generate_queries(
     dir: &Path,
     files: &mut Vec<filesystem::GeneratedFile<String>>,
 ) {
-    let formatter = crate::generate::server::typescript::to_formatter();
+    let formatter = to_node_formatter();
 
     // Generate individual query files
     for operation in &query_list.queries {
@@ -512,20 +569,26 @@ fn to_query_file(
     query: &ast::Query,
     formatter: &typealias::TypeFormatter,
 ) -> String {
-    // let mut result = format!("module Query.{} exposing (..)\n\n\n", query.name);
-
-    // result.push_str("import Db\n");
-    // result.push_str("import Db.Read\n");
-    // result.push_str("import Db.Decode\n");
-    // result.push_str("import Db.Encode\n");
-    // result.push_str("import Json.Decode as Decode\n");
-    // result.push_str("import Json.Encode as Encode\n");
-    // result.push_str("import Time\n");
-    // result.push_str("\n\n");
-
     let mut result = String::new();
     result.push_str("import * as Ark from 'arktype';\n");
-    result.push_str("import * as Decode from '../db/decode';\n\n");
+    result.push_str("import type { QueryShape } from '@pyre/client';\n\n");
+    
+    // Generate helper types for coercion (Date and Bool)
+    result.push_str("// Coercion helpers for IndexedDB data (numbers -> Date/boolean)\n");
+    result.push_str("const CoercedDate = Ark.type('number').pipe((val) => new Date(val * 1000));\n");
+    result.push_str("const CoercedBool = Ark.type('number').pipe((val) => val !== 0);\n\n");
+
+    // Operation type
+    let operation_str = match query.operation {
+        ast::QueryOperation::Query => "query",
+        ast::QueryOperation::Insert => "insert",
+        ast::QueryOperation::Update => "update",
+        ast::QueryOperation::Delete => "delete",
+    };
+    result.push_str(&format!(
+        "export const operation = \"{}\" as const;\n\n",
+        operation_str
+    ));
 
     result.push_str(&format!(
         "export const hash = \"{}\"\n\n",
@@ -536,107 +599,330 @@ fn to_query_file(
 
     result.push_str("\n\n");
 
+    // Generate QueryShape (only for queries, not mutations)
+    if query.operation == ast::QueryOperation::Query {
+        result.push_str(&to_query_shape(context, query));
+        result.push_str("\n\n");
+    }
+
     typealias::return_data_aliases(context, query, &mut result, formatter);
 
-    // result.push_str("const prepare =  input =\n");
-    // result.push_str(&format!(
-    // "    {{ args = encode input\n    , query = \"{}\"\n    , name = \"{}\"\n    }}\n\n\n",
-    // &query.interface_hash,
-    // string::capitalize(&query.name)
-    // ));
-
-    // // Top level query alias
-    // result.push_str(&format!(
-    //     "{{-| The Return Data! -}}\ntype alias {} =\n",
-    //     crate::ext::string::capitalize(&query.name)
-    // ));
-
-    // let mut is_first = true;
-    // for field in &query.fields {
-    //     match field {
-    //         ast::TopLevelQueryField::Field(query_field) => {
-    //             if is_first {
-    //                 result.push_str(&format!("    {{ ",))
-    //             }
-
-    //             let field_name = ast::get_aliased_name(query_field);
-    //             if is_first {
-    //                 result.push_str(&format!(
-    //                     "{} : List {}\n",
-    //                     crate::ext::string::decapitalize(&field_name),
-    //                     string::capitalize(&query_field.name)
-    //                 ));
-    //             } else {
-    //                 let spaces = " ".repeat(4);
-    //                 result.push_str(&format!(
-    //                     "{}, {} : List {}\n",
-    //                     spaces,
-    //                     crate::ext::string::decapitalize(&field_name),
-    //                     string::capitalize(&query_field.name)
-    //                 ));
-    //             }
-
-    //             if is_first {
-    //                 is_first = false;
-    //             }
-    //         }
-    //         _ => {}
-    //     }
-    // }
-    // result.push_str("    }\n\n\n");
-
-    // // Helpers
-
-    // // Type Alisaes
-    // for field in &query.fields {
-    //     match field {
-    //         ast::TopLevelQueryField::Field(query_field) => {
-    //             let table = context.tables.get(&query_field.name).unwrap();
-    //             result.push_str(&to_query_type_alias(
-    //                 context,
-    //                 &table.record,
-    //                 &query_field.name,
-    //                 &ast::collect_query_fields(&query_field.fields),
-    //             ));
-    //         }
-    //         ast::TopLevelQueryField::Lines { .. } => {}
-    //         ast::TopLevelQueryField::Comment { .. } => {}
-    //     }
-    // }
-
-    // result.push_str(&to_param_type_encoder(&query.args));
-
-    // Top level query decoder
-    // result.push_str(&to_query_toplevel_decoder(context, &query));
-    // result.push_str("\n\n");
-
-    // Helper Decoders
-    // for field in &query.fields {
-    //     match field {
-    //         ast::TopLevelQueryField::Field(query_field) => {
-    //             let table = context.tables.get(&query_field.name).unwrap();
-    //             result.push_str(&to_query_decoder(
-    //                 context,
-    //                 &ast::get_aliased_name(&query_field),
-    //                 &table.record,
-    //                 &ast::collect_query_fields(&query_field.fields),
-    //             ));
-    //             result.push_str("\n\n");
-    //         }
-    //         ast::TopLevelQueryField::Lines { .. } => {}
-    //         ast::TopLevelQueryField::Comment { .. } => {}
-    //     }
-    // }
+    // Export the query module as a named export for easy importing
+    result.push_str(&format!("\n\nexport const {} = {{\n", query.name));
+    result.push_str("  operation,\n");
+    result.push_str("  hash,\n");
+    result.push_str("  InputValidator,\n");
+    result.push_str("  ReturnData,\n");
+    if query.operation == ast::QueryOperation::Query {
+        result.push_str("  queryShape,\n");
+    }
+    result.push_str("};\n");
 
     result
+}
+
+fn to_query_shape(context: &typecheck::Context, query: &ast::Query) -> String {
+    let mut result = "export const queryShape: QueryShape = {\n".to_string();
+
+    let mut is_first_table = true;
+    for field in &query.fields {
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                if !is_first_table {
+                    result.push_str(",\n");
+                }
+                is_first_table = false;
+
+                // Use query field name (aliased name) instead of table name
+                // This matches what's in the ReturnData and what users write in queries
+                let field_name = ast::get_aliased_name(query_field);
+
+                result.push_str(&format!("  {}: {{\n", string::quote(&field_name)));
+
+                // Convert query fields to QueryShape format
+                result.push_str(&to_query_field_spec(context, query_field));
+
+                result.push_str("\n  }");
+            }
+            _ => {}
+        }
+    }
+
+    result.push_str("\n};\n");
+    result
+}
+
+fn to_query_field_spec(context: &typecheck::Context, query_field: &ast::QueryField) -> String {
+    let mut result = String::new();
+    let mut is_first = true;
+
+    // Get table info for relationship detection
+    let table = context.tables.get(&query_field.name);
+
+    // Extract special directives (@where, @sort, @limit)
+    let mut sort_clauses: Vec<String> = Vec::new();
+    let mut limit: Option<i32> = None;
+
+    // Collect all field selections and args
+    let mut field_selections: Vec<(String, bool, bool)> = Vec::new(); // (name, is_relationship, has_nested_fields)
+
+    for arg_field in &query_field.fields {
+        match arg_field {
+            ast::ArgField::Arg(located_arg) => {
+                match &located_arg.arg {
+                    ast::Arg::Where(_where_arg) => {
+                        // TODO: Convert WhereArg to QueryShape where clause format
+                        // For now, skip - this is complex and may need runtime evaluation
+                    }
+                    ast::Arg::OrderBy(direction, field_name) => {
+                        let dir_str = match direction {
+                            ast::Direction::Asc => "asc",
+                            ast::Direction::Desc => "desc",
+                        };
+                        sort_clauses.push(format!(
+                            "{{ field: {}, direction: {} }}",
+                            string::quote(field_name),
+                            string::quote(dir_str)
+                        ));
+                    }
+                    ast::Arg::Limit(query_value) => {
+                        if let ast::QueryValue::Int((_, val)) = query_value {
+                            limit = Some(*val);
+                        }
+                    }
+                }
+            }
+            ast::ArgField::Field(nested_field) => {
+                // Check if this is a relationship field
+                let is_relationship = if let Some(table_info) = table {
+                    let links = ast::collect_links(&table_info.record.fields);
+                    links.iter().any(|link| link.link_name == nested_field.name)
+                } else {
+                    false
+                };
+
+                let has_nested_fields = !nested_field.fields.is_empty()
+                    && nested_field
+                        .fields
+                        .iter()
+                        .any(|f| matches!(f, ast::ArgField::Field(_)));
+
+                field_selections.push((
+                    nested_field.name.clone(),
+                    is_relationship,
+                    has_nested_fields,
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    // Generate field selections
+    for (field_name, is_relationship, has_nested_fields) in field_selections {
+        if !is_first {
+            result.push_str(",\n");
+        }
+        is_first = false;
+
+        if is_relationship && has_nested_fields {
+            // Relationship field with nested selections - recurse
+            // Find the nested field to recurse on
+            if let Some(nested_field) = query_field.fields.iter().find_map(|f| match f {
+                ast::ArgField::Field(qf) if qf.name == field_name => Some(qf),
+                _ => None,
+            }) {
+                result.push_str(&format!("    {}: {{\n", string::quote(&field_name)));
+                result.push_str(&to_query_field_spec(context, nested_field));
+                result.push_str("\n    }");
+            }
+        } else if is_relationship {
+            // Relationship field without nested selections - just true
+            result.push_str(&format!("    {}: true", string::quote(&field_name)));
+        } else {
+            // Regular field - just true
+            result.push_str(&format!("    {}: true", string::quote(&field_name)));
+        }
+    }
+
+    // Add special directives if present
+    if !sort_clauses.is_empty() || limit.is_some() {
+        if !is_first {
+            result.push_str(",\n");
+        }
+
+        if !sort_clauses.is_empty() {
+            if sort_clauses.len() == 1 {
+                result.push_str(&format!("    '@sort': {}", sort_clauses[0]));
+            } else {
+                result.push_str(&format!("    '@sort': [{}]", sort_clauses.join(", ")));
+            }
+        }
+
+        if let Some(limit_val) = limit {
+            if !sort_clauses.is_empty() {
+                result.push_str(",\n");
+            }
+            result.push_str(&format!("    '@limit': {}", limit_val));
+        }
+    }
+
+    result
+}
+
+fn to_schema_metadata(context: &typecheck::Context) -> String {
+    let mut result = String::new();
+    result.push_str("export interface RelationshipInfo {\n");
+    result.push_str("  type: 'many-to-one' | 'one-to-many' | null;\n");
+    result.push_str("  relatedTable: string | null;\n");
+    result.push_str("  foreignKeyField: string | null;\n");
+    result.push_str("}\n\n");
+
+    result.push_str("export interface TableMetadata {\n");
+    result.push_str("  name: string;\n");
+    result.push_str("  relationships: Record<string, RelationshipInfo>;\n");
+    result.push_str("}\n\n");
+
+    result.push_str("export interface SchemaMetadata {\n");
+    result.push_str("  tables: Record<string, TableMetadata>;\n");
+    result.push_str("  queryFieldToTable: Record<string, string>;\n");
+    result.push_str("}\n\n");
+
+    result.push_str("export const schemaMetadata: SchemaMetadata = {\n");
+    result.push_str("  tables: {\n");
+
+    let mut is_first_table = true;
+    for (_record_name, table) in &context.tables {
+        let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+
+        if !is_first_table {
+            result.push_str(",\n");
+        }
+        is_first_table = false;
+
+        result.push_str(&format!("    {}: {{\n", string::quote(&table_name)));
+        result.push_str(&format!("      name: {},\n", string::quote(&table_name)));
+        result.push_str("      relationships: {\n");
+
+        // Get all links from this table
+        let links = ast::collect_links(&table.record.fields);
+        let primary_key_name = ast::get_primary_id_field_name(&table.record.fields);
+
+        let mut is_first_rel = true;
+        for link in links {
+            if !is_first_rel {
+                result.push_str(",\n");
+            }
+            is_first_rel = false;
+
+            // Determine link type
+            let is_many_to_one = link
+                .local_ids
+                .iter()
+                .any(|id| primary_key_name.as_ref().map(|pk| id != pk).unwrap_or(true));
+
+            let link_type = if is_many_to_one {
+                "many-to-one"
+            } else {
+                "one-to-many"
+            };
+
+            // Get foreign table name
+            let foreign_table_name = if let Some(foreign_table) = get_linked_table(context, &link) {
+                ast::get_tablename(&foreign_table.record.name, &foreign_table.record.fields)
+            } else {
+                link.foreign.table.clone()
+            };
+
+            // For many-to-one, foreign_key_field is the first local_id
+            // For one-to-many, we need to find the FK field in the related table
+            let foreign_key_field = if is_many_to_one {
+                link.local_ids[0].clone()
+            } else {
+                // For one-to-many, the FK is in the related table
+                // We need to find the reverse link
+                if let Some(foreign_table) = get_linked_table(context, &link) {
+                    let foreign_links = ast::collect_links(&foreign_table.record.fields);
+                    // Find the reverse link that points back to this table
+                    foreign_links
+                        .iter()
+                        .find_map(|fl| {
+                            if fl.foreign.table == table.record.name {
+                                Some(fl.local_ids[0].clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| link.local_ids[0].clone())
+                } else {
+                    link.local_ids[0].clone()
+                }
+            };
+
+            result.push_str(&format!("        {}: {{\n", string::quote(&link.link_name)));
+            result.push_str(&format!("          type: {},\n", string::quote(link_type)));
+            result.push_str(&format!(
+                "          relatedTable: {},\n",
+                string::quote(&foreign_table_name)
+            ));
+            result.push_str(&format!(
+                "          foreignKeyField: {}\n",
+                string::quote(&foreign_key_field)
+            ));
+            result.push_str("        }");
+        }
+
+        result.push_str("\n      }\n");
+        result.push_str("    }");
+    }
+
+    result.push_str("\n  },\n");
+    result.push_str("  queryFieldToTable: {\n");
+
+    // Generate mapping from query field names (lowercase record names) to table names
+    let mut is_first_mapping = true;
+    for (_record_name, table) in &context.tables {
+        let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+        let query_field_name = crate::ext::string::decapitalize(&table.record.name);
+
+        if !is_first_mapping {
+            result.push_str(",\n");
+        }
+        is_first_mapping = false;
+
+        result.push_str(&format!(
+            "    {}: {}",
+            string::quote(&query_field_name),
+            string::quote(&table_name)
+        ));
+    }
+
+    result.push_str("\n  }\n");
+    result.push_str("};\n");
+    result
+}
+
+fn get_linked_table<'a>(
+    context: &'a typecheck::Context,
+    link: &ast::LinkDetails,
+) -> Option<&'a typecheck::Table> {
+    context.tables.get(&link.foreign.table)
+}
+
+fn to_arktype_type(type_: &str) -> String {
+    match type_ {
+        "String" => "\"string\"".to_string(),
+        "Int" => "\"number\"".to_string(),
+        "Bool" => "\"boolean\"".to_string(),
+        "DateTime" => "\"date\"".to_string(),
+        _ => format!("\"{}\"", type_),
+    }
 }
 
 fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
     let mut result = "export const InputValidator = Ark.type({".to_string();
     let mut is_first = true;
     for arg in args {
-        let type_string =
-            ast::to_typescript_type(&arg.type_.clone().unwrap_or("unknown".to_string()));
+        let type_string = to_arktype_type(&arg.type_.clone().unwrap_or("unknown".to_string()));
         if is_first {
             result.push_str(&format!("\n  {}: {}", arg.name, type_string));
             is_first = false;

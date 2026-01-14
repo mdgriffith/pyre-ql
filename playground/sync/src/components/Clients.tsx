@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { PyreClient } from '@pyre/client'
+import { ListUsersAndPosts } from '../../pyre/generated/client/node/query/ListUsersAndPosts'
 import './Clients.css'
 
 interface Client {
@@ -40,27 +41,21 @@ function ClientCard({
       return
     }
 
-    // Query for user and all visible posts (published posts are visible to all users)
+    // Query for all users and all posts
     // The query will run immediately (may return empty), then re-run when sync completes
-    const unsubscribe = client.pyreClient.query(
-      {
-        users: {
-          id: true,
-          name: true,
-          email: true,
-          '@where': { id: client.userId || client.requestedUserId || 0 },
-          '@limit': 1,
-          posts: {
-            id: true,
-            title: true,
-            content: true,
-            published: true,
-          },
-        },
-      },
+    const unsubscribe = client.pyreClient.run(
+      ListUsersAndPosts,
+      undefined, // No input parameters
       (result) => {
-        const user = result.users && result.users.length > 0 ? result.users[0] : null
-        const posts = result.posts || []
+        // Find the user for this client
+        const userId = client.userId || client.requestedUserId || 0
+        const user = result.user?.find((u: any) => u.id === userId) || null
+
+        // Get all posts from the result
+        // The query returns both users (with nested posts) and posts (with nested users)
+        // We'll use the posts array directly
+        const posts = result.post || []
+
         setData({ user, posts })
       }
     )

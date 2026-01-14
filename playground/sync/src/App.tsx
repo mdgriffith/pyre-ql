@@ -4,6 +4,7 @@ import MessagePane from './components/MessagePane'
 import Clients from './components/Clients'
 import { discoverQueries, QueryMetadata } from './queryDiscovery'
 import { PyreClient } from '@pyre/client'
+import { schemaMetadata } from '../pyre/generated/client/node/schema'
 import './App.css'
 
 interface Client {
@@ -116,6 +117,7 @@ function App() {
     const pyreClient = new PyreClient({
       baseUrl: 'http://localhost:3000',
       userId: userId,
+      schemaMetadata,
       dbName: `pyre-sync-playground-${clientId}`,
     })
 

@@ -10,11 +10,12 @@ import type { SSEMessage } from './sse';
 import { QueryManager } from './query';
 import { SchemaManager } from './schema';
 
-const DEFAULT_CONFIG: ClientConfig = {
+const DEFAULT_CONFIG: Partial<ClientConfig> = {
   baseUrl: '',
   userId: 0,
   dbName: 'pyre-client',
   pageSize: 1000,
+  headers: {},
   retry: {
     maxRetries: 5,
     initialDelay: 1000,
@@ -32,8 +33,11 @@ function normalizeConfig(input: ClientConfigInput): ClientConfig {
   return {
     baseUrl: input.baseUrl,
     userId: input.userId,
+    schemaMetadata: input.schemaMetadata,
     dbName: input.dbName ?? DEFAULT_CONFIG.dbName,
     pageSize: input.pageSize ?? DEFAULT_CONFIG.pageSize,
+    headers: input.headers ?? {},
+    onError: input.onError,
     retry: {
       maxRetries: input.retry?.maxRetries ?? DEFAULT_CONFIG.retry.maxRetries,
       initialDelay: input.retry?.initialDelay ?? DEFAULT_CONFIG.retry.initialDelay,
@@ -66,6 +70,7 @@ export class PyreClient {
 
     this.storage = new Storage(this.config.dbName);
     this.schemaManager = new SchemaManager();
+    this.schemaManager.setSchemaMetadata(this.config.schemaMetadata);
     this.syncManager = new SyncManager(this.storage, this.config);
     this.sseManager = new SSEManager(this.config);
     this.queryManager = new QueryManager(this.storage, this.schemaManager);
@@ -78,7 +83,7 @@ export class PyreClient {
   }
 
   /**
-   * Initialize the client - fetches schema, connects SSE and performs initial sync
+   * Initialize the client - connects SSE and performs initial sync
    */
   async init(onProgress?: SyncProgressCallback): Promise<void> {
     if (this.initialized) {
@@ -88,33 +93,6 @@ export class PyreClient {
     try {
       // Initialize storage
       await this.storage.init();
-
-      // Fetch and store schema
-      try {
-        const { schema, introspection } = await this.schemaManager.fetchSchema(this.config.baseUrl);
-        // Store the introspection JSON as a string
-        await this.storage.saveSchema(JSON.stringify(introspection));
-      } catch (error) {
-        console.error('[PyreClient] Failed to fetch schema, trying cached version:', error);
-        // Try to load cached schema
-        const cachedSchemaJson = await this.storage.getSchema();
-        if (cachedSchemaJson) {
-          try {
-            // Try to parse as introspection JSON
-            const introspection = JSON.parse(cachedSchemaJson);
-            if (introspection.tables) {
-              this.schemaManager.setIntrospectionJson(introspection);
-            } else {
-              throw new Error('Invalid cached schema format');
-            }
-          } catch (parseError) {
-            console.error('[PyreClient] Failed to parse cached schema:', parseError);
-            throw new Error('No valid schema available and failed to fetch');
-          }
-        } else {
-          throw new Error('No schema available and failed to fetch');
-        }
-      }
 
       // Set up progress callback
       if (onProgress) {
@@ -155,7 +133,7 @@ export class PyreClient {
 
       this.initialized = true;
     } catch (error) {
-      console.error('[PyreClient] Initialization failed:', error);
+      this.handleError(error as Error);
       throw error;
     }
   }
@@ -178,34 +156,187 @@ export class PyreClient {
   }
 
   /**
-   * Execute a query with live updates
-   * @param shape - Query shape (GraphQL-like)
-   * @param callback - Callback function that receives query results
-   * @returns Unsubscribe function
+   * Execute a query or mutation with type safety
+   * @param queryModule - Generated query/mutation module with hash, operation, InputValidator, ReturnData, and queryShape (for queries)
+   * @param input - Input parameters (optional if query has no parameters)
+   * @param callback - Callback function that receives typed results
+   * @returns Unsubscribe function (for queries) or void (for mutations)
    */
-  query(shape: QueryShape, callback: (data: any) => void): Unsubscribe {
-    const unsubscribe = this.queryManager.query(shape, callback);
-    
-    // If sync has already completed, notify this query immediately
-    // so it picks up data that was synced before the query was created
-    if (this.initialized && this.lastSyncedTables.size > 0) {
-      // Extract table dependencies from query shape
-      const queryTables = new Set<string>();
-      for (const tableName of Object.keys(shape)) {
-        queryTables.add(tableName);
+  run<T extends {
+    hash?: string;
+    operation: 'query' | 'insert' | 'update' | 'delete';
+    InputValidator: { infer: any; (input: any): any };
+    ReturnData: { infer: any; (input: any): any };
+    queryShape?: QueryShape;
+  }>(
+    queryModule: T,
+    input: T['InputValidator']['infer'] extends Record<string, never> ? undefined : T['InputValidator']['infer'],
+    callback: (result: T['ReturnData']['infer']) => void
+  ): Unsubscribe | void {
+    try {
+      // Validate input if provided
+      if (input !== undefined) {
+        const validation = queryModule.InputValidator(input as any);
+        // ArkType returns an error object if validation fails, or the validated data if successful
+        // Check if validation failed (has 'summary' or 'problems' property)
+        if (validation && typeof validation === 'object' && ('summary' in validation || 'problems' in validation)) {
+          const queryName = (queryModule as any).hash || 'unknown';
+          const errorDetails = (validation as any).summary || (validation as any).problems || validation;
+          const error = new Error(`Query "${queryName}" input validation failed: ${JSON.stringify(errorDetails)}`);
+          this.handleError(error);
+          throw error;
+        }
       }
-      
-      // Check if any of the query's tables were synced
-      const hasSyncedTables = Array.from(queryTables).some(table => this.lastSyncedTables.has(table));
-      if (hasSyncedTables) {
-        // Notify immediately so the query picks up synced data
-        setTimeout(() => {
-          this.queryManager.notifyQueries(Array.from(queryTables));
-        }, 0);
+
+      if (queryModule.operation === 'query') {
+        // Execute query against IndexedDB
+        if (!queryModule.queryShape) {
+          throw new Error('Query module missing queryShape');
+        }
+
+        const unsubscribe = this.queryManager.query(queryModule.queryShape, (data: any) => {
+          try {
+            const queryName = (queryModule as any).hash || 'unknown';
+            
+            if (!data) {
+              console.warn(`[PyreClient] Query "${queryName}" returned no data`);
+              // Return empty structure matching ReturnData shape
+              callback({ user: [], post: [] } as T['ReturnData']['infer']);
+              return;
+            }
+
+            console.log(`[PyreClient] Query "${queryName}" raw data:`, JSON.stringify(data, null, 2));
+
+            // Validate and decode return data
+            // ArkType returns the validated data directly if valid, or an error object if invalid
+            let validation: any;
+            try {
+              validation = queryModule.ReturnData(data);
+              console.log(`[PyreClient] Query "${queryName}" validation result:`, validation);
+            } catch (validationError) {
+              const error = new Error(`Query "${queryName}" return data validation threw error: ${validationError}`);
+              this.handleError(error);
+              // Return empty structure on validation error
+              callback({ user: [], post: [] } as T['ReturnData']['infer']);
+              return;
+            }
+            
+            // Check if validation failed
+            // ArkType errors are instances of type.errors or have a 'summary' property
+            if (validation && typeof validation === 'object' && ('summary' in validation || 'problems' in validation)) {
+              const errorDetails = (validation as any).summary || (validation as any).problems || validation;
+              console.error(`[PyreClient] Query "${queryName}" return data validation failed:`, errorDetails);
+              console.error('[PyreClient] Data that failed validation:', JSON.stringify(data, null, 2));
+              const error = new Error(`Query "${queryName}" return data validation failed: ${JSON.stringify(errorDetails)}`);
+              this.handleError(error);
+              // Return empty structure on validation failure
+              callback({ user: [], post: [] } as T['ReturnData']['infer']);
+              return;
+            }
+            
+            // Validation succeeded - use the validated data directly
+            // The validation result IS the validated data
+            if (validation === null || validation === undefined) {
+              console.warn(`[PyreClient] Query "${queryName}" validation returned null/undefined, using original data`);
+              // Fallback to original data if validation returned undefined/null
+              // Ensure it has the right structure
+              const fallbackData = {
+                user: Array.isArray(data?.user) ? data.user : [],
+                post: Array.isArray(data?.post) ? data.post : []
+              };
+              callback(fallbackData as T['ReturnData']['infer']);
+              return;
+            }
+            
+            // Ensure validation result has the expected structure
+            const finalData = {
+              user: Array.isArray(validation?.user) ? validation.user : [],
+              post: Array.isArray(validation?.post) ? validation.post : []
+            };
+            
+            callback(finalData as T['ReturnData']['infer']);
+          } catch (error) {
+            console.error('[PyreClient] Unexpected error in query callback:', error);
+            this.handleError(error as Error);
+            // Return empty structure on unexpected error
+            callback({ user: [], post: [] } as T['ReturnData']['infer']);
+          }
+        });
+
+        // If sync has already completed, notify this query immediately
+        if (this.initialized && this.lastSyncedTables.size > 0) {
+          // Map query field names to table names for notification
+          const queryTableNames = new Set<string>();
+          for (const queryFieldName of Object.keys(queryModule.queryShape)) {
+            const tableName = this.schemaManager.getTableNameFromQueryField(queryFieldName);
+            if (tableName) {
+              queryTableNames.add(tableName);
+            }
+          }
+          
+          const hasSyncedTables = Array.from(queryTableNames).some(table => this.lastSyncedTables.has(table));
+          if (hasSyncedTables) {
+            setTimeout(() => {
+              this.queryManager.notifyQueries(Array.from(queryTableNames));
+            }, 0);
+          }
+        }
+
+        return unsubscribe;
+      } else {
+        // Execute mutation against server
+        const hash = queryModule.hash;
+        if (!hash) {
+          throw new Error('Mutation module missing hash');
+        }
+
+        const url = `${this.config.baseUrl}/${hash}`;
+        const body = input || {};
+
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...this.config.headers,
+          },
+          body: JSON.stringify(body),
+        })
+          .then(async (response) => {
+            if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            
+            // Validate return data
+            const validation = queryModule.ReturnData(data);
+            if (validation.problems) {
+              const error = new Error(`Return data validation failed: ${JSON.stringify(validation.problems)}`);
+              this.handleError(error);
+              return;
+            }
+            callback(validation.data as T['ReturnData']['infer']);
+          })
+          .catch((error) => {
+            this.handleError(error);
+          });
+
+        return;
+      }
+    } catch (error) {
+      this.handleError(error as Error);
+      throw error;
+    }
+  }
+
+  private handleError(error: Error): void {
+    console.error('[PyreClient]', error);
+    if (this.config.onError) {
+      try {
+        this.config.onError(error);
+      } catch (callbackError) {
+        console.error('[PyreClient] Error handler threw an error:', callbackError);
       }
     }
-    
-    return unsubscribe;
   }
 
   /**
@@ -293,10 +424,15 @@ export class PyreClient {
 // Export types
 export type {
   ClientConfigInput,
+  ClientConfig,
   QueryShape,
+  QueryField,
   WhereClause,
   SortClause,
   SyncProgressCallback,
   SyncStatus,
   Unsubscribe,
+  SchemaMetadata,
+  TableMetadata,
+  RelationshipInfo,
 } from './types';

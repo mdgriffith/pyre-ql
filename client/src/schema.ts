@@ -66,6 +66,7 @@ export class SchemaManager {
   private schema: Schema | null = null;
   private recordMap: Map<string, RecordInfo> = new Map();
   private introspectionJson: IntrospectionJson | null = null;
+  private schemaMetadata: import('./types').SchemaMetadata | null = null;
 
   async fetchSchema(baseUrl: string): Promise<{ schema: Schema; introspection: IntrospectionJson }> {
     try {
@@ -166,11 +167,61 @@ export class SchemaManager {
     return this.recordMap.get(recordName.toLowerCase()) || null;
   }
 
+  setSchemaMetadata(metadata: import('./types').SchemaMetadata) {
+    this.schemaMetadata = metadata;
+    // Build record map from metadata
+    this.recordMap.clear();
+    for (const [tableName, tableMeta] of Object.entries(metadata.tables)) {
+      const links: LinkInfo[] = [];
+      for (const [fieldName, relInfo] of Object.entries(tableMeta.relationships)) {
+        if (relInfo.type) {
+          links.push({
+            fieldName,
+            relatedTable: relInfo.relatedTable || '',
+            foreignKeyField: relInfo.foreignKeyField || '',
+            type: relInfo.type,
+          });
+        }
+      }
+      this.recordMap.set(tableName.toLowerCase(), {
+        name: tableMeta.name,
+        tableName: tableMeta.name,
+        links,
+      });
+    }
+  }
+
+  getTableNameFromQueryField(queryFieldName: string): string | null {
+    if (!this.schemaMetadata) {
+      return null;
+    }
+    return this.schemaMetadata.queryFieldToTable[queryFieldName] || null;
+  }
+
+  getSchemaMetadata(): import('./types').SchemaMetadata | null {
+    return this.schemaMetadata;
+  }
+
   getRelationshipInfo(
     tableName: string,
     fieldName: string
   ): { type: 'many-to-one' | 'one-to-many' | null; relatedTable: string | null; foreignKeyField: string | null } {
-    // Find record by table name
+    // First try schema metadata (preferred)
+    if (this.schemaMetadata) {
+      const tableMeta = this.schemaMetadata.tables[tableName];
+      if (tableMeta) {
+        const relInfo = tableMeta.relationships[fieldName];
+        if (relInfo) {
+          return {
+            type: relInfo.type,
+            relatedTable: relInfo.relatedTable,
+            foreignKeyField: relInfo.foreignKeyField,
+          };
+        }
+      }
+    }
+
+    // Fallback to record map (for backwards compatibility)
     const record = this.recordMap.get(tableName.toLowerCase());
     if (!record) {
       return { type: null, relatedTable: null, foreignKeyField: null };

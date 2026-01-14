@@ -32,17 +32,22 @@ export class QueryManager {
     const queryId = this.nextQueryId++;
     const tableDependencies = new Set<string>();
 
-    // Extract table dependencies from query shape
+    // Extract query field dependencies from query shape (these are query field names, not table names)
     this.extractTableDependencies(shape, tableDependencies);
 
     // Initial execution
     const executeQuery = async () => {
       try {
         const result = await this.executeQueryShape(shape);
+        if (result === null || result === undefined) {
+          console.warn('[QueryManager] Query returned null/undefined result');
+          callback({}); // Return empty object instead of null
+          return;
+        }
         callback(result);
       } catch (error) {
         console.error('[PyreClient] Query execution failed:', error);
-        callback(null); // Return null on error
+        callback({}); // Return empty object on error instead of null
       }
     };
 
@@ -62,13 +67,20 @@ export class QueryManager {
   }
 
   private extractTableDependencies(shape: QueryShape, dependencies: Set<string>) {
-    for (const [tableName, fieldSpec] of Object.entries(shape)) {
-      dependencies.add(tableName);
-      this.extractDependenciesFromFieldSpec(tableName, fieldSpec, dependencies);
+    // Extract query field names (not table names) from query shape
+    for (const [queryFieldName, fieldSpec] of Object.entries(shape)) {
+      dependencies.add(queryFieldName);
+      this.extractDependenciesFromFieldSpec(queryFieldName, fieldSpec, dependencies);
     }
   }
 
-  private extractDependenciesFromFieldSpec(tableName: string, fieldSpec: any, dependencies: Set<string>) {
+  private extractDependenciesFromFieldSpec(queryFieldName: string, fieldSpec: any, dependencies: Set<string>) {
+    // Map query field name to table name for relationship lookup
+    const tableName = this.schemaManager.getTableNameFromQueryField(queryFieldName);
+    if (!tableName) {
+      return; // Can't extract dependencies without table name
+    }
+    
     for (const [field, selection] of Object.entries(fieldSpec)) {
       if (field.startsWith('@')) {
         continue; // Skip special directives
@@ -80,12 +92,36 @@ export class QueryManager {
         // Check if this is a relationship
         const relInfo = this.schemaManager.getRelationshipInfo(tableName, field);
         if (relInfo.relatedTable) {
-          dependencies.add(relInfo.relatedTable);
-          // Recursively extract dependencies from nested selections
-          this.extractDependenciesFromFieldSpec(relInfo.relatedTable, selection, dependencies);
+          // Map related table name back to query field name
+          // Find the query field name that maps to this table
+          const relatedQueryFieldName = this.findQueryFieldNameForTable(relInfo.relatedTable);
+          if (relatedQueryFieldName) {
+            dependencies.add(relatedQueryFieldName);
+            // Recursively extract dependencies from nested selections
+            this.extractDependenciesFromFieldSpec(relatedQueryFieldName, selection, dependencies);
+          } else {
+            // Fallback: if we can't find the query field name, use the table name
+            // This shouldn't happen in normal operation, but provides a fallback
+            dependencies.add(relInfo.relatedTable);
+            this.extractDependenciesFromFieldSpec(relInfo.relatedTable, selection, dependencies);
+          }
         }
       }
     }
+  }
+
+  private findQueryFieldNameForTable(tableName: string): string | null {
+    const schemaMetadata = this.schemaManager.getSchemaMetadata();
+    if (!schemaMetadata) {
+      return null;
+    }
+    // Reverse lookup: find query field name that maps to this table name
+    for (const [queryFieldName, mappedTableName] of Object.entries(schemaMetadata.queryFieldToTable)) {
+      if (mappedTableName === tableName) {
+        return queryFieldName;
+      }
+    }
+    return null;
   }
 
   notifyQueries(tableNames: string[]) {
@@ -94,7 +130,12 @@ export class QueryManager {
     // Only notify queries that depend on the affected tables
     for (const [queryId, queryInfo] of this.activeQueries.entries()) {
       const dependencies = Array.from(queryInfo.tableDependencies);
-      const hasDependency = dependencies.some(dep => affectedTableSet.has(dep));
+      // Check if any dependency matches affected tables
+      // Dependencies are query field names, so we need to map them to table names
+      const hasDependency = dependencies.some(dep => {
+        const tableName = this.schemaManager.getTableNameFromQueryField(dep);
+        return tableName ? affectedTableSet.has(tableName) : false;
+      });
       
       if (hasDependency) {
         for (const callback of queryInfo.callbacks) {
@@ -111,8 +152,25 @@ export class QueryManager {
   private async executeQueryShape(shape: QueryShape): Promise<any> {
     const result: any = {};
 
-    for (const [tableName, fieldSpec] of Object.entries(shape)) {
-      result[tableName] = await this.executeFieldSpec(tableName, fieldSpec);
+    for (const [queryFieldName, fieldSpec] of Object.entries(shape)) {
+      // Map query field name to table name using schema metadata
+      const tableName = this.schemaManager.getTableNameFromQueryField(queryFieldName);
+      if (!tableName) {
+        console.error(`[QueryManager] Could not find table name for query field: ${queryFieldName}`);
+        // Still add an empty array to maintain structure
+        result[queryFieldName] = [];
+        continue;
+      }
+      
+      try {
+        // Execute using table name, but store result under query field name
+        const data = await this.executeFieldSpec(tableName, fieldSpec);
+        // Ensure we always have an array (even if empty)
+        result[queryFieldName] = Array.isArray(data) ? data : (data ? [data] : []);
+      } catch (error) {
+        console.error(`[QueryManager] Error executing query for field ${queryFieldName}:`, error);
+        result[queryFieldName] = [];
+      }
     }
 
     return result;

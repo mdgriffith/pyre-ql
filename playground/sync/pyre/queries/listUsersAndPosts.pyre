@@ -1,0 +1,28 @@
+query ListUsersAndPosts {
+    user {
+        id
+        name
+        email
+        createdAt
+        posts {
+            id
+            title
+            content
+            published
+            createdAt
+        }
+    }
+    post {
+        id
+        title
+        content
+        published
+        createdAt
+        authorUserId
+        users {
+            id
+            name
+            email
+        }
+    }
+}

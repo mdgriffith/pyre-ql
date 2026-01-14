@@ -50,7 +50,7 @@ fn write_client_schema(
     // client/{lang} (relative path)
     match client {
         Client::Elm => generate::client::elm::generate(&out_dir, database, files),
-        Client::Node => generate::client::node::generate(&out_dir, database, files),
+        Client::Node => generate::client::node::generate(context, &out_dir, database, files),
     }
 }
 
