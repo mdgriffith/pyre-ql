@@ -182,7 +182,7 @@ export class QueryManager {
 
   private async executeFieldSpec(tableName: string, fieldSpec: any): Promise<any> {
     console.log(`[QueryManager] executeFieldSpec - table: "${tableName}", fieldSpec:`, JSON.stringify(fieldSpec, null, 2));
-    
+
     // Extract special directives
     const where = fieldSpec['@where'] as WhereClause | undefined;
     const sort = fieldSpec['@sort'] as SortClause | SortClause[] | undefined;
@@ -288,7 +288,7 @@ export class QueryManager {
 
       const lookupValue = row[relInfo.fromColumn];
       console.log(`[QueryManager] resolveRelationship - one-to-many lookup: ${relInfo.relatedTable}.${relInfo.foreignKeyField} = ${lookupValue} (from ${currentTableName}.${relInfo.fromColumn})`);
-      
+
       const matchingRows = await this.storage.getRowsByForeignKey(
         relInfo.relatedTable,
         relInfo.foreignKeyField,
@@ -317,7 +317,7 @@ export class QueryManager {
 
       const foreignKeyId = row[relInfo.fromColumn];
       console.log(`[QueryManager] resolveRelationship - many-to-one/one-to-one lookup: ${relInfo.relatedTable}.${relInfo.foreignKeyField} = ${foreignKeyId} (from ${currentTableName}.${relInfo.fromColumn})`);
-      
+
       if (foreignKeyId === null || foreignKeyId === undefined) {
         console.log(`[QueryManager] resolveRelationship - foreignKeyId is null/undefined, returning null`);
         return null;

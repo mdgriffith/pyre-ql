@@ -56,7 +56,14 @@ pub fn return_data_aliases(
             ast::TopLevelQueryField::Field(query_field) => {
                 match context.tables.get(&query_field.name) {
                     Some(table) => {
-                        to_query_type_alias(context, &table.record, "", query_field, formatter, result);
+                        to_query_type_alias(
+                            context,
+                            &table.record,
+                            "",
+                            query_field,
+                            formatter,
+                            result,
+                        );
                     }
                     None => {
                         eprintln!("Error: Table '{}' referenced in query was not found in typecheck context. This should not happen after successful typechecking. Skipping type alias generation.", query_field.name);
@@ -189,49 +196,52 @@ fn to_query_type_alias(
         {
             let aliased_name = ast::get_aliased_name(field);
 
-        match table_field {
-            ast::Field::Column(col) => {
-                result.push_str(&(formatter.to_field)(
-                    &aliased_name,
-                    &col.type_,
-                    FieldMetadata {
-                        is_link: false,
-                        is_optional: col.nullable,
-                        is_array_relationship: false,
-                    },
-                ));
-                result.push_str(&(formatter.to_field_separator)(is_last));
-            }
-            ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                // Determine relationship type: if local_ids contains the primary key, it's one-to-many (array)
-                // Otherwise, it's many-to-one or one-to-one (optional object)
-                let primary_key_name = ast::get_primary_id_field_name(&table.fields);
-                let is_one_to_many = link
-                    .local_ids
-                    .iter()
-                    .all(|id| primary_key_name.as_ref().map(|pk| id == pk).unwrap_or(false));
-                
-                // Check if link points to unique fields for optionality (many-to-one/one-to-one can be null)
-                let linked_to_unique = if let Some(linked_table) = typecheck::get_linked_table(context, link) {
-                    ast::linked_to_unique_field_with_record(link, &linked_table.record)
-                } else {
-                    // Fallback to simple check if table not found
-                    ast::linked_to_unique_field(link)
-                };
+            match table_field {
+                ast::Field::Column(col) => {
+                    result.push_str(&(formatter.to_field)(
+                        &aliased_name,
+                        &col.type_,
+                        FieldMetadata {
+                            is_link: false,
+                            is_optional: col.nullable,
+                            is_array_relationship: false,
+                        },
+                    ));
+                    result.push_str(&(formatter.to_field_separator)(is_last));
+                }
+                ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                    // Determine relationship type: if local_ids contains the primary key, it's one-to-many (array)
+                    // Otherwise, it's many-to-one or one-to-one (optional object)
+                    let primary_key_name = ast::get_primary_id_field_name(&table.fields);
+                    let is_one_to_many = link.local_ids.iter().all(|id| {
+                        primary_key_name
+                            .as_ref()
+                            .map(|pk| id == pk)
+                            .unwrap_or(false)
+                    });
 
-                result.push_str(&(formatter.to_field)(
-                    &aliased_name,
-                    &get_name(&alias_stack, &aliased_name),
-                    FieldMetadata {
-                        is_link: true,
-                        is_optional: !is_one_to_many && linked_to_unique, // Optional only for many-to-one/one-to-one
-                        is_array_relationship: is_one_to_many,
-                    },
-                ));
-                result.push_str(&(formatter.to_field_separator)(is_last));
+                    // Check if link points to unique fields for optionality (many-to-one/one-to-one can be null)
+                    let linked_to_unique =
+                        if let Some(linked_table) = typecheck::get_linked_table(context, link) {
+                            ast::linked_to_unique_field_with_record(link, &linked_table.record)
+                        } else {
+                            // Fallback to simple check if table not found
+                            ast::linked_to_unique_field(link)
+                        };
+
+                    result.push_str(&(formatter.to_field)(
+                        &aliased_name,
+                        &get_name(&alias_stack, &aliased_name),
+                        FieldMetadata {
+                            is_link: true,
+                            is_optional: !is_one_to_many && linked_to_unique, // Optional only for many-to-one/one-to-one
+                            is_array_relationship: is_one_to_many,
+                        },
+                    ));
+                    result.push_str(&(formatter.to_field_separator)(is_last));
+                }
+                _ => {}
             }
-            _ => {}
-        }
         }
     }
 

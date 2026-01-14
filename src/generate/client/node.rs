@@ -831,15 +831,19 @@ fn to_schema_metadata(context: &typecheck::Context) -> String {
 
             // Get foreign table to check for one-to-one and get table name
             // get_linked_table should always succeed for valid schemas - if it returns None, that's a bug
-            let foreign_table = get_linked_table(context, &link)
-                .expect(&format!("Failed to find linked table '{}' in context. This indicates a schema error.", link.foreign.table));
-            let foreign_table_name = ast::get_tablename(&foreign_table.record.name, &foreign_table.record.fields);
-            
+            let foreign_table = get_linked_table(context, &link).expect(&format!(
+                "Failed to find linked table '{}' in context. This indicates a schema error.",
+                link.foreign.table
+            ));
+            let foreign_table_name =
+                ast::get_tablename(&foreign_table.record.name, &foreign_table.record.fields);
+
             let is_one_to_one = if is_many_to_one {
                 // For one-to-one, both conditions must be true:
                 // 1. The foreign field being linked to must be unique (primary key or unique constraint)
                 // 2. The local foreign key field must also be unique (so only one row can reference a given foreign row)
-                let foreign_field_is_unique = ast::linked_to_unique_field_with_record(&link, &foreign_table.record);
+                let foreign_field_is_unique =
+                    ast::linked_to_unique_field_with_record(&link, &foreign_table.record);
                 let local_field_is_unique = if link.local_ids.len() == 1 {
                     ast::field_is_unique(&link.local_ids[0], &table.record)
                 } else {
@@ -877,10 +881,19 @@ fn to_schema_metadata(context: &typecheck::Context) -> String {
 
             result.push_str(&format!("        {}: {{\n", string::quote(&link.link_name)));
             result.push_str(&format!("          type: {},\n", string::quote(link_type)));
-            result.push_str(&format!("          from: {},\n", string::quote(&from_column)));
+            result.push_str(&format!(
+                "          from: {},\n",
+                string::quote(&from_column)
+            ));
             result.push_str("          to: {\n");
-            result.push_str(&format!("            table: {},\n", string::quote(&to_table)));
-            result.push_str(&format!("            column: {}\n", string::quote(&to_column)));
+            result.push_str(&format!(
+                "            table: {},\n",
+                string::quote(&to_table)
+            ));
+            result.push_str(&format!(
+                "            column: {}\n",
+                string::quote(&to_column)
+            ));
             result.push_str("          }\n");
             result.push_str("        }");
         }
@@ -920,7 +933,9 @@ fn get_linked_table<'a>(
     link: &ast::LinkDetails,
 ) -> Option<&'a typecheck::Table> {
     // context.tables is keyed by decapitalized record names, so we need to decapitalize when looking up
-    context.tables.get(&crate::ext::string::decapitalize(&link.foreign.table))
+    context
+        .tables
+        .get(&crate::ext::string::decapitalize(&link.foreign.table))
 }
 
 fn to_arktype_type(type_: &str) -> String {
