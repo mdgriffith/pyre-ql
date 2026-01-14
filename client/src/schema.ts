@@ -173,13 +173,13 @@ export class SchemaManager {
     this.recordMap.clear();
     for (const [tableName, tableMeta] of Object.entries(metadata.tables)) {
       const links: LinkInfo[] = [];
-      for (const [fieldName, relInfo] of Object.entries(tableMeta.relationships)) {
-        if (relInfo.type) {
+      for (const [fieldName, linkInfo] of Object.entries(tableMeta.links)) {
+        if (linkInfo.type) {
           links.push({
             fieldName,
-            relatedTable: relInfo.relatedTable || '',
-            foreignKeyField: relInfo.foreignKeyField || '',
-            type: relInfo.type,
+            relatedTable: linkInfo.to.table,
+            foreignKeyField: linkInfo.to.column,
+            type: linkInfo.type,
           });
         }
       }
@@ -205,17 +205,18 @@ export class SchemaManager {
   getRelationshipInfo(
     tableName: string,
     fieldName: string
-  ): { type: 'many-to-one' | 'one-to-many' | null; relatedTable: string | null; foreignKeyField: string | null } {
+  ): { type: 'many-to-one' | 'one-to-many' | 'one-to-one' | null; relatedTable: string | null; foreignKeyField: string | null; fromColumn: string | null } {
     // First try schema metadata (preferred)
     if (this.schemaMetadata) {
       const tableMeta = this.schemaMetadata.tables[tableName];
       if (tableMeta) {
-        const relInfo = tableMeta.relationships[fieldName];
-        if (relInfo) {
+        const linkInfo = tableMeta.links[fieldName];
+        if (linkInfo) {
           return {
-            type: relInfo.type,
-            relatedTable: relInfo.relatedTable,
-            foreignKeyField: relInfo.foreignKeyField,
+            type: linkInfo.type,
+            relatedTable: linkInfo.to.table,
+            foreignKeyField: linkInfo.to.column,
+            fromColumn: linkInfo.from,
           };
         }
       }
@@ -224,19 +225,22 @@ export class SchemaManager {
     // Fallback to record map (for backwards compatibility)
     const record = this.recordMap.get(tableName.toLowerCase());
     if (!record) {
-      return { type: null, relatedTable: null, foreignKeyField: null };
+      return { type: null, relatedTable: null, foreignKeyField: null, fromColumn: null };
     }
 
     // Check if this field has a link
     const link = record.links.find(l => l.fieldName === fieldName);
     if (link) {
+      // For backwards compatibility, try to infer fromColumn
+      // This is a best-effort fallback
       return {
-        type: link.type,
+        type: link.type as 'many-to-one' | 'one-to-many' | 'one-to-one' | null,
         relatedTable: link.relatedTable,
         foreignKeyField: link.foreignKeyField,
+        fromColumn: link.type === 'one-to-many' ? 'id' : link.foreignKeyField || null,
       };
     }
 
-    return { type: null, relatedTable: null, foreignKeyField: null };
+    return { type: null, relatedTable: null, foreignKeyField: null, fromColumn: null };
   }
 }

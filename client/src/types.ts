@@ -24,15 +24,18 @@ export interface SyncPageResult {
 /**
  * Schema metadata for relationship information
  */
-export interface RelationshipInfo {
-  type: 'many-to-one' | 'one-to-many' | null;
-  relatedTable: string | null;
-  foreignKeyField: string | null;
+export interface LinkInfo {
+  type: 'many-to-one' | 'one-to-many' | 'one-to-one';
+  from: string;
+  to: {
+    table: string;
+    column: string;
+  };
 }
 
 export interface TableMetadata {
   name: string;
-  relationships: Record<string, RelationshipInfo>;
+  links: Record<string, LinkInfo>;
 }
 
 export interface SchemaMetadata {

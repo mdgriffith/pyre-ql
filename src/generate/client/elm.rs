@@ -450,6 +450,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
              typealias::FieldMetadata {
                  is_link,
                  is_optional,
+                 is_array_relationship: _,
              }| {
                 let base_type = to_elm_typename(type_, is_link);
 
@@ -498,6 +499,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
              typealias::FieldMetadata {
                  is_link,
                  is_optional,
+                 is_array_relationship: _,
              }| {
                 let decoder = match type_ {
                     "String" => "Decode.string".to_string(),

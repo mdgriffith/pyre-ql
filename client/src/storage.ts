@@ -120,16 +120,51 @@ export class Storage {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(['tables'], 'readonly');
       const store = tx.objectStore('tables');
+      
+      // First, let's check what's actually in the database
+      const allRequest = store.getAll();
+      allRequest.onsuccess = () => {
+        const allRows = allRequest.result || [];
+        console.log(`[Storage] getAllRows("${tableName}") - Total rows in database: ${allRows.length}`);
+        
+        // Group by tableName to see what tables exist
+        const byTable: Record<string, any[]> = {};
+        allRows.forEach(row => {
+          const rowTableName = row.tableName || 'NO_TABLE_NAME';
+          if (!byTable[rowTableName]) {
+            byTable[rowTableName] = [];
+          }
+          byTable[rowTableName].push(row);
+        });
+        console.log(`[Storage] Rows by table:`, Object.keys(byTable).map(t => `${t}: ${byTable[t].length}`).join(', '));
+        
+        if (byTable[tableName]) {
+          console.log(`[Storage] Found ${byTable[tableName].length} rows for table "${tableName}"`);
+          if (byTable[tableName].length > 0) {
+            console.log(`[Storage] Sample row for "${tableName}":`, JSON.stringify(byTable[tableName][0], null, 2));
+          }
+        } else {
+          console.warn(`[Storage] No rows found for table "${tableName}" in direct scan. Available tables:`, Object.keys(byTable));
+        }
+      };
+      
       const index = store.index('byTable');
       const range = IDBKeyRange.only(tableName);
       const request = index.getAll(range);
 
       request.onsuccess = () => {
         const result = request.result || [];
+        console.log(`[Storage] getAllRows("${tableName}") - index query returned ${result.length} rows`);
+        if (result.length > 0) {
+          console.log(`[Storage] Sample row from index:`, JSON.stringify(result[0], null, 2));
+        } else {
+          console.warn(`[Storage] Index query returned 0 rows for "${tableName}" - checking if index is working correctly`);
+        }
         resolve(result);
       };
 
       request.onerror = () => {
+        console.error(`[Storage] Failed to read rows for table "${tableName}":`, request.error);
         reject(new Error(`Failed to read rows: ${request.error}`));
       };
     });
@@ -349,17 +384,31 @@ export class Storage {
     // Since we can't easily create dynamic indexes, we'll fetch all rows and filter
     // This is acceptable for now, but could be optimized with proper index setup
     // WARNING: This is inefficient for large tables - consider creating indexes during schema setup
+    console.log(`[Storage] getRowsByForeignKey - table: "${tableName}", field: "${foreignKeyField}", value: ${foreignKeyValue} (type: ${typeof foreignKeyValue})`);
     const allRows = await this.getAllRows(tableName);
+    console.log(`[Storage] getRowsByForeignKey - fetched ${allRows.length} total rows, filtering by ${foreignKeyField} = ${foreignKeyValue}`);
+    
+    if (allRows.length > 0) {
+      console.log(`[Storage] getRowsByForeignKey - sample row fields:`, Object.keys(allRows[0]));
+      console.log(`[Storage] getRowsByForeignKey - sample row ${foreignKeyField} value:`, allRows[0][foreignKeyField], `(type: ${typeof allRows[0][foreignKeyField]})`);
+    }
+    
     if (allRows.length > 1000) {
       console.warn(
         `[PyreClient] getRowsByForeignKey: Filtering ${allRows.length} rows for ${tableName}.${foreignKeyField}. ` +
         `Consider creating an index for better performance.`
       );
     }
-    return allRows.filter(row => {
+    const filtered = allRows.filter(row => {
       const fkValue = row[foreignKeyField];
-      return fkValue === foreignKeyValue || String(fkValue) === String(foreignKeyValue);
+      const matches = fkValue === foreignKeyValue || String(fkValue) === String(foreignKeyValue);
+      if (!matches && allRows.length <= 10) {
+        console.log(`[Storage] getRowsByForeignKey - row ${row.id} doesn't match: ${fkValue} !== ${foreignKeyValue}`);
+      }
+      return matches;
     });
+    console.log(`[Storage] getRowsByForeignKey - filtered to ${filtered.length} matching rows`);
+    return filtered;
   }
 
   async checkStorageQuota(): Promise<{ usage: number; quota: number; percentage: number }> {

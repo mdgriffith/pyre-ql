@@ -324,7 +324,19 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
     let mut last_line_index: usize = 0;
     let mut first_rendered = false;
 
+    // Helper function to check if a line number is in any primary range
+    let line_in_primary = |line: u32| -> bool {
+        location.primary.iter().any(|primary| {
+            primary.start.line <= line && line <= primary.end.line
+        })
+    };
+
     for context in &location.contexts {
+        // Skip rendering context lines that overlap with primary lines
+        if line_in_primary(context.start.line) {
+            continue;
+        }
+        
         if first_rendered && context.start.line.to_usize() > last_line_index + 1 {
             rendered.push_str(&divider(indent, enable_color))
         }
@@ -364,7 +376,17 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
     }
 
     for context in location.contexts.iter().rev() {
+        // Skip rendering context lines that overlap with primary lines
+        if line_in_primary(context.end.line) {
+            continue;
+        }
+        
+        // Only decrement indent if the corresponding start line was actually rendered
+        // (i.e., not skipped because it overlapped with a primary line)
+        let start_line_was_rendered = !line_in_primary(context.start.line);
+        
         if last_line_index == context.end.line.to_usize() {
+            // Skip if we've already rendered this line - don't change indent
             continue;
         }
         if context.end.line.to_usize() > last_line_index + 1 {
@@ -375,7 +397,10 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
         rendered.push_str("\n");
 
         last_line_index = context.end.line.to_usize();
-        indent -= 1;
+        // Only decrement indent if the corresponding start line was rendered
+        if start_line_was_rendered && indent > 0 {
+            indent -= 1;
+        }
     }
 }
 

@@ -12,6 +12,9 @@ pub struct TypeFormatter {
 pub struct FieldMetadata {
     pub is_link: bool,
     pub is_optional: bool,
+    /// If true, this relationship should be an array (one-to-many).
+    /// If false and is_link is true, it's many-to-one or one-to-one (optional object).
+    pub is_array_relationship: bool,
 }
 
 /// Generates type alias definitions for query return types using the provided formatting functions
@@ -88,6 +91,7 @@ pub fn return_data_aliases(
                     FieldMetadata {
                         is_link: true,
                         is_optional: false,
+                        is_array_relationship: true, // Top-level query fields are always arrays
                     },
                 ));
 
@@ -193,27 +197,35 @@ fn to_query_type_alias(
                     FieldMetadata {
                         is_link: false,
                         is_optional: col.nullable,
+                        is_array_relationship: false,
                     },
                 ));
                 result.push_str(&(formatter.to_field_separator)(is_last));
             }
             ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                // Check if link points to unique fields by examining the foreign table's schema
+                // Determine relationship type: if local_ids contains the primary key, it's one-to-many (array)
+                // Otherwise, it's many-to-one or one-to-one (optional object)
+                let primary_key_name = ast::get_primary_id_field_name(&table.fields);
+                let is_one_to_many = link
+                    .local_ids
+                    .iter()
+                    .all(|id| primary_key_name.as_ref().map(|pk| id == pk).unwrap_or(false));
+                
+                // Check if link points to unique fields for optionality (many-to-one/one-to-one can be null)
                 let linked_to_unique = if let Some(linked_table) = typecheck::get_linked_table(context, link) {
                     ast::linked_to_unique_field_with_record(link, &linked_table.record)
                 } else {
                     // Fallback to simple check if table not found
                     ast::linked_to_unique_field(link)
                 };
-                // If we're linked to a unique field
-                // Then we have either 0 or 1 of them
 
                 result.push_str(&(formatter.to_field)(
                     &aliased_name,
                     &get_name(&alias_stack, &aliased_name),
                     FieldMetadata {
                         is_link: true,
-                        is_optional: linked_to_unique,
+                        is_optional: !is_one_to_many && linked_to_unique, // Optional only for many-to-one/one-to-one
+                        is_array_relationship: is_one_to_many,
                     },
                 ));
                 result.push_str(&(formatter.to_field_separator)(is_last));

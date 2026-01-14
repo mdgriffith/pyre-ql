@@ -80,7 +80,7 @@ export class QueryManager {
     if (!tableName) {
       return; // Can't extract dependencies without table name
     }
-    
+
     for (const [field, selection] of Object.entries(fieldSpec)) {
       if (field.startsWith('@')) {
         continue; // Skip special directives
@@ -126,7 +126,7 @@ export class QueryManager {
 
   notifyQueries(tableNames: string[]) {
     const affectedTableSet = new Set(tableNames);
-    
+
     // Only notify queries that depend on the affected tables
     for (const [queryId, queryInfo] of this.activeQueries.entries()) {
       const dependencies = Array.from(queryInfo.tableDependencies);
@@ -136,7 +136,7 @@ export class QueryManager {
         const tableName = this.schemaManager.getTableNameFromQueryField(dep);
         return tableName ? affectedTableSet.has(tableName) : false;
       });
-      
+
       if (hasDependency) {
         for (const callback of queryInfo.callbacks) {
           try {
@@ -151,20 +151,23 @@ export class QueryManager {
 
   private async executeQueryShape(shape: QueryShape): Promise<any> {
     const result: any = {};
+    console.log('[QueryManager] executeQueryShape - shape:', JSON.stringify(shape, null, 2));
 
     for (const [queryFieldName, fieldSpec] of Object.entries(shape)) {
       // Map query field name to table name using schema metadata
       const tableName = this.schemaManager.getTableNameFromQueryField(queryFieldName);
+      console.log(`[QueryManager] Processing query field "${queryFieldName}" -> table "${tableName}"`);
       if (!tableName) {
         console.error(`[QueryManager] Could not find table name for query field: ${queryFieldName}`);
         // Still add an empty array to maintain structure
         result[queryFieldName] = [];
         continue;
       }
-      
+
       try {
         // Execute using table name, but store result under query field name
         const data = await this.executeFieldSpec(tableName, fieldSpec);
+        console.log(`[QueryManager] Query field "${queryFieldName}" (table "${tableName}") returned ${Array.isArray(data) ? data.length : 'non-array'} results`);
         // Ensure we always have an array (even if empty)
         result[queryFieldName] = Array.isArray(data) ? data : (data ? [data] : []);
       } catch (error) {
@@ -173,10 +176,13 @@ export class QueryManager {
       }
     }
 
+    console.log('[QueryManager] executeQueryShape - final result:', JSON.stringify(result, null, 2));
     return result;
   }
 
   private async executeFieldSpec(tableName: string, fieldSpec: any): Promise<any> {
+    console.log(`[QueryManager] executeFieldSpec - table: "${tableName}", fieldSpec:`, JSON.stringify(fieldSpec, null, 2));
+    
     // Extract special directives
     const where = fieldSpec['@where'] as WhereClause | undefined;
     const sort = fieldSpec['@sort'] as SortClause | SortClause[] | undefined;
@@ -184,10 +190,13 @@ export class QueryManager {
 
     // Get all rows for this table
     let rows = await this.storage.getAllRows(tableName);
+    console.log(`[QueryManager] getAllRows("${tableName}") returned ${rows.length} rows:`, rows.map(r => ({ id: r.id, ...(r.tableName ? { tableName: r.tableName } : {}) })));
 
     // Apply filter
     if (where) {
+      const beforeCount = rows.length;
       rows = rows.filter(row => evaluateFilter(row, where));
+      console.log(`[QueryManager] After applying @where filter: ${beforeCount} -> ${rows.length} rows`);
     }
 
     // Apply sorting
@@ -197,11 +206,14 @@ export class QueryManager {
         field: s.field,
         direction: s.direction.toLowerCase() === 'desc' ? 'desc' : 'asc'
       })));
+      console.log(`[QueryManager] Applied sorting, ${rows.length} rows`);
     }
 
     // Apply limit
     if (limit !== undefined) {
+      const beforeLimit = rows.length;
       rows = rows.slice(0, limit);
+      console.log(`[QueryManager] Applied limit ${limit}: ${beforeLimit} -> ${rows.length} rows`);
     }
 
     // Extract field selections (everything except special directives)
@@ -228,16 +240,20 @@ export class QueryManager {
 
   private async projectFields(row: any, fieldSelections: Record<string, any>, currentTableName: string): Promise<any> {
     const projected: any = {};
+    console.log(`[QueryManager] projectFields - table: "${currentTableName}", row id: ${row.id}, selections:`, Object.keys(fieldSelections));
 
     for (const [field, selection] of Object.entries(fieldSelections)) {
       if (selection === true) {
         // Simple field selection
         projected[field] = row[field];
+        console.log(`[QueryManager] projectFields - simple field "${field}":`, row[field]);
       } else if (typeof selection === 'object' && selection !== null) {
         // Nested selection or relationship
         if (this.isRelationshipField(currentTableName, field)) {
           // This is a relationship field - resolve it
+          console.log(`[QueryManager] projectFields - resolving relationship field "${field}"`);
           projected[field] = await this.resolveRelationship(field, row, selection, currentTableName);
+          console.log(`[QueryManager] projectFields - relationship "${field}" resolved to:`, Array.isArray(projected[field]) ? `${projected[field].length} items` : projected[field]);
         } else {
           // Nested object selection
           projected[field] = await this.projectFields(row[field] || {}, selection, currentTableName);
@@ -255,45 +271,60 @@ export class QueryManager {
 
   private async resolveRelationship(fieldName: string, row: any, selection: any, currentTableName: string): Promise<any> {
     const relInfo = this.schemaManager.getRelationshipInfo(currentTableName, fieldName);
-    
-    if (!relInfo.type || !relInfo.relatedTable) {
+    console.log(`[QueryManager] resolveRelationship - field: "${fieldName}", table: "${currentTableName}", relInfo:`, relInfo);
+    console.log(`[QueryManager] resolveRelationship - row:`, JSON.stringify(row, null, 2));
+
+    if (!relInfo.type || !relInfo.relatedTable || !relInfo.fromColumn) {
+      console.warn(`[QueryManager] resolveRelationship - missing relInfo: type=${relInfo.type}, relatedTable=${relInfo.relatedTable}, fromColumn=${relInfo.fromColumn}`);
       return null;
     }
 
     if (relInfo.type === 'one-to-many') {
-      // One-to-many: get all rows from related table where foreignKeyId matches this row's id
+      // One-to-many: get all rows from related table where foreignKeyField (FK in foreign table) matches this row's fromColumn (PK in current table)
       if (!relInfo.foreignKeyField) {
+        console.warn(`[QueryManager] resolveRelationship - one-to-many missing foreignKeyField`);
         return [];
       }
 
+      const lookupValue = row[relInfo.fromColumn];
+      console.log(`[QueryManager] resolveRelationship - one-to-many lookup: ${relInfo.relatedTable}.${relInfo.foreignKeyField} = ${lookupValue} (from ${currentTableName}.${relInfo.fromColumn})`);
+      
       const matchingRows = await this.storage.getRowsByForeignKey(
         relInfo.relatedTable,
         relInfo.foreignKeyField,
-        row.id
+        lookupValue
       );
+
+      console.log(`[QueryManager] resolveRelationship - one-to-many found ${matchingRows.length} matching rows`);
 
       // Apply selection to each row
       if (selection === true) {
         return matchingRows.map(r => this.removeTableName(r));
       } else {
         // Need to project fields for each matching row
-        const projected = await Promise.all(matchingRows.map(r => 
+        const projected = await Promise.all(matchingRows.map(r =>
           this.projectFields(r, selection, relInfo.relatedTable!)
         ));
         return projected;
       }
     } else {
-      // Many-to-one: get single related row
+      // Many-to-one or one-to-one: get single related row
+      // foreignKeyField is the PK in the foreign table, fromColumn is the FK in the current table
       if (!relInfo.foreignKeyField) {
+        console.warn(`[QueryManager] resolveRelationship - many-to-one/one-to-one missing foreignKeyField`);
         return null;
       }
 
-      const foreignKeyId = row[relInfo.foreignKeyField];
+      const foreignKeyId = row[relInfo.fromColumn];
+      console.log(`[QueryManager] resolveRelationship - many-to-one/one-to-one lookup: ${relInfo.relatedTable}.${relInfo.foreignKeyField} = ${foreignKeyId} (from ${currentTableName}.${relInfo.fromColumn})`);
+      
       if (foreignKeyId === null || foreignKeyId === undefined) {
+        console.log(`[QueryManager] resolveRelationship - foreignKeyId is null/undefined, returning null`);
         return null;
       }
 
       const relatedRow = await this.storage.getRow(relInfo.relatedTable, foreignKeyId);
+      console.log(`[QueryManager] resolveRelationship - many-to-one/one-to-one found row:`, relatedRow ? 'yes' : 'no');
 
       if (!relatedRow) {
         return null;

@@ -111,3 +111,72 @@ record User {
         formatted
     );
 }
+
+#[test]
+fn test_generate_schema_with_relationships() {
+    let ctx = TestContext::new();
+
+    // Create a schema with relationships
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+record User {
+    @public
+    id   Int    @id
+    name String
+    
+    posts @link(Post.authorUserId)
+}
+
+record Post {
+    @public
+    id           Int    @id
+    authorUserId Int
+    title        String
+    
+    users @link(authorUserId, User.id)
+}
+        "#,
+    )
+    .unwrap();
+
+    ctx.run_command("generate").assert().success();
+
+    // Verify schema.ts was generated
+    let schema_path = ctx
+        .workspace_path
+        .join("pyre/generated/client/node/schema.ts");
+    assert!(schema_path.exists(), "schema.ts should be generated");
+
+    // Read and verify the generated schema
+    let schema_content = std::fs::read_to_string(&schema_path).unwrap();
+
+    // Verify that table names in 'to' field use actual table names (lowercase plural), not record names
+    // User.posts link should point to "posts" table, not "Post"
+    assert!(
+        schema_content.contains(r#"table: "posts""#),
+        "User.posts link should point to 'posts' table, not 'Post'. Schema content:\n{}",
+        schema_content
+    );
+
+    // Post.users link should point to "users" table, not "User"
+    assert!(
+        schema_content.contains(r#"table: "users""#),
+        "Post.users link should point to 'users' table, not 'User'. Schema content:\n{}",
+        schema_content
+    );
+
+    // Verify the structure uses 'links' not 'relationships'
+    assert!(
+        schema_content.contains("links:"),
+        "Schema should use 'links' property, not 'relationships'. Schema content:\n{}",
+        schema_content
+    );
+
+    // Verify LinkInfo interface exists
+    assert!(
+        schema_content.contains("export interface LinkInfo"),
+        "Schema should export LinkInfo interface. Schema content:\n{}",
+        schema_content
+    );
+}

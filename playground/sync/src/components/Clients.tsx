@@ -45,7 +45,7 @@ function ClientCard({
     // The query will run immediately (may return empty), then re-run when sync completes
     const unsubscribe = client.pyreClient.run(
       ListUsersAndPosts,
-      undefined, // No input parameters
+      {}, // No input parameters
       (result) => {
         // Find the user for this client
         const userId = client.userId || client.requestedUserId || 0

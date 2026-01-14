@@ -37,6 +37,7 @@ fn to_node_formatter() -> typealias::TypeFormatter {
              typealias::FieldMetadata {
                  is_link,
                  is_optional,
+                 is_array_relationship,
              }| {
                 let (base_type, is_primitive, needs_coercion) = match type_ {
                     "String" => ("string".to_string(), true, false),
@@ -58,37 +59,41 @@ fn to_node_formatter() -> typealias::TypeFormatter {
                     match type_ {
                         "DateTime" => {
                             // Reference the CoercedDate helper type
-                            match (is_link, is_optional) {
-                                (true, true) => "CoercedDate.array().optional()".to_string(), // Optional array
-                                (true, false) => "CoercedDate.array()".to_string(), // Required array
-                                (false, true) => "CoercedDate.optional()".to_string(), // Optional single
-                                (false, false) => "CoercedDate".to_string(), // Required single
+                            match (is_link, is_array_relationship, is_optional) {
+                                (true, true, _) => "CoercedDate.array()".to_string(), // One-to-many: array (not optional)
+                                (true, false, true) => "CoercedDate.optional()".to_string(), // Many-to-one/one-to-one: optional object
+                                (true, false, false) => "CoercedDate".to_string(), // Many-to-one/one-to-one: required object (shouldn't happen but handle it)
+                                (false, _, true) => "CoercedDate.optional()".to_string(), // Optional single
+                                (false, _, false) => "CoercedDate".to_string(), // Required single
                             }
                         }
                         "Bool" => {
                             // Reference the CoercedBool helper type
-                            match (is_link, is_optional) {
-                                (true, true) => "CoercedBool.array().optional()".to_string(), // Optional array
-                                (true, false) => "CoercedBool.array()".to_string(), // Required array
-                                (false, true) => "CoercedBool.optional()".to_string(), // Optional single
-                                (false, false) => "CoercedBool".to_string(), // Required single
+                            match (is_link, is_array_relationship, is_optional) {
+                                (true, true, _) => "CoercedBool.array()".to_string(), // One-to-many: array (not optional)
+                                (true, false, true) => "CoercedBool.optional()".to_string(), // Many-to-one/one-to-one: optional object
+                                (true, false, false) => "CoercedBool".to_string(), // Many-to-one/one-to-one: required object (shouldn't happen but handle it)
+                                (false, _, true) => "CoercedBool.optional()".to_string(), // Optional single
+                                (false, _, false) => "CoercedBool".to_string(), // Required single
                             }
                         }
                         _ => unreachable!(),
                     }
                 } else {
                     // Standard type handling without coercion
-                    match (is_primitive, is_link, is_optional) {
+                    match (is_primitive, is_link, is_array_relationship, is_optional) {
                         // Primitive types
-                        (true, true, true) => format!("\"{}?\"", base_type),
-                        (true, true, false) => format!("\"{}[]\"", base_type),
-                        (true, false, true) => format!("\"{}?\"", base_type),
-                        (true, false, false) => format!("\"{}\"", base_type),
+                        (true, true, true, _) => format!("\"{}[]\"", base_type), // One-to-many: array
+                        (true, true, false, true) => format!("\"{}?\"", base_type), // Many-to-one/one-to-one: optional
+                        (true, true, false, false) => format!("\"{}\"", base_type), // Many-to-one/one-to-one: required (shouldn't happen)
+                        (true, false, _, true) => format!("\"{}?\"", base_type),
+                        (true, false, _, false) => format!("\"{}\"", base_type),
                         // Non-primitive types
-                        (false, true, true) => format!("{}.array().optional()", base_type),
-                        (false, true, false) => format!("{}.array()", base_type),
-                        (false, false, true) => format!("{}.optional()", base_type),
-                        (false, false, false) => base_type.to_string(),
+                        (false, true, true, _) => format!("{}.array()", base_type), // One-to-many: array (not optional)
+                        (false, true, false, true) => format!("{}.optional()", base_type), // Many-to-one/one-to-one: optional object
+                        (false, true, false, false) => base_type.to_string(), // Many-to-one/one-to-one: required object (shouldn't happen)
+                        (false, false, _, true) => format!("{}.optional()", base_type),
+                        (false, false, _, false) => base_type.to_string(),
                     }
                 };
                 format!("  {}: {}", name, type_str)
@@ -572,10 +577,11 @@ fn to_query_file(
     let mut result = String::new();
     result.push_str("import * as Ark from 'arktype';\n");
     result.push_str("import type { QueryShape } from '@pyre/client';\n\n");
-    
+
     // Generate helper types for coercion (Date and Bool)
     result.push_str("// Coercion helpers for IndexedDB data (numbers -> Date/boolean)\n");
-    result.push_str("const CoercedDate = Ark.type('number').pipe((val) => new Date(val * 1000));\n");
+    result
+        .push_str("const CoercedDate = Ark.type('number').pipe((val) => new Date(val * 1000));\n");
     result.push_str("const CoercedBool = Ark.type('number').pipe((val) => val !== 0);\n\n");
 
     // Operation type
@@ -771,15 +777,18 @@ fn to_query_field_spec(context: &typecheck::Context, query_field: &ast::QueryFie
 
 fn to_schema_metadata(context: &typecheck::Context) -> String {
     let mut result = String::new();
-    result.push_str("export interface RelationshipInfo {\n");
-    result.push_str("  type: 'many-to-one' | 'one-to-many' | null;\n");
-    result.push_str("  relatedTable: string | null;\n");
-    result.push_str("  foreignKeyField: string | null;\n");
+    result.push_str("export interface LinkInfo {\n");
+    result.push_str("  type: 'many-to-one' | 'one-to-many' | 'one-to-one';\n");
+    result.push_str("  from: string;\n");
+    result.push_str("  to: {\n");
+    result.push_str("    table: string;\n");
+    result.push_str("    column: string;\n");
+    result.push_str("  };\n");
     result.push_str("}\n\n");
 
     result.push_str("export interface TableMetadata {\n");
     result.push_str("  name: string;\n");
-    result.push_str("  relationships: Record<string, RelationshipInfo>;\n");
+    result.push_str("  links: Record<string, LinkInfo>;\n");
     result.push_str("}\n\n");
 
     result.push_str("export interface SchemaMetadata {\n");
@@ -801,7 +810,7 @@ fn to_schema_metadata(context: &typecheck::Context) -> String {
 
         result.push_str(&format!("    {}: {{\n", string::quote(&table_name)));
         result.push_str(&format!("      name: {},\n", string::quote(&table_name)));
-        result.push_str("      relationships: {\n");
+        result.push_str("      links: {\n");
 
         // Get all links from this table
         let links = ast::collect_links(&table.record.fields);
@@ -820,54 +829,59 @@ fn to_schema_metadata(context: &typecheck::Context) -> String {
                 .iter()
                 .any(|id| primary_key_name.as_ref().map(|pk| id != pk).unwrap_or(true));
 
-            let link_type = if is_many_to_one {
+            // Get foreign table to check for one-to-one and get table name
+            // get_linked_table should always succeed for valid schemas - if it returns None, that's a bug
+            let foreign_table = get_linked_table(context, &link)
+                .expect(&format!("Failed to find linked table '{}' in context. This indicates a schema error.", link.foreign.table));
+            let foreign_table_name = ast::get_tablename(&foreign_table.record.name, &foreign_table.record.fields);
+            
+            let is_one_to_one = if is_many_to_one {
+                // For one-to-one, both conditions must be true:
+                // 1. The foreign field being linked to must be unique (primary key or unique constraint)
+                // 2. The local foreign key field must also be unique (so only one row can reference a given foreign row)
+                let foreign_field_is_unique = ast::linked_to_unique_field_with_record(&link, &foreign_table.record);
+                let local_field_is_unique = if link.local_ids.len() == 1 {
+                    ast::field_is_unique(&link.local_ids[0], &table.record)
+                } else {
+                    false // Multi-field unique constraints not yet supported
+                };
+                foreign_field_is_unique && local_field_is_unique
+            } else {
+                false
+            };
+
+            let link_type = if is_one_to_one {
+                "one-to-one"
+            } else if is_many_to_one {
                 "many-to-one"
             } else {
                 "one-to-many"
             };
 
-            // Get foreign table name
-            let foreign_table_name = if let Some(foreign_table) = get_linked_table(context, &link) {
-                ast::get_tablename(&foreign_table.record.name, &foreign_table.record.fields)
+            // Determine "from" (local column) and "to" (foreign table and column)
+            let (from_column, to_table, to_column) = if is_many_to_one {
+                // For many-to-one/one-to-one: FK is in current table (local_ids), points to foreign table
+                (
+                    link.local_ids[0].clone(),
+                    foreign_table_name,
+                    link.foreign.fields[0].clone(),
+                )
             } else {
-                link.foreign.table.clone()
-            };
-
-            // For many-to-one, foreign_key_field is the first local_id
-            // For one-to-many, we need to find the FK field in the related table
-            let foreign_key_field = if is_many_to_one {
-                link.local_ids[0].clone()
-            } else {
-                // For one-to-many, the FK is in the related table
-                // We need to find the reverse link
-                if let Some(foreign_table) = get_linked_table(context, &link) {
-                    let foreign_links = ast::collect_links(&foreign_table.record.fields);
-                    // Find the reverse link that points back to this table
-                    foreign_links
-                        .iter()
-                        .find_map(|fl| {
-                            if fl.foreign.table == table.record.name {
-                                Some(fl.local_ids[0].clone())
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or_else(|| link.local_ids[0].clone())
-                } else {
-                    link.local_ids[0].clone()
-                }
+                // For one-to-many: FK is in foreign table (foreign.fields), points to current table's PK
+                (
+                    primary_key_name.clone().unwrap_or_else(|| "id".to_string()),
+                    foreign_table_name,
+                    link.foreign.fields[0].clone(),
+                )
             };
 
             result.push_str(&format!("        {}: {{\n", string::quote(&link.link_name)));
             result.push_str(&format!("          type: {},\n", string::quote(link_type)));
-            result.push_str(&format!(
-                "          relatedTable: {},\n",
-                string::quote(&foreign_table_name)
-            ));
-            result.push_str(&format!(
-                "          foreignKeyField: {}\n",
-                string::quote(&foreign_key_field)
-            ));
+            result.push_str(&format!("          from: {},\n", string::quote(&from_column)));
+            result.push_str("          to: {\n");
+            result.push_str(&format!("            table: {},\n", string::quote(&to_table)));
+            result.push_str(&format!("            column: {}\n", string::quote(&to_column)));
+            result.push_str("          }\n");
             result.push_str("        }");
         }
 
@@ -905,7 +919,8 @@ fn get_linked_table<'a>(
     context: &'a typecheck::Context,
     link: &ast::LinkDetails,
 ) -> Option<&'a typecheck::Table> {
-    context.tables.get(&link.foreign.table)
+    // context.tables is keyed by decapitalized record names, so we need to decapitalize when looking up
+    context.tables.get(&crate::ext::string::decapitalize(&link.foreign.table))
 }
 
 fn to_arktype_type(type_: &str) -> String {

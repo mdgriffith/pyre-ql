@@ -197,7 +197,7 @@ export class PyreClient {
         const unsubscribe = this.queryManager.query(queryModule.queryShape, (data: any) => {
           try {
             const queryName = (queryModule as any).hash || 'unknown';
-            
+
             if (!data) {
               console.warn(`[PyreClient] Query "${queryName}" returned no data`);
               // Return empty structure matching ReturnData shape
@@ -220,7 +220,7 @@ export class PyreClient {
               callback({ user: [], post: [] } as T['ReturnData']['infer']);
               return;
             }
-            
+
             // Check if validation failed
             // ArkType errors are instances of type.errors or have a 'summary' property
             if (validation && typeof validation === 'object' && ('summary' in validation || 'problems' in validation)) {
@@ -233,7 +233,7 @@ export class PyreClient {
               callback({ user: [], post: [] } as T['ReturnData']['infer']);
               return;
             }
-            
+
             // Validation succeeded - use the validated data directly
             // The validation result IS the validated data
             if (validation === null || validation === undefined) {
@@ -247,13 +247,13 @@ export class PyreClient {
               callback(fallbackData as T['ReturnData']['infer']);
               return;
             }
-            
+
             // Ensure validation result has the expected structure
             const finalData = {
               user: Array.isArray(validation?.user) ? validation.user : [],
               post: Array.isArray(validation?.post) ? validation.post : []
             };
-            
+
             callback(finalData as T['ReturnData']['infer']);
           } catch (error) {
             console.error('[PyreClient] Unexpected error in query callback:', error);
@@ -273,7 +273,7 @@ export class PyreClient {
               queryTableNames.add(tableName);
             }
           }
-          
+
           const hasSyncedTables = Array.from(queryTableNames).some(table => this.lastSyncedTables.has(table));
           if (hasSyncedTables) {
             setTimeout(() => {
@@ -306,7 +306,7 @@ export class PyreClient {
               throw new Error(`HTTP error! status: ${response.status}`);
             }
             const data = await response.json();
-            
+
             // Validate return data
             const validation = queryModule.ReturnData(data);
             if (validation.problems) {

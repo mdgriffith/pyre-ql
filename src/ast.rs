@@ -382,6 +382,24 @@ pub fn linked_to_unique_field_with_record(
     link.foreign.fields.iter().all(|f| f == "id")
 }
 
+/// Check if a field in a record has a UNIQUE or PRIMARY KEY constraint.
+pub fn field_is_unique(field_name: &str, record: &RecordDetails) -> bool {
+    for field in &record.fields {
+        match field {
+            Field::Column(column) => {
+                if column.name == field_name {
+                    // Check if this column has UNIQUE or PRIMARY KEY constraint
+                    return column.directives.iter().any(|d| {
+                        matches!(d, ColumnDirective::Unique | ColumnDirective::PrimaryKey)
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 pub fn to_reciprocal(local_namespace: &str, local_table: &str, link: &LinkDetails) -> LinkDetails {
     LinkDetails {
         link_name: string::pluralize(&string::decapitalize(local_table)),

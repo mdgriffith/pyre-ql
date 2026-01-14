@@ -407,6 +407,7 @@ pub fn to_formatter() -> typealias::TypeFormatter {
              typealias::FieldMetadata {
                  is_link,
                  is_optional,
+                 is_array_relationship: _,
              }| {
                 let (base_type, is_primitive) = match type_ {
                     "String" => ("string".to_string(), true),
