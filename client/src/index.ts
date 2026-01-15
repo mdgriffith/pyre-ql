@@ -10,9 +10,7 @@ import type { SSEMessage } from './sse';
 import { QueryManager } from './query';
 import { SchemaManager } from './schema';
 
-const DEFAULT_CONFIG: Partial<ClientConfig> = {
-  baseUrl: '',
-  userId: 0,
+const DEFAULT_CONFIG: Pick<ClientConfig, 'dbName' | 'pageSize' | 'headers' | 'retry' | 'reconnect'> = {
   dbName: 'pyre-client',
   pageSize: 1000,
   headers: {},
@@ -434,5 +432,5 @@ export type {
   Unsubscribe,
   SchemaMetadata,
   TableMetadata,
-  RelationshipInfo,
+  LinkInfo,
 } from './types';
