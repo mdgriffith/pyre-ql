@@ -6,20 +6,12 @@ use crate::generate::typealias;
 use crate::typecheck;
 use std::path::Path;
 
-const NODE_REQUEST_MODULE: &str = include_str!("./static/node/db/request.ts");
-
 pub fn generate(
     context: &typecheck::Context,
     base_path: &Path,
     database: &ast::Database,
     files: &mut Vec<filesystem::GeneratedFile<String>>,
 ) {
-    // Decode Helper file
-    files.push(filesystem::GeneratedFile {
-        path: base_path.join("db/request.ts"),
-        contents: NODE_REQUEST_MODULE.to_string(),
-    });
-
     // Generate schema metadata file
     files.push(filesystem::GeneratedFile {
         path: base_path.join("schema.ts"),
@@ -61,9 +53,9 @@ fn to_node_formatter() -> typealias::TypeFormatter {
                             // Reference the CoercedDate helper type
                             match (is_link, is_array_relationship, is_optional) {
                                 (true, true, _) => "CoercedDate.array()".to_string(), // One-to-many: array (not optional)
-                                (true, false, true) => "CoercedDate.or('null')".to_string(), // Many-to-one/one-to-one: optional object (can be null)
+                                (true, false, true) => "CoercedDate.or('null')".to_string(), // Many-to-one/one-to-one: nullable object (can be null)
                                 (true, false, false) => "CoercedDate".to_string(), // Many-to-one/one-to-one: required object (shouldn't happen but handle it)
-                                (false, _, true) => "CoercedDate.optional()".to_string(), // Optional single
+                                (false, _, true) => "CoercedDate.or('null')".to_string(), // Nullable single
                                 (false, _, false) => "CoercedDate".to_string(), // Required single
                             }
                         }
@@ -71,9 +63,9 @@ fn to_node_formatter() -> typealias::TypeFormatter {
                             // Reference the CoercedBool helper type
                             match (is_link, is_array_relationship, is_optional) {
                                 (true, true, _) => "CoercedBool.array()".to_string(), // One-to-many: array (not optional)
-                                (true, false, true) => "CoercedBool.or('null')".to_string(), // Many-to-one/one-to-one: optional object (can be null)
+                                (true, false, true) => "CoercedBool.or('null')".to_string(), // Many-to-one/one-to-one: nullable object (can be null)
                                 (true, false, false) => "CoercedBool".to_string(), // Many-to-one/one-to-one: required object (shouldn't happen but handle it)
-                                (false, _, true) => "CoercedBool.optional()".to_string(), // Optional single
+                                (false, _, true) => "CoercedBool.or('null')".to_string(), // Nullable single
                                 (false, _, false) => "CoercedBool".to_string(), // Required single
                             }
                         }
@@ -84,15 +76,15 @@ fn to_node_formatter() -> typealias::TypeFormatter {
                     match (is_primitive, is_link, is_array_relationship, is_optional) {
                         // Primitive types
                         (true, true, true, _) => format!("\"{}[]\"", base_type), // One-to-many: array
-                        (true, true, false, true) => format!("\"{}?\"", base_type), // Many-to-one/one-to-one: optional
+                        (true, true, false, true) => format!("\"{} | null\"", base_type), // Many-to-one/one-to-one: nullable
                         (true, true, false, false) => format!("\"{}\"", base_type), // Many-to-one/one-to-one: required (shouldn't happen)
-                        (true, false, _, true) => format!("\"{}?\"", base_type),
+                        (true, false, _, true) => format!("\"{} | null\"", base_type),
                         (true, false, _, false) => format!("\"{}\"", base_type),
                         // Non-primitive types
                         (false, true, true, _) => format!("{}.array()", base_type), // One-to-many: array (not optional)
-                        (false, true, false, true) => format!("{}.or('null')", base_type), // Many-to-one/one-to-one: optional object (can be null)
+                        (false, true, false, true) => format!("{}.or('null')", base_type), // Many-to-one/one-to-one: nullable object (can be null)
                         (false, true, false, false) => base_type.to_string(), // Many-to-one/one-to-one: required object (shouldn't happen)
-                        (false, false, _, true) => format!("{}.optional()", base_type),
+                        (false, false, _, true) => format!("{}.or('null')", base_type),
                         (false, false, _, false) => base_type.to_string(),
                     }
                 };
@@ -514,6 +506,7 @@ pub fn generate_queries(
     let formatter = to_node_formatter();
 
     // Generate individual query files
+    // Note: PyreClient replaces the need for a generated query.ts runner file
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
@@ -525,48 +518,6 @@ pub fn generate_queries(
             _ => continue,
         }
     }
-
-    // Create one central file for sending the queries
-    let mut query_file_imports = String::new();
-    query_file_imports.push_str("import * as Req from './db/request';\n");
-
-    let mut query_file_contents = String::new();
-    query_file_contents.push_str("\n\n");
-
-    // Generate imports and function definitions
-    for operation in &query_list.queries {
-        match operation {
-            ast::QueryDef::Query(q) => {
-                // Add import
-                query_file_imports.push_str(&format!(
-                    "import * as {}_Query from './query/{}';\n",
-                    q.name, q.name
-                ));
-
-                // Add query function
-                let mut query_definition = format!(
-                    "export async function {}(base_url: string, input: {}_Query.Input, headers?: Record<string, string>){{\n",
-                    q.name, q.name
-                );
-                query_definition.push_str(&format!(
-                    "  return Req.send(`${{base_url}}/{}`, input, headers)\n",
-                    q.interface_hash
-                ));
-                query_definition.push_str("}\n\n");
-                query_file_contents.push_str(&query_definition);
-            }
-            _ => continue,
-        }
-    }
-
-    // Combine imports and contents
-    query_file_imports.push_str(&query_file_contents);
-
-    // Add the central query file
-    files.push(filesystem::GeneratedFile {
-        path: dir.join("query.ts"),
-        contents: query_file_imports,
-    });
 }
 
 fn to_query_file(
