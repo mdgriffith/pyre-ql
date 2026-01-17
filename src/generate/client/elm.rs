@@ -432,12 +432,12 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     // Collect type names as we generate them
     use std::cell::RefCell;
     use std::rc::Rc;
-    
+
     let type_names: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
-    
+
     // Always include Input
     type_names.borrow_mut().push("Input".to_string());
-    
+
     let mut result = String::new();
 
     result.push_str("import Db.Decode\n");
@@ -559,27 +559,24 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         result.push_str(&to_query_shape_json(context, query));
         result.push_str("\n\n");
     }
-    
+
     // Generate send command port (pyre_send{capitalized operation})
     let port_name = format!("pyre_send{}", query.name);
-    result.push_str(&format!(
-        "port {} : Encode.Value -> Cmd msg\n\n",
-        port_name
-    ));
-    
+    result.push_str(&format!("port {} : Encode.Value -> Cmd msg\n\n", port_name));
+
     // Generate send function
     result.push_str("send : Input -> Cmd msg\n");
     result.push_str("send input =\n");
     // All operations just send the encoded input (Elm has already validated)
     result.push_str(&format!("    {} (encode input)\n\n", port_name));
-    
+
     // Generate results subscription port (pyre_receive{capitalized operation})
     let results_port_name = format!("pyre_receive{}", query.name);
     result.push_str(&format!(
         "port {} : (Decode.Value -> msg) -> Sub msg\n\n",
         results_port_name
     ));
-    
+
     // Generate subscription function
     match query.operation {
         ast::QueryOperation::Query => {
@@ -602,20 +599,23 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     // Build exposing list: functions first, then types
     let mut exposing_items: Vec<String> = Vec::new();
-    
+
     // Add functions first - unified for all operations
     exposing_items.push("send".to_string());
     exposing_items.push("subscription".to_string());
-    
+
     // Then add types (sorted)
     let mut type_names_sorted: Vec<String> = type_names.borrow().clone();
     type_names_sorted.sort();
     exposing_items.extend(type_names_sorted);
-    
+
     // Build the module declaration with explicit exposing
     let exposing_list = exposing_items.join(", ");
-    let module_decl = format!("port module Query.{} exposing ({})\n\n\n", query.name, exposing_list);
-    
+    let module_decl = format!(
+        "port module Query.{} exposing ({})\n\n\n",
+        query.name, exposing_list
+    );
+
     // Replace the placeholder or prepend the module declaration
     // Since we started with an empty result, we need to prepend
     format!("{}{}", module_decl, result)
@@ -695,7 +695,7 @@ fn to_query_shape_json(context: &typecheck::Context, query: &ast::Query) -> Stri
     result.push_str("queryShape =\n");
     result.push_str("    Encode.object\n");
     result.push_str("        [ ");
-    
+
     let mut is_first_table = true;
     for field in &query.fields {
         match field {
@@ -704,7 +704,7 @@ fn to_query_shape_json(context: &typecheck::Context, query: &ast::Query) -> Stri
                     result.push_str("\n        , ");
                 }
                 is_first_table = false;
-                
+
                 let field_name = ast::get_aliased_name(query_field);
                 result.push_str(&format!(
                     "({}, {})",
@@ -715,7 +715,7 @@ fn to_query_shape_json(context: &typecheck::Context, query: &ast::Query) -> Stri
             _ => {}
         }
     }
-    
+
     result.push_str("\n        ]\n");
     result
 }
@@ -723,17 +723,17 @@ fn to_query_shape_json(context: &typecheck::Context, query: &ast::Query) -> Stri
 fn to_query_field_spec_json(context: &typecheck::Context, query_field: &ast::QueryField) -> String {
     let mut result = "Encode.object\n            [ ".to_string();
     let mut is_first = true;
-    
+
     // Get table info for relationship detection
     let table = context.tables.get(&query_field.name);
-    
+
     // Extract special directives (@where, @sort, @limit)
     let mut sort_clauses: Vec<String> = Vec::new();
     let mut limit: Option<i32> = None;
-    
+
     // Collect all field selections and args
     let mut field_selections: Vec<(String, bool, bool)> = Vec::new();
-    
+
     for arg_field in &query_field.fields {
         match arg_field {
             ast::ArgField::Arg(located_arg) => {
@@ -768,13 +768,13 @@ fn to_query_field_spec_json(context: &typecheck::Context, query_field: &ast::Que
                 } else {
                     false
                 };
-                
+
                 let has_nested_fields = !nested_field.fields.is_empty()
                     && nested_field
                         .fields
                         .iter()
                         .any(|f| matches!(f, ast::ArgField::Field(_)));
-                
+
                 field_selections.push((
                     nested_field.name.clone(),
                     is_relationship,
@@ -784,14 +784,14 @@ fn to_query_field_spec_json(context: &typecheck::Context, query_field: &ast::Que
             _ => {}
         }
     }
-    
+
     // Generate field selections
     for (field_name, is_relationship, has_nested_fields) in field_selections {
         if !is_first {
             result.push_str("\n            , ");
         }
         is_first = false;
-        
+
         if is_relationship && has_nested_fields {
             // Relationship field with nested selections - recurse
             if let Some(nested_field) = query_field.fields.iter().find_map(|f| match f {
@@ -812,13 +812,13 @@ fn to_query_field_spec_json(context: &typecheck::Context, query_field: &ast::Que
             ));
         }
     }
-    
+
     // Add special directives if present
     if !sort_clauses.is_empty() || limit.is_some() {
         if !is_first {
             result.push_str("\n            , ");
         }
-        
+
         if !sort_clauses.is_empty() {
             if sort_clauses.len() == 1 {
                 result.push_str(&format!("(\"@sort\", {})", sort_clauses[0]));
@@ -834,7 +834,7 @@ fn to_query_field_spec_json(context: &typecheck::Context, query_field: &ast::Que
                 result.push_str("])");
             }
         }
-        
+
         if let Some(limit_val) = limit {
             if !sort_clauses.is_empty() {
                 result.push_str("\n            , ");
@@ -842,7 +842,7 @@ fn to_query_field_spec_json(context: &typecheck::Context, query_field: &ast::Que
             result.push_str(&format!("(\"@limit\", Encode.int {})", limit_val));
         }
     }
-    
+
     result.push_str("\n            ]");
     result
 }
