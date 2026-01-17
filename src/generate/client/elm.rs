@@ -8,18 +8,11 @@ use std::path::Path;
 
 mod rectangle;
 
-const ELM_DECODE_HELP: &str = include_str!("./static/elm/src/Json/Decode/Help.elm");
-
 pub fn generate(
     base_path: &Path,
     database: &ast::Database,
     files: &mut Vec<GeneratedFile<String>>,
 ) {
-    files.push(generate_text_file(base_path.join("Db.elm"), write_schema(database)));
-    files.push(generate_text_file(
-        base_path.join("Json/Decode/Help.elm"),
-        ELM_DECODE_HELP.to_string(),
-    ));
     files.push(generate_text_file(
         base_path.join("Db/Decode.elm"),
         to_schema_decoders(database),
@@ -154,6 +147,22 @@ pub fn to_schema_decoders(database: &ast::Database) -> String {
         r#"field : String -> Decode.Decoder a -> Decode.Decoder (a -> b) -> Decode.Decoder b
 field fieldName_ fieldDecoder_ decoder_ =
     decoder_ |> Decode.andThen (\func -> Decode.field fieldName_ fieldDecoder_ |> Decode.map func)
+
+
+{-| Chain field decoders together, similar to Db.Read.field.
+This allows you to build up a decoder by adding fields one at a time.
+
+    decodeGame =
+        Decode.succeed Game
+            |> andField "id" Decode.int 
+            |> andField "name" Decode.string
+
+-}
+andField : String -> Decode.Decoder a -> Decode.Decoder (a -> b) -> Decode.Decoder b
+andField field decoder partial =
+    Decode.map2 (\f value -> f value)
+        partial
+        (Decode.field field decoder)
 
 
 bool : Decode.Decoder Bool
@@ -420,30 +429,33 @@ pub fn generate_queries(
 }
 
 fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
-    let mut result = format!("module Query.{} exposing (..)\n\n\n", query.name);
+    // Collect type names as we generate them
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    
+    let type_names: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    
+    // Always include Input
+    type_names.borrow_mut().push("Input".to_string());
+    
+    let mut result = String::new();
 
-    result.push_str("import Db\n");
     result.push_str("import Db.Decode\n");
     result.push_str("import Db.Encode\n");
     result.push_str("import Json.Decode as Decode\n");
-    result.push_str("import Josn.Decode.Help as Decode\n");
     result.push_str("import Json.Encode as Encode\n");
     result.push_str("import Time\n");
     result.push_str("\n\n");
 
     result.push_str(&to_param_type_alias(&query.args));
 
-    result.push_str(
-        "prepare : Input -> { args : Encode.Value, query : String, decoder : Decode.Decoder ReturnData }\n"
-    );
-    result.push_str("prepare input =\n");
-    result.push_str(&format!(
-        "    {{ args = encode input\n    , query = \"{}\"\n    , decoder = decodeReturnResult\n    }}\n\n\n",
-        &query.interface_hash,
-    ));
+    let type_names_clone = type_names.clone();
     let formatter = typealias::TypeFormatter {
         to_comment: Box::new(|s| format!("{{-| {} -}}\n", s)),
-        to_type_def_start: Box::new(|name| format!("type alias {} =\n    {{ ", name)),
+        to_type_def_start: Box::new(move |name| {
+            type_names_clone.borrow_mut().push(name.to_string());
+            format!("type alias {} =\n    {{ ", name)
+        }),
         to_field: Box::new(
             |name,
              type_,
@@ -527,7 +539,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
                     }
                 };
 
-                format!("|> Decode.andField \"{}\" {}\n", name, final_decoder)
+                format!("|> Db.Decode.andField \"{}\" {}\n", name, final_decoder)
             },
         ),
         to_type_def_end: Box::new(|| "\n".to_string()),
@@ -540,7 +552,73 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     typealias::return_data_aliases(context, query, &mut result, &decoder_formatter);
 
-    result
+    // Generate ports and functions - unified for all operations
+    // Generate queryShape as JSON encoder (only for queries)
+    if query.operation == ast::QueryOperation::Query {
+        result.push_str("\n\n");
+        result.push_str(&to_query_shape_json(context, query));
+        result.push_str("\n\n");
+    }
+    
+    // Generate send command port (pyre_send{capitalized operation})
+    let port_name = format!("pyre_send{}", query.name);
+    result.push_str(&format!(
+        "port {} : Encode.Value -> Cmd msg\n\n",
+        port_name
+    ));
+    
+    // Generate send function
+    result.push_str("send : Input -> Cmd msg\n");
+    result.push_str("send input =\n");
+    // All operations just send the encoded input (Elm has already validated)
+    result.push_str(&format!("    {} (encode input)\n\n", port_name));
+    
+    // Generate results subscription port (pyre_receive{capitalized operation})
+    let results_port_name = format!("pyre_receive{}", query.name);
+    result.push_str(&format!(
+        "port {} : (Decode.Value -> msg) -> Sub msg\n\n",
+        results_port_name
+    ));
+    
+    // Generate subscription function
+    match query.operation {
+        ast::QueryOperation::Query => {
+            result.push_str("subscription : (ReturnData -> msg) -> Sub msg\n");
+            result.push_str("subscription toMsg =\n");
+            result.push_str(&format!(
+                "    {} (\\json ->\n        case Decode.decodeValue decodeReturnData json of\n            Ok data ->\n                toMsg data\n\n            Err _ ->\n                toMsg (ReturnData [] [])\n    )\n",
+                results_port_name
+            ));
+        }
+        _ => {
+            result.push_str("subscription : (Result String ReturnData -> msg) -> Sub msg\n");
+            result.push_str("subscription toMsg =\n");
+            result.push_str(&format!(
+                "    {} (\\json ->\n        case Decode.decodeValue decodeReturnData json of\n            Ok data ->\n                toMsg (Ok data)\n\n            Err err ->\n                toMsg (Err (Decode.errorToString err))\n    )\n",
+                results_port_name
+            ));
+        }
+    }
+
+    // Build exposing list: functions first, then types
+    let mut exposing_items: Vec<String> = Vec::new();
+    
+    // Add functions first - unified for all operations
+    exposing_items.push("send".to_string());
+    exposing_items.push("subscription".to_string());
+    
+    // Then add types (sorted)
+    let mut type_names_sorted: Vec<String> = type_names.borrow().clone();
+    type_names_sorted.sort();
+    exposing_items.extend(type_names_sorted);
+    
+    // Build the module declaration with explicit exposing
+    let exposing_list = exposing_items.join(", ");
+    let module_decl = format!("port module Query.{} exposing ({})\n\n\n", query.name, exposing_list);
+    
+    // Replace the placeholder or prepend the module declaration
+    // Since we started with an empty result, we need to prepend
+    format!("{}{}", module_decl, result)
 }
 
 fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
@@ -610,4 +688,161 @@ fn to_elm_typename(type_: &str, is_link: bool) -> String {
             }
         }
     }
+}
+
+fn to_query_shape_json(context: &typecheck::Context, query: &ast::Query) -> String {
+    let mut result = "queryShape : Encode.Value\n".to_string();
+    result.push_str("queryShape =\n");
+    result.push_str("    Encode.object\n");
+    result.push_str("        [ ");
+    
+    let mut is_first_table = true;
+    for field in &query.fields {
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                if !is_first_table {
+                    result.push_str("\n        , ");
+                }
+                is_first_table = false;
+                
+                let field_name = ast::get_aliased_name(query_field);
+                result.push_str(&format!(
+                    "({}, {})",
+                    string::quote(&field_name),
+                    to_query_field_spec_json(context, query_field)
+                ));
+            }
+            _ => {}
+        }
+    }
+    
+    result.push_str("\n        ]\n");
+    result
+}
+
+fn to_query_field_spec_json(context: &typecheck::Context, query_field: &ast::QueryField) -> String {
+    let mut result = "Encode.object\n            [ ".to_string();
+    let mut is_first = true;
+    
+    // Get table info for relationship detection
+    let table = context.tables.get(&query_field.name);
+    
+    // Extract special directives (@where, @sort, @limit)
+    let mut sort_clauses: Vec<String> = Vec::new();
+    let mut limit: Option<i32> = None;
+    
+    // Collect all field selections and args
+    let mut field_selections: Vec<(String, bool, bool)> = Vec::new();
+    
+    for arg_field in &query_field.fields {
+        match arg_field {
+            ast::ArgField::Arg(located_arg) => {
+                match &located_arg.arg {
+                    ast::Arg::Where(_where_arg) => {
+                        // TODO: Convert WhereArg to QueryShape where clause format
+                        // For now, skip - this is complex and may need runtime evaluation
+                    }
+                    ast::Arg::OrderBy(direction, field_name) => {
+                        let dir_str = match direction {
+                            ast::Direction::Asc => "asc",
+                            ast::Direction::Desc => "desc",
+                        };
+                        sort_clauses.push(format!(
+                            "Encode.object [ (\"field\", Encode.string {}) , (\"direction\", Encode.string {}) ]",
+                            string::quote(field_name),
+                            string::quote(dir_str)
+                        ));
+                    }
+                    ast::Arg::Limit(query_value) => {
+                        if let ast::QueryValue::Int((_, val)) = query_value {
+                            limit = Some(*val);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ast::ArgField::Field(nested_field) => {
+                let is_relationship = if let Some(table_info) = table {
+                    let links = ast::collect_links(&table_info.record.fields);
+                    links.iter().any(|link| link.link_name == nested_field.name)
+                } else {
+                    false
+                };
+                
+                let has_nested_fields = !nested_field.fields.is_empty()
+                    && nested_field
+                        .fields
+                        .iter()
+                        .any(|f| matches!(f, ast::ArgField::Field(_)));
+                
+                field_selections.push((
+                    nested_field.name.clone(),
+                    is_relationship,
+                    has_nested_fields,
+                ));
+            }
+            _ => {}
+        }
+    }
+    
+    // Generate field selections
+    for (field_name, is_relationship, has_nested_fields) in field_selections {
+        if !is_first {
+            result.push_str("\n            , ");
+        }
+        is_first = false;
+        
+        if is_relationship && has_nested_fields {
+            // Relationship field with nested selections - recurse
+            if let Some(nested_field) = query_field.fields.iter().find_map(|f| match f {
+                ast::ArgField::Field(qf) if qf.name == field_name => Some(qf),
+                _ => None,
+            }) {
+                result.push_str(&format!(
+                    "({}, {})",
+                    string::quote(&field_name),
+                    to_query_field_spec_json(context, nested_field)
+                ));
+            }
+        } else {
+            // Regular field or relationship without nested - just true
+            result.push_str(&format!(
+                "({}, Encode.bool True)",
+                string::quote(&field_name)
+            ));
+        }
+    }
+    
+    // Add special directives if present
+    if !sort_clauses.is_empty() || limit.is_some() {
+        if !is_first {
+            result.push_str("\n            , ");
+        }
+        
+        if !sort_clauses.is_empty() {
+            if sort_clauses.len() == 1 {
+                result.push_str(&format!("(\"@sort\", {})", sort_clauses[0]));
+            } else {
+                // For multiple sort clauses, create a list
+                result.push_str("(\"@sort\", Encode.list identity [");
+                for (i, clause) in sort_clauses.iter().enumerate() {
+                    if i > 0 {
+                        result.push_str(", ");
+                    }
+                    result.push_str(clause);
+                }
+                result.push_str("])");
+            }
+        }
+        
+        if let Some(limit_val) = limit {
+            if !sort_clauses.is_empty() {
+                result.push_str("\n            , ");
+            }
+            result.push_str(&format!("(\"@limit\", Encode.int {})", limit_val));
+        }
+    }
+    
+    result.push_str("\n            ]");
+    result
 }

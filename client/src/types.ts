@@ -154,11 +154,22 @@ export interface QueryShape {
   [tableName: string]: QueryField;
 }
 
+/**
+ * Represents a query or mutation module that can be executed by PyreClient
+ */
+export interface Query {
+  hash?: string;
+  operation: 'query' | 'insert' | 'update' | 'delete';
+  InputValidator: { infer: any; (input: any): any };
+  ReturnData: { infer: any; (input: any): any };
+  toQueryShape?: (input: any) => QueryShape;
+}
+
 export type Unsubscribe = () => void;
 
-export interface QuerySubscription {
-  data: any;
-  unsubscribe: Unsubscribe;
+export interface QuerySubscription<Input = any> {
+  unsubscribe(): void;
+  update(input: Input): void;
 }
 
 export type SyncProgressCallback = (progress: {

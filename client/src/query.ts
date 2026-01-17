@@ -2,19 +2,20 @@
  * Query execution and live updates for Pyre Client
  */
 
-import type { QueryShape, WhereClause, SortClause, Unsubscribe } from './types';
+import type { QueryShape, WhereClause, SortClause, QuerySubscription } from './types';
 import { Storage } from './storage';
 import { evaluateFilter, sortRows } from './filter';
 import { SchemaManager } from './schema';
 
-export interface QuerySubscription {
-  data: any;
-  unsubscribe: Unsubscribe;
-}
-
 interface QueryInfo {
-  callbacks: Set<() => void>;
+  callbacks: Set<(data: any) => void>;
+  toQueryShape: (input: any) => QueryShape;
+  inputValidator?: { (input: any): any };
+  currentInput: any;
+  currentShape: QueryShape;
   tableDependencies: Set<string>;
+  executeQuery: () => Promise<void>;
+  handleError?: (error: Error) => void;
 }
 
 export class QueryManager {
@@ -28,41 +29,94 @@ export class QueryManager {
     this.schemaManager = schemaManager;
   }
 
-  query(shape: QueryShape, callback: (data: any) => void): Unsubscribe {
+  query<Input>(
+    toQueryShape: (input: Input) => QueryShape,
+    initialInput: Input,
+    callback: (data: any) => void,
+    inputValidator?: { (input: any): any },
+    handleError?: (error: Error) => void
+  ): QuerySubscription<Input> {
     const queryId = this.nextQueryId++;
+    const initialShape = toQueryShape(initialInput);
     const tableDependencies = new Set<string>();
 
     // Extract query field dependencies from query shape (these are query field names, not table names)
-    this.extractTableDependencies(shape, tableDependencies);
+    this.extractTableDependencies(initialShape, tableDependencies);
 
-    // Initial execution
+    // Create execute function that uses current shape
     const executeQuery = async () => {
+      const queryInfo = this.activeQueries.get(queryId);
+      if (!queryInfo) {
+        return; // Query was unsubscribed
+      }
+      const shape = queryInfo.currentShape;
       try {
         const result = await this.executeQueryShape(shape);
         if (result === null || result === undefined) {
           console.warn('[QueryManager] Query returned null/undefined result');
-          callback({}); // Return empty object instead of null
+          // Call all callbacks with empty result
+          queryInfo.callbacks.forEach(cb => cb({}));
           return;
         }
-        callback(result);
+        // Call all callbacks with result
+        queryInfo.callbacks.forEach(cb => cb(result));
       } catch (error) {
         console.error('[PyreClient] Query execution failed:', error);
-        callback({}); // Return empty object on error instead of null
+        // Call all callbacks with empty result on error
+        queryInfo.callbacks.forEach(cb => cb({}));
       }
     };
 
-    executeQuery();
-
     // Store query info for live updates
     const queryInfo: QueryInfo = {
-      callbacks: new Set([executeQuery]),
+      callbacks: new Set([callback]),
+      toQueryShape: toQueryShape as (input: any) => QueryShape,
+      inputValidator,
+      currentInput: initialInput,
+      currentShape: initialShape,
       tableDependencies,
+      executeQuery,
+      handleError,
     };
     this.activeQueries.set(queryId, queryInfo);
 
-    // Return unsubscribe function
-    return () => {
-      this.activeQueries.delete(queryId);
+    // Initial execution
+    executeQuery();
+
+    // Return subscription object with update method
+    return {
+      unsubscribe: () => {
+        this.activeQueries.delete(queryId);
+      },
+      update: (input: Input) => {
+        const info = this.activeQueries.get(queryId);
+        if (!info) {
+          return; // Already unsubscribed
+        }
+
+        // Validate input if validator is provided
+        if (info.inputValidator) {
+          const validation = info.inputValidator(input as any);
+          // ArkType returns an error object if validation fails, or the validated data if successful
+          // Check if validation failed (has 'summary' or 'problems' property)
+          if (validation && typeof validation === 'object' && ('summary' in validation || 'problems' in validation)) {
+            const errorDetails = (validation as any).summary || (validation as any).problems || validation;
+            const error = new Error(`Query input validation failed: ${JSON.stringify(errorDetails)}`);
+            if (info.handleError) {
+              info.handleError(error);
+            } else {
+              console.error('[QueryManager]', error);
+            }
+            return; // Don't update if validation fails
+          }
+        }
+
+        // Update current input and shape
+        info.currentInput = input;
+        info.currentShape = info.toQueryShape(input);
+        // Re-execute query with new shape
+        info.executeQuery();
+      },
     };
   }
 
@@ -138,12 +192,10 @@ export class QueryManager {
       });
 
       if (hasDependency) {
-        for (const callback of queryInfo.callbacks) {
-          try {
-            callback();
-          } catch (error) {
-            console.error('[PyreClient] Query callback failed:', error);
-          }
+        try {
+          queryInfo.executeQuery();
+        } catch (error) {
+          console.error('[PyreClient] Query execution failed:', error);
         }
       }
     }

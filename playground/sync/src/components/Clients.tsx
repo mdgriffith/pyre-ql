@@ -60,7 +60,12 @@ function ClientCard({
       }
     )
 
-    return unsubscribe
+    // Return cleanup function that calls unsubscribe if it exists
+    return () => {
+      if (unsubscribe && typeof unsubscribe === 'object' && 'unsubscribe' in unsubscribe) {
+        unsubscribe.unsubscribe()
+      }
+    }
   }, [client.pyreClient, client.connected, client.userId, client.requestedUserId])
 
   const getUserName = (): string => {

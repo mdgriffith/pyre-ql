@@ -506,7 +506,6 @@ pub fn generate_queries(
     let formatter = to_node_formatter();
 
     // Generate individual query files
-    // Note: PyreClient replaces the need for a generated query.ts runner file
     for operation in &query_list.queries {
         match operation {
             ast::QueryDef::Query(q) => {
@@ -518,6 +517,56 @@ pub fn generate_queries(
             _ => continue,
         }
     }
+
+    // Generate queries.ts file that collects all queries for easy importing
+    files.push(filesystem::GeneratedFile {
+        path: dir.join("queries.ts"),
+        contents: generate_queries_collection(&query_list),
+    });
+}
+
+fn generate_queries_collection(query_list: &ast::QueryList) -> String {
+    let mut content = String::new();
+
+    content.push_str("// Auto-generated file: collects all query modules for easy importing\n");
+    content.push_str("// This file is regenerated when queries are generated\n\n");
+    content.push_str("import type { QueryModule } from '@pyre/client/elm-adapter';\n\n");
+
+    // Import all query modules
+    let mut query_names: Vec<String> = Vec::new();
+    for operation in &query_list.queries {
+        match operation {
+            ast::QueryDef::Query(q) => {
+                let query_name = q.name.to_string();
+                query_names.push(query_name.clone());
+                content.push_str(&format!(
+                    "import {{ {} }} from './query/{}';\n",
+                    query_name,
+                    crate::ext::string::decapitalize(&query_name)
+                ));
+            }
+            _ => continue,
+        }
+    }
+
+    if query_names.is_empty() {
+        content.push_str("\nexport const queries: Record<string, QueryModule> = {};\n");
+        return content;
+    }
+
+    // Generate the queries object
+    content.push_str("\nexport const queries: Record<string, QueryModule> = {\n");
+    let mut is_first = true;
+    for query_name in &query_names {
+        if !is_first {
+            content.push_str(",\n");
+        }
+        content.push_str(&format!("  {}: {}", query_name, query_name));
+        is_first = false;
+    }
+    content.push_str("\n};\n");
+
+    content
 }
 
 fn to_query_file(
@@ -572,6 +621,7 @@ fn to_query_file(
     result.push_str("  ReturnData,\n");
     if query.operation == ast::QueryOperation::Query {
         result.push_str("  queryShape,\n");
+        result.push_str("  toQueryShape: (input: Input) => queryShape,\n");
     }
     result.push_str("};\n");
 

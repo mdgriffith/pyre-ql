@@ -2,7 +2,7 @@
  * Pyre Client - Browser-side data synchronization and querying
  */
 
-import type { ClientConfigInput, ClientConfig, QueryShape, SyncProgressCallback, SyncStatus, Unsubscribe } from './types';
+import type { ClientConfigInput, ClientConfig, QueryShape, SyncProgressCallback, SyncStatus, Unsubscribe, QuerySubscription, Query } from './types';
 import { Storage } from './storage';
 import { SyncManager } from './sync';
 import { SSEManager } from './sse';
@@ -160,17 +160,13 @@ export class PyreClient {
    * @param callback - Callback function that receives typed results
    * @returns Unsubscribe function (for queries) or void (for mutations)
    */
-  run<T extends {
-    hash?: string;
-    operation: 'query' | 'insert' | 'update' | 'delete';
-    InputValidator: { infer: any; (input: any): any };
-    ReturnData: { infer: any; (input: any): any };
-    queryShape?: QueryShape;
+  run<T extends Query & {
+    toQueryShape?: (input: T['InputValidator']['infer']) => QueryShape;
   }>(
     queryModule: T,
     input: T['InputValidator']['infer'] extends Record<string, never> ? undefined : T['InputValidator']['infer'],
     callback: (result: T['ReturnData']['infer']) => void
-  ): Unsubscribe | void {
+  ): QuerySubscription<T['InputValidator']['infer']> | void {
     try {
       // Validate input if provided
       if (input !== undefined) {
@@ -188,84 +184,94 @@ export class PyreClient {
 
       if (queryModule.operation === 'query') {
         // Execute query against IndexedDB
-        if (!queryModule.queryShape) {
-          throw new Error('Query module missing queryShape');
+        if (!queryModule.toQueryShape) {
+          throw new Error('Query module missing toQueryShape');
         }
 
-        const unsubscribe = this.queryManager.query(queryModule.queryShape, (data: any) => {
-          try {
-            const queryName = (queryModule as any).hash || 'unknown';
+        // Normalize input (use empty object if undefined)
+        const normalizedInput = input ?? ({} as T['InputValidator']['infer']);
 
-            if (!data) {
-              console.warn(`[PyreClient] Query "${queryName}" returned no data`);
-              // Return empty structure matching ReturnData shape
-              callback({ user: [], post: [] } as T['ReturnData']['infer']);
-              return;
-            }
-
-            console.log(`[PyreClient] Query "${queryName}" raw data:`, JSON.stringify(data, null, 2));
-
-            // Validate and decode return data
-            // ArkType returns the validated data directly if valid, or an error object if invalid
-            let validation: any;
+        const subscription = this.queryManager.query(
+          queryModule.toQueryShape,
+          normalizedInput,
+          (data: any) => {
             try {
-              validation = queryModule.ReturnData(data);
-              console.log(`[PyreClient] Query "${queryName}" validation result:`, validation);
-            } catch (validationError) {
-              const error = new Error(`Query "${queryName}" return data validation threw error: ${validationError}`);
-              this.handleError(error);
-              // Return empty structure on validation error
-              callback({ user: [], post: [] } as T['ReturnData']['infer']);
-              return;
-            }
+              const queryName = (queryModule as any).hash || 'unknown';
 
-            // Check if validation failed
-            // ArkType errors are instances of type.errors or have a 'summary' property
-            if (validation && typeof validation === 'object' && ('summary' in validation || 'problems' in validation)) {
-              const errorDetails = (validation as any).summary || (validation as any).problems || validation;
-              console.error(`[PyreClient] Query "${queryName}" return data validation failed:`, errorDetails);
-              console.error('[PyreClient] Data that failed validation:', JSON.stringify(data, null, 2));
-              const error = new Error(`Query "${queryName}" return data validation failed: ${JSON.stringify(errorDetails)}`);
-              this.handleError(error);
-              // Return empty structure on validation failure
-              callback({ user: [], post: [] } as T['ReturnData']['infer']);
-              return;
-            }
+              if (!data) {
+                console.warn(`[PyreClient] Query "${queryName}" returned no data`);
+                // Return empty structure matching ReturnData shape
+                callback({ user: [], post: [] } as T['ReturnData']['infer']);
+                return;
+              }
 
-            // Validation succeeded - use the validated data directly
-            // The validation result IS the validated data
-            if (validation === null || validation === undefined) {
-              console.warn(`[PyreClient] Query "${queryName}" validation returned null/undefined, using original data`);
-              // Fallback to original data if validation returned undefined/null
-              // Ensure it has the right structure
-              const fallbackData = {
-                user: Array.isArray(data?.user) ? data.user : [],
-                post: Array.isArray(data?.post) ? data.post : []
+              console.log(`[PyreClient] Query "${queryName}" raw data:`, JSON.stringify(data, null, 2));
+
+              // Validate and decode return data
+              // ArkType returns the validated data directly if valid, or an error object if invalid
+              let validation: any;
+              try {
+                validation = queryModule.ReturnData(data);
+                console.log(`[PyreClient] Query "${queryName}" validation result:`, validation);
+              } catch (validationError) {
+                const error = new Error(`Query "${queryName}" return data validation threw error: ${validationError}`);
+                this.handleError(error);
+                // Return empty structure on validation error
+                callback({ user: [], post: [] } as T['ReturnData']['infer']);
+                return;
+              }
+
+              // Check if validation failed
+              // ArkType errors are instances of type.errors or have a 'summary' property
+              if (validation && typeof validation === 'object' && ('summary' in validation || 'problems' in validation)) {
+                const errorDetails = (validation as any).summary || (validation as any).problems || validation;
+                console.error(`[PyreClient] Query "${queryName}" return data validation failed:`, errorDetails);
+                console.error('[PyreClient] Data that failed validation:', JSON.stringify(data, null, 2));
+                const error = new Error(`Query "${queryName}" return data validation failed: ${JSON.stringify(errorDetails)}`);
+                this.handleError(error);
+                // Return empty structure on validation failure
+                callback({ user: [], post: [] } as T['ReturnData']['infer']);
+                return;
+              }
+
+              // Validation succeeded - use the validated data directly
+              // The validation result IS the validated data
+              if (validation === null || validation === undefined) {
+                console.warn(`[PyreClient] Query "${queryName}" validation returned null/undefined, using original data`);
+                // Fallback to original data if validation returned undefined/null
+                // Ensure it has the right structure
+                const fallbackData = {
+                  user: Array.isArray(data?.user) ? data.user : [],
+                  post: Array.isArray(data?.post) ? data.post : []
+                };
+                callback(fallbackData as T['ReturnData']['infer']);
+                return;
+              }
+
+              // Ensure validation result has the expected structure
+              const finalData = {
+                user: Array.isArray(validation?.user) ? validation.user : [],
+                post: Array.isArray(validation?.post) ? validation.post : []
               };
-              callback(fallbackData as T['ReturnData']['infer']);
-              return;
+
+              callback(finalData as T['ReturnData']['infer']);
+            } catch (error) {
+              console.error('[PyreClient] Unexpected error in query callback:', error);
+              this.handleError(error as Error);
+              // Return empty structure on unexpected error
+              callback({ user: [], post: [] } as T['ReturnData']['infer']);
             }
-
-            // Ensure validation result has the expected structure
-            const finalData = {
-              user: Array.isArray(validation?.user) ? validation.user : [],
-              post: Array.isArray(validation?.post) ? validation.post : []
-            };
-
-            callback(finalData as T['ReturnData']['infer']);
-          } catch (error) {
-            console.error('[PyreClient] Unexpected error in query callback:', error);
-            this.handleError(error as Error);
-            // Return empty structure on unexpected error
-            callback({ user: [], post: [] } as T['ReturnData']['infer']);
-          }
-        });
+          },
+          queryModule.InputValidator,
+          (error: Error) => this.handleError(error)
+        );
 
         // If sync has already completed, notify this query immediately
         if (this.initialized && this.lastSyncedTables.size > 0) {
           // Map query field names to table names for notification
+          const initialShape = queryModule.toQueryShape(normalizedInput);
           const queryTableNames = new Set<string>();
-          for (const queryFieldName of Object.keys(queryModule.queryShape)) {
+          for (const queryFieldName of Object.keys(initialShape)) {
             const tableName = this.schemaManager.getTableNameFromQueryField(queryFieldName);
             if (tableName) {
               queryTableNames.add(tableName);
@@ -280,7 +286,7 @@ export class PyreClient {
           }
         }
 
-        return unsubscribe;
+        return subscription;
       } else {
         // Execute mutation against server
         const hash = queryModule.hash;
@@ -425,11 +431,13 @@ export type {
   ClientConfig,
   QueryShape,
   QueryField,
+  Query,
   WhereClause,
   SortClause,
   SyncProgressCallback,
   SyncStatus,
   Unsubscribe,
+  QuerySubscription,
   SchemaMetadata,
   TableMetadata,
   LinkInfo,
