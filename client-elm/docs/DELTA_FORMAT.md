@@ -103,9 +103,8 @@ type alias TableGroup =
 - **Added:** `rowArrayToObject` to convert row arrays to Dict
 
 ### Elm (`client-elm/src/Db/Index.elm`)
-- **Updated:** `updateIndicesFromDelta` to handle grouped format
-- **Added:** `updateIndicesForTableGroup` to process group rows
-- **Added:** `rowArrayToObject` helper
+- **Simplified:** Removed `updateIndicesFromDelta` (index updates now handled in Db.elm)
+- **Improvement:** Index updates now properly track FK changes by comparing old vs new rows
 
 ### TypeScript (`client-elm/src-ts/index.ts`)
 - **Updated:** `writeDelta` handler to process table groups

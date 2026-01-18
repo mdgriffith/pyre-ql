@@ -153,7 +153,7 @@ handleSSEIncoming incoming model =
             -- Update database with delta
             let
                 ( updatedDb, dbCmd ) =
-                    Db.update (Db.DeltaReceived model.schema delta) model.db
+                    Db.update (Db.DeltaReceived delta) model.db
 
                 -- Notify query manager of affected tables
                 affectedTables =
@@ -370,3 +370,4 @@ decodeFlags =
     Decode.map2 Flags
         (Decode.field "schema" Data.Schema.decodeSchemaMetadata)
         (Decode.field "sseConfig" SSE.decodeSSEConfig)
+

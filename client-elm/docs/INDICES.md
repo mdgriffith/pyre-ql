@@ -116,34 +116,26 @@ type Msg
 
 ## Known Limitations & Future Work
 
-### 1. Foreign Key Changes (High Priority)
+### 1. Foreign Key Changes ✅ **FIXED**
 
-**Problem:** Deltas only include new row data, not old values.
+**Previous Problem:** Deltas only included new row data, not old values.
+
+**Solution Implemented:** The `applyDelta` function now:
+1. Looks up existing rows before upserting new data
+2. Compares old and new FK values for indexed columns
+3. Generates index update operations only when FK values change
+4. Applies updates using `Db.Index.update` to properly remove old entries and add new ones
 
 When a FK changes (e.g., post moves from user 1 to user 2):
-- ✅ Post added to index["2"]
-- ❌ Post NOT removed from index["1"] (stale entry)
+- ✅ Post removed from index["1"] (old FK value from existing row)
+- ✅ Post added to index["2"] (new FK value from delta)
 
-**Solution:** Enhance delta format on the server to include before/after data:
+**Implementation Details:**
+- `calculateIndexUpdates`: Compares old vs new row to find FK changes
+- `applyIndexUpdates`: Applies the calculated updates to indices
+- `IndexUpdate`: Type-safe record tracking what needs to change
 
-```elm
-type alias TableGroup =
-    { tableName : String
-    , headers : List String
-    , rows : List { before : Maybe (List Value), after : List Value }
-    }
-```
-
-This would enable proper use of the `update` function:
-
-```elm
-update 
-    { oldKey = extractFK before "user_id"  -- Remove from old index
-    , newKey = extractFK after "user_id"   -- Add to new index
-    , rowId = 10
-    }
-    index
-```
+**Complexity:** O(D × I) where D = delta rows, I = indices per table (typically 1-5)
 
 ### 2. Row Deletions
 

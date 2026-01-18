@@ -5605,10 +5605,9 @@ var $author$project$Main$handleQueryManagerIncoming = F2(
 						]));
 		}
 	});
-var $author$project$Db$DeltaReceived = F2(
-	function (a, b) {
-		return {$: 'DeltaReceived', a: a, b: b};
-	});
+var $author$project$Db$DeltaReceived = function (a) {
+	return {$: 'DeltaReceived', a: a};
+};
 var $author$project$Main$SyncError = function (a) {
 	return {$: 'SyncError', a: a};
 };
@@ -5694,6 +5693,51 @@ var $author$project$Data$QueryManager$notifyTablesChanged = F4(
 			_List_Nil,
 			model.subscriptions);
 	});
+var $elm$core$Maybe$andThen = F2(
+	function (callback, maybeValue) {
+		if (maybeValue.$ === 'Just') {
+			var value = maybeValue.a;
+			return callback(value);
+		} else {
+			return $elm$core$Maybe$Nothing;
+		}
+	});
+var $author$project$Db$calculateIndexUpdates = F5(
+	function (indices, tableName, rowId, existingRow, newRow) {
+		return A3(
+			$elm$core$Dict$foldl,
+			F3(
+				function (_v0, _v1, acc) {
+					var idxTable = _v0.a;
+					var idxColumn = _v0.b;
+					if (_Utils_eq(idxTable, tableName)) {
+						var oldKey = A2(
+							$elm$core$Maybe$andThen,
+							$author$project$Db$valueToIndexKey,
+							A2(
+								$elm$core$Maybe$andThen,
+								$elm$core$Dict$get(idxColumn),
+								existingRow));
+						var newKey = A2(
+							$elm$core$Maybe$andThen,
+							$author$project$Db$valueToIndexKey,
+							A2($elm$core$Dict$get, idxColumn, newRow));
+						return (!_Utils_eq(oldKey, newKey)) ? A2(
+							$elm$core$List$cons,
+							{
+								indexKey: _Utils_Tuple2(idxTable, idxColumn),
+								newKey: newKey,
+								oldKey: oldKey,
+								rowId: rowId
+							},
+							acc) : acc;
+					} else {
+						return acc;
+					}
+				}),
+			_List_Nil,
+			indices);
+	});
 var $author$project$Db$getRowId = function (row) {
 	var _v0 = A2($elm$core$Dict$get, 'id', row);
 	if ((_v0.$ === 'Just') && (_v0.a.$ === 'IntValue')) {
@@ -5712,54 +5756,53 @@ var $author$project$Db$rowArrayToObject = F2(
 		return $elm$core$Dict$fromList(
 			A3($elm$core$List$map2, $elm$core$Tuple$pair, headers, values));
 	});
-var $author$project$Db$applyTableGroupRows = F3(
-	function (table, headers, rows) {
+var $author$project$Db$applyTableGroupRows = F5(
+	function (indices, tableName, table, headers, rows) {
 		return A3(
 			$elm$core$List$foldl,
 			F2(
-				function (rowArray, acc) {
+				function (rowArray, _v0) {
+					var accTable = _v0.a;
+					var accUpdates = _v0.b;
 					var rowObj = A2($author$project$Db$rowArrayToObject, headers, rowArray);
-					var _v0 = $author$project$Db$getRowId(rowObj);
-					if (_v0.$ === 'Just') {
-						var rowId = _v0.a;
-						return A3($elm$core$Dict$insert, rowId, rowObj, acc);
+					var _v1 = $author$project$Db$getRowId(rowObj);
+					if (_v1.$ === 'Just') {
+						var rowId = _v1.a;
+						var updatedTable = A3($elm$core$Dict$insert, rowId, rowObj, accTable);
+						var existingRow = A2($elm$core$Dict$get, rowId, accTable);
+						var indexUpdates = A5($author$project$Db$calculateIndexUpdates, indices, tableName, rowId, existingRow, rowObj);
+						return _Utils_Tuple2(
+							updatedTable,
+							_Utils_ap(accUpdates, indexUpdates));
 					} else {
-						return acc;
+						return _Utils_Tuple2(accTable, accUpdates);
 					}
 				}),
-			table,
+			_Utils_Tuple2(table, _List_Nil),
 			rows);
 	});
-var $author$project$Db$applyDeltaToTableData = F2(
-	function (data, delta) {
+var $author$project$Db$applyDeltaToTableData = F3(
+	function (indices, data, delta) {
 		return A3(
 			$elm$core$List$foldl,
 			F2(
-				function (tableGroup, acc) {
+				function (tableGroup, _v0) {
+					var accTables = _v0.a;
+					var accUpdates = _v0.b;
 					var tableName = tableGroup.tableName;
 					var currentTable = A2(
 						$elm$core$Maybe$withDefault,
 						$elm$core$Dict$empty,
-						A2($elm$core$Dict$get, tableName, acc));
-					var updatedTable = A3($author$project$Db$applyTableGroupRows, currentTable, tableGroup.headers, tableGroup.rows);
-					return A3($elm$core$Dict$insert, tableName, updatedTable, acc);
+						A2($elm$core$Dict$get, tableName, accTables));
+					var _v1 = A5($author$project$Db$applyTableGroupRows, indices, tableName, currentTable, tableGroup.headers, tableGroup.rows);
+					var updatedTable = _v1.a;
+					var indexUpdates = _v1.b;
+					return _Utils_Tuple2(
+						A3($elm$core$Dict$insert, tableName, updatedTable, accTables),
+						_Utils_ap(accUpdates, indexUpdates));
 				}),
-			data,
+			_Utils_Tuple2(data, _List_Nil),
 			delta.tableGroups);
-	});
-var $author$project$Db$Index$getRowIdFromRow = function (row) {
-	var _v0 = A2($elm$core$Dict$get, 'id', row);
-	if ((_v0.$ === 'Just') && (_v0.a.$ === 'IntValue')) {
-		var i = _v0.a.a;
-		return $elm$core$Maybe$Just(i);
-	} else {
-		return $elm$core$Maybe$Nothing;
-	}
-};
-var $author$project$Db$Index$rowArrayToObject = F2(
-	function (headers, values) {
-		return $elm$core$Dict$fromList(
-			A3($elm$core$List$map2, $elm$core$Tuple$pair, headers, values));
 	});
 var $author$project$Db$Index$Index = function (a) {
 	return {$: 'Index', a: a};
@@ -5784,6 +5827,86 @@ var $author$project$Db$Index$insert = F3(
 				},
 				dict));
 	});
+var $elm$core$List$isEmpty = function (xs) {
+	if (!xs.b) {
+		return true;
+	} else {
+		return false;
+	}
+};
+var $author$project$Db$Index$remove = F3(
+	function (key, rowId, _v0) {
+		var dict = _v0.a;
+		return $author$project$Db$Index$Index(
+			A3(
+				$elm$core$Dict$update,
+				key,
+				function (maybeList) {
+					if (maybeList.$ === 'Just') {
+						var list = maybeList.a;
+						var filtered = A2(
+							$elm$core$List$filter,
+							function (id) {
+								return !_Utils_eq(id, rowId);
+							},
+							list);
+						return $elm$core$List$isEmpty(filtered) ? $elm$core$Maybe$Nothing : $elm$core$Maybe$Just(filtered);
+					} else {
+						return $elm$core$Maybe$Nothing;
+					}
+				},
+				dict));
+	});
+var $author$project$Db$Index$update = F2(
+	function (_v0, index) {
+		var oldKey = _v0.oldKey;
+		var newKey = _v0.newKey;
+		var rowId = _v0.rowId;
+		var afterRemove = function () {
+			if (oldKey.$ === 'Just') {
+				var key = oldKey.a;
+				return A3($author$project$Db$Index$remove, key, rowId, index);
+			} else {
+				return index;
+			}
+		}();
+		if (newKey.$ === 'Just') {
+			var key = newKey.a;
+			return A3($author$project$Db$Index$insert, key, rowId, afterRemove);
+		} else {
+			return afterRemove;
+		}
+	});
+var $author$project$Db$applyIndexUpdates = F2(
+	function (updates, indices) {
+		return A3(
+			$elm$core$List$foldl,
+			F2(
+				function (indexUpdate, accIndices) {
+					var _v0 = A2($elm$core$Dict$get, indexUpdate.indexKey, accIndices);
+					if (_v0.$ === 'Just') {
+						var index = _v0.a;
+						var updatedIndex = A2(
+							$author$project$Db$Index$update,
+							{newKey: indexUpdate.newKey, oldKey: indexUpdate.oldKey, rowId: indexUpdate.rowId},
+							index);
+						return A3($elm$core$Dict$insert, indexUpdate.indexKey, updatedIndex, accIndices);
+					} else {
+						return accIndices;
+					}
+				}),
+			indices,
+			updates);
+	});
+var $author$project$Db$applyDelta = F2(
+	function (delta, db) {
+		var _v0 = A3($author$project$Db$applyDeltaToTableData, db.indices, db.tables, delta);
+		var updatedTables = _v0.a;
+		var indexUpdates = _v0.b;
+		var updatedIndices = A2($author$project$Db$applyIndexUpdates, indexUpdates, db.indices);
+		return {indices: updatedIndices, tables: updatedTables};
+	});
+var $author$project$Db$Index$empty = $author$project$Db$Index$Index($elm$core$Dict$empty);
 var $author$project$Db$Index$valueToIndexKey = function (value) {
 	switch (value.$) {
 		case 'IntValue':
@@ -5799,78 +5922,6 @@ var $author$project$Db$Index$valueToIndexKey = function (value) {
 			return $elm$core$Maybe$Nothing;
 	}
 };
-var $author$project$Db$Index$updateIndicesForTable = F5(
-	function (schema, tableName, rowId, row, indices) {
-		return A3(
-			$elm$core$Dict$foldl,
-			F3(
-				function (_v0, index, acc) {
-					var idxTableName = _v0.a;
-					var idxColumnName = _v0.b;
-					if (_Utils_eq(idxTableName, tableName)) {
-						var _v1 = A2($elm$core$Dict$get, idxColumnName, row);
-						if (_v1.$ === 'Just') {
-							var value = _v1.a;
-							var _v2 = $author$project$Db$Index$valueToIndexKey(value);
-							if (_v2.$ === 'Just') {
-								var key = _v2.a;
-								var updatedIndex = A3($author$project$Db$Index$insert, key, rowId, index);
-								return A3(
-									$elm$core$Dict$insert,
-									_Utils_Tuple2(idxTableName, idxColumnName),
-									updatedIndex,
-									acc);
-							} else {
-								return acc;
-							}
-						} else {
-							return acc;
-						}
-					} else {
-						return acc;
-					}
-				}),
-			indices,
-			indices);
-	});
-var $author$project$Db$Index$updateIndicesForTableGroup = F3(
-	function (schema, tableGroup, indices) {
-		var tableName = tableGroup.tableName;
-		var headers = tableGroup.headers;
-		return A3(
-			$elm$core$List$foldl,
-			F2(
-				function (rowArray, acc) {
-					var rowObj = A2($author$project$Db$Index$rowArrayToObject, headers, rowArray);
-					var rowId = $author$project$Db$Index$getRowIdFromRow(rowObj);
-					if (rowId.$ === 'Just') {
-						var id = rowId.a;
-						return A5($author$project$Db$Index$updateIndicesForTable, schema, tableName, id, rowObj, acc);
-					} else {
-						return acc;
-					}
-				}),
-			indices,
-			tableGroup.rows);
-	});
-var $author$project$Db$Index$updateIndicesFromDelta = F3(
-	function (schema, delta, indices) {
-		return A3(
-			$elm$core$List$foldl,
-			F2(
-				function (tableGroup, acc) {
-					return A3($author$project$Db$Index$updateIndicesForTableGroup, schema, tableGroup, acc);
-				}),
-			indices,
-			delta.tableGroups);
-	});
-var $author$project$Db$applyDelta = F3(
-	function (schema, db, delta) {
-		var updatedTables = A2($author$project$Db$applyDeltaToTableData, db.tables, delta);
-		var updatedIndices = A3($author$project$Db$Index$updateIndicesFromDelta, schema, delta, db.indices);
-		return {indices: updatedIndices, tables: updatedTables};
-	});
-var $author$project$Db$Index$empty = $author$project$Db$Index$Index($elm$core$Dict$empty);
 var $author$project$Db$Index$rebuildFromTable = F2(
 	function (tableData, columnName) {
 		return A3(
@@ -5962,23 +6013,19 @@ var $author$project$Data$IndexedDb$writeDelta = function (tableGroups) {
 };
 var $author$project$Db$update = F2(
 	function (msg, db) {
-		switch (msg.$) {
-			case 'FromIndexedDb':
-				var schema = msg.a;
-				var incoming = msg.b;
-				var initialData = incoming.a;
-				return _Utils_Tuple2(
-					A2($author$project$Db$fromInitialData, schema, initialData),
-					$elm$core$Platform$Cmd$none);
-			case 'DeltaReceived':
-				var schema = msg.a;
-				var delta = msg.b;
-				var updatedDb = A3($author$project$Db$applyDelta, schema, db, delta);
-				return _Utils_Tuple2(
-					updatedDb,
-					$author$project$Data$IndexedDb$writeDelta(delta.tableGroups));
-			default:
-				return _Utils_Tuple2(db, $elm$core$Platform$Cmd$none);
+		if (msg.$ === 'FromIndexedDb') {
+			var schema = msg.a;
+			var incoming = msg.b;
+			var initialData = incoming.a;
+			return _Utils_Tuple2(
+				A2($author$project$Db$fromInitialData, schema, initialData),
+				$elm$core$Platform$Cmd$none);
+		} else {
+			var delta = msg.a;
+			var updatedDb = A2($author$project$Db$applyDelta, delta, db);
+			return _Utils_Tuple2(
+				updatedDb,
+				$author$project$Data$IndexedDb$writeDelta(delta.tableGroups));
 		}
 	});
 var $author$project$Main$handleSSEIncoming = F2(
@@ -5989,7 +6036,7 @@ var $author$project$Main$handleSSEIncoming = F2(
 				var affectedTables = $author$project$Db$extractAffectedTables(delta);
 				var _v1 = A2(
 					$author$project$Db$update,
-					A2($author$project$Db$DeltaReceived, model.schema, delta),
+					$author$project$Db$DeltaReceived(delta),
 					model.db);
 				var updatedDb = _v1.a;
 				var dbCmd = _v1.b;

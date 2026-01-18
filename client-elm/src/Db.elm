@@ -30,8 +30,7 @@ type alias TableData =
 
 type Msg
     = FromIndexedDb SchemaMetadata Data.IndexedDb.Incoming
-    | DeltaReceived SchemaMetadata Delta
-    | PersistDelta
+    | DeltaReceived Delta
 
 
 
@@ -59,18 +58,14 @@ update msg db =
                     , Cmd.none
                     )
 
-        DeltaReceived schema delta ->
+        DeltaReceived delta ->
             let
                 updatedDb =
-                    applyDelta schema db delta
+                    applyDelta delta db
             in
             ( updatedDb
             , Data.IndexedDb.writeDelta delta.tableGroups
             )
-
-        PersistDelta ->
-            -- Persistence command already sent, no further action needed
-            ( db, Cmd.none )
 
 
 
@@ -95,14 +90,14 @@ fromInitialData schema initialData =
 -- Apply a delta to the database and update indices
 
 
-applyDelta : SchemaMetadata -> Db -> Data.Delta.Delta -> Db
-applyDelta schema db delta =
+applyDelta : Data.Delta.Delta -> Db -> Db
+applyDelta delta db =
     let
-        updatedTables =
-            applyDeltaToTableData db.tables delta
+        ( updatedTables, indexUpdates ) =
+            applyDeltaToTableData db.indices db.tables delta
 
         updatedIndices =
-            Db.Index.updateIndicesFromDelta schema delta db.indices
+            applyIndexUpdates indexUpdates db.indices
     in
     { tables = updatedTables
     , indices = updatedIndices
@@ -174,49 +169,142 @@ getRowId row =
 
 
 
+-- Index update tracking
+
+
+{-| Represents a change to an index that needs to be applied.
+-}
+type alias IndexUpdate =
+    { indexKey : ( String, String )
+    , oldKey : Maybe String
+    , newKey : Maybe String
+    , rowId : Int
+    }
+
+
+{-| Calculate index updates needed when a row changes.
+Compares the old row (if it exists) with the new row to determine
+which indices need to be updated.
+-}
+calculateIndexUpdates : Dict ( String, String ) Db.Index.Index -> String -> Int -> Maybe (Dict String Value) -> Dict String Value -> List IndexUpdate
+calculateIndexUpdates indices tableName rowId existingRow newRow =
+    Dict.foldl
+        (\( idxTable, idxColumn ) _ acc ->
+            if idxTable == tableName then
+                let
+                    oldKey =
+                        existingRow
+                            |> Maybe.andThen (Dict.get idxColumn)
+                            |> Maybe.andThen valueToIndexKey
+
+                    newKey =
+                        Dict.get idxColumn newRow
+                            |> Maybe.andThen valueToIndexKey
+                in
+                -- Only create update if keys actually changed
+                if oldKey /= newKey then
+                    { indexKey = ( idxTable, idxColumn )
+                    , oldKey = oldKey
+                    , newKey = newKey
+                    , rowId = rowId
+                    }
+                        :: acc
+
+                else
+                    acc
+
+            else
+                acc
+        )
+        []
+        indices
+
+
+{-| Apply a list of index updates to the indices dictionary.
+-}
+applyIndexUpdates : List IndexUpdate -> Dict ( String, String ) Db.Index.Index -> Dict ( String, String ) Db.Index.Index
+applyIndexUpdates updates indices =
+    List.foldl
+        (\indexUpdate accIndices ->
+            case Dict.get indexUpdate.indexKey accIndices of
+                Just index ->
+                    let
+                        updatedIndex =
+                            Db.Index.update
+                                { oldKey = indexUpdate.oldKey
+                                , newKey = indexUpdate.newKey
+                                , rowId = indexUpdate.rowId
+                                }
+                                index
+                    in
+                    Dict.insert indexUpdate.indexKey updatedIndex accIndices
+
+                Nothing ->
+                    accIndices
+        )
+        indices
+        updates
+
+
+
 -- Helper: Apply delta to TableData
 
 
-applyDeltaToTableData : Dict String TableData -> Data.Delta.Delta -> Dict String TableData
-applyDeltaToTableData data delta =
+applyDeltaToTableData : Dict ( String, String ) Db.Index.Index -> Dict String TableData -> Data.Delta.Delta -> ( Dict String TableData, List IndexUpdate )
+applyDeltaToTableData indices data delta =
     List.foldl
-        (\tableGroup acc ->
+        (\tableGroup ( accTables, accUpdates ) ->
             let
                 tableName =
                     tableGroup.tableName
 
                 currentTable =
-                    Dict.get tableName acc |> Maybe.withDefault Dict.empty
+                    Dict.get tableName accTables |> Maybe.withDefault Dict.empty
 
-                updatedTable =
-                    applyTableGroupRows currentTable tableGroup.headers tableGroup.rows
+                ( updatedTable, indexUpdates ) =
+                    applyTableGroupRows indices tableName currentTable tableGroup.headers tableGroup.rows
             in
-            Dict.insert tableName updatedTable acc
+            ( Dict.insert tableName updatedTable accTables
+            , accUpdates ++ indexUpdates
+            )
         )
-        data
+        ( data, [] )
         delta.tableGroups
 
 
 {-| Apply multiple rows from a table group to a table.
 Converts row arrays to row objects using headers.
+Returns the updated table and a list of index updates that need to be applied.
 -}
-applyTableGroupRows : TableData -> List String -> List (List Value) -> TableData
-applyTableGroupRows table headers rows =
+applyTableGroupRows : Dict ( String, String ) Db.Index.Index -> String -> TableData -> List String -> List (List Value) -> ( TableData, List IndexUpdate )
+applyTableGroupRows indices tableName table headers rows =
     List.foldl
-        (\rowArray acc ->
+        (\rowArray ( accTable, accUpdates ) ->
             let
                 rowObj =
                     rowArrayToObject headers rowArray
             in
             case getRowId rowObj of
                 Just rowId ->
-                    Dict.insert rowId rowObj acc
+                    let
+                        existingRow =
+                            Dict.get rowId accTable
+
+                        -- Calculate index updates for this row
+                        indexUpdates =
+                            calculateIndexUpdates indices tableName rowId existingRow rowObj
+
+                        -- Update table
+                        updatedTable =
+                            Dict.insert rowId rowObj accTable
+                    in
+                    ( updatedTable, accUpdates ++ indexUpdates )
 
                 Nothing ->
                     -- Can't insert row without valid ID
-                    acc
+                    ( accTable, accUpdates )
         )
-        table
+        ( table, [] )
         rows
 
 

@@ -2,14 +2,13 @@ module Db.Index exposing
     ( Index
     , IndexKey
     , RowId
+    , buildIndicesFromSchema
     , empty
     , insert
-    , remove
-    , update
     , lookup
     , rebuildFromTable
-    , buildIndicesFromSchema
-    , updateIndicesFromDelta
+    , remove
+    , update
     )
 
 {-| Index module for efficient foreign key lookups.
@@ -56,7 +55,7 @@ type Index
     = Index (Dict String (List Int))
 
 
-{-| The foreign key value (e.g., "1", "2" for user_id values).
+{-| The foreign key value (e.g., "1", "2" for user\_id values).
 -}
 type alias IndexKey =
     String
@@ -132,27 +131,10 @@ remove key rowId (Index dict) =
 This handles the case where a row's foreign key changes from oldKey to newKey.
 If oldKey is Nothing, only insert. If newKey is Nothing, only remove.
 
-**TODO: Improve Delta Format**
-
-Currently, deltas only include the new row data, not the old values. This means
-we can't properly remove the old foreign key entry from the index when a FK changes.
-
-Example problematic scenario:
-
-    - Post 10 has user_id: 1 (indexed under "1")
-    - Delta arrives: Post 10 now has user_id: 2
-    - We add Post 10 to index["2"], but can't remove it from index["1"]
-
-Solution: Enhance the server's delta format to include both before and after data:
-
-    type alias AffectedRow =
-        { tableName : String
-        , before : Maybe (Dict String Value)  -- Old row data
-        , after : Dict String Value           -- New row data
-        , headers : List String
-        }
-
-This would allow proper index updates when foreign keys change.
+The "before" state comes from the client's in-memory database state, which is
+compared against the incoming delta's "after" state in `calculateIndexUpdates`.
+This allows proper index updates when foreign keys change without requiring the
+server to send both before/after data over the network.
 
 -}
 update : { oldKey : Maybe IndexKey, newKey : Maybe IndexKey, rowId : RowId } -> Index -> Index
@@ -212,6 +194,28 @@ rebuildFromTable tableData columnName =
         tableData
 
 
+{-| Convert a Value to an IndexKey (String).
+
+Returns Nothing for Null values (we don't index null foreign keys).
+
+-}
+valueToIndexKey : Value -> Maybe String
+valueToIndexKey value =
+    case value of
+        Data.Value.IntValue i ->
+            Just (String.fromInt i)
+
+        Data.Value.StringValue s ->
+            Just s
+
+        Data.Value.NullValue ->
+            Nothing
+
+        _ ->
+            -- Other types shouldn't be used as foreign keys
+            Nothing
+
+
 {-| Build all necessary indices from schema metadata.
 
 This creates indices for OneToMany relationships (the problematic ones),
@@ -253,136 +257,3 @@ buildIndicesFromSchema schema tables =
         )
         Dict.empty
         schema.tables
-
-
-{-| Update all indices based on a delta.
-
-This incrementally updates indices when new data arrives via SSE.
-
-**Current Limitation:** Only handles inserts and updates where the FK value stays the same.
-Cannot properly handle FK value changes (e.g., post moves from user 1 to user 2) because
-deltas don't include the old row data.
-
-See the `update` function documentation for the proposed delta format improvement.
-
--}
-updateIndicesFromDelta : SchemaMetadata -> Delta -> Dict ( String, String ) Index -> Dict ( String, String ) Index
-updateIndicesFromDelta schema delta indices =
-    List.foldl
-        (\tableGroup acc ->
-            updateIndicesForTableGroup schema tableGroup acc
-        )
-        indices
-        delta.tableGroups
-
-
-{-| Update indices for all rows in a table group.
--}
-updateIndicesForTableGroup : SchemaMetadata -> TableGroup -> Dict ( String, String ) Index -> Dict ( String, String ) Index
-updateIndicesForTableGroup schema tableGroup indices =
-    let
-        tableName =
-            tableGroup.tableName
-
-        headers =
-            tableGroup.headers
-    in
-    List.foldl
-        (\rowArray acc ->
-            let
-                rowObj =
-                    rowArrayToObject headers rowArray
-
-                rowId =
-                    getRowIdFromRow rowObj
-            in
-            case rowId of
-                Just id ->
-                    -- Update all indices for this table
-                    updateIndicesForTable schema tableName id rowObj acc
-
-                Nothing ->
-                    -- Can't index without an ID
-                    acc
-        )
-        indices
-        tableGroup.rows
-
-
-{-| Convert a row array to a row object using headers.
--}
-rowArrayToObject : List String -> List Value -> Dict String Value
-rowArrayToObject headers values =
-    List.map2 Tuple.pair headers values
-        |> Dict.fromList
-
-
-{-| Update all indices that involve a specific table.
-
-For each index on this table, extract the foreign key value and update the index.
-
--}
-updateIndicesForTable : SchemaMetadata -> String -> RowId -> Dict String Value -> Dict ( String, String ) Index -> Dict ( String, String ) Index
-updateIndicesForTable schema tableName rowId row indices =
-    -- Find all indices for this table by checking which (table, column) pairs exist
-    Dict.foldl
-        (\( idxTableName, idxColumnName ) index acc ->
-            if idxTableName == tableName then
-                -- This index is for our table, update it
-                case Dict.get idxColumnName row of
-                    Just value ->
-                        case valueToIndexKey value of
-                            Just key ->
-                                let
-                                    updatedIndex =
-                                        insert key rowId index
-                                in
-                                Dict.insert ( idxTableName, idxColumnName ) updatedIndex acc
-
-                            Nothing ->
-                                -- Null foreign key, don't index
-                                acc
-
-                    Nothing ->
-                        -- Column not in row, skip
-                        acc
-
-            else
-                acc
-        )
-        indices
-        indices
-
-
-{-| Extract row ID from a row dictionary.
--}
-getRowIdFromRow : Dict String Value -> Maybe Int
-getRowIdFromRow row =
-    case Dict.get "id" row of
-        Just (Data.Value.IntValue i) ->
-            Just i
-
-        _ ->
-            Nothing
-
-
-{-| Convert a Value to an IndexKey (String).
-
-Returns Nothing for Null values (we don't index null foreign keys).
-
--}
-valueToIndexKey : Value -> Maybe String
-valueToIndexKey value =
-    case value of
-        Data.Value.IntValue i ->
-            Just (String.fromInt i)
-
-        Data.Value.StringValue s ->
-            Just s
-
-        Data.Value.NullValue ->
-            Nothing
-
-        _ ->
-            -- Other types shouldn't be used as foreign keys
-            Nothing
