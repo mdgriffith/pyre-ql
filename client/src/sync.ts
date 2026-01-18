@@ -186,19 +186,24 @@ export class SyncManager {
     throw lastError || new Error('Sync failed after retries');
   }
 
-  async applyDelta(delta: {
-    all_affected_rows: Array<{ table_name: string; row: any; headers: string[] }>;
-    affected_row_indices: number[];
-  }): Promise<void> {
+  /**
+   * Apply a delta (array of affected rows) to the local database.
+   * 
+   * Delta format:
+   * ```json
+   * [
+   *   {
+   *     "table_name": "users",
+   *     "row": { "id": 1, "name": "Alice" },
+   *     "headers": ["id", "name"]
+   *   }
+   * ]
+   * ```
+   */
+  async applyDelta(delta: Array<{ table_name: string; row: any; headers: string[] }>): Promise<void> {
     const rowsToUpdate: Record<string, any[]> = {};
 
-    for (const index of delta.affected_row_indices) {
-      const affectedRow = delta.all_affected_rows[index];
-      if (!affectedRow) {
-        console.warn(`[PyreClient] Delta index ${index} out of bounds`);
-        continue;
-      }
-
+    for (const affectedRow of delta) {
       const tableName = affectedRow.table_name;
       if (!tableName) {
         console.warn('[PyreClient] Delta row missing table_name');

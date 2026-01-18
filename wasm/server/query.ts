@@ -347,6 +347,28 @@ export async function run(
     const affectedRowGroups: any[] = response?._affectedRows ?? [];
 
     // Always create sync function - it will be a no-op if there's nothing to send
+    /**
+     * Broadcast sync deltas to connected clients.
+     * 
+     * For each session group, resolves the affected rows and sends them directly.
+     * Clients receive only the rows they have permission to see.
+     * 
+     * Message format sent to each client:
+     * ```json
+     * [
+     *   {
+     *     "table_name": "users",
+     *     "row": { "id": 1, "name": "Alice" },
+     *     "headers": ["id", "name"]
+     *   },
+     *   {
+     *     "table_name": "posts",
+     *     "row": { "id": 10, "title": "Hello" },
+     *     "headers": ["id", "title"]
+     *   }
+     * ]
+     * ```
+     */
     async function sync(sendToSession: (sessionId: string, message: any) => void): Promise<void> {
         // Early return if nothing to sync
         if (affectedRowGroups.length === 0 || !connectedSessions || connectedSessions.size === 0) {
@@ -365,12 +387,13 @@ export async function run(
 
         // Broadcast to each group
         for (const group of result.groups) {
+            // Resolve the affected rows for this group - each client only gets their relevant rows
+            const affectedRows = group.affected_row_indices.map((index: number) => result.all_affected_rows[index]);
+
+            // Wrap in message envelope for consistent client handling
             const deltaMessage = {
                 type: "delta",
-                data: {
-                    all_affected_rows: result.all_affected_rows,
-                    affected_row_indices: group.affected_row_indices,
-                },
+                data: affectedRows
             };
 
             for (const sessionId of group.session_ids) {
