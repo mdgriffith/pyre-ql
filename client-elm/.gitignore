@@ -1,0 +1,17 @@
+# Elm build artifacts
+elm-stuff/
+dist/
+
+# Node modules
+node_modules/
+
+# TypeScript build
+*.js
+*.js.map
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

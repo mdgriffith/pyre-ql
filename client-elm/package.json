@@ -1,0 +1,22 @@
+{
+  "name": "@pyre/client-elm",
+  "version": "0.1.0",
+  "description": "Elm client for Pyre data synchronization and querying",
+  "scripts": {
+    "build": "elm make src/Main.elm --output=dist/elm.js --optimize",
+    "dev": "elm make src/Main.elm --output=dist/elm.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "pyre",
+    "database",
+    "sync",
+    "indexeddb",
+    "elm"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
