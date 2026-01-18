@@ -187,26 +187,26 @@ export class SyncManager {
   }
 
   /**
-   * Apply a delta (array of affected rows) to the local database.
+   * Apply a delta (array of table groups) to the local database.
    * 
-   * Delta format:
+   * Delta format (grouped by table for efficiency):
    * ```json
    * [
    *   {
-   *     "table_name": "users",
-   *     "row": { "id": 1, "name": "Alice" },
-   *     "headers": ["id", "name"]
+   *     "table_name": "posts",
+   *     "headers": ["id", "title"],
+   *     "rows": [[1, "Hello"], [2, "World"]]
    *   }
    * ]
    * ```
    */
-  async applyDelta(delta: Array<{ table_name: string; row: any; headers: string[] }>): Promise<void> {
+  async applyDelta(delta: Array<{ table_name: string; headers: string[]; rows: any[][] }>): Promise<void> {
     const rowsToUpdate: Record<string, any[]> = {};
 
-    for (const affectedRow of delta) {
-      const tableName = affectedRow.table_name;
+    for (const tableGroup of delta) {
+      const tableName = tableGroup.table_name;
       if (!tableName) {
-        console.warn('[PyreClient] Delta row missing table_name');
+        console.warn('[PyreClient] Delta table group missing table_name');
         continue;
       }
 
@@ -214,18 +214,14 @@ export class SyncManager {
         rowsToUpdate[tableName] = [];
       }
 
-      // Convert row array to object if needed
-      let row: any;
-      if (Array.isArray(affectedRow.row)) {
-        row = {};
-        affectedRow.headers.forEach((header, i) => {
-          row[header] = affectedRow.row[i];
+      // Convert row arrays to objects using headers
+      for (const rowArray of tableGroup.rows) {
+        const row: any = {};
+        tableGroup.headers.forEach((header, i) => {
+          row[header] = rowArray[i];
         });
-      } else {
-        row = affectedRow.row;
+        rowsToUpdate[tableName].push(row);
       }
-
-      rowsToUpdate[tableName].push(row);
     }
 
     // Apply updates with conflict resolution

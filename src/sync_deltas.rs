@@ -12,37 +12,28 @@ use serde_json::{Map, Value as JsonValue};
 #[cfg(not(feature = "json"))]
 compile_error!("sync_deltas module requires the 'json' feature to be enabled");
 
-/// A single affected row from a mutation
-#[derive(Clone, Serialize, Deserialize)]
-pub struct AffectedRow {
-    pub table_name: String,
-    pub row: JsonValue,       // Object with column names as keys
-    pub headers: Vec<String>, // Column names in order
-}
-
 /// Grouped format from SQL: one entry per table with multiple rows
 /// This matches the format returned by SQL generation
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AffectedRowTableGroup {
     pub table_name: String,
     pub headers: Vec<String>,
     pub rows: Vec<Vec<JsonValue>>, // Array of row arrays, each row array has values matching headers order
 }
 
-/// A group of sessions that share the same affected row indices
+/// A group of sessions that share the same affected table groups
 #[derive(Serialize, Deserialize)]
-pub struct AffectedRowGroup {
+pub struct SessionDeltaGroup {
     pub session_ids: HashSet<String>,
-    pub affected_row_indices: Vec<usize>, // indices into all_affected_rows
+    /// Table groups with their rows (keeps grouped format for efficiency)
+    pub table_groups: Vec<AffectedRowTableGroup>,
 }
 
-/// Result containing deltas with deduplicated affected rows
+/// Result containing deltas grouped by session permissions
 #[derive(Serialize, Deserialize)]
 pub struct SyncDeltasResult {
-    /// Shared pool of all unique affected rows
-    pub all_affected_rows: Vec<AffectedRow>,
-    /// Groups of sessions, each referencing rows by index
-    pub groups: Vec<AffectedRowGroup>,
+    /// Groups of sessions, each with their filtered table groups
+    pub groups: Vec<SessionDeltaGroup>,
 }
 
 /// Evaluate a permission WhereArg against row data and session values
@@ -358,11 +349,12 @@ fn row_array_to_object(headers: &[String], row_array: &[JsonValue]) -> Map<Strin
 }
 
 /// Calculate which sessions should receive which affected rows based on permissions
-/// Accepts grouped format directly from SQL (no transformation needed)
+/// Keeps grouped format for efficiency (no explosion into individual rows)
 /// Optimized with:
 /// - Table lookup map (O(1) instead of O(n) per lookup)
-/// - Lazy conversion of row arrays to objects (only when needed)
-/// - Grouped sessions by shared affected row sets (deduplication)
+/// - Lazy conversion of row arrays to objects (only when needed for permission checking)
+/// - Groups sessions by shared affected row sets (deduplication)
+/// - Returns grouped format to minimize bandwidth and memory
 pub fn calculate_sync_deltas(
     affected_row_groups: &[AffectedRowTableGroup],
     connected_sessions: &HashMap<String, HashMap<String, SessionValue>>,
@@ -376,15 +368,11 @@ pub fn calculate_sync_deltas(
         table_map.insert(actual_table_name, permission);
     }
 
-    // OPTIMIZATION 2: Flatten grouped format and convert rows to objects lazily
-    // We need to build both:
-    // 1. The flat list of AffectedRow for the result
-    // 2. The processed rows for permission checking
-    // We do this in a single pass through the grouped data
-    let mut all_affected_rows: Vec<AffectedRow> = Vec::new();
-    let mut processed_rows: Vec<Map<String, JsonValue>> = Vec::new();
+    // Build a flat index for permission checking while preserving group structure
+    // Structure: Vec<(table_group_idx, row_idx_in_group, row_obj)>
+    let mut flat_rows: Vec<(usize, usize, Map<String, JsonValue>)> = Vec::new();
 
-    for table_group in affected_row_groups {
+    for (group_idx, table_group) in affected_row_groups.iter().enumerate() {
         let table_name = &table_group.table_name;
         let headers = &table_group.headers;
 
@@ -393,73 +381,89 @@ pub fn calculate_sync_deltas(
             .get(table_name)
             .ok_or_else(|| SyncDeltasError::TableNotFound(table_name.clone()))?;
 
-        // Convert each row array to an object and store both formats
-        for row_array in &table_group.rows {
+        // Convert each row array to an object for permission checking
+        for (row_idx, row_array) in table_group.rows.iter().enumerate() {
             let row_obj = row_array_to_object(headers, row_array);
-
-            // Store the AffectedRow for the result (convert Map to JsonValue)
-            // We clone here because we need both the Map (for permission checking) and JsonValue (for result)
-            all_affected_rows.push(AffectedRow {
-                table_name: table_name.clone(),
-                row: JsonValue::Object(row_obj.clone()),
-                headers: headers.clone(),
-            });
-
-            // Store the object for permission checking
-            processed_rows.push(row_obj);
+            flat_rows.push((group_idx, row_idx, row_obj));
         }
     }
 
-    // OPTIMIZATION 3: Group sessions by shared affected row sets
-    // Map: (sorted row indices) -> set of session IDs
-    let mut row_set_to_sessions: HashMap<Vec<usize>, HashSet<String>> = HashMap::new();
+    // OPTIMIZATION 2: Group sessions by which rows they can see
+    // Key: Vec<(group_idx, row_idx)> sorted, Value: session IDs
+    let mut row_visibility_to_sessions: HashMap<Vec<(usize, usize)>, HashSet<String>> =
+        HashMap::new();
 
     for (session_id, session_data) in connected_sessions {
-        let mut session_row_indices = Vec::new();
+        let mut visible_rows = Vec::new();
 
-        for (idx, row_data) in processed_rows.iter().enumerate() {
-            let affected_row = &all_affected_rows[idx];
+        for (flat_idx, (group_idx, row_idx, row_obj)) in flat_rows.iter().enumerate() {
+            let table_name = &affected_row_groups[*group_idx].table_name;
 
-            // OPTIMIZATION: Use hash map lookup instead of linear search
             let permission = table_map
-                .get(&affected_row.table_name)
-                .ok_or_else(|| SyncDeltasError::TableNotFound(affected_row.table_name.clone()))?
+                .get(table_name)
+                .ok_or_else(|| SyncDeltasError::TableNotFound(table_name.clone()))?
                 .as_ref();
 
             // If no permission (public), all sessions can see it
             let should_receive = if let Some(perm) = permission {
-                evaluate_permission(perm, row_data, session_data)
+                evaluate_permission(perm, row_obj, session_data)
             } else {
                 true // Public - all sessions can see it
             };
 
             if should_receive {
-                session_row_indices.push(idx);
+                visible_rows.push((*group_idx, *row_idx));
             }
         }
 
-        if !session_row_indices.is_empty() {
+        if !visible_rows.is_empty() {
             // Sort to ensure consistent key for grouping
-            session_row_indices.sort_unstable();
-            row_set_to_sessions
-                .entry(session_row_indices)
+            visible_rows.sort_unstable();
+            row_visibility_to_sessions
+                .entry(visible_rows)
                 .or_insert_with(HashSet::new)
                 .insert(session_id.clone());
         }
     }
 
-    let groups: Vec<AffectedRowGroup> = row_set_to_sessions
+    // OPTIMIZATION 3: Convert back to grouped format for each session group
+    // This keeps the bandwidth-efficient grouped structure
+    let groups: Vec<SessionDeltaGroup> = row_visibility_to_sessions
         .into_iter()
-        .map(|(row_indices, session_ids)| AffectedRowGroup {
-            session_ids,
-            affected_row_indices: row_indices,
+        .map(|(visible_rows, session_ids)| {
+            // Group visible rows by table
+            let mut table_to_row_indices: HashMap<usize, Vec<usize>> = HashMap::new();
+            for (group_idx, row_idx) in visible_rows {
+                table_to_row_indices
+                    .entry(group_idx)
+                    .or_insert_with(Vec::new)
+                    .push(row_idx);
+            }
+
+            // Build filtered table groups
+            let mut table_groups = Vec::new();
+            for (group_idx, row_indices) in table_to_row_indices {
+                let original_group = &affected_row_groups[group_idx];
+                let filtered_rows: Vec<Vec<JsonValue>> = row_indices
+                    .iter()
+                    .map(|&idx| original_group.rows[idx].clone())
+                    .collect();
+
+                table_groups.push(AffectedRowTableGroup {
+                    table_name: original_group.table_name.clone(),
+                    headers: original_group.headers.clone(),
+                    rows: filtered_rows,
+                });
+            }
+
+            SessionDeltaGroup {
+                session_ids,
+                table_groups,
+            }
         })
         .collect();
 
-    Ok(SyncDeltasResult {
-        all_affected_rows,
-        groups,
-    })
+    Ok(SyncDeltasResult { groups })
 }
 
 pub enum SyncDeltasError {

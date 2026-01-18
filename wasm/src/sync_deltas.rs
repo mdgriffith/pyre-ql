@@ -9,19 +9,11 @@ use wasm_bindgen::prelude::*;
 
 // WASM-compatible types for sync deltas
 // Grouped format matching SQL output: one entry per table with multiple rows
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AffectedRowTableGroupWasm {
     pub table_name: String,
     pub headers: Vec<String>,
     pub rows: Vec<Vec<serde_json::Value>>, // Array of row arrays, each row array has values matching headers order
-}
-
-// Flat format for result output (one entry per row)
-#[derive(Serialize, Deserialize)]
-pub struct AffectedRowWasm {
-    pub table_name: String,
-    pub row: serde_json::Value,
-    pub headers: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -52,15 +44,14 @@ impl From<SessionValueWasm> for RustSessionValue {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct AffectedRowGroupWasm {
+pub struct SessionDeltaGroupWasm {
     pub session_ids: HashSet<String>,
-    pub affected_row_indices: Vec<usize>,
+    pub table_groups: Vec<AffectedRowTableGroupWasm>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SyncDeltasResultWasm {
-    pub all_affected_rows: Vec<AffectedRowWasm>,
-    pub groups: Vec<AffectedRowGroupWasm>,
+    pub groups: Vec<SessionDeltaGroupWasm>,
 }
 
 fn convert_table_group_wasm_to_rust(
@@ -73,23 +64,28 @@ fn convert_table_group_wasm_to_rust(
     }
 }
 
+fn convert_table_group_rust_to_wasm(
+    group: sync_deltas::AffectedRowTableGroup,
+) -> AffectedRowTableGroupWasm {
+    AffectedRowTableGroupWasm {
+        table_name: group.table_name,
+        headers: group.headers,
+        rows: group.rows,
+    }
+}
+
 fn convert_result_rust_to_wasm(result: sync_deltas::SyncDeltasResult) -> SyncDeltasResultWasm {
     SyncDeltasResultWasm {
-        all_affected_rows: result
-            .all_affected_rows
-            .into_iter()
-            .map(|row| AffectedRowWasm {
-                table_name: row.table_name,
-                row: row.row,
-                headers: row.headers,
-            })
-            .collect(),
         groups: result
             .groups
             .into_iter()
-            .map(|group| AffectedRowGroupWasm {
+            .map(|group| SessionDeltaGroupWasm {
                 session_ids: group.session_ids,
-                affected_row_indices: group.affected_row_indices,
+                table_groups: group
+                    .table_groups
+                    .into_iter()
+                    .map(convert_table_group_rust_to_wasm)
+                    .collect(),
             })
             .collect(),
     }

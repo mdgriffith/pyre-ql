@@ -350,21 +350,21 @@ export async function run(
     /**
      * Broadcast sync deltas to connected clients.
      * 
-     * For each session group, resolves the affected rows and sends them directly.
+     * For each session group, sends filtered table groups.
      * Clients receive only the rows they have permission to see.
      * 
-     * Message format sent to each client:
+     * Message format sent to each client (grouped by table for efficiency):
      * ```json
      * [
      *   {
      *     "table_name": "users",
-     *     "row": { "id": 1, "name": "Alice" },
-     *     "headers": ["id", "name"]
+     *     "headers": ["id", "name"],
+     *     "rows": [[1, "Alice"], [2, "Bob"]]
      *   },
      *   {
      *     "table_name": "posts",
-     *     "row": { "id": 10, "title": "Hello" },
-     *     "headers": ["id", "title"]
+     *     "headers": ["id", "title"],
+     *     "rows": [[10, "Hello"], [11, "World"]]
      *   }
      * ]
      * ```
@@ -375,7 +375,7 @@ export async function run(
             return;
         }
 
-        // Pass grouped format directly - WASM will handle conversion during iteration
+        // Pass grouped format directly - WASM keeps it grouped for efficiency
         const deltasResult = wasm.calculate_sync_deltas(affectedRowGroups, connectedSessions);
 
         if (typeof deltasResult === "string" && deltasResult.startsWith("Error:")) {
@@ -385,15 +385,12 @@ export async function run(
 
         const result = typeof deltasResult === "string" ? JSON.parse(deltasResult) : deltasResult;
 
-        // Broadcast to each group
+        // Broadcast to each session group
         for (const group of result.groups) {
-            // Resolve the affected rows for this group - each client only gets their relevant rows
-            const affectedRows = group.affected_row_indices.map((index: number) => result.all_affected_rows[index]);
-
-            // Wrap in message envelope for consistent client handling
+            // Each group already has the filtered table groups (no need to resolve indices)
             const deltaMessage = {
                 type: "delta",
-                data: affectedRows
+                data: group.table_groups
             };
 
             for (const sessionId of group.session_ids) {
