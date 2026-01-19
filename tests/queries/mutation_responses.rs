@@ -216,16 +216,14 @@ async fn test_update_typed_response_fields_only() -> Result<(), TestError> {
         "User should have 'name' field. User: {:#}",
         user
     );
-    
+
     // The update should have changed the name
     // Note: seed_standard_data creates users, so we need to verify the update worked
     let name_value = user_obj["name"].as_str().unwrap();
     assert_eq!(
-        name_value,
-        "Only Name",
+        name_value, "Only Name",
         "User name should match updated value. Got: '{}', Expected: 'Only Name'. User: {:#}",
-        name_value,
-        user
+        name_value, user
     );
     // Should NOT have id, status, etc. since they weren't requested
     assert!(
@@ -273,7 +271,9 @@ async fn test_delete_typed_response() -> Result<(), TestError> {
     );
 
     let deleted_user = &users[0];
-    let deleted_user_obj = deleted_user.as_object().expect("Deleted user should be a JSON object");
+    let deleted_user_obj = deleted_user
+        .as_object()
+        .expect("Deleted user should be a JSON object");
     assert_eq!(
         deleted_user_obj["id"].as_i64().unwrap(),
         1,
@@ -364,7 +364,10 @@ async fn test_insert_multiple_fields() -> Result<(), TestError> {
     "#;
 
     let mut params = HashMap::new();
-    params.insert("name".to_string(), libsql::Value::Text("Charlie".to_string()));
+    params.insert(
+        "name".to_string(),
+        libsql::Value::Text("Charlie".to_string()),
+    );
 
     let rows = db.execute_insert_with_params(insert_query, params).await?;
     let results = db.parse_query_results(rows).await?;
@@ -380,10 +383,7 @@ async fn test_insert_multiple_fields() -> Result<(), TestError> {
         "Charlie",
         "User name should match"
     );
-    assert!(
-        user_obj.contains_key("id"),
-        "User should have 'id' field"
-    );
+    assert!(user_obj.contains_key("id"), "User should have 'id' field");
     assert!(
         user_obj.contains_key("status"),
         "User should have 'status' field"

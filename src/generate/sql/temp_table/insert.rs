@@ -67,7 +67,7 @@ pub fn insert_to_string(
         "drop table if exists {}",
         parent_temp_table_name
     )));
-    
+
     // Always create temp table - we need it for the typed response query
     statements.push(to_sql::ignore(format!(
         "create temp table {} as\n  select last_insert_rowid() as id",
@@ -369,7 +369,7 @@ pub fn insert_linked(
             "drop table if exists {}",
             temp_table_name
         )));
-        
+
         // Create temp table with rowids of inserted rows by joining on foreign key
         let foreign_key = &link.foreign.fields[0];
         let local_key = &link.local_ids[0];

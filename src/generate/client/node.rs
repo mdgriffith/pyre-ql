@@ -787,9 +787,16 @@ fn to_schema_metadata(context: &typecheck::Context) -> String {
     result.push_str("  };\n");
     result.push_str("}\n\n");
 
+    result.push_str("export interface IndexInfo {\n");
+    result.push_str("  field: string;\n");
+    result.push_str("  unique: boolean;\n");
+    result.push_str("  primary: boolean;\n");
+    result.push_str("}\n\n");
+
     result.push_str("export interface TableMetadata {\n");
     result.push_str("  name: string;\n");
     result.push_str("  links: Record<string, LinkInfo>;\n");
+    result.push_str("  indices: IndexInfo[];\n");
     result.push_str("}\n\n");
 
     result.push_str("export interface SchemaMetadata {\n");
@@ -899,7 +906,52 @@ fn to_schema_metadata(context: &typecheck::Context) -> String {
             result.push_str("        }");
         }
 
-        result.push_str("\n      }\n");
+        result.push_str("\n      },\n");
+
+        result.push_str("      indices: [\n");
+
+        let mut is_first_index = true;
+        for field in &table.record.fields {
+            if let ast::Field::Column(column) = field {
+                let is_primary = ast::is_primary_key(column);
+                let is_unique = column
+                    .directives
+                    .iter()
+                    .any(|d| matches!(d, ast::ColumnDirective::Unique));
+                let is_index = column
+                    .directives
+                    .iter()
+                    .any(|d| matches!(d, ast::ColumnDirective::Index));
+
+                if is_primary || is_unique || is_index {
+                    if !is_first_index {
+                        result.push_str(",\n");
+                    }
+                    is_first_index = false;
+
+                    result.push_str("        {\n");
+                    result.push_str(&format!(
+                        "          field: {},\n",
+                        string::quote(&column.name)
+                    ));
+                    result.push_str(&format!(
+                        "          unique: {},\n",
+                        if is_unique || is_primary {
+                            "true"
+                        } else {
+                            "false"
+                        }
+                    ));
+                    result.push_str(&format!(
+                        "          primary: {}\n",
+                        if is_primary { "true" } else { "false" }
+                    ));
+                    result.push_str("        }");
+                }
+            }
+        }
+
+        result.push_str("\n      ]\n");
         result.push_str("    }");
     }
 

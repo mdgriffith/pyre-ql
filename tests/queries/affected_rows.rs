@@ -235,10 +235,7 @@ async fn test_update_affected_rows() -> Result<(), TestError> {
 
                             // Verify structure
                             if let Some(table_group) = arr.first() {
-                                assert!(
-                                    table_group.is_object(),
-                                    "Table group should be an object"
-                                );
+                                assert!(table_group.is_object(), "Table group should be an object");
 
                                 let obj = table_group.as_object().unwrap();
                                 assert_eq!(
@@ -319,10 +316,7 @@ async fn test_delete_affected_rows() -> Result<(), TestError> {
 
                             // Verify structure
                             if let Some(table_group) = arr.first() {
-                                assert!(
-                                    table_group.is_object(),
-                                    "Table group should be an object"
-                                );
+                                assert!(table_group.is_object(), "Table group should be an object");
 
                                 let obj = table_group.as_object().unwrap();
                                 assert_eq!(

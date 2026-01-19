@@ -3045,10 +3045,22 @@ var $author$project$Data$Schema$SchemaMetadata = F2(
 	function (tables, queryFieldToTable) {
 		return {queryFieldToTable: queryFieldToTable, tables: tables};
 	});
-var $author$project$Data$Schema$TableMetadata = F2(
-	function (name, links) {
-		return {links: links, name: name};
+var $author$project$Data$Schema$TableMetadata = F3(
+	function (name, links, indices) {
+		return {indices: indices, links: links, name: name};
 	});
+var $author$project$Data$Schema$IndexInfo = F3(
+	function (field, unique, primary) {
+		return {field: field, primary: primary, unique: unique};
+	});
+var $elm$json$Json$Decode$bool = _Json_decodeBool;
+var $elm$json$Json$Decode$map3 = _Json_map3;
+var $author$project$Data$Schema$decodeIndexInfo = A4(
+	$elm$json$Json$Decode$map3,
+	$author$project$Data$Schema$IndexInfo,
+	A2($elm$json$Json$Decode$field, 'field', $elm$json$Json$Decode$string),
+	A2($elm$json$Json$Decode$field, 'unique', $elm$json$Json$Decode$bool),
+	A2($elm$json$Json$Decode$field, 'primary', $elm$json$Json$Decode$bool));
 var $author$project$Data$Schema$LinkInfo = F3(
 	function (type_, from, to) {
 		return {from: from, to: to, type_: type_};
@@ -3083,7 +3095,6 @@ var $author$project$Data$Schema$decodeLinkType = A2(
 		}
 	},
 	$elm$json$Json$Decode$string);
-var $elm$json$Json$Decode$map3 = _Json_map3;
 var $author$project$Data$Schema$decodeLinkInfo = A4(
 	$elm$json$Json$Decode$map3,
 	$author$project$Data$Schema$LinkInfo,
@@ -3221,14 +3232,19 @@ var $elm$json$Json$Decode$dict = function (decoder) {
 		$elm$core$Dict$fromList,
 		$elm$json$Json$Decode$keyValuePairs(decoder));
 };
-var $author$project$Data$Schema$decodeTableMetadata = A3(
-	$elm$json$Json$Decode$map2,
+var $elm$json$Json$Decode$list = _Json_decodeList;
+var $author$project$Data$Schema$decodeTableMetadata = A4(
+	$elm$json$Json$Decode$map3,
 	$author$project$Data$Schema$TableMetadata,
 	A2($elm$json$Json$Decode$field, 'name', $elm$json$Json$Decode$string),
 	A2(
 		$elm$json$Json$Decode$field,
 		'links',
-		$elm$json$Json$Decode$dict($author$project$Data$Schema$decodeLinkInfo)));
+		$elm$json$Json$Decode$dict($author$project$Data$Schema$decodeLinkInfo)),
+	A2(
+		$elm$json$Json$Decode$field,
+		'indices',
+		$elm$json$Json$Decode$list($author$project$Data$Schema$decodeIndexInfo)));
 var $author$project$Data$Schema$decodeSchemaMetadata = A3(
 	$elm$json$Json$Decode$map2,
 	$author$project$Data$Schema$SchemaMetadata,
@@ -3488,7 +3504,6 @@ var $author$project$Data$Value$ObjectValue = function (a) {
 var $author$project$Data$Value$StringValue = function (a) {
 	return {$: 'StringValue', a: a};
 };
-var $elm$json$Json$Decode$bool = _Json_decodeBool;
 var $elm$json$Json$Decode$float = _Json_decodeFloat;
 var $elm$json$Json$Decode$lazy = function (thunk) {
 	return A2(
@@ -3496,7 +3511,6 @@ var $elm$json$Json$Decode$lazy = function (thunk) {
 		thunk,
 		$elm$json$Json$Decode$succeed(_Utils_Tuple0));
 };
-var $elm$json$Json$Decode$list = _Json_decodeList;
 var $elm$json$Json$Decode$null = _Json_decodeNull;
 var $elm$json$Json$Decode$oneOf = _Json_oneOf;
 function $author$project$Data$Value$cyclic$decodeValue() {
@@ -3631,6 +3645,42 @@ var $author$project$Db$Query$FilterValueOr = function (a) {
 var $author$project$Db$Query$FilterValueSimple = function (a) {
 	return {$: 'FilterValueSimple', a: a};
 };
+var $author$project$Db$Query$OpEq = {$: 'OpEq'};
+var $author$project$Db$Query$OpGt = {$: 'OpGt'};
+var $author$project$Db$Query$OpGte = {$: 'OpGte'};
+var $author$project$Db$Query$OpIn = {$: 'OpIn'};
+var $author$project$Db$Query$OpLike = {$: 'OpLike'};
+var $author$project$Db$Query$OpLt = {$: 'OpLt'};
+var $author$project$Db$Query$OpLte = {$: 'OpLte'};
+var $author$project$Db$Query$OpNe = {$: 'OpNe'};
+var $author$project$Db$Query$OpNotIn = {$: 'OpNotIn'};
+var $author$project$Db$Query$OpNotLike = {$: 'OpNotLike'};
+var $author$project$Db$Query$decodeOperator = function (operator) {
+	switch (operator) {
+		case '$eq':
+			return $elm$core$Maybe$Just($author$project$Db$Query$OpEq);
+		case '$ne':
+			return $elm$core$Maybe$Just($author$project$Db$Query$OpNe);
+		case '$gt':
+			return $elm$core$Maybe$Just($author$project$Db$Query$OpGt);
+		case '$gte':
+			return $elm$core$Maybe$Just($author$project$Db$Query$OpGte);
+		case '$lt':
+			return $elm$core$Maybe$Just($author$project$Db$Query$OpLt);
+		case '$lte':
+			return $elm$core$Maybe$Just($author$project$Db$Query$OpLte);
+		case '$in':
+			return $elm$core$Maybe$Just($author$project$Db$Query$OpIn);
+		case '$nin':
+			return $elm$core$Maybe$Just($author$project$Db$Query$OpNotIn);
+		case '$like':
+			return $elm$core$Maybe$Just($author$project$Db$Query$OpLike);
+		case '$nlike':
+			return $elm$core$Maybe$Just($author$project$Db$Query$OpNotLike);
+		default:
+			return $elm$core$Maybe$Nothing;
+	}
+};
 var $elm$core$Dict$get = F2(
 	function (targetKey, dict) {
 		get:
@@ -3671,6 +3721,47 @@ var $elm$core$Dict$member = F2(
 			return false;
 		}
 	});
+var $author$project$Db$Query$decodeOperatorDict = function (dict) {
+	var decodeEntry = F3(
+		function (opString, value, acc) {
+			var _v0 = $author$project$Db$Query$decodeOperator(opString);
+			if (_v0.$ === 'Just') {
+				var operator = _v0.a;
+				var _v1 = A2(
+					$elm$json$Json$Decode$decodeValue,
+					$author$project$Db$Query$cyclic$decodeFilterValue(),
+					value);
+				if (_v1.$ === 'Ok') {
+					var filterValue = _v1.a;
+					return $elm$json$Json$Decode$succeed(
+						A2(
+							$elm$core$List$cons,
+							_Utils_Tuple2(operator, filterValue),
+							acc));
+				} else {
+					return $elm$json$Json$Decode$fail('Invalid operator value');
+				}
+			} else {
+				return $elm$json$Json$Decode$fail('Unknown operator');
+			}
+		});
+	return A2(
+		$elm$json$Json$Decode$map,
+		$author$project$Db$Query$FilterValueOperators,
+		A3(
+			$elm$core$Dict$foldl,
+			F3(
+				function (key, value, decoderAcc) {
+					return A2(
+						$elm$json$Json$Decode$andThen,
+						function (acc) {
+							return A3(decodeEntry, key, value, acc);
+						},
+						decoderAcc);
+				}),
+			$elm$json$Json$Decode$succeed(_List_Nil),
+			dict));
+};
 function $author$project$Db$Query$cyclic$decodeWhereClause() {
 	return $elm$json$Json$Decode$dict(
 		$author$project$Db$Query$cyclic$decodeFilterValue());
@@ -3697,14 +3788,9 @@ function $author$project$Db$Query$cyclic$decodeFilterValue() {
 							$elm$json$Json$Decode$field,
 							'$or',
 							$elm$json$Json$Decode$list(
-								$author$project$Db$Query$cyclic$decodeWhereClause()))) : $elm$json$Json$Decode$succeed(
-						$author$project$Db$Query$FilterValueOperators(dict)));
+								$author$project$Db$Query$cyclic$decodeWhereClause()))) : $author$project$Db$Query$decodeOperatorDict(dict));
 				},
-				$elm$json$Json$Decode$dict(
-					$elm$json$Json$Decode$lazy(
-						function (_v0) {
-							return $author$project$Db$Query$cyclic$decodeFilterValue();
-						}))),
+				$elm$json$Json$Decode$dict($elm$json$Json$Decode$value)),
 				A2($elm$json$Json$Decode$map, $author$project$Db$Query$FilterValueSimple, $author$project$Data$Value$decodeValue)
 			]));
 }
@@ -3718,7 +3804,7 @@ try {
 		return $author$project$Db$Query$decodeFilterValue;
 	};
 } catch ($) {
-	throw 'Some top-level definitions from `Db.Query` are causing infinite recursion:\n\n  ┌─────┐\n  │    decodeWhereClause\n  │     ↓\n  │    decodeFilterValue\n  └─────┘\n\nThese errors are very tricky, so read https://elm-lang.org/0.19.1/bad-recursion to learn how to fix it!';}
+	throw 'Some top-level definitions from `Db.Query` are causing infinite recursion:\n\n  ┌─────┐\n  │    decodeWhereClause\n  │     ↓\n  │    decodeFilterValue\n  │     ↓\n  │    decodeOperatorDict\n  └─────┘\n\nThese errors are very tricky, so read https://elm-lang.org/0.19.1/bad-recursion to learn how to fix it!';}
 var $author$project$Db$Query$buildFieldQueryFromPairs = function (pairs) {
 	return A5($author$project$Db$Query$buildFieldQueryFromPairsHelp, $elm$core$Dict$empty, $elm$core$Maybe$Nothing, $elm$core$Maybe$Nothing, $elm$core$Maybe$Nothing, pairs);
 };
@@ -4215,13 +4301,13 @@ var $elm$core$List$take = F2(
 	function (n, list) {
 		return A3($elm$core$List$takeFast, 0, n, list);
 	});
-var $author$project$Db$applyLimit = F2(
-	function (limit, rows) {
+var $author$project$Db$applyLimitWithIds = F2(
+	function (limit, rowsWithIds) {
 		if (limit.$ === 'Just') {
 			var n = limit.a;
-			return A2($elm$core$List$take, n, rows);
+			return A2($elm$core$List$take, n, rowsWithIds);
 		} else {
-			return rows;
+			return rowsWithIds;
 		}
 	});
 var $elm$core$Basics$negate = function (n) {
@@ -4273,15 +4359,17 @@ var $elm$core$Maybe$withDefault = F2(
 			return _default;
 		}
 	});
-var $author$project$Db$applySort = F2(
-	function (sortClauses, rows) {
+var $author$project$Db$applySortWithIds = F2(
+	function (sortClauses, rowsWithIds) {
 		if (sortClauses.$ === 'Just') {
 			var clauses = sortClauses.a;
 			return A2(
 				$elm$core$List$sortWith,
 				F2(
-					function (a, b) {
-						var _v1 = A3(
+					function (_v1, _v2) {
+						var a = _v1.b;
+						var b = _v2.b;
+						var _v3 = A3(
 							$elm$core$List$foldl,
 							F2(
 								function (clause, acc) {
@@ -4303,146 +4391,16 @@ var $author$project$Db$applySort = F2(
 								}),
 							$elm$core$Maybe$Nothing,
 							clauses);
-						if (_v1.$ === 'Just') {
-							var order = _v1.a;
+						if (_v3.$ === 'Just') {
+							var order = _v3.a;
 							return order;
 						} else {
 							return $elm$core$Basics$EQ;
 						}
 					}),
-				rows);
+				rowsWithIds);
 		} else {
-			return rows;
-		}
-	});
-var $elm$core$List$any = F2(
-	function (isOkay, list) {
-		any:
-		while (true) {
-			if (!list.b) {
-				return false;
-			} else {
-				var x = list.a;
-				var xs = list.b;
-				if (isOkay(x)) {
-					return true;
-				} else {
-					var $temp$isOkay = isOkay,
-						$temp$list = xs;
-					isOkay = $temp$isOkay;
-					list = $temp$list;
-					continue any;
-				}
-			}
-		}
-	});
-var $elm$core$Basics$composeL = F3(
-	function (g, f, x) {
-		return g(
-			f(x));
-	});
-var $elm$core$Basics$not = _Basics_not;
-var $elm$core$List$all = F2(
-	function (isOkay, list) {
-		return !A2(
-			$elm$core$List$any,
-			A2($elm$core$Basics$composeL, $elm$core$Basics$not, isOkay),
-			list);
-	});
-var $elm$core$Basics$ge = _Utils_ge;
-var $elm$core$Basics$neq = _Utils_notEqual;
-var $author$project$Db$evaluateOperator = F3(
-	function (fieldValue, operator, opValue) {
-		switch (opValue.$) {
-			case 'FilterValueSimple':
-				var value = opValue.a;
-				switch (operator) {
-					case '$eq':
-						return _Utils_eq(fieldValue, value);
-					case '$ne':
-						return !_Utils_eq(fieldValue, value);
-					case '$gt':
-						return A2($author$project$Db$compareValues, fieldValue, value) > 0;
-					case '$gte':
-						return A2($author$project$Db$compareValues, fieldValue, value) >= 0;
-					case '$lt':
-						return A2($author$project$Db$compareValues, fieldValue, value) < 0;
-					case '$lte':
-						return A2($author$project$Db$compareValues, fieldValue, value) <= 0;
-					default:
-						return false;
-				}
-			case 'FilterValueOperators':
-				return false;
-			default:
-				return false;
-		}
-	});
-var $author$project$Db$evaluateFilterValue = F2(
-	function (fieldValue, condition) {
-		switch (condition.$) {
-			case 'FilterValueNull':
-				return _Utils_eq(fieldValue, $author$project$Data$Value$NullValue);
-			case 'FilterValueSimple':
-				var value = condition.a;
-				return _Utils_eq(fieldValue, value);
-			case 'FilterValueOperators':
-				var operators = condition.a;
-				return A3(
-					$elm$core$Dict$foldl,
-					F3(
-						function (op, opValue, acc) {
-							return (!acc) ? false : A3($author$project$Db$evaluateOperator, fieldValue, op, opValue);
-						}),
-					true,
-					operators);
-			case 'FilterValueAnd':
-				return false;
-			default:
-				return false;
-		}
-	});
-var $author$project$Db$evaluateFilter = F2(
-	function (row, whereClause) {
-		var _v0 = A2($elm$core$Dict$get, '$and', whereClause);
-		if ((_v0.$ === 'Just') && (_v0.a.$ === 'FilterValueAnd')) {
-			var clauses = _v0.a.a;
-			return A2(
-				$elm$core$List$all,
-				function (clause) {
-					return A2($author$project$Db$evaluateFilter, row, clause);
-				},
-				clauses);
-		} else {
-			var _v1 = A2($elm$core$Dict$get, '$or', whereClause);
-			if ((_v1.$ === 'Just') && (_v1.a.$ === 'FilterValueOr')) {
-				var clauses = _v1.a.a;
-				return A2(
-					$elm$core$List$any,
-					function (clause) {
-						return A2($author$project$Db$evaluateFilter, row, clause);
-					},
-					clauses);
-			} else {
-				return A3(
-					$elm$core$Dict$foldl,
-					F3(
-						function (field, condition, acc) {
-							if (!acc) {
-								return false;
-							} else {
-								var _v2 = A2($elm$core$Dict$get, field, row);
-								if (_v2.$ === 'Just') {
-									var fieldValue = _v2.a;
-									return A2($author$project$Db$evaluateFilterValue, fieldValue, condition);
-								} else {
-									return A2($author$project$Db$evaluateFilterValue, $author$project$Data$Value$NullValue, condition);
-								}
-							}
-						}),
-					true,
-					whereClause);
-			}
+			return rowsWithIds;
 		}
 	});
 var $elm$core$List$foldrHelper = F4(
@@ -4500,37 +4458,16 @@ var $elm$core$List$foldr = F3(
 	function (fn, acc, ls) {
 		return A4($elm$core$List$foldrHelper, fn, acc, 0, ls);
 	});
-var $elm$core$List$filter = F2(
-	function (isGood, list) {
-		return A3(
-			$elm$core$List$foldr,
-			F2(
-				function (x, xs) {
-					return isGood(x) ? A2($elm$core$List$cons, x, xs) : xs;
-				}),
-			_List_Nil,
-			list);
-	});
-var $author$project$Db$applyWhere = F2(
-	function (whereClause, rows) {
-		if (whereClause.$ === 'Just') {
-			var where_ = whereClause.a;
-			return A2(
-				$elm$core$List$filter,
-				function (row) {
-					return A2($author$project$Db$evaluateFilter, row, where_);
-				},
-				rows);
+var $elm$core$List$append = F2(
+	function (xs, ys) {
+		if (!ys.b) {
+			return xs;
 		} else {
-			return rows;
+			return A3($elm$core$List$foldr, $elm$core$List$cons, ys, xs);
 		}
 	});
-var $elm$core$Dict$isEmpty = function (dict) {
-	if (dict.$ === 'RBEmpty_elm_builtin') {
-		return true;
-	} else {
-		return false;
-	}
+var $elm$core$List$concat = function (lists) {
+	return A3($elm$core$List$foldr, $elm$core$List$append, _List_Nil, lists);
 };
 var $elm$core$List$map = F2(
 	function (f, xs) {
@@ -4546,6 +4483,437 @@ var $elm$core$List$map = F2(
 			_List_Nil,
 			xs);
 	});
+var $elm$core$List$concatMap = F2(
+	function (f, list) {
+		return $elm$core$List$concat(
+			A2($elm$core$List$map, f, list));
+	});
+var $elm$core$List$maybeCons = F3(
+	function (f, mx, xs) {
+		var _v0 = f(mx);
+		if (_v0.$ === 'Just') {
+			var x = _v0.a;
+			return A2($elm$core$List$cons, x, xs);
+		} else {
+			return xs;
+		}
+	});
+var $elm$core$List$filterMap = F2(
+	function (f, xs) {
+		return A3(
+			$elm$core$List$foldr,
+			$elm$core$List$maybeCons(f),
+			_List_Nil,
+			xs);
+	});
+var $elm$core$Set$Set_elm_builtin = function (a) {
+	return {$: 'Set_elm_builtin', a: a};
+};
+var $elm$core$Set$empty = $elm$core$Set$Set_elm_builtin($elm$core$Dict$empty);
+var $elm$core$Set$insert = F2(
+	function (key, _v0) {
+		var dict = _v0.a;
+		return $elm$core$Set$Set_elm_builtin(
+			A3($elm$core$Dict$insert, key, _Utils_Tuple0, dict));
+	});
+var $elm$core$Set$fromList = function (list) {
+	return A3($elm$core$List$foldl, $elm$core$Set$insert, $elm$core$Set$empty, list);
+};
+var $elm$core$List$head = function (list) {
+	if (list.b) {
+		var x = list.a;
+		var xs = list.b;
+		return $elm$core$Maybe$Just(x);
+	} else {
+		return $elm$core$Maybe$Nothing;
+	}
+};
+var $author$project$Db$Index$lookup = F2(
+	function (key, _v0) {
+		var dict = _v0.a;
+		return A2(
+			$elm$core$Maybe$withDefault,
+			_List_Nil,
+			A2($elm$core$Dict$get, key, dict));
+	});
+var $author$project$Db$valueToIndexKey = function (value) {
+	switch (value.$) {
+		case 'IntValue':
+			var i = value.a;
+			return $elm$core$Maybe$Just(
+				$elm$core$String$fromInt(i));
+		case 'StringValue':
+			var s = value.a;
+			return $elm$core$Maybe$Just(s);
+		case 'NullValue':
+			return $elm$core$Maybe$Nothing;
+		default:
+			return $elm$core$Maybe$Nothing;
+	}
+};
+var $author$project$Db$extractIndexedIdsFromOperators = F4(
+	function (indices, tableName, field, operators) {
+		var indexKey = _Utils_Tuple2(tableName, field);
+		var inValues = $elm$core$List$head(
+			A2(
+				$elm$core$List$filterMap,
+				function (_v8) {
+					var op = _v8.a;
+					var opValue = _v8.b;
+					var _v9 = _Utils_Tuple2(op, opValue);
+					if (((_v9.a.$ === 'OpIn') && (_v9.b.$ === 'FilterValueSimple')) && (_v9.b.a.$ === 'ArrayValue')) {
+						var _v10 = _v9.a;
+						var values = _v9.b.a.a;
+						return $elm$core$Maybe$Just(values);
+					} else {
+						return $elm$core$Maybe$Nothing;
+					}
+				},
+				operators));
+		var gatherIds = function (opValue) {
+			var _v6 = A2($elm$core$Dict$get, indexKey, indices);
+			if (_v6.$ === 'Just') {
+				var index = _v6.a;
+				var _v7 = $author$project$Db$valueToIndexKey(opValue);
+				if (_v7.$ === 'Just') {
+					var key = _v7.a;
+					return $elm$core$Maybe$Just(
+						$elm$core$Set$fromList(
+							A2($author$project$Db$Index$lookup, key, index)));
+				} else {
+					return $elm$core$Maybe$Nothing;
+				}
+			} else {
+				return $elm$core$Maybe$Nothing;
+			}
+		};
+		var eqValue = $elm$core$List$head(
+			A2(
+				$elm$core$List$filterMap,
+				function (_v3) {
+					var op = _v3.a;
+					var opValue = _v3.b;
+					var _v4 = _Utils_Tuple2(op, opValue);
+					if ((_v4.a.$ === 'OpEq') && (_v4.b.$ === 'FilterValueSimple')) {
+						var _v5 = _v4.a;
+						var value = _v4.b.a;
+						return $elm$core$Maybe$Just(value);
+					} else {
+						return $elm$core$Maybe$Nothing;
+					}
+				},
+				operators));
+		if (eqValue.$ === 'Just') {
+			var value = eqValue.a;
+			return gatherIds(value);
+		} else {
+			if (inValues.$ === 'Just') {
+				var values = inValues.a;
+				var _v2 = A2($elm$core$Dict$get, indexKey, indices);
+				if (_v2.$ === 'Just') {
+					var index = _v2.a;
+					return $elm$core$Maybe$Just(
+						$elm$core$Set$fromList(
+							A2(
+								$elm$core$List$concatMap,
+								function (key) {
+									return A2($author$project$Db$Index$lookup, key, index);
+								},
+								A2($elm$core$List$filterMap, $author$project$Db$valueToIndexKey, values))));
+				} else {
+					return $elm$core$Maybe$Nothing;
+				}
+			} else {
+				return $elm$core$Maybe$Nothing;
+			}
+		}
+	});
+var $author$project$Db$collectIndexedFromAnd = F3(
+	function (indices, tableName, clauses) {
+		collectIndexedFromAnd:
+		while (true) {
+			if (!clauses.b) {
+				return $elm$core$Maybe$Nothing;
+			} else {
+				var clause = clauses.a;
+				var rest = clauses.b;
+				var _v5 = A3($author$project$Db$collectIndexedRowIds, indices, tableName, clause);
+				if (_v5.$ === 'Just') {
+					var ids = _v5.a;
+					return $elm$core$Maybe$Just(ids);
+				} else {
+					var $temp$indices = indices,
+						$temp$tableName = tableName,
+						$temp$clauses = rest;
+					indices = $temp$indices;
+					tableName = $temp$tableName;
+					clauses = $temp$clauses;
+					continue collectIndexedFromAnd;
+				}
+			}
+		}
+	});
+var $author$project$Db$collectIndexedRowIds = F3(
+	function (indices, tableName, whereClause) {
+		var nestedAnd = function () {
+			var _v3 = A2($elm$core$Dict$get, '$and', whereClause);
+			if ((_v3.$ === 'Just') && (_v3.a.$ === 'FilterValueAnd')) {
+				var clauses = _v3.a.a;
+				return A3($author$project$Db$collectIndexedFromAnd, indices, tableName, clauses);
+			} else {
+				return $elm$core$Maybe$Nothing;
+			}
+		}();
+		var directFieldOperators = A3(
+			$elm$core$Dict$foldl,
+			F3(
+				function (field, value, acc) {
+					if (acc.$ === 'Just') {
+						return acc;
+					} else {
+						switch (value.$) {
+							case 'FilterValueOperators':
+								var operators = value.a;
+								return A4($author$project$Db$extractIndexedIdsFromOperators, indices, tableName, field, operators);
+							case 'FilterValueSimple':
+								var simpleValue = value.a;
+								return A4(
+									$author$project$Db$extractIndexedIdsFromOperators,
+									indices,
+									tableName,
+									field,
+									_List_fromArray(
+										[
+											_Utils_Tuple2(
+											$author$project$Db$Query$OpEq,
+											$author$project$Db$Query$FilterValueSimple(simpleValue))
+										]));
+							default:
+								return $elm$core$Maybe$Nothing;
+						}
+					}
+				}),
+			$elm$core$Maybe$Nothing,
+			whereClause);
+		if (directFieldOperators.$ === 'Just') {
+			return directFieldOperators;
+		} else {
+			return nestedAnd;
+		}
+	});
+var $elm$core$List$any = F2(
+	function (isOkay, list) {
+		any:
+		while (true) {
+			if (!list.b) {
+				return false;
+			} else {
+				var x = list.a;
+				var xs = list.b;
+				if (isOkay(x)) {
+					return true;
+				} else {
+					var $temp$isOkay = isOkay,
+						$temp$list = xs;
+					isOkay = $temp$isOkay;
+					list = $temp$list;
+					continue any;
+				}
+			}
+		}
+	});
+var $elm$core$Basics$composeL = F3(
+	function (g, f, x) {
+		return g(
+			f(x));
+	});
+var $elm$core$Basics$not = _Basics_not;
+var $elm$core$List$all = F2(
+	function (isOkay, list) {
+		return !A2(
+			$elm$core$List$any,
+			A2($elm$core$Basics$composeL, $elm$core$Basics$not, isOkay),
+			list);
+	});
+var $elm$core$Basics$ge = _Utils_ge;
+var $elm$core$List$member = F2(
+	function (x, xs) {
+		return A2(
+			$elm$core$List$any,
+			function (a) {
+				return _Utils_eq(a, x);
+			},
+			xs);
+	});
+var $elm$core$Basics$neq = _Utils_notEqual;
+var $author$project$Db$evaluateOperator = F3(
+	function (fieldValue, operator, opValue) {
+		var _v0 = _Utils_Tuple2(operator, opValue);
+		_v0$7:
+		while (true) {
+			if (_v0.b.$ === 'FilterValueSimple') {
+				switch (_v0.a.$) {
+					case 'OpEq':
+						var _v1 = _v0.a;
+						var value = _v0.b.a;
+						return _Utils_eq(fieldValue, value);
+					case 'OpNe':
+						var _v2 = _v0.a;
+						var value = _v0.b.a;
+						return !_Utils_eq(fieldValue, value);
+					case 'OpGt':
+						var _v3 = _v0.a;
+						var value = _v0.b.a;
+						return A2($author$project$Db$compareValues, fieldValue, value) > 0;
+					case 'OpGte':
+						var _v4 = _v0.a;
+						var value = _v0.b.a;
+						return A2($author$project$Db$compareValues, fieldValue, value) >= 0;
+					case 'OpLt':
+						var _v5 = _v0.a;
+						var value = _v0.b.a;
+						return A2($author$project$Db$compareValues, fieldValue, value) < 0;
+					case 'OpLte':
+						var _v6 = _v0.a;
+						var value = _v0.b.a;
+						return A2($author$project$Db$compareValues, fieldValue, value) <= 0;
+					case 'OpIn':
+						if (_v0.b.a.$ === 'ArrayValue') {
+							var _v7 = _v0.a;
+							var values = _v0.b.a.a;
+							return A2($elm$core$List$member, fieldValue, values);
+						} else {
+							break _v0$7;
+						}
+					default:
+						break _v0$7;
+				}
+			} else {
+				break _v0$7;
+			}
+		}
+		return false;
+	});
+var $author$project$Db$evaluateFilterValue = F2(
+	function (fieldValue, condition) {
+		switch (condition.$) {
+			case 'FilterValueNull':
+				return _Utils_eq(fieldValue, $author$project$Data$Value$NullValue);
+			case 'FilterValueSimple':
+				var value = condition.a;
+				return _Utils_eq(fieldValue, value);
+			case 'FilterValueOperators':
+				var operators = condition.a;
+				return A3(
+					$elm$core$List$foldl,
+					F2(
+						function (_v1, acc) {
+							var op = _v1.a;
+							var opValue = _v1.b;
+							return (!acc) ? false : A3($author$project$Db$evaluateOperator, fieldValue, op, opValue);
+						}),
+					true,
+					operators);
+			case 'FilterValueAnd':
+				return false;
+			default:
+				return false;
+		}
+	});
+var $author$project$Db$evaluateFilter = F2(
+	function (row, whereClause) {
+		var _v0 = A2($elm$core$Dict$get, '$and', whereClause);
+		if ((_v0.$ === 'Just') && (_v0.a.$ === 'FilterValueAnd')) {
+			var clauses = _v0.a.a;
+			return A2(
+				$elm$core$List$all,
+				function (clause) {
+					return A2($author$project$Db$evaluateFilter, row, clause);
+				},
+				clauses);
+		} else {
+			var _v1 = A2($elm$core$Dict$get, '$or', whereClause);
+			if ((_v1.$ === 'Just') && (_v1.a.$ === 'FilterValueOr')) {
+				var clauses = _v1.a.a;
+				return A2(
+					$elm$core$List$any,
+					function (clause) {
+						return A2($author$project$Db$evaluateFilter, row, clause);
+					},
+					clauses);
+			} else {
+				return A3(
+					$elm$core$Dict$foldl,
+					F3(
+						function (field, condition, acc) {
+							if (!acc) {
+								return false;
+							} else {
+								var _v2 = A2($elm$core$Dict$get, field, row);
+								if (_v2.$ === 'Just') {
+									var fieldValue = _v2.a;
+									return A2($author$project$Db$evaluateFilterValue, fieldValue, condition);
+								} else {
+									return A2($author$project$Db$evaluateFilterValue, $author$project$Data$Value$NullValue, condition);
+								}
+							}
+						}),
+					true,
+					whereClause);
+			}
+		}
+	});
+var $elm$core$List$filter = F2(
+	function (isGood, list) {
+		return A3(
+			$elm$core$List$foldr,
+			F2(
+				function (x, xs) {
+					return isGood(x) ? A2($elm$core$List$cons, x, xs) : xs;
+				}),
+			_List_Nil,
+			list);
+	});
+var $elm$core$Set$member = F2(
+	function (key, _v0) {
+		var dict = _v0.a;
+		return A2($elm$core$Dict$member, key, dict);
+	});
+var $author$project$Db$applyWhereWithIndicesWithIds = F4(
+	function (indices, tableName, whereClause, rowsWithIds) {
+		if (whereClause.$ === 'Just') {
+			var where_ = whereClause.a;
+			var maybeIndexedIds = A3($author$project$Db$collectIndexedRowIds, indices, tableName, where_);
+			if (maybeIndexedIds.$ === 'Just') {
+				var indexedIds = maybeIndexedIds.a;
+				return A2(
+					$elm$core$List$filter,
+					function (_v2) {
+						var rowId = _v2.a;
+						var row = _v2.b;
+						return A2($elm$core$Set$member, rowId, indexedIds) && A2($author$project$Db$evaluateFilter, row, where_);
+					},
+					rowsWithIds);
+			} else {
+				return A2(
+					$elm$core$List$filter,
+					function (_v3) {
+						var row = _v3.b;
+						return A2($author$project$Db$evaluateFilter, row, where_);
+					},
+					rowsWithIds);
+			}
+		} else {
+			return rowsWithIds;
+		}
+	});
+var $elm$core$Dict$isEmpty = function (dict) {
+	if (dict.$ === 'RBEmpty_elm_builtin') {
+		return true;
+	} else {
+		return false;
+	}
+};
 var $author$project$Db$getRelatedTableName = F3(
 	function (schema, tableName, fieldName) {
 		var _v0 = A2($elm$core$Dict$get, tableName, schema.tables);
@@ -4586,32 +4954,6 @@ var $author$project$Db$lookupRowByPrimaryKey = F4(
 			return $elm$core$Maybe$Nothing;
 		}
 	});
-var $elm$core$List$maybeCons = F3(
-	function (f, mx, xs) {
-		var _v0 = f(mx);
-		if (_v0.$ === 'Just') {
-			var x = _v0.a;
-			return A2($elm$core$List$cons, x, xs);
-		} else {
-			return xs;
-		}
-	});
-var $elm$core$List$filterMap = F2(
-	function (f, xs) {
-		return A3(
-			$elm$core$List$foldr,
-			$elm$core$List$maybeCons(f),
-			_List_Nil,
-			xs);
-	});
-var $author$project$Db$Index$lookup = F2(
-	function (key, _v0) {
-		var dict = _v0.a;
-		return A2(
-			$elm$core$Maybe$withDefault,
-			_List_Nil,
-			A2($elm$core$Dict$get, key, dict));
-	});
 var $elm$core$Dict$values = function (dict) {
 	return A3(
 		$elm$core$Dict$foldr,
@@ -4640,21 +4982,6 @@ var $author$project$Db$lookupRowsByForeignKey = F4(
 			return $elm$core$Maybe$Nothing;
 		}
 	});
-var $author$project$Db$valueToIndexKey = function (value) {
-	switch (value.$) {
-		case 'IntValue':
-			var i = value.a;
-			return $elm$core$Maybe$Just(
-				$elm$core$String$fromInt(i));
-		case 'StringValue':
-			var s = value.a;
-			return $elm$core$Maybe$Just(s);
-		case 'NullValue':
-			return $elm$core$Maybe$Nothing;
-		default:
-			return $elm$core$Maybe$Nothing;
-	}
-};
 var $author$project$Db$lookupRowsByForeignKeyIndexed = F5(
 	function (indices, data, tableName, foreignKeyColumn, foreignKeyValue) {
 		var indexKey = _Utils_Tuple2(tableName, foreignKeyColumn);
@@ -4792,7 +5119,11 @@ var $author$project$Db$projectFields = F6(
 			},
 			rows);
 	});
-var $author$project$Db$executeFieldQuery = F5(
+var $elm$core$Tuple$second = function (_v0) {
+	var y = _v0.b;
+	return y;
+};
+var $author$project$Db$executeFieldQueryWithTracking = F5(
 	function (schema, data, indices, queryFieldName, fieldQuery) {
 		var _v0 = A2($elm$core$Dict$get, queryFieldName, schema.queryFieldToTable);
 		if (_v0.$ === 'Just') {
@@ -4800,28 +5131,26 @@ var $author$project$Db$executeFieldQuery = F5(
 			var _v1 = A2($elm$core$Dict$get, tableName, data);
 			if (_v1.$ === 'Just') {
 				var tableRows = _v1.a;
-				return A6(
+				var rowsWithIds = $elm$core$Dict$toList(tableRows);
+				var filteredWithIds = A4($author$project$Db$applyWhereWithIndicesWithIds, indices, tableName, fieldQuery.where_, rowsWithIds);
+				var sortedWithIds = A2($author$project$Db$applySortWithIds, fieldQuery.sort, filteredWithIds);
+				var limitedWithIds = A2($author$project$Db$applyLimitWithIds, fieldQuery.limit, sortedWithIds);
+				var rowIds = $elm$core$Set$fromList(
+					A2($elm$core$List$map, $elm$core$Tuple$first, limitedWithIds));
+				var rows = A6(
 					$author$project$Db$projectFields,
 					schema,
 					tableName,
 					fieldQuery.selections,
 					data,
 					indices,
-					A2(
-						$author$project$Db$applyLimit,
-						fieldQuery.limit,
-						A2(
-							$author$project$Db$applySort,
-							fieldQuery.sort,
-							A2(
-								$author$project$Db$applyWhere,
-								fieldQuery.where_,
-								$elm$core$Dict$values(tableRows)))));
+					A2($elm$core$List$map, $elm$core$Tuple$second, limitedWithIds));
+				return _Utils_Tuple2(rows, rowIds);
 			} else {
-				return _List_Nil;
+				return _Utils_Tuple2(_List_Nil, $elm$core$Set$empty);
 			}
 		} else {
-			return _List_Nil;
+			return _Utils_Tuple2(_List_Nil, $elm$core$Set$empty);
 		}
 	});
 var $elm$core$Dict$map = F2(
@@ -4843,15 +5172,32 @@ var $elm$core$Dict$map = F2(
 				A2($elm$core$Dict$map, func, right));
 		}
 	});
-var $author$project$Db$executeQuery = F3(
+var $author$project$Db$executeQueryWithTracking = F3(
 	function (schema, db, query) {
-		return A2(
+		var resultsWithIds = A2(
 			$elm$core$Dict$map,
 			F2(
 				function (queryFieldName, fieldQuery) {
-					return A5($author$project$Db$executeFieldQuery, schema, db.tables, db.indices, queryFieldName, fieldQuery);
+					return A5($author$project$Db$executeFieldQueryWithTracking, schema, db.tables, db.indices, queryFieldName, fieldQuery);
 				}),
 			query);
+		var rowIds = A2(
+			$elm$core$Dict$map,
+			F2(
+				function (_v2, _v3) {
+					var ids = _v3.b;
+					return ids;
+				}),
+			resultsWithIds);
+		var results = A2(
+			$elm$core$Dict$map,
+			F2(
+				function (_v0, _v1) {
+					var rows = _v1.a;
+					return rows;
+				}),
+			resultsWithIds);
+		return {results: results, rowIds: rowIds};
 	});
 var $elm$http$Http$BadStatus_ = F2(
 	function (a, b) {
@@ -5530,10 +5876,25 @@ var $author$project$Main$handleQueryManagerIncoming = F2(
 				var query = incoming.b;
 				var input = incoming.c;
 				var callbackPort = incoming.d;
-				var result = A3($author$project$Db$executeQuery, model.schema, model.db, query);
-				var resultJson = $author$project$Main$encodeQueryResult(result);
+				var executionResult = A3($author$project$Db$executeQueryWithTracking, model.schema, model.db, query);
+				var resultJson = $author$project$Main$encodeQueryResult(executionResult.results);
+				var updatedQueryManager = function () {
+					var _v1 = A2($elm$core$Dict$get, queryId, model.queryManager.subscriptions);
+					if (_v1.$ === 'Just') {
+						var subscription = _v1.a;
+						var updatedSubscription = _Utils_update(
+							subscription,
+							{resultRowIds: executionResult.rowIds});
+						var updatedSubscriptions = A3($elm$core$Dict$insert, queryId, updatedSubscription, model.queryManager.subscriptions);
+						return {subscriptions: updatedSubscriptions};
+					} else {
+						return model.queryManager;
+					}
+				}();
 				return _Utils_Tuple2(
-					model,
+					_Utils_update(
+						model,
+						{queryManager: updatedQueryManager}),
 					_List_fromArray(
 						[
 							A2($author$project$Data$QueryManager$queryResult, callbackPort, resultJson)
@@ -5541,13 +5902,20 @@ var $author$project$Main$handleQueryManagerIncoming = F2(
 			case 'UpdateQueryInput':
 				var queryId = incoming.a;
 				var newInput = incoming.b;
-				var _v1 = A2($elm$core$Dict$get, queryId, model.queryManager.subscriptions);
-				if (_v1.$ === 'Just') {
-					var subscription = _v1.a;
-					var result = A3($author$project$Db$executeQuery, model.schema, model.db, subscription.query);
-					var resultJson = $author$project$Main$encodeQueryResult(result);
+				var _v2 = A2($elm$core$Dict$get, queryId, model.queryManager.subscriptions);
+				if (_v2.$ === 'Just') {
+					var subscription = _v2.a;
+					var executionResult = A3($author$project$Db$executeQueryWithTracking, model.schema, model.db, subscription.query);
+					var resultJson = $author$project$Main$encodeQueryResult(executionResult.results);
+					var updatedSubscription = _Utils_update(
+						subscription,
+						{resultRowIds: executionResult.rowIds});
+					var updatedSubscriptions = A3($elm$core$Dict$insert, queryId, updatedSubscription, model.queryManager.subscriptions);
+					var updatedQueryManager = {subscriptions: updatedSubscriptions};
 					return _Utils_Tuple2(
-						model,
+						_Utils_update(
+							model,
+							{queryManager: updatedQueryManager}),
 						_List_fromArray(
 							[
 								A2($author$project$Data$QueryManager$queryResult, subscription.callbackPort, resultJson)
@@ -5588,12 +5956,12 @@ var $author$project$Main$handleQueryManagerIncoming = F2(
 													$elm$http$Http$BadStatus(metadata.statusCode));
 											default:
 												var body = response.b;
-												var _v3 = A2($elm$json$Json$Decode$decodeString, $elm$json$Json$Decode$value, body);
-												if (_v3.$ === 'Ok') {
-													var json = _v3.a;
+												var _v4 = A2($elm$json$Json$Decode$decodeString, $elm$json$Json$Decode$value, body);
+												if (_v4.$ === 'Ok') {
+													var json = _v4.a;
 													return $elm$core$Result$Ok(json);
 												} else {
-													var err = _v3.a;
+													var err = _v4.a;
 													return $elm$core$Result$Err(
 														$elm$http$Http$BadBody(
 															$elm$json$Json$Decode$errorToString(err)));
@@ -5615,25 +5983,6 @@ var $author$project$Main$Synced = {$: 'Synced'};
 var $author$project$Main$Syncing = function (a) {
 	return {$: 'Syncing', a: a};
 };
-var $elm$core$List$member = F2(
-	function (x, xs) {
-		return A2(
-			$elm$core$List$any,
-			function (a) {
-				return _Utils_eq(a, x);
-			},
-			xs);
-	});
-var $author$project$Db$extractAffectedTables = function (delta) {
-	return A3(
-		$elm$core$List$foldl,
-		F2(
-			function (tableGroup, acc) {
-				return A2($elm$core$List$member, tableGroup.tableName, acc) ? acc : A2($elm$core$List$cons, tableGroup.tableName, acc);
-			}),
-		_List_Nil,
-		delta.tableGroups);
-};
 var $elm$core$Platform$Cmd$map = _Platform_map;
 var $author$project$Data$QueryManager$encodeQueryResult = function (result) {
 	return A3(
@@ -5648,6 +5997,360 @@ var $author$project$Data$QueryManager$encodeQueryResult = function (result) {
 				rows);
 		},
 		result);
+};
+var $author$project$Data$QueryManager$NoReExecute = {$: 'NoReExecute'};
+var $author$project$Data$QueryManager$ReExecuteFull = {$: 'ReExecuteFull'};
+var $elm$core$Dict$union = F2(
+	function (t1, t2) {
+		return A3($elm$core$Dict$foldl, $elm$core$Dict$insert, t2, t1);
+	});
+var $elm$core$Set$union = F2(
+	function (_v0, _v1) {
+		var dict1 = _v0.a;
+		var dict2 = _v1.a;
+		return $elm$core$Set$Set_elm_builtin(
+			A2($elm$core$Dict$union, dict1, dict2));
+	});
+var $author$project$Data$QueryManager$extractWhereClauseFields = function (whereClause) {
+	return A3(
+		$elm$core$Dict$foldl,
+		F3(
+			function (fieldName, filterValue, acc) {
+				switch (filterValue.$) {
+					case 'FilterValueAnd':
+						var clauses = filterValue.a;
+						return A3(
+							$elm$core$List$foldl,
+							F2(
+								function (clause, innerAcc) {
+									return A2(
+										$elm$core$Set$union,
+										innerAcc,
+										$author$project$Data$QueryManager$extractWhereClauseFields(clause));
+								}),
+							acc,
+							clauses);
+					case 'FilterValueOr':
+						var clauses = filterValue.a;
+						return A3(
+							$elm$core$List$foldl,
+							F2(
+								function (clause, innerAcc) {
+									return A2(
+										$elm$core$Set$union,
+										innerAcc,
+										$author$project$Data$QueryManager$extractWhereClauseFields(clause));
+								}),
+							acc,
+							clauses);
+					case 'FilterValueOperators':
+						return A2($elm$core$Set$insert, fieldName, acc);
+					case 'FilterValueSimple':
+						return A2($elm$core$Set$insert, fieldName, acc);
+					default:
+						return A2($elm$core$Set$insert, fieldName, acc);
+				}
+			}),
+		$elm$core$Set$empty,
+		whereClause);
+};
+var $elm$core$Set$foldl = F3(
+	function (func, initialState, _v0) {
+		var dict = _v0.a;
+		return A3(
+			$elm$core$Dict$foldl,
+			F3(
+				function (key, _v1, state) {
+					return A2(func, key, state);
+				}),
+			initialState,
+			dict);
+	});
+var $author$project$Data$QueryManager$doesChangeAffectWhereClause = F3(
+	function (whereClause, oldRow, newRow) {
+		var filteredFields = $author$project$Data$QueryManager$extractWhereClauseFields(whereClause);
+		return A3(
+			$elm$core$Set$foldl,
+			F2(
+				function (fieldName, hasChanged) {
+					return hasChanged ? true : (!_Utils_eq(
+						A2($elm$core$Dict$get, fieldName, oldRow),
+						A2($elm$core$Dict$get, fieldName, newRow)));
+				}),
+			false,
+			filteredFields);
+	});
+var $elm$core$Tuple$pair = F2(
+	function (a, b) {
+		return _Utils_Tuple2(a, b);
+	});
+var $author$project$Data$QueryManager$rowArrayToDict = F2(
+	function (headers, values) {
+		return $elm$core$Dict$fromList(
+			A3($elm$core$List$map2, $elm$core$Tuple$pair, headers, values));
+	});
+var $author$project$Data$QueryManager$checkIfFilteredFieldsChanged = F5(
+	function (db, tableName, overlappingIds, whereClause, delta) {
+		var oldTableData = A2(
+			$elm$core$Maybe$withDefault,
+			$elm$core$Dict$empty,
+			A2($elm$core$Dict$get, tableName, db.tables));
+		var deltaTableGroup = $elm$core$List$head(
+			A2(
+				$elm$core$List$filter,
+				function (tg) {
+					return _Utils_eq(tg.tableName, tableName);
+				},
+				delta.tableGroups));
+		var anyFilteredFieldChanged = function () {
+			if (deltaTableGroup.$ === 'Just') {
+				var tableGroup = deltaTableGroup.a;
+				return A2(
+					$elm$core$List$any,
+					function (newRowArray) {
+						if (newRowArray.b && (newRowArray.a.$ === 'IntValue')) {
+							var rowId = newRowArray.a.a;
+							if (A2($elm$core$Set$member, rowId, overlappingIds)) {
+								var _v2 = A2($elm$core$Dict$get, rowId, oldTableData);
+								if (_v2.$ === 'Just') {
+									var oldRow = _v2.a;
+									var newRow = A2($author$project$Data$QueryManager$rowArrayToDict, tableGroup.headers, newRowArray);
+									return A3($author$project$Data$QueryManager$doesChangeAffectWhereClause, whereClause, oldRow, newRow);
+								} else {
+									return true;
+								}
+							} else {
+								return false;
+							}
+						} else {
+							return false;
+						}
+					},
+					tableGroup.rows);
+			} else {
+				return false;
+			}
+		}();
+		return anyFilteredFieldChanged;
+	});
+var $author$project$Data$QueryManager$checkIfSpecificFieldsChanged = F5(
+	function (db, tableName, overlappingIds, fieldsToCheck, delta) {
+		var oldTableData = A2(
+			$elm$core$Maybe$withDefault,
+			$elm$core$Dict$empty,
+			A2($elm$core$Dict$get, tableName, db.tables));
+		var deltaTableGroup = $elm$core$List$head(
+			A2(
+				$elm$core$List$filter,
+				function (tg) {
+					return _Utils_eq(tg.tableName, tableName);
+				},
+				delta.tableGroups));
+		var anyFieldChanged = function () {
+			if (deltaTableGroup.$ === 'Just') {
+				var tableGroup = deltaTableGroup.a;
+				return A2(
+					$elm$core$List$any,
+					function (newRowArray) {
+						if (newRowArray.b && (newRowArray.a.$ === 'IntValue')) {
+							var rowId = newRowArray.a.a;
+							if (A2($elm$core$Set$member, rowId, overlappingIds)) {
+								var _v2 = A2($elm$core$Dict$get, rowId, oldTableData);
+								if (_v2.$ === 'Just') {
+									var oldRow = _v2.a;
+									var newRow = A2($author$project$Data$QueryManager$rowArrayToDict, tableGroup.headers, newRowArray);
+									return A3(
+										$elm$core$Set$foldl,
+										F2(
+											function (fieldName, hasChanged) {
+												return hasChanged ? true : (!_Utils_eq(
+													A2($elm$core$Dict$get, fieldName, oldRow),
+													A2($elm$core$Dict$get, fieldName, newRow)));
+											}),
+										false,
+										fieldsToCheck);
+								} else {
+									return true;
+								}
+							} else {
+								return false;
+							}
+						} else {
+							return false;
+						}
+					},
+					tableGroup.rows);
+			} else {
+				return false;
+			}
+		}();
+		return anyFieldChanged;
+	});
+var $author$project$Data$QueryManager$analyzeOverlappingChanges = F6(
+	function (schema, db, subscription, tableName, overlappingIds, delta) {
+		var maybeFieldQuery = A3(
+			$elm$core$Dict$foldl,
+			F3(
+				function (queryFieldName, fieldQuery, acc) {
+					if (acc.$ === 'Just') {
+						return acc;
+					} else {
+						var _v4 = A2($elm$core$Dict$get, queryFieldName, schema.queryFieldToTable);
+						if (_v4.$ === 'Just') {
+							var qTableName = _v4.a;
+							return _Utils_eq(qTableName, tableName) ? $elm$core$Maybe$Just(fieldQuery) : $elm$core$Maybe$Nothing;
+						} else {
+							return $elm$core$Maybe$Nothing;
+						}
+					}
+				}),
+			$elm$core$Maybe$Nothing,
+			subscription.query);
+		if (maybeFieldQuery.$ === 'Just') {
+			var fieldQuery = maybeFieldQuery.a;
+			var hasLimitOrSort = (!_Utils_eq(fieldQuery.limit, $elm$core$Maybe$Nothing)) || (!_Utils_eq(fieldQuery.sort, $elm$core$Maybe$Nothing));
+			if (hasLimitOrSort) {
+				var _v1 = fieldQuery.sort;
+				if (_v1.$ === 'Just') {
+					var sortClauses = _v1.a;
+					var sortedFields = $elm$core$Set$fromList(
+						A2(
+							$elm$core$List$map,
+							function ($) {
+								return $.field;
+							},
+							sortClauses));
+					var sortedFieldChanged = A5($author$project$Data$QueryManager$checkIfSpecificFieldsChanged, db, tableName, overlappingIds, sortedFields, delta);
+					return sortedFieldChanged;
+				} else {
+					return true;
+				}
+			} else {
+				var _v2 = fieldQuery.where_;
+				if (_v2.$ === 'Just') {
+					var whereClause = _v2.a;
+					return A5($author$project$Data$QueryManager$checkIfFilteredFieldsChanged, db, tableName, overlappingIds, whereClause, delta);
+				} else {
+					return true;
+				}
+			}
+		} else {
+			return true;
+		}
+	});
+var $elm$core$Set$isEmpty = function (_v0) {
+	var dict = _v0.a;
+	return $elm$core$Dict$isEmpty(dict);
+};
+var $author$project$Db$evaluateWhereOnRow = F2(
+	function (whereClause, row) {
+		if (whereClause.$ === 'Just') {
+			var where_ = whereClause.a;
+			return A2($author$project$Db$evaluateFilter, row, where_);
+		} else {
+			return true;
+		}
+	});
+var $author$project$Db$rowMatchesWhere = $author$project$Db$evaluateWhereOnRow;
+var $author$project$Data$QueryManager$checkIfNewRowsMatchWhere = F6(
+	function (schema, db, tableName, newRowIds, subscription, delta) {
+		if ($elm$core$Set$isEmpty(newRowIds)) {
+			return false;
+		} else {
+			var maybeFieldQuery = A3(
+				$elm$core$Dict$foldl,
+				F3(
+					function (queryFieldName, fieldQuery, acc) {
+						if (acc.$ === 'Just') {
+							return acc;
+						} else {
+							var _v4 = A2($elm$core$Dict$get, queryFieldName, schema.queryFieldToTable);
+							if (_v4.$ === 'Just') {
+								var qTableName = _v4.a;
+								return _Utils_eq(qTableName, tableName) ? $elm$core$Maybe$Just(fieldQuery) : $elm$core$Maybe$Nothing;
+							} else {
+								return $elm$core$Maybe$Nothing;
+							}
+						}
+					}),
+				$elm$core$Maybe$Nothing,
+				subscription.query);
+			var deltaTableGroup = $elm$core$List$head(
+				A2(
+					$elm$core$List$filter,
+					function (tg) {
+						return _Utils_eq(tg.tableName, tableName);
+					},
+					delta.tableGroups));
+			var _v0 = _Utils_Tuple2(maybeFieldQuery, deltaTableGroup);
+			if ((_v0.a.$ === 'Just') && (_v0.b.$ === 'Just')) {
+				var fieldQuery = _v0.a.a;
+				var tableGroup = _v0.b.a;
+				var whereClause = fieldQuery.where_;
+				if (whereClause.$ === 'Just') {
+					return A2(
+						$elm$core$List$any,
+						function (newRowArray) {
+							if (newRowArray.b && (newRowArray.a.$ === 'IntValue')) {
+								var rowId = newRowArray.a.a;
+								if (A2($elm$core$Set$member, rowId, newRowIds)) {
+									var newRow = A2($author$project$Data$QueryManager$rowArrayToDict, tableGroup.headers, newRowArray);
+									return A2($author$project$Db$rowMatchesWhere, whereClause, newRow);
+								} else {
+									return false;
+								}
+							} else {
+								return false;
+							}
+						},
+						tableGroup.rows);
+				} else {
+					return true;
+				}
+			} else {
+				return true;
+			}
+		}
+	});
+var $elm$core$Dict$diff = F2(
+	function (t1, t2) {
+		return A3(
+			$elm$core$Dict$foldl,
+			F3(
+				function (k, v, t) {
+					return A2($elm$core$Dict$remove, k, t);
+				}),
+			t1,
+			t2);
+	});
+var $elm$core$Set$diff = F2(
+	function (_v0, _v1) {
+		var dict1 = _v0.a;
+		var dict2 = _v1.a;
+		return $elm$core$Set$Set_elm_builtin(
+			A2($elm$core$Dict$diff, dict1, dict2));
+	});
+var $author$project$Data$QueryManager$extractChangedRowIds = function (delta) {
+	return A3(
+		$elm$core$List$foldl,
+		F2(
+			function (tableGroup, acc) {
+				var changedIds = $elm$core$Set$fromList(
+					A2(
+						$elm$core$List$filterMap,
+						function (row) {
+							if (row.b && (row.a.$ === 'IntValue')) {
+								var id = row.a.a;
+								return $elm$core$Maybe$Just(id);
+							} else {
+								return $elm$core$Maybe$Nothing;
+							}
+						},
+						tableGroup.rows));
+				return A3($elm$core$Dict$insert, tableGroup.tableName, changedIds, acc);
+			}),
+		$elm$core$Dict$empty,
+		delta.tableGroups);
 };
 var $author$project$Data$QueryManager$extractQueryTables = F2(
 	function (schema, query) {
@@ -5666,31 +6369,101 @@ var $author$project$Data$QueryManager$extractQueryTables = F2(
 			_List_Nil,
 			query);
 	});
-var $author$project$Data$QueryManager$notifyTablesChanged = F4(
-	function (schema, db, model, affectedTables) {
+var $elm$core$Dict$filter = F2(
+	function (isGood, dict) {
 		return A3(
 			$elm$core$Dict$foldl,
 			F3(
-				function (queryId, subscription, acc) {
-					var queryTables = A2($author$project$Data$QueryManager$extractQueryTables, schema, subscription.query);
-					var isAffected = A2(
-						$elm$core$List$any,
-						function (table) {
-							return A2($elm$core$List$member, table, queryTables);
-						},
-						affectedTables);
-					if (isAffected) {
-						var result = A3($author$project$Db$executeQuery, schema, db, subscription.query);
-						var resultJson = $author$project$Data$QueryManager$encodeQueryResult(result);
-						return A2(
-							$elm$core$List$cons,
-							A2($author$project$Data$QueryManager$queryResult, subscription.callbackPort, resultJson),
-							acc);
+				function (k, v, d) {
+					return A2(isGood, k, v) ? A3($elm$core$Dict$insert, k, v, d) : d;
+				}),
+			$elm$core$Dict$empty,
+			dict);
+	});
+var $elm$core$Dict$intersect = F2(
+	function (t1, t2) {
+		return A2(
+			$elm$core$Dict$filter,
+			F2(
+				function (k, _v0) {
+					return A2($elm$core$Dict$member, k, t2);
+				}),
+			t1);
+	});
+var $elm$core$Set$intersect = F2(
+	function (_v0, _v1) {
+		var dict1 = _v0.a;
+		var dict2 = _v1.a;
+		return $elm$core$Set$Set_elm_builtin(
+			A2($elm$core$Dict$intersect, dict1, dict2));
+	});
+var $author$project$Data$QueryManager$shouldReExecuteQuery = F4(
+	function (schema, db, subscription, delta) {
+		var queryTables = A2($author$project$Data$QueryManager$extractQueryTables, schema, subscription.query);
+		var changedRowIds = $author$project$Data$QueryManager$extractChangedRowIds(delta);
+		var hasRelevantChanges = A2(
+			$elm$core$List$any,
+			function (tableName) {
+				var _v0 = _Utils_Tuple2(
+					A2($elm$core$Dict$get, tableName, changedRowIds),
+					A2($elm$core$Dict$get, tableName, subscription.resultRowIds));
+				if (_v0.a.$ === 'Just') {
+					if (_v0.b.$ === 'Just') {
+						var deltaIds = _v0.a.a;
+						var resultIds = _v0.b.a;
+						var overlappingIds = A2($elm$core$Set$intersect, deltaIds, resultIds);
+						var hasNewRows = !$elm$core$Set$isEmpty(
+							A2($elm$core$Set$diff, deltaIds, resultIds));
+						return (!$elm$core$Set$isEmpty(overlappingIds)) ? A6($author$project$Data$QueryManager$analyzeOverlappingChanges, schema, db, subscription, tableName, overlappingIds, delta) : (hasNewRows ? A6(
+							$author$project$Data$QueryManager$checkIfNewRowsMatchWhere,
+							schema,
+							db,
+							tableName,
+							A2($elm$core$Set$diff, deltaIds, resultIds),
+							subscription,
+							delta) : false);
 					} else {
-						return acc;
+						var _v1 = _v0.b;
+						return true;
+					}
+				} else {
+					var _v2 = _v0.a;
+					return false;
+				}
+			},
+			queryTables);
+		return hasRelevantChanges ? $author$project$Data$QueryManager$ReExecuteFull : $author$project$Data$QueryManager$NoReExecute;
+	});
+var $author$project$Data$QueryManager$notifyTablesChanged = F4(
+	function (schema, db, model, delta) {
+		return A3(
+			$elm$core$Dict$foldl,
+			F3(
+				function (queryId, subscription, _v0) {
+					var accModel = _v0.a;
+					var accCmds = _v0.b;
+					var decision = A4($author$project$Data$QueryManager$shouldReExecuteQuery, schema, db, subscription, delta);
+					if (decision.$ === 'ReExecuteFull') {
+						var executionResult = A3($author$project$Db$executeQueryWithTracking, schema, db, subscription.query);
+						var resultJson = $author$project$Data$QueryManager$encodeQueryResult(executionResult.results);
+						var updatedSubscription = _Utils_update(
+							subscription,
+							{resultRowIds: executionResult.rowIds});
+						var updatedSubscriptions = A3($elm$core$Dict$insert, queryId, updatedSubscription, accModel.subscriptions);
+						var updatedModel = _Utils_update(
+							accModel,
+							{subscriptions: updatedSubscriptions});
+						return _Utils_Tuple2(
+							updatedModel,
+							A2(
+								$elm$core$List$cons,
+								A2($author$project$Data$QueryManager$queryResult, subscription.callbackPort, resultJson),
+								accCmds));
+					} else {
+						return _Utils_Tuple2(accModel, accCmds);
 					}
 				}),
-			_List_Nil,
+			_Utils_Tuple2(model, _List_Nil),
 			model.subscriptions);
 	});
 var $elm$core$Maybe$andThen = F2(
@@ -5747,10 +6520,6 @@ var $author$project$Db$getRowId = function (row) {
 		return $elm$core$Maybe$Nothing;
 	}
 };
-var $elm$core$Tuple$pair = F2(
-	function (a, b) {
-		return _Utils_Tuple2(a, b);
-	});
 var $author$project$Db$rowArrayToObject = F2(
 	function (headers, values) {
 		return $elm$core$Dict$fromList(
@@ -5951,15 +6720,15 @@ var $author$project$Db$Index$buildIndicesFromSchema = F2(
 			$elm$core$Dict$foldl,
 			F3(
 				function (tableName, tableMeta, acc) {
-					return A3(
+					var accWithLinks = A3(
 						$elm$core$Dict$foldl,
 						F3(
 							function (linkName, linkInfo, innerAcc) {
-								var _v0 = linkInfo.type_;
-								if (_v0.$ === 'OneToMany') {
-									var _v1 = A2($elm$core$Dict$get, linkInfo.to.table, tables);
-									if (_v1.$ === 'Just') {
-										var targetTable = _v1.a;
+								var _v1 = linkInfo.type_;
+								if (_v1.$ === 'OneToMany') {
+									var _v2 = A2($elm$core$Dict$get, linkInfo.to.table, tables);
+									if (_v2.$ === 'Just') {
+										var targetTable = _v2.a;
 										var indexKey = _Utils_Tuple2(linkInfo.to.table, linkInfo.to.column);
 										var index = A2($author$project$Db$Index$rebuildFromTable, targetTable, linkInfo.to.column);
 										return A3($elm$core$Dict$insert, indexKey, index, innerAcc);
@@ -5972,6 +6741,23 @@ var $author$project$Db$Index$buildIndicesFromSchema = F2(
 							}),
 						acc,
 						tableMeta.links);
+					var accWithExplicit = A3(
+						$elm$core$List$foldl,
+						F2(
+							function (indexInfo, innerAcc) {
+								var _v0 = A2($elm$core$Dict$get, tableName, tables);
+								if (_v0.$ === 'Just') {
+									var tableRows = _v0.a;
+									var indexKey = _Utils_Tuple2(tableName, indexInfo.field);
+									var index = A2($author$project$Db$Index$rebuildFromTable, tableRows, indexInfo.field);
+									return A3($elm$core$Dict$insert, indexKey, index, innerAcc);
+								} else {
+									return innerAcc;
+								}
+							}),
+						accWithLinks,
+						tableMeta.indices);
+					return accWithExplicit;
 				}),
 			$elm$core$Dict$empty,
 			schema.tables);
@@ -6033,18 +6819,19 @@ var $author$project$Main$handleSSEIncoming = F2(
 		switch (incoming.$) {
 			case 'DeltaReceived':
 				var delta = incoming.a;
-				var affectedTables = $author$project$Db$extractAffectedTables(delta);
 				var _v1 = A2(
 					$author$project$Db$update,
 					$author$project$Db$DeltaReceived(delta),
 					model.db);
 				var updatedDb = _v1.a;
 				var dbCmd = _v1.b;
-				var triggerCmds = A4($author$project$Data$QueryManager$notifyTablesChanged, model.schema, updatedDb, model.queryManager, affectedTables);
+				var _v2 = A4($author$project$Data$QueryManager$notifyTablesChanged, model.schema, updatedDb, model.queryManager, delta);
+				var updatedQueryManager = _v2.a;
+				var triggerCmds = _v2.b;
 				return _Utils_Tuple2(
 					_Utils_update(
 						model,
-						{db: updatedDb}),
+						{db: updatedDb, queryManager: updatedQueryManager}),
 					$elm$core$Platform$Cmd$batch(
 						_List_fromArray(
 							[
@@ -6109,9 +6896,9 @@ var $author$project$Data$Error$errorOut = _Platform_outgoingPort('errorOut', $el
 var $author$project$Data$Error$sendError = function (message) {
 	return $author$project$Data$Error$errorOut(message);
 };
-var $author$project$Data$QueryManager$QuerySubscription = F4(
-	function (queryId, query, input, callbackPort) {
-		return {callbackPort: callbackPort, input: input, query: query, queryId: queryId};
+var $author$project$Data$QueryManager$QuerySubscription = F5(
+	function (queryId, query, input, callbackPort, resultRowIds) {
+		return {callbackPort: callbackPort, input: input, query: query, queryId: queryId, resultRowIds: resultRowIds};
 	});
 var $author$project$Data$QueryManager$handleIncoming = F2(
 	function (incoming, model) {
@@ -6121,7 +6908,7 @@ var $author$project$Data$QueryManager$handleIncoming = F2(
 				var query = incoming.b;
 				var input = incoming.c;
 				var callbackPort = incoming.d;
-				var subscription = A4($author$project$Data$QueryManager$QuerySubscription, queryId, query, input, callbackPort);
+				var subscription = A5($author$project$Data$QueryManager$QuerySubscription, queryId, query, input, callbackPort, $elm$core$Dict$empty);
 				var updatedSubscriptions = A3($elm$core$Dict$insert, queryId, subscription, model.subscriptions);
 				return _Utils_Tuple2(
 					_Utils_update(

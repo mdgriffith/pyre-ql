@@ -1,5 +1,6 @@
 module Db.Query exposing
     ( FieldQuery
+    , FilterOperator(..)
     , FilterValue(..)
     , Query
     , Selection(..)
@@ -35,10 +36,23 @@ type alias WhereClause =
     Dict String FilterValue
 
 
+type FilterOperator
+    = OpEq
+    | OpNe
+    | OpGt
+    | OpGte
+    | OpLt
+    | OpLte
+    | OpIn
+    | OpNotIn
+    | OpLike
+    | OpNotLike
+
+
 type FilterValue
     = FilterValueSimple Value
     | FilterValueNull
-    | FilterValueOperators (Dict String FilterValue)
+    | FilterValueOperators (List ( FilterOperator, FilterValue ))
     | FilterValueAnd (List WhereClause)
     | FilterValueOr (List WhereClause)
 
@@ -158,7 +172,7 @@ decodeFilterValue : Decode.Decoder FilterValue
 decodeFilterValue =
     Decode.oneOf
         [ Decode.null FilterValueNull
-        , Decode.dict (Decode.lazy (\_ -> decodeFilterValue))
+        , Decode.dict Decode.value
             |> Decode.andThen
                 (\dict ->
                     if Dict.member "$and" dict then
@@ -170,10 +184,73 @@ decodeFilterValue =
                             |> Decode.map FilterValueOr
 
                     else
-                        Decode.succeed (FilterValueOperators dict)
+                        decodeOperatorDict dict
                 )
         , Data.Value.decodeValue |> Decode.map FilterValueSimple
         ]
+
+
+decodeOperatorDict : Dict String Decode.Value -> Decode.Decoder FilterValue
+decodeOperatorDict dict =
+    let
+        decodeEntry opString value acc =
+            case decodeOperator opString of
+                Just operator ->
+                    case Decode.decodeValue decodeFilterValue value of
+                        Ok filterValue ->
+                            Decode.succeed (( operator, filterValue ) :: acc)
+
+                        Err _ ->
+                            Decode.fail "Invalid operator value"
+
+                Nothing ->
+                    Decode.fail "Unknown operator"
+    in
+    Dict.foldl
+        (\key value decoderAcc ->
+            decoderAcc
+                |> Decode.andThen (\acc -> decodeEntry key value acc)
+        )
+        (Decode.succeed [])
+        dict
+        |> Decode.map FilterValueOperators
+
+
+decodeOperator : String -> Maybe FilterOperator
+decodeOperator operator =
+    case operator of
+        "$eq" ->
+            Just OpEq
+
+        "$ne" ->
+            Just OpNe
+
+        "$gt" ->
+            Just OpGt
+
+        "$gte" ->
+            Just OpGte
+
+        "$lt" ->
+            Just OpLt
+
+        "$lte" ->
+            Just OpLte
+
+        "$in" ->
+            Just OpIn
+
+        "$nin" ->
+            Just OpNotIn
+
+        "$like" ->
+            Just OpLike
+
+        "$nlike" ->
+            Just OpNotLike
+
+        _ ->
+            Nothing
 
 
 decodeSortClause : Decode.Decoder SortClause

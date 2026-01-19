@@ -54,8 +54,13 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
             generate::generate_schema(&context, &schema, out_dir, &mut files);
 
             // Collect all queries from all files first
-            let mut all_queries = ast::QueryList { queries: Vec::new() };
-            let mut all_query_info_combined: std::collections::HashMap<String, typecheck::QueryInfo> = std::collections::HashMap::new();
+            let mut all_queries = ast::QueryList {
+                queries: Vec::new(),
+            };
+            let mut all_query_info_combined: std::collections::HashMap<
+                String,
+                typecheck::QueryInfo,
+            > = std::collections::HashMap::new();
 
             for query_file_path in paths.query_files {
                 let mut query_file = fs::File::open(query_file_path.clone())?;

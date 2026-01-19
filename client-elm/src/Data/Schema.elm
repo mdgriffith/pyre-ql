@@ -1,4 +1,4 @@
-module Data.Schema exposing (LinkInfo, LinkTarget, LinkType(..), SchemaMetadata, TableMetadata, decodeLinkInfo, decodeLinkTarget, decodeLinkType, decodeSchemaMetadata, decodeTableMetadata)
+module Data.Schema exposing (IndexInfo, LinkInfo, LinkTarget, LinkType(..), SchemaMetadata, TableMetadata, decodeIndexInfo, decodeLinkInfo, decodeLinkTarget, decodeLinkType, decodeSchemaMetadata, decodeTableMetadata)
 
 import Dict exposing (Dict)
 import Json.Decode as Decode
@@ -23,9 +23,17 @@ type alias LinkTarget =
     }
 
 
+type alias IndexInfo =
+    { field : String
+    , unique : Bool
+    , primary : Bool
+    }
+
+
 type alias TableMetadata =
     { name : String
     , links : Dict String LinkInfo
+    , indices : List IndexInfo
     }
 
 
@@ -70,11 +78,20 @@ decodeLinkTarget =
         (Decode.field "column" Decode.string)
 
 
+decodeIndexInfo : Decode.Decoder IndexInfo
+decodeIndexInfo =
+    Decode.map3 IndexInfo
+        (Decode.field "field" Decode.string)
+        (Decode.field "unique" Decode.bool)
+        (Decode.field "primary" Decode.bool)
+
+
 decodeTableMetadata : Decode.Decoder TableMetadata
 decodeTableMetadata =
-    Decode.map2 TableMetadata
+    Decode.map3 TableMetadata
         (Decode.field "name" Decode.string)
         (Decode.field "links" (Decode.dict decodeLinkInfo))
+        (Decode.field "indices" (Decode.list decodeIndexInfo))
 
 
 decodeSchemaMetadata : Decode.Decoder SchemaMetadata

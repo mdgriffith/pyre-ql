@@ -54,7 +54,7 @@ pub fn delete_to_string(
         "drop table if exists {}",
         temp_table_name
     )));
-    
+
     // Always create temp table - we need it for the typed response query
     statements.push(to_sql::ignore(format!(
         "create temp table {} as select * from {} {}",

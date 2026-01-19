@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashSet;
 
-#[derive(Debug, Clone,Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Error {
     pub error_type: ErrorType,
     pub filepath: String,
@@ -311,14 +311,22 @@ fn prepare_highlight(file_contents: &str, error: &Error, enable_color: bool) -> 
 }
 
 fn divider(indent: usize, enable_color: bool) -> String {
-    color::gray(enable_color, &format!("    | {}...\n", " ".repeat(indent * 4)))
+    color::gray(
+        enable_color,
+        &format!("    | {}...\n", " ".repeat(indent * 4)),
+    )
 }
 
 fn join_hashset(set: &HashSet<String>, sep: &str) -> String {
     set.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(sep)
 }
 
-fn render_highlight_location(file_contents: &str, rendered: &mut String, location: &Location, enable_color: bool) {
+fn render_highlight_location(
+    file_contents: &str,
+    rendered: &mut String,
+    location: &Location,
+    enable_color: bool,
+) {
     let mut indent: usize = 0;
 
     let mut last_line_index: usize = 0;
@@ -326,9 +334,10 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
 
     // Helper function to check if a line number is in any primary range
     let line_in_primary = |line: u32| -> bool {
-        location.primary.iter().any(|primary| {
-            primary.start.line <= line && line <= primary.end.line
-        })
+        location
+            .primary
+            .iter()
+            .any(|primary| primary.start.line <= line && line <= primary.end.line)
     };
 
     for context in &location.contexts {
@@ -336,11 +345,16 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
         if line_in_primary(context.start.line) {
             continue;
         }
-        
+
         if first_rendered && context.start.line.to_usize() > last_line_index + 1 {
             rendered.push_str(&divider(indent, enable_color))
         }
-        rendered.push_str(&get_line(&file_contents, false, context.start.line, enable_color));
+        rendered.push_str(&get_line(
+            &file_contents,
+            false,
+            context.start.line,
+            enable_color,
+        ));
         rendered.push_str("\n");
 
         first_rendered = true;
@@ -356,7 +370,12 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
         }
 
         if primary.start.line == primary.end.line {
-            rendered.push_str(&get_line(file_contents, true, primary.start.line, enable_color));
+            rendered.push_str(&get_line(
+                file_contents,
+                true,
+                primary.start.line,
+                enable_color,
+            ));
             rendered.push_str("\n");
             rendered.push_str(&highlight_line(&primary, enable_color));
             rendered.push_str("\n");
@@ -380,11 +399,11 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
         if line_in_primary(context.end.line) {
             continue;
         }
-        
+
         // Only decrement indent if the corresponding start line was actually rendered
         // (i.e., not skipped because it overlapped with a primary line)
         let start_line_was_rendered = !line_in_primary(context.start.line);
-        
+
         if last_line_index == context.end.line.to_usize() {
             // Skip if we've already rendered this line - don't change indent
             continue;
@@ -393,7 +412,12 @@ fn render_highlight_location(file_contents: &str, rendered: &mut String, locatio
             rendered.push_str(&divider(indent, enable_color))
         }
 
-        rendered.push_str(&get_line(&file_contents, false, context.end.line, enable_color));
+        rendered.push_str(&get_line(
+            &file_contents,
+            false,
+            context.end.line,
+            enable_color,
+        ));
         rendered.push_str("\n");
 
         last_line_index = context.end.line.to_usize();
@@ -450,11 +474,18 @@ fn highlight_line(range: &Range, enable_color: bool) -> String {
     }
 }
 
-fn get_line(file_contents: &str, show_line_number: bool, line_index: u32, enable_color: bool) -> String {
+fn get_line(
+    file_contents: &str,
+    show_line_number: bool,
+    line_index: u32,
+    enable_color: bool,
+) -> String {
     let line_number = line_index.to_usize() - 1;
 
-    let prefix =
-        color::gray(enable_color, &line_number_prefix(show_line_number, line_index.to_usize()));
+    let prefix = color::gray(
+        enable_color,
+        &line_number_prefix(show_line_number, line_index.to_usize()),
+    );
 
     for (index, line) in file_contents.to_string().lines().enumerate() {
         if line_number == index {
@@ -464,7 +495,13 @@ fn get_line(file_contents: &str, show_line_number: bool, line_index: u32, enable
     prefix.to_string()
 }
 
-fn get_lines(file_contents: &str, show_line_number: bool, start: u32, end: u32, enable_color: bool) -> String {
+fn get_lines(
+    file_contents: &str,
+    show_line_number: bool,
+    start: u32,
+    end: u32,
+    enable_color: bool,
+) -> String {
     let start_line_number = start.to_usize() - 1;
     let end_line_number = end.to_usize() - 1;
 
@@ -472,8 +509,10 @@ fn get_lines(file_contents: &str, show_line_number: bool, start: u32, end: u32, 
 
     for (index, line) in file_contents.to_string().lines().enumerate() {
         if start_line_number <= index && end_line_number >= index {
-            let prefix =
-                color::gray(enable_color, &line_number_prefix(show_line_number, index.to_usize() + 1));
+            let prefix = color::gray(
+                enable_color,
+                &line_number_prefix(show_line_number, index.to_usize() + 1),
+            );
             result.push_str(&format!("{}{}", prefix, line.to_string()));
             result.push_str("\n");
         }
@@ -669,10 +708,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
-        ErrorType::DuplicateVariant {
-            base_variant,
-            ..
-        } => {
+        ErrorType::DuplicateVariant { base_variant, .. } => {
             let mut result = "".to_string();
             result.push_str(&format!(
                 "{} has more than one variant named {}.\n",
@@ -812,7 +848,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result
         }
 
-        ErrorType::MultiplePrimaryKeys { record , .. } => {
+        ErrorType::MultiplePrimaryKeys { record, .. } => {
             let mut result = "".to_string();
 
             result.push_str(&format!(
@@ -1189,23 +1225,40 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             )
         }
         ErrorType::MigrationTableDropped { table_name } => {
-            format!("The table {} has been dropped. This might be causing issues in your query.", yellow_if(in_color, table_name))
+            format!(
+                "The table {} has been dropped. This might be causing issues in your query.",
+                yellow_if(in_color, table_name)
+            )
         }
-        ErrorType::MigrationColumnDropped { table_name, column_name, added_columns } => {
+        ErrorType::MigrationColumnDropped {
+            table_name,
+            column_name,
+            added_columns,
+        } => {
             format!("The column {} has been dropped from the table {}. This might be causing issues in your query. Consider adding the column back or updating your query to use the new column format.", yellow_if(in_color, column_name), yellow_if(in_color, table_name))
         }
-        ErrorType::MigrationColumnModified { table_name, column_name, changes } => {
+        ErrorType::MigrationColumnModified {
+            table_name,
+            column_name,
+            changes,
+        } => {
             format!("The column {} has been modified in the table {}. This might be causing issues in your query. Consider updating your query to use the new column format.", yellow_if(in_color, column_name), yellow_if(in_color, table_name))
         }
-        ErrorType::MigrationVariantRemoved { tagged_name, variant_name } => {
+        ErrorType::MigrationVariantRemoved {
+            tagged_name,
+            variant_name,
+        } => {
             format!("The variant {} has been removed from the tagged type {}. This might be causing issues in your query. Consider updating your query to use the new variant format.", yellow_if(in_color, variant_name), yellow_if(in_color, tagged_name))
         }
-        ErrorType::MigrationSchemaNotFound { namespace } => {
-            match namespace {
-                Some(name) => format!("A migration was attempted for the schema named {}, but it was not found.", yellow_if(in_color, &name)),
-                None => format!("A migration was attempted for the default schema, but it was not found.")
+        ErrorType::MigrationSchemaNotFound { namespace } => match namespace {
+            Some(name) => format!(
+                "A migration was attempted for the schema named {}, but it was not found.",
+                yellow_if(in_color, &name)
+            ),
+            None => {
+                format!("A migration was attempted for the default schema, but it was not found.")
             }
-        }
+        },
         ErrorType::MigrationMissingSchema => {
             format!("There is no schema recorded in the database.")
         }
@@ -1370,10 +1423,14 @@ pub fn format_json(error: &Error) -> serde_json::Value {
     serde_json::Value::Object(error_json)
 }
 
-
-pub fn report_and_exit(error_list: Vec<Error>, paths: &crate::filesystem::Found, enable_color: bool) -> ! {
+pub fn report_and_exit(
+    error_list: Vec<Error>,
+    paths: &crate::filesystem::Found,
+    enable_color: bool,
+) -> ! {
     for err in error_list {
-        let schema_source = crate::filesystem::get_schema_source(&err.filepath, paths).unwrap_or("");
+        let schema_source =
+            crate::filesystem::get_schema_source(&err.filepath, paths).unwrap_or("");
         let formatted_error = format_error(&schema_source, &err, enable_color);
         eprintln!("{}", &formatted_error);
     }
@@ -1387,6 +1444,3 @@ pub struct ColumnDiff {
     pub added_directives: Vec<ast::ColumnDirective>,
     pub removed_directives: Vec<ast::ColumnDirective>,
 }
-
-
-

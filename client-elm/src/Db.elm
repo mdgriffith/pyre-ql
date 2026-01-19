@@ -362,8 +362,7 @@ executeFieldQuery schema data indices queryFieldName fieldQuery =
         Just tableName ->
             case Dict.get tableName data of
                 Just tableRows ->
-                    Dict.values tableRows
-                        |> applyWhere fieldQuery.where_
+                    applyWhereWithIndices indices tableName fieldQuery.where_ tableRows
                         |> applySort fieldQuery.sort
                         |> applyLimit fieldQuery.limit
                         |> projectFields schema tableName fieldQuery.selections data indices
@@ -388,8 +387,7 @@ executeFieldQueryWithTracking schema data indices queryFieldName fieldQuery =
 
                         -- Apply WHERE filter (keep track of IDs)
                         filteredWithIds =
-                            rowsWithIds
-                                |> List.filter (\( _, row ) -> evaluateWhereOnRow fieldQuery.where_ row)
+                            applyWhereWithIndicesWithIds indices tableName fieldQuery.where_ rowsWithIds
 
                         -- Apply sort (IDs stay paired)
                         sortedWithIds =
@@ -428,6 +426,158 @@ evaluateWhereOnRow whereClause row =
 
         Nothing ->
             True
+
+
+applyWhereWithIndices : Dict ( String, String ) Db.Index.Index -> String -> Maybe Db.Query.WhereClause -> TableData -> List (Dict String Value)
+applyWhereWithIndices indices tableName whereClause tableRows =
+    let
+        filteredRowsWithIds =
+            applyWhereWithIndicesWithIds indices tableName whereClause (Dict.toList tableRows)
+    in
+    List.map Tuple.second filteredRowsWithIds
+
+
+applyWhereWithIndicesWithIds : Dict ( String, String ) Db.Index.Index -> String -> Maybe Db.Query.WhereClause -> List ( Int, Dict String Value ) -> List ( Int, Dict String Value )
+applyWhereWithIndicesWithIds indices tableName whereClause rowsWithIds =
+    case whereClause of
+        Just where_ ->
+            let
+                maybeIndexedIds =
+                    collectIndexedRowIds indices tableName where_
+            in
+            case maybeIndexedIds of
+                Just indexedIds ->
+                    rowsWithIds
+                        |> List.filter (\( rowId, row ) -> Set.member rowId indexedIds && evaluateFilter row where_)
+
+                Nothing ->
+                    rowsWithIds
+                        |> List.filter (\( _, row ) -> evaluateFilter row where_)
+
+        Nothing ->
+            rowsWithIds
+
+
+collectIndexedRowIds : Dict ( String, String ) Db.Index.Index -> String -> Db.Query.WhereClause -> Maybe (Set Int)
+collectIndexedRowIds indices tableName whereClause =
+    let
+        directFieldOperators =
+            Dict.foldl
+                (\field value acc ->
+                    case acc of
+                        Just _ ->
+                            acc
+
+                        Nothing ->
+                            case value of
+                                Db.Query.FilterValueOperators operators ->
+                                    extractIndexedIdsFromOperators indices tableName field operators
+
+                                Db.Query.FilterValueSimple simpleValue ->
+                                    extractIndexedIdsFromOperators indices tableName field [ ( Db.Query.OpEq, Db.Query.FilterValueSimple simpleValue ) ]
+
+                                _ ->
+                                    Nothing
+                )
+                Nothing
+                whereClause
+
+        nestedAnd =
+            case Dict.get "$and" whereClause of
+                Just (Db.Query.FilterValueAnd clauses) ->
+                    collectIndexedFromAnd indices tableName clauses
+
+                _ ->
+                    Nothing
+    in
+    case directFieldOperators of
+        Just _ ->
+            directFieldOperators
+
+        Nothing ->
+            nestedAnd
+
+
+collectIndexedFromAnd : Dict ( String, String ) Db.Index.Index -> String -> List Db.Query.WhereClause -> Maybe (Set Int)
+collectIndexedFromAnd indices tableName clauses =
+    case clauses of
+        [] ->
+            Nothing
+
+        clause :: rest ->
+            case collectIndexedRowIds indices tableName clause of
+                Just ids ->
+                    Just ids
+
+                Nothing ->
+                    collectIndexedFromAnd indices tableName rest
+
+
+extractIndexedIdsFromOperators : Dict ( String, String ) Db.Index.Index -> String -> String -> List ( Db.Query.FilterOperator, Db.Query.FilterValue ) -> Maybe (Set Int)
+extractIndexedIdsFromOperators indices tableName field operators =
+    let
+        indexKey =
+            ( tableName, field )
+
+        gatherIds opValue =
+            case Dict.get indexKey indices of
+                Just index ->
+                    case valueToIndexKey opValue of
+                        Just key ->
+                            Db.Index.lookup key index |> Set.fromList |> Just
+
+                        Nothing ->
+                            Nothing
+
+                Nothing ->
+                    Nothing
+
+        eqValue =
+            List.filterMap
+                (\( op, opValue ) ->
+                    case ( op, opValue ) of
+                        ( Db.Query.OpEq, Db.Query.FilterValueSimple value ) ->
+                            Just value
+
+                        _ ->
+                            Nothing
+                )
+                operators
+                |> List.head
+
+        inValues =
+            List.filterMap
+                (\( op, opValue ) ->
+                    case ( op, opValue ) of
+                        ( Db.Query.OpIn, Db.Query.FilterValueSimple (Data.Value.ArrayValue values) ) ->
+                            Just values
+
+                        _ ->
+                            Nothing
+                )
+                operators
+                |> List.head
+    in
+    case eqValue of
+        Just value ->
+            gatherIds value
+
+        Nothing ->
+            case inValues of
+                Just values ->
+                    case Dict.get indexKey indices of
+                        Just index ->
+                            values
+                                |> List.filterMap valueToIndexKey
+                                |> List.concatMap (\key -> Db.Index.lookup key index)
+                                |> Set.fromList
+                                |> Just
+
+                        Nothing ->
+                            Nothing
+
+                Nothing ->
+                    Nothing
 
 
 rowMatchesWhere : Maybe Db.Query.WhereClause -> Dict String Value -> Bool
@@ -758,8 +908,8 @@ evaluateFilterValue fieldValue condition =
             fieldValue == value
 
         Db.Query.FilterValueOperators operators ->
-            Dict.foldl
-                (\op opValue acc ->
+            List.foldl
+                (\( op, opValue ) acc ->
                     if not acc then
                         False
 
@@ -776,34 +926,29 @@ evaluateFilterValue fieldValue condition =
             False
 
 
-evaluateOperator : Value -> String -> Db.Query.FilterValue -> Bool
+evaluateOperator : Value -> Db.Query.FilterOperator -> Db.Query.FilterValue -> Bool
 evaluateOperator fieldValue operator opValue =
-    case opValue of
-        Db.Query.FilterValueSimple value ->
-            case operator of
-                "$eq" ->
-                    fieldValue == value
+    case ( operator, opValue ) of
+        ( Db.Query.OpEq, Db.Query.FilterValueSimple value ) ->
+            fieldValue == value
 
-                "$ne" ->
-                    fieldValue /= value
+        ( Db.Query.OpNe, Db.Query.FilterValueSimple value ) ->
+            fieldValue /= value
 
-                "$gt" ->
-                    compareValues fieldValue value > 0
+        ( Db.Query.OpGt, Db.Query.FilterValueSimple value ) ->
+            compareValues fieldValue value > 0
 
-                "$gte" ->
-                    compareValues fieldValue value >= 0
+        ( Db.Query.OpGte, Db.Query.FilterValueSimple value ) ->
+            compareValues fieldValue value >= 0
 
-                "$lt" ->
-                    compareValues fieldValue value < 0
+        ( Db.Query.OpLt, Db.Query.FilterValueSimple value ) ->
+            compareValues fieldValue value < 0
 
-                "$lte" ->
-                    compareValues fieldValue value <= 0
+        ( Db.Query.OpLte, Db.Query.FilterValueSimple value ) ->
+            compareValues fieldValue value <= 0
 
-                _ ->
-                    False
-
-        Db.Query.FilterValueOperators _ ->
-            False
+        ( Db.Query.OpIn, Db.Query.FilterValueSimple (Data.Value.ArrayValue values) ) ->
+            List.member fieldValue values
 
         _ ->
             False

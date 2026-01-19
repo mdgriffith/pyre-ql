@@ -53,11 +53,7 @@ pub fn generate(
 
     if !watched_ops.is_empty() {
         for (table_name, watched_operation) in &watched_ops {
-            let name = format!(
-                "{}{}",
-                table_name,
-                operation_name(watched_operation)
-            );
+            let name = format!("{}{}", table_name, operation_name(watched_operation));
             content.push_str(&format!(
                 "\n\nexport interface {} {{\n  kind: WatchedKind.{};\n  data: {};\n}}",
                 name, name, "{}"
@@ -67,11 +63,7 @@ pub fn generate(
         content.push_str("\n\nexport type Watched");
         let mut is_first = true;
         for (table_name, watched_operation) in &watched_ops {
-            let name = format!(
-                "{}{}",
-                table_name,
-                operation_name(watched_operation)
-            );
+            let name = format!("{}{}", table_name, operation_name(watched_operation));
             if is_first {
                 content.push_str(&format!("\n    = {}", name));
                 is_first = false;

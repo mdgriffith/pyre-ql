@@ -566,9 +566,9 @@ fn test_insert_delete_incomplete_union_variant() {
 
 #[test]
 fn test_parse_string_column_position() {
-    use pyre::parser::{parse_string, ParseContext};
     use nom_locate::LocatedSpan;
-    
+    use pyre::parser::{parse_string, ParseContext};
+
     // Test string parsing: "hello" with leading spaces
     // Line: "        title = \"hello\""
     // We want to verify the range starts at the opening quote
@@ -581,13 +581,14 @@ fn test_parse_string_column_position() {
             expecting: pyre::error::Expecting::PyreFile,
         },
     );
-    
+
     // Skip to the position where the string starts
     use nom::error::VerboseError;
     use pyre::parser::Text;
-    let (remaining, _) = nom::bytes::complete::take_until::<_, _, VerboseError<Text>>("\"")(text).unwrap();
+    let (remaining, _) =
+        nom::bytes::complete::take_until::<_, _, VerboseError<Text>>("\"")(text).unwrap();
     let (remaining, result) = parse_string(remaining).unwrap();
-    
+
     match result {
         pyre::ast::QueryValue::String((range, _)) => {
             // The string starts at column 17 (1-based): "        title = " = 16 chars, then " at column 17
@@ -610,9 +611,9 @@ fn test_parse_string_column_position() {
 
 #[test]
 fn test_parse_variable_column_position() {
-    use pyre::parser::{parse_variable, ParseContext};
     use nom_locate::LocatedSpan;
-    
+    use pyre::parser::{parse_variable, ParseContext};
+
     // Test variable parsing: $title with leading spaces
     // Line: "        title = $title"
     // We want to verify the range starts at the $ character
@@ -625,13 +626,14 @@ fn test_parse_variable_column_position() {
             expecting: pyre::error::Expecting::PyreFile,
         },
     );
-    
+
     // Skip to the position where the variable starts
     use nom::error::VerboseError;
     use pyre::parser::Text;
-    let (remaining, _) = nom::bytes::complete::take_until::<_, _, VerboseError<Text>>("$")(text).unwrap();
+    let (remaining, _) =
+        nom::bytes::complete::take_until::<_, _, VerboseError<Text>>("$")(text).unwrap();
     let (remaining, result) = parse_variable(remaining).unwrap();
-    
+
     match result {
         pyre::ast::QueryValue::Variable((range, _)) => {
             // The variable should start at column 17 (1-based): "        title = " = 16 chars, then $ at column 17

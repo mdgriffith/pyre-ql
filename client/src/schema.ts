@@ -51,6 +51,12 @@ export interface LinkInfo {
   type: 'many-to-one' | 'one-to-many';
 }
 
+export interface IndexInfo {
+  field: string;
+  unique: boolean;
+  primary: boolean;
+}
+
 export interface RecordInfo {
   name: string;
   tableName: string;

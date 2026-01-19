@@ -30,7 +30,7 @@ Example: Query 100 users with their posts (each user has ~50 posts)
 
 # Index Building Strategy
 
-Indices are built for OneToMany relationships only, as these are the problematic ones.
+Indices are built for OneToMany relationships and any schema-declared indices.
 ManyToOne and OneToOne relationships use primary key lookups which are already O(1).
 
 Indices are:
@@ -218,8 +218,8 @@ valueToIndexKey value =
 
 {-| Build all necessary indices from schema metadata.
 
-This creates indices for OneToMany relationships (the problematic ones),
-as those require foreign key lookups that would otherwise be O(N) table scans.
+This creates indices for OneToMany relationships (the problematic ones) and
+for schema-declared indices.
 
 Returns a Dict keyed by (tableName, columnName).
 
@@ -228,32 +228,55 @@ buildIndicesFromSchema : SchemaMetadata -> Dict String (Dict Int (Dict String Va
 buildIndicesFromSchema schema tables =
     Dict.foldl
         (\tableName tableMeta acc ->
-            -- For each table, look at its links
-            Dict.foldl
-                (\linkName linkInfo innerAcc ->
-                    case linkInfo.type_ of
-                        OneToMany ->
-                            -- Build index on the target table's foreign key column
-                            case Dict.get linkInfo.to.table tables of
-                                Just targetTable ->
-                                    let
-                                        index =
-                                            rebuildFromTable targetTable linkInfo.to.column
+            let
+                accWithLinks =
+                    Dict.foldl
+                        (\linkName linkInfo innerAcc ->
+                            case linkInfo.type_ of
+                                OneToMany ->
+                                    -- Build index on the target table's foreign key column
+                                    case Dict.get linkInfo.to.table tables of
+                                        Just targetTable ->
+                                            let
+                                                index =
+                                                    rebuildFromTable targetTable linkInfo.to.column
 
+                                                indexKey =
+                                                    ( linkInfo.to.table, linkInfo.to.column )
+                                            in
+                                            Dict.insert indexKey index innerAcc
+
+                                        Nothing ->
+                                            innerAcc
+
+                                _ ->
+                                    -- ManyToOne and OneToOne use primary key lookups (already O(1))
+                                    innerAcc
+                        )
+                        acc
+                        tableMeta.links
+
+                accWithExplicit =
+                    List.foldl
+                        (\indexInfo innerAcc ->
+                            case Dict.get tableName tables of
+                                Just tableRows ->
+                                    let
                                         indexKey =
-                                            ( linkInfo.to.table, linkInfo.to.column )
+                                            ( tableName, indexInfo.field )
+
+                                        index =
+                                            rebuildFromTable tableRows indexInfo.field
                                     in
                                     Dict.insert indexKey index innerAcc
 
                                 Nothing ->
                                     innerAcc
-
-                        _ ->
-                            -- ManyToOne and OneToOne use primary key lookups (already O(1))
-                            innerAcc
-                )
-                acc
-                tableMeta.links
+                        )
+                        accWithLinks
+                        tableMeta.indices
+            in
+            accWithExplicit
         )
         Dict.empty
         schema.tables

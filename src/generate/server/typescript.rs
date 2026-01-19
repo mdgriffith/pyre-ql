@@ -2,11 +2,11 @@ pub mod watched;
 use crate::ast;
 use crate::ext::string;
 use crate::filesystem;
+use crate::filesystem::generate_text_file;
 use crate::generate;
 use crate::generate::typealias;
 use crate::typecheck;
 use std::collections::HashMap;
-use crate::filesystem::generate_text_file;
 use std::path::Path;
 
 const DB_ENGINE: &str = include_str!("./static/typescript/db.ts");
@@ -16,18 +16,30 @@ pub fn generate(
     context: &typecheck::Context,
     database: &ast::Database,
     base_out_dir: &Path,
-    files: &mut Vec<filesystem::GeneratedFile<String>>
+    files: &mut Vec<filesystem::GeneratedFile<String>>,
 ) {
     // Generate core files
-    files.push(generate_text_file(base_out_dir.join("db.ts"), DB_ENGINE.to_string()));
-    
+    files.push(generate_text_file(
+        base_out_dir.join("db.ts"),
+        DB_ENGINE.to_string(),
+    ));
+
     if let Some(config_ts) = to_env(database) {
-        files.push(generate_text_file(base_out_dir.join("db/env.ts"), config_ts));
+        files.push(generate_text_file(
+            base_out_dir.join("db/env.ts"),
+            config_ts,
+        ));
     }
-    
-    files.push(generate_text_file(base_out_dir.join("db/data.ts"), schema(database)));
-    files.push(generate_text_file(base_out_dir.join("db/decode.ts"), to_schema_decoders(database)));
-    
+
+    files.push(generate_text_file(
+        base_out_dir.join("db/data.ts"),
+        schema(database),
+    ));
+    files.push(generate_text_file(
+        base_out_dir.join("db/decode.ts"),
+        to_schema_decoders(database),
+    ));
+
     // Generate watched.ts file
     watched::generate(files, context, base_out_dir);
 }
@@ -59,10 +71,10 @@ fn to_string_definition(definition: &ast::Definition) -> String {
         ast::Definition::Session(_) => "".to_string(),
         ast::Definition::Tagged { name, variants, .. } => {
             let mut result = format!("type {} =", name);
-            
+
             for variant in variants {
                 result.push_str("\n");
-                result.push_str(&to_string_variant( 2, variant));
+                result.push_str(&to_string_variant(2, variant));
             }
             result.push_str(";\n\n");
             result
@@ -90,7 +102,7 @@ fn to_type_alias(name: &str, fields: &Vec<ast::Field>) -> String {
     result
 }
 
-fn to_string_variant( indent_size: usize, variant: &ast::Variant) -> String {
+fn to_string_variant(indent_size: usize, variant: &ast::Variant) -> String {
     let prefix = " | ";
 
     match &variant.fields {
@@ -209,7 +221,6 @@ fn to_decoder_variant(
     variant: &ast::Variant,
 ) -> String {
     let outer_indent = " ".repeat(indent_size);
-    
 
     let or = &format!("{}{}", outer_indent, ".or");
     let starter = if is_first { "Ark.type" } else { or };
@@ -253,7 +264,6 @@ fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
     }
 }
 
-
 //  QUERIES
 //
 pub fn generate_queries(
@@ -267,9 +277,7 @@ pub fn generate_queries(
 ) {
     // Only generate the runner file if requested (should be done once after all queries are collected)
     if generate_runner_file {
-        files.push(
-            generate_runner(context, base_out_dir, query_list)
-        );
+        files.push(generate_runner(context, base_out_dir, query_list));
     }
 
     let is_multidb = database.schemas.len() > 1;
@@ -277,28 +285,32 @@ pub fn generate_queries(
     // Generate individual query files
     for operation in &query_list.queries {
         match operation {
-            ast::QueryDef::Query(q) => {
-                match all_query_info.get(&q.name) {
-                    Some(query_info) => {
-                        let filename = base_out_dir.join("query").join(format!("{}.ts", crate::ext::string::decapitalize(&q.name)));
-                        let content = to_query_file(context, query_info, q, is_multidb);
-                        files.push(generate_text_file(filename, content));
-                    }
-                    None => {
-                        eprintln!("Warning: Query '{}' was found in query list but not in typecheck results. This should not happen after successful typechecking. Skipping query file generation.", q.name);
-                    }
+            ast::QueryDef::Query(q) => match all_query_info.get(&q.name) {
+                Some(query_info) => {
+                    let filename = base_out_dir
+                        .join("query")
+                        .join(format!("{}.ts", crate::ext::string::decapitalize(&q.name)));
+                    let content = to_query_file(context, query_info, q, is_multidb);
+                    files.push(generate_text_file(filename, content));
                 }
-            }
+                None => {
+                    eprintln!("Warning: Query '{}' was found in query list but not in typecheck results. This should not happen after successful typechecking. Skipping query file generation.", q.name);
+                }
+            },
             _ => continue,
         }
     }
 }
 
-fn generate_runner(_context: &typecheck::Context, base_out_dir: &Path, query_list: &ast::QueryList) -> filesystem::GeneratedFile<String> {
+fn generate_runner(
+    _context: &typecheck::Context,
+    base_out_dir: &Path,
+    query_list: &ast::QueryList,
+) -> filesystem::GeneratedFile<String> {
     let mut content = String::new();
 
     content.push_str("import type { QueryMap } from '../../../../../../wasm/server';\n");
-    
+
     // Import all query modules
     for operation in &query_list.queries {
         match operation {
@@ -333,10 +345,7 @@ fn generate_runner(_context: &typecheck::Context, base_out_dir: &Path, query_lis
 
     content.push_str("\n};\n");
 
-    generate_text_file(
-        base_out_dir.join("query.ts"),
-        content
-    )
+    generate_text_file(base_out_dir.join("query.ts"), content)
 }
 
 pub fn literal_quote(s: &str) -> String {
@@ -424,7 +433,6 @@ pub fn to_formatter() -> typealias::TypeFormatter {
                     }
                 };
 
-
                 #[rustfmt::skip]
                 let type_str = match (is_primitive, is_link, is_optional) {
                     // Primitive types
@@ -461,7 +469,7 @@ fn to_query_file(
     _is_multidb: bool,
 ) -> String {
     let mut result = "".to_string();
-    
+
     // Add imports
     result.push_str("import * as Env from '../db/env';\n");
     result.push_str("import type { QueryMetadata } from '../../../../../../wasm/server';\n\n");
@@ -477,25 +485,30 @@ fn to_query_file(
             ast::TopLevelQueryField::Field(query_field) => {
                 match context.tables.get(&query_field.name) {
                     Some(table) => {
-                let param_info = get_formatted_used_params(
-                    &ast::get_aliased_name(query_field),
-                    &query_info.variables,
-                );
-                let prepared =
-                    generate::sql::to_string(context, query, query_info, table, query_field);
+                        let param_info = get_formatted_used_params(
+                            &ast::get_aliased_name(query_field),
+                            &query_info.variables,
+                        );
+                        let prepared = generate::sql::to_string(
+                            context,
+                            query,
+                            query_info,
+                            table,
+                            query_field,
+                        );
 
-                for prepped in prepared {
-                    if written_field {
-                        result.push_str(",\n");
-                    }
-                    result.push_str(&format!(
-                        "{{\n  include: {},\n  params: {},\n  sql: {}}}",
-                        bool_to_ts_bool(prepped.include),
-                        &param_info,
-                        &literal_quote(&prepped.sql)
-                    ));
-                    written_field = true;
-                }
+                        for prepped in prepared {
+                            if written_field {
+                                result.push_str(",\n");
+                            }
+                            result.push_str(&format!(
+                                "{{\n  include: {},\n  params: {},\n  sql: {}}}",
+                                bool_to_ts_bool(prepped.include),
+                                &param_info,
+                                &literal_quote(&prepped.sql)
+                            ));
+                            written_field = true;
+                        }
                     }
                     None => {
                         eprintln!("Error: Table '{}' referenced in query '{}' was not found in typecheck context. This should not happen after successful typechecking. Skipping field generation.", query_field.name, query.name);
@@ -531,14 +544,14 @@ fn to_query_file(
     // result.push_str("});\n\n");
 
     let session_args = get_session_args(&query_info.variables);
-    
+
     // Generate session schema based on session args used
     result.push_str("\nexport const session_schema: Record<string, string> = {\n");
     let session = context
         .session
         .clone()
         .unwrap_or_else(|| ast::default_session_details());
-    
+
     // Extract session arg names from query_info.variables
     let mut session_arg_names: Vec<String> = Vec::new();
     for (_name, info) in &query_info.variables {
@@ -558,7 +571,7 @@ fn to_query_file(
             _ => continue,
         }
     }
-    
+
     if session_arg_names.is_empty() {
         result.push_str("};\n");
     } else {
@@ -572,7 +585,11 @@ fn to_query_file(
                     result.push_str(",\n");
                 }
                 let type_str = to_ts_type_string(column.nullable, &column.type_);
-                result.push_str(&format!("  {}: {}", crate::ext::string::quote(field_name), crate::ext::string::quote(&type_str)));
+                result.push_str(&format!(
+                    "  {}: {}",
+                    crate::ext::string::quote(field_name),
+                    crate::ext::string::quote(&type_str)
+                ));
                 first_session_field = false;
             }
         }
@@ -590,8 +607,7 @@ export const query: QueryMetadata = {{
   session_schema: session_schema
 }};
 "#,
-        query.interface_hash,
-        session_args
+        query.interface_hash, session_args
     );
 
     result.push_str(&metadata);
@@ -625,8 +641,6 @@ export const query: QueryMetadata = {{
 
     result
 }
-
-
 
 fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
     let mut result = "[ ".to_string();
@@ -669,7 +683,8 @@ fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
 fn to_query_input_decoder(_context: &typecheck::Context, query: &ast::Query, result: &mut String) {
     result.push_str("export const input_schema: Record<string, string> = {");
     for arg in &query.args {
-        let type_str = to_ts_type_string(false, &arg.type_.clone().unwrap_or("unknown".to_string()));
+        let type_str =
+            to_ts_type_string(false, &arg.type_.clone().unwrap_or("unknown".to_string()));
         result.push_str(&format!(
             "\n  {}: {},",
             crate::ext::string::quote(&arg.name),
@@ -786,7 +801,6 @@ fn to_ts_type_decoder(qualified: bool, nullable: bool, type_: &str) -> String {
         }
     }
 }
-
 
 pub fn to_env(database: &ast::Database) -> Option<String> {
     let mut result = String::new();

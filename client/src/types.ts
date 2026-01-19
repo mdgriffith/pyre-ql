@@ -33,9 +33,16 @@ export interface LinkInfo {
   };
 }
 
+export interface IndexInfo {
+  field: string;
+  unique: boolean;
+  primary: boolean;
+}
+
 export interface TableMetadata {
   name: string;
   links: Record<string, LinkInfo>;
+  indices: IndexInfo[];
 }
 
 export interface SchemaMetadata {

@@ -369,7 +369,7 @@ fn test_round_trip_update_post() {
     // Test that formatting multiple times doesn't keep adding newlines
     // This simulates the actual bug where formatting keeps adding newlines
     let database = create_test_database();
-    
+
     // Use a working query format as a base
     let source = r#"query GetUsers {
     user {
@@ -426,7 +426,7 @@ fn test_round_trip_update_post() {
 fn test_round_trip_with_many_trailing_newlines() {
     // Test the specific bug: file with many trailing newlines that keeps growing
     let database = create_test_database();
-    
+
     // Start with query that has many trailing newlines (simulating the actual file)
     let source = r#"query GetUsers {
     user {
@@ -484,12 +484,11 @@ fn test_round_trip_with_many_trailing_newlines() {
     );
 }
 
-
 #[test]
 fn test_update_post_query_round_trip() {
     // Test that formatting the updatePost query multiple times doesn't keep adding newlines
     let database = create_test_database();
-    
+
     // This is the exact query from updatePost.pyre - start with exactly 2 newlines
     let source = r#"update UpdatePost($id: Int, $title: String?, $content: String?, $published: Bool?) {
     post {
@@ -544,7 +543,7 @@ fn test_update_post_query_round_trip() {
         "Formatting should be idempotent. Second:\n{:?}\n\nThird:\n{:?}",
         formatted2, formatted3
     );
-    
+
     // Also check that formatted1 equals formatted2 (should be idempotent from the start)
     assert_eq!(
         formatted1, formatted2,
@@ -571,35 +570,35 @@ fn test_update_post_query_exact_from_file() {
 
 "#;
     let database = create_test_database();
-    
+
     // Parse and format
     let mut query_list = parser::parse_query("query.pyre", source).unwrap();
     format::query_list(&database, &mut query_list);
     let formatted = generate::to_string::query(&query_list);
-    
+
     // Count trailing newlines
     let end_newlines = formatted.chars().rev().take_while(|&c| c == '\n').count();
-    
+
     // Should have exactly 2 newlines, not 3
     assert_eq!(
         end_newlines, 2,
         "Formatted query should have exactly 2 trailing newlines, got {}. Formatted:\n{:?}",
         end_newlines, formatted
     );
-    
+
     // Now format again - should still have 2 newlines
     let mut query_list2 = parser::parse_query("query.pyre", &formatted).unwrap();
     format::query_list(&database, &mut query_list2);
     let formatted2 = generate::to_string::query(&query_list2);
-    
+
     let end_newlines2 = formatted2.chars().rev().take_while(|&c| c == '\n').count();
-    
+
     assert_eq!(
         end_newlines2, 2,
         "Second format should still have exactly 2 trailing newlines, got {}. Formatted:\n{:?}",
         end_newlines2, formatted2
     );
-    
+
     // The two formatted versions should be identical
     assert_eq!(
         formatted, formatted2,
