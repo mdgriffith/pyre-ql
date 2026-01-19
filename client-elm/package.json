@@ -5,7 +5,9 @@
   "scripts": {
     "build": "elm make src/Main.elm --output=dist/elm.js --optimize",
     "dev": "elm make src/Main.elm --output=dist/elm.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "elm-test",
+    "test:watch": "elm-test --watch"
   },
   "keywords": [
     "pyre",

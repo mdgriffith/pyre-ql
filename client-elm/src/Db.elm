@@ -1,4 +1,4 @@
-module Db exposing (Db, Msg(..), executeQuery, extractAffectedTables, fromInitialData, init, update)
+module Db exposing (Db, Msg(..), QueryExecutionResult, executeQuery, executeQueryWithTracking, extractAffectedTables, fromInitialData, init, update)
 
 import Basics exposing (Order(..))
 import Data.Delta exposing (Delta, TableGroup)
@@ -8,6 +8,7 @@ import Data.Value exposing (Value)
 import Db.Index
 import Db.Query
 import Dict exposing (Dict)
+import Set exposing (Set)
 
 
 
@@ -105,12 +106,47 @@ applyDelta delta db =
 
 
 
+-- Query execution result with tracking
+
+
+type alias QueryExecutionResult =
+    { results : Dict String (List (Dict String Value))
+    , rowIds : Dict String (Set Int)
+    }
+
+
+
 -- Execute a query against the database
 
 
 executeQuery : SchemaMetadata -> Db -> Db.Query.Query -> Dict String (List (Dict String Value))
 executeQuery schema db query =
     Dict.map (\queryFieldName fieldQuery -> executeFieldQuery schema db.tables db.indices queryFieldName fieldQuery) query
+
+
+
+-- Execute a query and track which row IDs are in the result set
+
+
+executeQueryWithTracking : SchemaMetadata -> Db -> Db.Query.Query -> QueryExecutionResult
+executeQueryWithTracking schema db query =
+    let
+        resultsWithIds =
+            Dict.map
+                (\queryFieldName fieldQuery ->
+                    executeFieldQueryWithTracking schema db.tables db.indices queryFieldName fieldQuery
+                )
+                query
+
+        results =
+            Dict.map (\_ ( rows, _ ) -> rows) resultsWithIds
+
+        rowIds =
+            Dict.map (\_ ( _, ids ) -> ids) resultsWithIds
+    in
+    { results = results
+    , rowIds = rowIds
+    }
 
 
 
@@ -337,6 +373,126 @@ executeFieldQuery schema data indices queryFieldName fieldQuery =
 
         Nothing ->
             []
+
+
+executeFieldQueryWithTracking : SchemaMetadata -> Dict String TableData -> Dict ( String, String ) Db.Index.Index -> String -> Db.Query.FieldQuery -> ( List (Dict String Value), Set Int )
+executeFieldQueryWithTracking schema data indices queryFieldName fieldQuery =
+    case Dict.get queryFieldName schema.queryFieldToTable of
+        Just tableName ->
+            case Dict.get tableName data of
+                Just tableRows ->
+                    let
+                        -- Get all rows with their IDs
+                        rowsWithIds =
+                            Dict.toList tableRows
+
+                        -- Apply WHERE filter (keep track of IDs)
+                        filteredWithIds =
+                            rowsWithIds
+                                |> List.filter (\( _, row ) -> evaluateWhereOnRow fieldQuery.where_ row)
+
+                        -- Apply sort (IDs stay paired)
+                        sortedWithIds =
+                            applySortWithIds fieldQuery.sort filteredWithIds
+
+                        -- Apply limit
+                        limitedWithIds =
+                            applyLimitWithIds fieldQuery.limit sortedWithIds
+
+                        -- Extract IDs before projection
+                        rowIds =
+                            limitedWithIds
+                                |> List.map Tuple.first
+                                |> Set.fromList
+
+                        -- Project fields
+                        rows =
+                            limitedWithIds
+                                |> List.map Tuple.second
+                                |> projectFields schema tableName fieldQuery.selections data indices
+                    in
+                    ( rows, rowIds )
+
+                Nothing ->
+                    ( [], Set.empty )
+
+        Nothing ->
+            ( [], Set.empty )
+
+
+evaluateWhereOnRow : Maybe Db.Query.WhereClause -> Dict String Value -> Bool
+evaluateWhereOnRow whereClause row =
+    case whereClause of
+        Just where_ ->
+            evaluateFilter row where_
+
+        Nothing ->
+            True
+
+
+applySortWithIds : Maybe (List Db.Query.SortClause) -> List ( Int, Dict String Value ) -> List ( Int, Dict String Value )
+applySortWithIds sortClauses rowsWithIds =
+    case sortClauses of
+        Just clauses ->
+            List.sortWith
+                (\( _, a ) ( _, b ) ->
+                    case
+                        List.foldl
+                            (\clause acc ->
+                                case acc of
+                                    Just _ ->
+                                        acc
+
+                                    Nothing ->
+                                        let
+                                            aVal =
+                                                Dict.get clause.field a |> Maybe.withDefault Data.Value.NullValue
+
+                                            bVal =
+                                                Dict.get clause.field b |> Maybe.withDefault Data.Value.NullValue
+
+                                            comparison =
+                                                compareValues aVal bVal
+
+                                            result =
+                                                if clause.direction == Db.Query.Desc then
+                                                    -1 * comparison
+
+                                                else
+                                                    comparison
+                                        in
+                                        if result < 0 then
+                                            Just LT
+
+                                        else if result > 0 then
+                                            Just GT
+
+                                        else
+                                            Nothing
+                            )
+                            Nothing
+                            clauses
+                    of
+                        Just order ->
+                            order
+
+                        Nothing ->
+                            EQ
+                )
+                rowsWithIds
+
+        Nothing ->
+            rowsWithIds
+
+
+applyLimitWithIds : Maybe Int -> List ( Int, Dict String Value ) -> List ( Int, Dict String Value )
+applyLimitWithIds limit rowsWithIds =
+    case limit of
+        Just n ->
+            List.take n rowsWithIds
+
+        Nothing ->
+            rowsWithIds
 
 
 {-| Project (select) specific fields from rows based on the query selections.

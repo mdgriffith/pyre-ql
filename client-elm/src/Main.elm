@@ -155,14 +155,11 @@ handleSSEIncoming incoming model =
                 ( updatedDb, dbCmd ) =
                     Db.update (Db.DeltaReceived delta) model.db
 
-                -- Notify query manager of affected tables
-                affectedTables =
-                    Db.extractAffectedTables delta
-
-                triggerCmds =
-                    QueryManager.notifyTablesChanged model.schema updatedDb model.queryManager affectedTables
+                -- Notify query manager with fine-grained reactivity
+                ( updatedQueryManager, triggerCmds ) =
+                    QueryManager.notifyTablesChanged model.schema updatedDb model.queryManager delta
             in
-            ( { model | db = updatedDb }
+            ( { model | db = updatedDb, queryManager = updatedQueryManager }
             , Cmd.batch
                 [ Cmd.map DbMsg dbCmd
                 , Cmd.batch triggerCmds
@@ -193,31 +190,57 @@ handleQueryManagerIncoming incoming model =
     case incoming of
         QueryManager.RegisterQuery queryId query input callbackPort ->
             -- QueryManager already updated the subscription
-            -- Execute query and send result
+            -- Execute query and send result, and update subscription with row IDs
             let
-                result =
-                    Db.executeQuery model.schema model.db query
+                executionResult =
+                    Db.executeQueryWithTracking model.schema model.db query
 
                 resultJson =
-                    encodeQueryResult result
+                    encodeQueryResult executionResult.results
+
+                -- Update subscription with row IDs
+                updatedQueryManager =
+                    case Dict.get queryId model.queryManager.subscriptions of
+                        Just subscription ->
+                            let
+                                updatedSubscription =
+                                    { subscription | resultRowIds = executionResult.rowIds }
+
+                                updatedSubscriptions =
+                                    Dict.insert queryId updatedSubscription model.queryManager.subscriptions
+                            in
+                            { subscriptions = updatedSubscriptions }
+
+                        Nothing ->
+                            model.queryManager
             in
-            ( model
+            ( { model | queryManager = updatedQueryManager }
             , [ QueryManager.queryResult callbackPort resultJson ]
             )
 
         QueryManager.UpdateQueryInput queryId newInput ->
             -- QueryManager already updated the subscription
-            -- Re-execute query and send result
+            -- Re-execute query and send result, and update subscription with row IDs
             case Dict.get queryId model.queryManager.subscriptions of
                 Just subscription ->
                     let
-                        result =
-                            Db.executeQuery model.schema model.db subscription.query
+                        executionResult =
+                            Db.executeQueryWithTracking model.schema model.db subscription.query
 
                         resultJson =
-                            encodeQueryResult result
+                            encodeQueryResult executionResult.results
+
+                        -- Update subscription with row IDs
+                        updatedSubscription =
+                            { subscription | resultRowIds = executionResult.rowIds }
+
+                        updatedSubscriptions =
+                            Dict.insert queryId updatedSubscription model.queryManager.subscriptions
+
+                        updatedQueryManager =
+                            { subscriptions = updatedSubscriptions }
                     in
-                    ( model
+                    ( { model | queryManager = updatedQueryManager }
                     , [ QueryManager.queryResult subscription.callbackPort resultJson ]
                     )
 
