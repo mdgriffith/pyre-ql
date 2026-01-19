@@ -1,4 +1,4 @@
-module Db exposing (Db, Msg(..), QueryExecutionResult, executeQuery, executeQueryWithTracking, extractAffectedTables, fromInitialData, init, update)
+module Db exposing (Db, Msg(..), QueryExecutionResult, executeQuery, executeQueryWithTracking, extractAffectedTables, fromInitialData, init, rowMatchesWhere, update)
 
 import Basics exposing (Order(..))
 import Data.Delta exposing (Delta, TableGroup)
@@ -428,6 +428,11 @@ evaluateWhereOnRow whereClause row =
 
         Nothing ->
             True
+
+
+rowMatchesWhere : Maybe Db.Query.WhereClause -> Dict String Value -> Bool
+rowMatchesWhere =
+    evaluateWhereOnRow
 
 
 applySortWithIds : Maybe (List Db.Query.SortClause) -> List ( Int, Dict String Value ) -> List ( Int, Dict String Value )

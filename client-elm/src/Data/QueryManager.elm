@@ -294,10 +294,11 @@ doesChangeAffectWhereClause whereClause oldRow newRow =
 {-| Determine if a query should be re-executed based on delta changes.
 
 Implementation (Phase 3): Row-level filtering with WHERE clause analysis
-- Check if delta tables overlap with query tables
-- Check if changed row IDs overlap with result row IDs
-- For updates: analyze if filtered fields changed
-- For potential inserts: always re-execute (might match WHERE)
+
+  - Check if delta tables overlap with query tables
+  - Check if changed row IDs overlap with result row IDs
+  - For updates: analyze if filtered fields changed
+  - For potential inserts: always re-execute (might match WHERE)
 
 -}
 shouldReExecuteQuery : Data.Schema.SchemaMetadata -> Db.Db -> QuerySubscription -> Data.Delta.Delta -> ReExecuteDecision
@@ -331,9 +332,8 @@ shouldReExecuteQuery schema db subscription delta =
                                 analyzeOverlappingChanges schema db subscription tableName overlappingIds delta
 
                             else if hasNewRows then
-                                -- New rows that aren't in result set - might match WHERE clause
-                                -- Conservative: re-execute to check if they should be included
-                                True
+                                -- New rows that aren't in result set - only re-execute if they match WHERE
+                                checkIfNewRowsMatchWhere schema db tableName (Set.diff deltaIds resultIds) subscription delta
 
                             else
                                 False
@@ -431,6 +431,73 @@ analyzeOverlappingChanges schema db subscription tableName overlappingIds delta 
         Nothing ->
             -- Shouldn't happen, but be conservative
             True
+
+
+checkIfNewRowsMatchWhere : Data.Schema.SchemaMetadata -> Db.Db -> String -> Set Int -> QuerySubscription -> Data.Delta.Delta -> Bool
+checkIfNewRowsMatchWhere schema db tableName newRowIds subscription delta =
+    if Set.isEmpty newRowIds then
+        False
+
+    else
+        let
+            maybeFieldQuery =
+                Dict.foldl
+                    (\queryFieldName fieldQuery acc ->
+                        case acc of
+                            Just _ ->
+                                acc
+
+                            Nothing ->
+                                case Dict.get queryFieldName schema.queryFieldToTable of
+                                    Just qTableName ->
+                                        if qTableName == tableName then
+                                            Just fieldQuery
+
+                                        else
+                                            Nothing
+
+                                    Nothing ->
+                                        Nothing
+                    )
+                    Nothing
+                    subscription.query
+
+            deltaTableGroup =
+                List.filter (\tg -> tg.tableName == tableName) delta.tableGroups
+                    |> List.head
+        in
+        case ( maybeFieldQuery, deltaTableGroup ) of
+            ( Just fieldQuery, Just tableGroup ) ->
+                let
+                    whereClause =
+                        fieldQuery.where_
+                in
+                case whereClause of
+                    Just _ ->
+                        List.any
+                            (\newRowArray ->
+                                case newRowArray of
+                                    (Data.Value.IntValue rowId) :: _ ->
+                                        if Set.member rowId newRowIds then
+                                            let
+                                                newRow =
+                                                    rowArrayToDict tableGroup.headers newRowArray
+                                            in
+                                            Db.rowMatchesWhere whereClause newRow
+
+                                        else
+                                            False
+
+                                    _ ->
+                                        False
+                            )
+                            tableGroup.rows
+
+                    Nothing ->
+                        True
+
+            _ ->
+                True
 
 
 {-| Check if any of the changed rows had their filtered fields modified.
