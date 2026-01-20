@@ -8,6 +8,8 @@ module Db.Query exposing
     , SortDirection(..)
     , WhereClause
     , decodeQuery
+    , operatorFromString
+    , operatorToString
     )
 
 import Data.Value exposing (Value)
@@ -52,7 +54,7 @@ type FilterOperator
 type FilterValue
     = FilterValueSimple Value
     | FilterValueNull
-    | FilterValueOperators (List ( FilterOperator, FilterValue ))
+    | FilterValueOperators (Dict String FilterValue)
     | FilterValueAnd (List WhereClause)
     | FilterValueOr (List WhereClause)
 
@@ -194,11 +196,11 @@ decodeOperatorDict : Dict String Decode.Value -> Decode.Decoder FilterValue
 decodeOperatorDict dict =
     let
         decodeEntry opString value acc =
-            case decodeOperator opString of
-                Just operator ->
+            case operatorFromString opString of
+                Just _ ->
                     case Decode.decodeValue decodeFilterValue value of
                         Ok filterValue ->
-                            Decode.succeed (( operator, filterValue ) :: acc)
+                            Decode.succeed (Dict.insert opString filterValue acc)
 
                         Err _ ->
                             Decode.fail "Invalid operator value"
@@ -211,13 +213,13 @@ decodeOperatorDict dict =
             decoderAcc
                 |> Decode.andThen (\acc -> decodeEntry key value acc)
         )
-        (Decode.succeed [])
+        (Decode.succeed Dict.empty)
         dict
         |> Decode.map FilterValueOperators
 
 
-decodeOperator : String -> Maybe FilterOperator
-decodeOperator operator =
+operatorFromString : String -> Maybe FilterOperator
+operatorFromString operator =
     case operator of
         "$eq" ->
             Just OpEq
@@ -251,6 +253,40 @@ decodeOperator operator =
 
         _ ->
             Nothing
+
+
+operatorToString : FilterOperator -> String
+operatorToString operator =
+    case operator of
+        OpEq ->
+            "$eq"
+
+        OpNe ->
+            "$ne"
+
+        OpGt ->
+            "$gt"
+
+        OpGte ->
+            "$gte"
+
+        OpLt ->
+            "$lt"
+
+        OpLte ->
+            "$lte"
+
+        OpIn ->
+            "$in"
+
+        OpNotIn ->
+            "$nin"
+
+        OpLike ->
+            "$like"
+
+        OpNotLike ->
+            "$nlike"
 
 
 decodeSortClause : Decode.Decoder SortClause

@@ -474,7 +474,7 @@ collectIndexedRowIds indices tableName whereClause =
                                     extractIndexedIdsFromOperators indices tableName field operators
 
                                 Db.Query.FilterValueSimple simpleValue ->
-                                    extractIndexedIdsFromOperators indices tableName field [ ( Db.Query.OpEq, Db.Query.FilterValueSimple simpleValue ) ]
+                                    extractIndexedIdsFromOperators indices tableName field (Dict.fromList [ ( Db.Query.operatorToString Db.Query.OpEq, Db.Query.FilterValueSimple simpleValue ) ])
 
                                 _ ->
                                     Nothing
@@ -513,7 +513,7 @@ collectIndexedFromAnd indices tableName clauses =
                     collectIndexedFromAnd indices tableName rest
 
 
-extractIndexedIdsFromOperators : Dict ( String, String ) Db.Index.Index -> String -> String -> List ( Db.Query.FilterOperator, Db.Query.FilterValue ) -> Maybe (Set Int)
+extractIndexedIdsFromOperators : Dict ( String, String ) Db.Index.Index -> String -> String -> Dict String Db.Query.FilterValue -> Maybe (Set Int)
 extractIndexedIdsFromOperators indices tableName field operators =
     let
         indexKey =
@@ -533,30 +533,28 @@ extractIndexedIdsFromOperators indices tableName field operators =
                     Nothing
 
         eqValue =
-            List.filterMap
-                (\( op, opValue ) ->
-                    case ( op, opValue ) of
-                        ( Db.Query.OpEq, Db.Query.FilterValueSimple value ) ->
-                            Just value
+            Dict.get (Db.Query.operatorToString Db.Query.OpEq) operators
+                |> Maybe.andThen
+                    (\opValue ->
+                        case opValue of
+                            Db.Query.FilterValueSimple value ->
+                                Just value
 
-                        _ ->
-                            Nothing
-                )
-                operators
-                |> List.head
+                            _ ->
+                                Nothing
+                    )
 
         inValues =
-            List.filterMap
-                (\( op, opValue ) ->
-                    case ( op, opValue ) of
-                        ( Db.Query.OpIn, Db.Query.FilterValueSimple (Data.Value.ArrayValue values) ) ->
-                            Just values
+            Dict.get (Db.Query.operatorToString Db.Query.OpIn) operators
+                |> Maybe.andThen
+                    (\opValue ->
+                        case opValue of
+                            Db.Query.FilterValueSimple (Data.Value.ArrayValue values) ->
+                                Just values
 
-                        _ ->
-                            Nothing
-                )
-                operators
-                |> List.head
+                            _ ->
+                                Nothing
+                    )
     in
     case eqValue of
         Just value ->
@@ -908,13 +906,18 @@ evaluateFilterValue fieldValue condition =
             fieldValue == value
 
         Db.Query.FilterValueOperators operators ->
-            List.foldl
-                (\( op, opValue ) acc ->
+            Dict.foldl
+                (\opKey opValue acc ->
                     if not acc then
                         False
 
                     else
-                        evaluateOperator fieldValue op opValue
+                        case Db.Query.operatorFromString opKey of
+                            Just operator ->
+                                evaluateOperator fieldValue operator opValue
+
+                            Nothing ->
+                                False
                 )
                 True
                 operators
