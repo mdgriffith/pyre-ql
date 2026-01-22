@@ -3,7 +3,7 @@ import QueryForm from './components/QueryForm'
 import MessagePane from './components/MessagePane'
 import Clients from './components/Clients'
 import { discoverQueries, QueryMetadata } from './queryDiscovery'
-import { PyreClient } from '@pyre/client'
+import { PyreClient } from '@pyre/client-elm'
 import { schemaMetadata } from '../pyre/generated/client/node/schema'
 import './App.css'
 
@@ -15,6 +15,7 @@ interface Client {
   userId: number | null
   requestedUserId: number | null // User-specified userId for connection
   sessionId: string | null
+  dbName: string | null
 }
 
 interface Event {
@@ -35,6 +36,7 @@ function App() {
       connected: false,
       userId: null,
       requestedUserId: 1, // First client always starts as userId 1
+      dbName: 'pyre-sync-playground-1',
     },
   ])
   const [activeTab, setActiveTab] = useState<'messages' | 'clients'>('clients')
@@ -113,12 +115,16 @@ function App() {
       clientId,
     })
 
+    const dbName = `pyre-sync-playground-${clientId}`
+
     // Create PyreClient instance
     const pyreClient = new PyreClient({
-      baseUrl: 'http://localhost:3000',
-      userId: userId,
-      schemaMetadata,
-      dbName: `pyre-sync-playground-${clientId}`,
+      schema: schemaMetadata,
+      sseConfig: {
+        baseUrl: 'http://localhost:3000',
+        userId: userId,
+      },
+      dbName,
     })
 
     // Store in ref for cleanup
@@ -141,18 +147,24 @@ function App() {
       }
     })
 
+    const unsubscribeSession = pyreClient.onSession((sessionId) => {
+      setClients((prev) =>
+        prev.map((c) =>
+          c.id === clientId
+            ? {
+              ...c,
+              sessionId,
+            }
+            : c
+        )
+      )
+    })
+
     try {
-      // Initialize client (connects SSE and syncs)
+      // Initialize client storage
       await pyreClient.init()
 
-      // Get session ID from SSE manager (for query execution)
-      const sseManager = (pyreClient as any).sseManager
-      const sessionId = sseManager?.getSessionId() || null
-
-      // Note: We don't set up a custom SSE message handler here because
-      // PyreClient already has its own handler in setupSSEHandlers() that
-      // processes deltas and updates queries. If we call sseManager.onMessage() here,
-      // it would replace PyreClient's handler and break delta processing.
+      const sessionId = pyreClient.getSessionId()
 
       setClients((prev) =>
         prev.map((c) =>
@@ -163,6 +175,7 @@ function App() {
               connected: true,
               userId: userId,
               sessionId,
+              dbName,
             }
             : c
         )
@@ -174,6 +187,7 @@ function App() {
         clientId,
       })
     } catch (error: any) {
+      unsubscribeSession()
       console.error('Failed to initialize PyreClient:', error)
       addEvent({
         type: 'query_response',
@@ -209,6 +223,7 @@ function App() {
         connected: false,
         userId: null,
         requestedUserId: newUserId, // Assign next sequential userId
+        dbName: `pyre-sync-playground-${newId}`,
       }
       // Connect immediately after adding
       setTimeout(() => {
@@ -315,12 +330,10 @@ function App() {
     const dbNames: string[] = []
     for (const [clientId, pyreClient] of pyreClientsRef.current.entries()) {
       if (pyreClient) {
-        // Get the database name from the client
-        const storage = (pyreClient as any).storage
-        if (storage) {
-          const dbName = (storage as any).dbName
-          dbNames.push(dbName)
-          console.log(`[Reset] Will delete database for client ${clientId}: ${dbName}`)
+        const client = clientsRef.current.find((item) => item.id === clientId)
+        if (client?.dbName) {
+          dbNames.push(client.dbName)
+          console.log(`[Reset] Will delete database for client ${clientId}: ${client.dbName}`)
         }
         deletePromises.push(pyreClient.deleteDatabase().catch(err => {
           console.error(`Error deleting database for client ${clientId}:`, err)
@@ -381,6 +394,7 @@ function App() {
         connected: false,
         userId: null,
         requestedUserId: 1,
+        dbName: 'pyre-sync-playground-1',
       },
     ])
     setSelectedClientId('1')

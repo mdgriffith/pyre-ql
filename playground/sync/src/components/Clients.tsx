@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { PyreClient } from '@pyre/client'
+import { PyreClient } from '@pyre/client-elm'
 import { ListUsersAndPosts } from '../../pyre/generated/client/node/query/ListUsersAndPosts'
 import './Clients.css'
 
@@ -10,6 +10,7 @@ interface Client {
   requestedUserId: number | null
   connected: boolean
   pyreClient: PyreClient | null
+  dbName?: string | null
 }
 
 interface ClientsProps {
