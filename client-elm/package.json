@@ -2,9 +2,19 @@
   "name": "@pyre/client-elm",
   "version": "0.1.0",
   "description": "Elm client for Pyre data synchronization and querying",
+  "type": "module",
+  "main": "./src-ts/index.ts",
+  "module": "./src-ts/index.ts",
+  "types": "./src-ts/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src-ts/index.ts",
+      "default": "./src-ts/index.ts"
+    }
+  },
   "scripts": {
-    "build": "elm make src/Main.elm --output=dist/elm.js --optimize",
-    "dev": "elm make src/Main.elm --output=dist/elm.js",
+    "build": "bash ./scripts/build.sh --optimize",
+    "dev": "bash ./scripts/build.sh",
     "typecheck": "tsc --noEmit",
     "test": "elm-test",
     "test:watch": "elm-test --watch"

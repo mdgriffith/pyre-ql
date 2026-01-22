@@ -5,7 +5,7 @@ A headless Elm application for Pyre data synchronization and querying. This clie
 ## Architecture
 
 - **Elm (`src/`)**: Manages in-memory state, executes queries, handles deltas, and sends mutations
-- **TypeScript (`src-ts/`)**: Handles IndexedDB operations and SSE communication via ports
+- **TypeScript (`src-ts/`)**: Boots the Elm app and wires IndexedDB/SSE/query manager services
 
 ## Setup
 
@@ -31,70 +31,47 @@ npm run typecheck
 ### Initialization
 
 ```typescript
-import { initPyreElmClient } from './src-ts/index';
-import schemaMetadata from './generated/client/node/schema';
+import { PyreClient } from '@pyre/client-elm';
+import { schemaMetadata } from './generated/client/node/schema';
 
-// Initialize Elm app (assuming you've compiled it)
-const elmApp = Elm.Main.init({
-  flags: schemaMetadata
+const client = new PyreClient({
+  schema: schemaMetadata,
+  sseConfig: {
+    baseUrl: 'http://localhost:3000',
+    userId: 1,
+  },
+  dbName: 'pyre-client',
 });
 
-// Initialize the TypeScript bridge
-initPyreElmClient(elmApp, 'pyre-client');
-
-// Connect SSE (this will be triggered from Elm)
-elmApp.ports.connectSSE.subscribe((config) => {
-  // SSE connection is handled by TypeScript bridge
-});
+await client.init();
 ```
 
 ### Registering Queries
 
 ```typescript
-import { Encode } from 'elm-ts-interop'; // or similar
-
-// Register a query
-elmApp.ports.receiveRegisterQuery.send([
-  'query-1',                    // queryId
-  queryShapeJson,               // QueryShape as JSON
-  inputJson,                    // Input as JSON
-  'callback-port-1'            // callbackPort identifier
-]);
-
-// Subscribe to query results
-elmApp.ports.queryResult.subscribe(([callbackPort, result]) => {
-  // Route result to appropriate callback based on callbackPort
-  if (callbackPort === 'callback-port-1') {
-    handleQueryResult(result);
+const subscription = client.run(
+  ListUsersAndPosts,
+  {},
+  (result) => {
+    console.log('Query result:', result);
   }
-});
+);
+
+subscription?.update({});
+subscription?.unsubscribe();
 ```
 
 ### Updating Query Input
 
 ```typescript
-// Update query input (re-executes query)
-elmApp.ports.receiveUpdateQueryInput.send([
-  'query-1',     // queryId
-  newInputJson   // New input as JSON
-]);
+subscription?.update({});
 ```
 
 ### Sending Mutations
 
 ```typescript
-// Send a mutation
-elmApp.ports.receiveSendMutation.send([
-  'mutation-hash',           // hash
-  'http://localhost:3000',  // baseUrl
-  inputJson                  // Input as JSON
-]);
-
-// Subscribe to mutation results
-elmApp.ports.mutationResult.subscribe(([hash, result]) => {
-  case result of
-    Ok response -> handleSuccess(response);
-    Err error -> handleError(error);
+client.run(CreatePost, { title: 'Hello' }, (result) => {
+  console.log('Mutation result:', result);
 });
 ```
 
