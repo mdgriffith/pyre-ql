@@ -13,7 +13,6 @@ export class SSEManager {
   private sessionId: string | null = null;
   private config: SSEConfig | null = null;
   private elmApp: ElmApp | null = null;
-  private clientId: string;
   private shouldReconnect = true;
   private syncProgressCallbacks: Set<SyncProgressCallback> = new Set();
   private sessionCallbacks: Set<SessionCallback> = new Set();
@@ -21,7 +20,6 @@ export class SSEManager {
 
   constructor(config: SSEConfig) {
     this.config = config;
-    this.clientId = `client_${Math.random().toString(36).substring(2, 15)}_${Date.now()}`;
   }
 
   attachPorts(elmApp: ElmApp): void {
@@ -96,7 +94,7 @@ export class SSEManager {
     }
 
     try {
-      const sseUrl = `${this.config.baseUrl}${this.config.eventsPath}?clientId=${encodeURIComponent(this.clientId)}`;
+      const sseUrl = `${this.config.baseUrl}${this.config.eventsPath}`;
       const eventSource = new EventSource(sseUrl);
 
       eventSource.onopen = () => {

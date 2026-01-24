@@ -105,23 +105,29 @@ function App() {
       }
     }
 
+    const queryParams = new URLSearchParams({ userId: String(userId) }).toString()
+    const indexedDbName = `pyre-sync-playground-${clientId}`
+
     addEvent({
       type: 'query_sent',
       data: {
         message: 'Connecting to server...',
-        url: 'ws://localhost:3000/sync',
+        url: `ws://localhost:3000/sync?${queryParams}`,
         method: 'WS',
       },
       clientId,
     })
-
-    const indexedDbName = `pyre-sync-playground-${clientId}`
 
     // Create PyreClient instance
     const pyreClient = new PyreClient({
       schema: schemaMetadata,
       server: {
         baseUrl: 'http://localhost:3000',
+        endpoints: {
+          catchup: `/sync?${queryParams}`,
+          events: `/sync/events?${queryParams}`,
+          query: `/db?${queryParams}`,
+        },
       },
       indexedDbName,
     })

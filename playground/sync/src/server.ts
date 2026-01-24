@@ -37,19 +37,38 @@ app.get("/", (c) => {
 app.use("*", async (c, next) => {
     c.header("Access-Control-Allow-Origin", "*");
     c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    c.header("Access-Control-Allow-Headers", "Content-Type");
+    c.header("Access-Control-Allow-Headers", "Content-Type, X-User-Id");
     if (c.req.method === "OPTIONS") {
         return new Response(null, {
             status: 204,
             headers: {
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Allow-Headers": "Content-Type, X-User-Id",
             },
         });
     }
     await next();
 });
+
+const parseUserId = (value: string | undefined | null) => {
+    if (!value) {
+        return null;
+    }
+    const parsed = parseInt(value, 10);
+    if (Number.isNaN(parsed) || parsed < 1) {
+        return null;
+    }
+    return parsed;
+};
+
+const getUserIdFromRequest = (c: any) => {
+    const headerUserId = parseUserId(c.req.header("x-user-id"));
+    if (headerUserId) {
+        return headerUserId;
+    }
+    return parseUserId(c.req.query("userId"));
+};
 
 // Query metadata endpoint
 app.get("/queries", async (c) => {
@@ -68,23 +87,12 @@ app.get("/schema", async (c) => {
 
 // SSE endpoint for real-time delta updates
 app.get("/sync/events", async (c) => {
-    const userId = c.req.query("userId");
+    const parsedUserId = getUserIdFromRequest(c);
     const clientId = c.req.query("clientId");
     
-    if (!userId) {
+    if (!parsedUserId) {
         c.status(400);
-        return c.json({ error: "userId query parameter is required" });
-    }
-
-    let parsedUserId: number;
-    try {
-        parsedUserId = parseInt(userId, 10);
-        if (isNaN(parsedUserId) || parsedUserId < 1) {
-            console.error(`Invalid userId provided: ${userId}, defaulting to 1`);
-            parsedUserId = 1;
-        }
-    } catch {
-        parsedUserId = 1;
+        return c.json({ error: "userId header or query parameter is required" });
     }
 
     // Use userId + clientId as the session key to distinguish between tabs/browsers
@@ -214,10 +222,11 @@ app.post("/db/:req", async (c) => {
     const { req } = c.req.param();
     const args = await c.req.json();
     const sessionId = c.req.query("sessionId");
+    const headerUserId = getUserIdFromRequest(c);
 
     // Get executing session from connected client or use default
     const client = sessionId ? connectedClients.get(sessionId) : null;
-    const executingSession = client?.session ?? { userId: 1, role: "user" };
+    const executingSession = client?.session ?? { userId: headerUserId ?? 1, role: "user" };
 
     // Execute query with all connected clients for sync delta calculation
     // Pyre.run can extract session.fields from ConnectedClient objects

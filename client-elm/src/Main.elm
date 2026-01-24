@@ -263,19 +263,23 @@ handleQueryManagerIncoming incoming model =
 
         QueryManager.SendMutation hash baseUrl headers input ->
             -- Mutations are handled via HTTP request
+            let
+                url =
+                    buildMutationUrl baseUrl hash
+            in
             ( model
             , [ Http.request
                     { method = "POST"
                     , headers = List.map (\( key, value ) -> Http.header key value) headers
-                    , url = baseUrl ++ "/" ++ hash
+                    , url = url
                     , body = Http.jsonBody input
                     , expect =
                         Http.expectStringResponse
                             (MutationRequest hash baseUrl input)
                             (\response ->
                                 case response of
-                                    Http.BadUrl_ url ->
-                                        Err (Http.BadUrl url)
+                                    Http.BadUrl_ badUrl ->
+                                        Err (Http.BadUrl badUrl)
 
                                     Http.Timeout_ ->
                                         Err Http.Timeout
@@ -322,6 +326,24 @@ httpErrorToString error =
 
         Http.BadBody message ->
             "Decode Error: " ++ message
+
+
+buildMutationUrl : String -> String -> String
+buildMutationUrl baseUrl hash =
+    case String.split "?" baseUrl of
+        base :: queryParts ->
+            let
+                query =
+                    String.join "?" queryParts
+            in
+            if String.isEmpty query then
+                base ++ "/" ++ hash
+
+            else
+                base ++ "/" ++ hash ++ "?" ++ query
+
+        [] ->
+            baseUrl ++ "/" ++ hash
 
 
 encodeQueryResult : Dict String (List (Dict String Data.Value.Value)) -> Encode.Value
