@@ -36,7 +36,7 @@ ManyToOne and OneToOne relationships use primary key lookups which are already O
 Indices are:
 
   - Built from scratch when initial data loads from IndexedDB
-  - Updated incrementally as deltas arrive from SSE
+  - Updated incrementally as deltas arrive from live sync
 
 -}
 

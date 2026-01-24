@@ -20,11 +20,16 @@ export interface SyncProgress {
   error?: string;
 }
 
+export type LiveSyncTransport = 'sse' | 'websocket';
+
 export interface ElmPorts {
   indexedDbOut?: {
     subscribe: (callback: (message: unknown) => void) => void;
   };
   sseOut?: {
+    subscribe: (callback: (message: unknown) => void) => void;
+  };
+  webSocketOut?: {
     subscribe: (callback: (message: unknown) => void) => void;
   };
   queryManagerOut?: {
@@ -37,6 +42,9 @@ export interface ElmPorts {
     send: (message: unknown) => void;
   };
   receiveSSEMessage?: {
+    send: (message: unknown) => void;
+  };
+  receiveWebSocketMessage?: {
     send: (message: unknown) => void;
   };
   receiveQueryManagerMessage?: {
@@ -53,6 +61,9 @@ export interface ElmFlags {
   server: {
     baseUrl: string;
     catchupPath: string;
+  };
+  liveSync: {
+    transport: LiveSyncTransport;
   };
 }
 

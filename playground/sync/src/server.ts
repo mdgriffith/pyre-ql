@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { createClient } from "@libsql/client";
 import { join } from "path";
+import type { ServerWebSocket, WebSocketHandler } from "bun";
 import * as Pyre from "../../../wasm/server";
 
 await Pyre.init();
@@ -9,10 +10,19 @@ await Pyre.init();
 const app = new Hono();
 
 // Types
+type LiveSyncTransport = "sse" | "websocket";
+
+interface WebSocketData {
+    sessionId: string;
+    session: Record<string, any>;
+}
+
 interface ConnectedClient {
     sessionId: string;
     session: Record<string, any>;
-    writeSSE: (data: { event?: string; data: any; id?: string }) => Promise<void>;
+    transport: LiveSyncTransport;
+    writeSSE?: (data: { event?: string; data: any; id?: string }) => Promise<void>;
+    ws?: ServerWebSocket<WebSocketData>;
 }
 
 const DB_PATH = join(process.cwd(), "test.db");
@@ -122,6 +132,7 @@ app.get("/sync/events", async (c) => {
         const client: ConnectedClient = {
             sessionId: sessionId!,
             session,
+            transport: "sse",
             writeSSE: async (data) => {
                 await stream.writeSSE(data);
             },
@@ -253,18 +264,33 @@ app.post("/db/:req", async (c) => {
     // Broadcast sync deltas in background (fire-and-forget, we're not awaiting it)
     result.sync(async (sessionId, message) => {
         const client = connectedClients.get(sessionId);
-        if (client) {
-            try {
+        if (!client) {
+            return;
+        }
+
+        const payload = {
+            type: "delta",
+            data: (message as { data?: any }).data ?? message,
+        };
+
+        try {
+            if (client.transport === "sse" && client.writeSSE) {
                 // Send SSE event with delta data
                 await client.writeSSE({
                     event: "delta",
                     data: JSON.stringify(message),
                 });
-            } catch (error) {
-                console.error(`Failed to send delta to client ${sessionId}:`, error);
-                // Remove client if stream is closed
-                connectedClients.delete(sessionId);
+            } else if (client.transport === "websocket" && client.ws) {
+                // ServerWebSocket readyState: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
+                if (client.ws.readyState === 1) {
+                    client.ws.send(JSON.stringify(payload));
+                } else {
+                    connectedClients.delete(sessionId);
+                }
             }
+        } catch (error) {
+            console.error(`Failed to send delta to client ${sessionId}:`, error);
+            connectedClients.delete(sessionId);
         }
     })
 
@@ -290,12 +316,79 @@ export default async function startServer() {
     
     const server = Bun.serve({
         port,
-        fetch: app.fetch,
+        fetch: (request, server) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/sync/events" && request.headers.get("upgrade") === "websocket") {
+                const sessionId = url.searchParams.get("sessionId");
+                if (!sessionId) {
+                    return new Response("sessionId query parameter is required", { status: 400 });
+                }
+                const session = getSession(sessionId);
+                if (!session) {
+                    return new Response("Session not found", { status: 404 });
+                }
+
+                const upgraded = server.upgrade(request, {
+                    data: { sessionId, session },
+                });
+
+                if (upgraded) {
+                    return;
+                }
+
+                return new Response("WebSocket upgrade failed", { status: 400 });
+            }
+
+            return app.fetch(request);
+        },
+        websocket: {
+            open(ws: ServerWebSocket<WebSocketData>) {
+                const { sessionId, session } = ws.data;
+                const isReconnection = connectedClients.has(sessionId);
+                if (isReconnection) {
+                    console.log(`[RECONNECT] Client reconnected via WebSocket: ${sessionId}`);
+                } else {
+                    console.log(`[NEW] Client connected via WebSocket: ${sessionId}`);
+                }
+
+                const client: ConnectedClient = {
+                    sessionId,
+                    session,
+                    transport: "websocket",
+                    ws,
+                };
+                connectedClients.set(sessionId, client);
+
+                if (!isReconnection) {
+                    ws.send(
+                        JSON.stringify({
+                            type: "connected",
+                            sessionId,
+                            session,
+                        })
+                    );
+                }
+            },
+            message(ws: ServerWebSocket<WebSocketData>, message: string | Buffer) {
+                // Handle incoming WebSocket messages if needed
+                // Currently, this is a one-way sync (server -> client), so we don't need to handle messages
+                console.log(`Received message from ${ws.data.sessionId}:`, message);
+            },
+            close(ws: ServerWebSocket<WebSocketData>) {
+                const { sessionId } = ws.data;
+                const currentClient = connectedClients.get(sessionId);
+                if (currentClient?.ws === ws) {
+                    connectedClients.delete(sessionId);
+                    console.log(`WebSocket client session removed: ${sessionId}`);
+                }
+            },
+        } as WebSocketHandler<WebSocketData>,
         idleTimeout: SSE_IDLE_TIMEOUT, // Bun's maximum - keep-alive prevents actual disconnection
     });
 
     console.log(`Server starting on http://localhost:${port}`);
     console.log(`SSE endpoint: http://localhost:${port}/sync/events`);
+    console.log(`WebSocket endpoint: ws://localhost:${port}/sync/events`);
     console.log(`SSE idleTimeout: ${SSE_IDLE_TIMEOUT}s (~4.25 minutes, Bun's maximum)`);
     console.log(`Keep-alive interval: 15s (prevents idle timeout and proxy timeouts)`);
 

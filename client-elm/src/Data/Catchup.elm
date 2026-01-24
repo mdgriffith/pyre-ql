@@ -1,7 +1,7 @@
 module Data.Catchup exposing (Model, Msg(..), ServerConfig, Status(..), UpdateResult, init, status, update)
 
 import Data.Delta
-import Data.SSE as SSE
+import Data.LiveSync as LiveSync
 import Data.Value
 import Db
 import Dict exposing (Dict)
@@ -20,7 +20,7 @@ type alias ServerConfig =
 
 type Status
     = NotStarted
-    | Syncing SSE.SyncProgress
+    | Syncing LiveSync.SyncProgress
     | Synced
     | Error String
 

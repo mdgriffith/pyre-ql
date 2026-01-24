@@ -124,14 +124,18 @@ function App() {
     }
 
     const queryParams = new URLSearchParams({ sessionId: String(sessionId) }).toString()
+    const liveSyncTransport = 'websocket'
+    const liveSyncUrl = liveSyncTransport === 'websocket'
+      ? `ws://localhost:3000/sync/events?${queryParams}`
+      : `http://localhost:3000/sync/events?${queryParams}`
     const indexedDbName = `pyre-sync-playground-${clientId}`
 
     addEvent({
       type: 'query_sent',
       data: {
         message: 'Connecting to server...',
-        url: `ws://localhost:3000/sync?${queryParams}`,
-        method: 'WS',
+        url: liveSyncUrl,
+        method: liveSyncTransport === 'websocket' ? 'WS' : 'SSE',
       },
       clientId,
     })
@@ -148,6 +152,7 @@ function App() {
         },
       },
       indexedDbName,
+      liveSyncTransport,
     })
 
     // Store in ref for cleanup

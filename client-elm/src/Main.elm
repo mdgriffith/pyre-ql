@@ -4,7 +4,7 @@ import Data.Catchup as Catchup
 import Data.Error
 import Data.IndexedDb as IndexedDb exposing (Incoming(..))
 import Data.QueryManager as QueryManager exposing (Incoming(..), Msg(..))
-import Data.SSE as SSE exposing (Incoming(..))
+import Data.LiveSync as LiveSync exposing (Incoming(..))
 import Data.Schema
 import Data.Value
 import Db exposing (Msg(..))
@@ -24,6 +24,7 @@ import String
 type alias Flags =
     { schema : Data.Schema.SchemaMetadata
     , server : Catchup.ServerConfig
+    , liveSync : LiveSync.Config
     }
 
 
@@ -37,13 +38,14 @@ type alias Model =
     , queryManager : QueryManager.Model
     , catchup : Catchup.Model
     , syncStatus : SyncStatus
-    , sseStarted : Bool
+    , liveSyncStarted : Bool
+    , liveSyncTransport : LiveSync.Transport
     }
 
 
 type SyncStatus
     = NotStarted
-    | Syncing SSE.SyncProgress
+    | Syncing LiveSync.SyncProgress
     | Synced
     | SyncError String
 
@@ -54,7 +56,7 @@ type SyncStatus
 
 type Msg
     = IndexedDbReceived IndexedDb.Incoming
-    | SSEReceived SSE.Incoming
+    | LiveSyncReceived LiveSync.Incoming
     | QueryManagerReceived QueryManager.Incoming
     | MutationRequest String String Encode.Value (Result Http.Error Encode.Value)
     | DbMsg Db.Msg
@@ -73,7 +75,8 @@ init flags =
       , queryManager = QueryManager.init
       , catchup = Catchup.init flags.server
       , syncStatus = NotStarted
-      , sseStarted = False
+      , liveSyncStarted = False
+      , liveSyncTransport = flags.liveSync.transport
       }
     , Cmd.batch
         [ IndexedDb.requestInitialData ]
@@ -105,8 +108,8 @@ update msg model =
                 ]
             )
 
-        SSEReceived incoming ->
-            handleSSEIncoming incoming model
+        LiveSyncReceived incoming ->
+            handleLiveSyncIncoming incoming model
 
         QueryManagerReceived incoming ->
             let
@@ -169,10 +172,10 @@ handleIndexedDbIncoming incoming model =
             )
 
 
-handleSSEIncoming : SSE.Incoming -> Model -> ( Model, Cmd Msg )
-handleSSEIncoming incoming model =
+handleLiveSyncIncoming : LiveSync.Incoming -> Model -> ( Model, Cmd Msg )
+handleLiveSyncIncoming incoming model =
     case incoming of
-        SSE.DeltaReceived delta ->
+        LiveSync.DeltaReceived delta ->
             -- Update database with delta
             let
                 ( updatedDb, dbCmd ) =
@@ -189,20 +192,20 @@ handleSSEIncoming incoming model =
                 ]
             )
 
-        SSE.SSEConnected _ ->
+        LiveSync.LiveSyncConnected _ ->
             ( model, Cmd.none )
 
-        SSE.SSEError error ->
+        LiveSync.LiveSyncError error ->
             ( { model | syncStatus = SyncError error }
             , Cmd.none
             )
 
-        SSE.SyncProgressReceived progress ->
+        LiveSync.SyncProgressReceived progress ->
             ( { model | syncStatus = Syncing progress }
             , Cmd.none
             )
 
-        SSE.SyncCompleteReceived ->
+        LiveSync.SyncCompleteReceived ->
             ( { model | syncStatus = Synced }
             , Cmd.none
             )
@@ -368,8 +371,8 @@ applyCatchupUpdate result model =
                 , syncStatus = syncStatusFromCatchup result.model
             }
 
-        ( sseModel, sseCmd ) =
-            startSseIfReady updatedModel
+        ( liveSyncModel, liveSyncCmd ) =
+            startLiveSyncIfReady updatedModel
 
         ( updatedQueryManager, triggerCmds ) =
             case result.delta of
@@ -395,11 +398,11 @@ applyCatchupUpdate result model =
             [ Cmd.map CatchupMsg result.cmd
             , errorCmd
             , Cmd.batch triggerCmds
-            , sseCmd
+            , liveSyncCmd
             ]
                 ++ dbCmds
     in
-    ( { sseModel | queryManager = updatedQueryManager }
+    ( { liveSyncModel | queryManager = updatedQueryManager }
     , Cmd.batch cmds
     )
 
@@ -420,17 +423,19 @@ syncStatusFromCatchup catchupModel =
             SyncError message
 
 
-startSseIfReady : Model -> ( Model, Cmd Msg )
-startSseIfReady model =
-    case ( model.sseStarted, Catchup.status model.catchup ) of
+startLiveSyncIfReady : Model -> ( Model, Cmd Msg )
+startLiveSyncIfReady model =
+    case ( model.liveSyncStarted, Catchup.status model.catchup ) of
         ( False, Catchup.Synced ) ->
-            ( { model | sseStarted = True }
-            , SSE.connect { baseUrl = model.catchup.server.baseUrl }
+            ( { model | liveSyncStarted = True }
+            , LiveSync.connect
+                { transport = model.liveSyncTransport }
             )
 
         ( False, Catchup.Error _ ) ->
-            ( { model | sseStarted = True }
-            , SSE.connect { baseUrl = model.catchup.server.baseUrl }
+            ( { model | liveSyncStarted = True }
+            , LiveSync.connect
+                { transport = model.liveSyncTransport }
             )
 
         _ ->
@@ -463,15 +468,15 @@ subscriptions model =
                         -- Send error to console
                         Error ("Failed to decode IndexedDB message: " ++ Decode.errorToString err)
             )
-        , SSE.receiveIncoming
+        , LiveSync.receiveIncoming
             (\result ->
                 case result of
                     Ok incoming ->
-                        SSEReceived incoming
+                        LiveSyncReceived incoming
 
                     Err err ->
                         -- Send error to console
-                        Error ("Failed to decode SSE message: " ++ Decode.errorToString err)
+                        Error ("Failed to decode LiveSync message: " ++ Decode.errorToString err)
             )
         , QueryManager.receiveIncoming
             (\result ->
@@ -500,7 +505,7 @@ main =
                         init flags
 
                     Err err ->
-                        -- Fallback with empty schema and default SSE config
+                        -- Fallback with empty schema and default live sync config
                         init
                             { schema =
                                 { tables = Dict.empty
@@ -510,6 +515,8 @@ main =
                                 { baseUrl = ""
                                 , catchupPath = ""
                                 }
+                            , liveSync =
+                                { transport = LiveSync.Sse }
                             }
         , update = update
         , subscriptions = subscriptions
@@ -518,9 +525,14 @@ main =
 
 decodeFlags : Decode.Decoder Flags
 decodeFlags =
-    Decode.map2 Flags
+    Decode.map3 Flags
         (Decode.field "schema" Data.Schema.decodeSchemaMetadata)
         (Decode.field "server" decodeServerConfig)
+        (Decode.oneOf
+            [ Decode.field "liveSync" LiveSync.decodeConfig
+            , Decode.succeed { transport = LiveSync.Sse }
+            ]
+        )
 
 
 decodeServerConfig : Decode.Decoder Catchup.ServerConfig

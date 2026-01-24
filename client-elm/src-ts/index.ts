@@ -2,10 +2,11 @@ import loadElm from '../dist/engine.mjs';
 import type { SchemaMetadata } from '../../client/src/types';
 import { IndexedDBStorage, IndexedDbService } from './service/indexeddb';
 import { QueryManagerService } from './service/query-manager';
-import { SSEManager } from './service/sse';
-import type { ElmApp, ServerConfig, ServerEndpoints, SyncProgress } from './types';
+import { SSEManager, type LiveSyncMessage } from './service/sse';
+import { WebSocketManager } from './service/websocket';
+import type { ElmApp, LiveSyncTransport, ServerConfig, ServerEndpoints, SyncProgress } from './types';
 
-export type { ServerConfig, ServerEndpoints, SyncProgress } from './types';
+export type { LiveSyncTransport, ServerConfig, ServerEndpoints, SyncProgress } from './types';
 export type { MutationResult } from './service/query-manager';
 
 export interface QueryModule<Input = unknown> {
@@ -24,6 +25,7 @@ export interface PyreClientConfig {
   schema: SchemaMetadata;
   server: ServerConfig;
   indexedDbName?: string;
+  liveSyncTransport?: LiveSyncTransport;
   onError?: (error: Error) => void;
 }
 
@@ -32,6 +34,11 @@ export class PyreClient {
   private storage: IndexedDBStorage;
   private indexedDbService: IndexedDbService;
   private sseManager: SSEManager;
+  private webSocketManager: WebSocketManager;
+  private sessionId: string | null = null;
+  private syncProgressCallbacks: Set<(progress: SyncProgress) => void> = new Set();
+  private sessionCallbacks: Set<(sessionId: string) => void> = new Set();
+  private lastSyncProgress: SyncProgress | null = null;
   private queryManager: QueryManagerService;
   private server: ServerConfig;
   private endpoints: ServerEndpoints;
@@ -39,6 +46,7 @@ export class PyreClient {
 
   constructor(config: PyreClientConfig) {
     const dbName = config.indexedDbName ?? 'pyre-client';
+    const liveSyncTransport = config.liveSyncTransport ?? 'sse';
     this.server = config.server;
     this.endpoints = {
       catchup: '/sync',
@@ -56,6 +64,9 @@ export class PyreClient {
           baseUrl: config.server.baseUrl,
           catchupPath: this.endpoints.catchup,
         },
+        liveSync: {
+          transport: liveSyncTransport,
+        },
       },
     });
 
@@ -65,10 +76,17 @@ export class PyreClient {
       baseUrl: config.server.baseUrl,
       eventsPath: this.endpoints.events,
     });
+    this.webSocketManager = new WebSocketManager({
+      baseUrl: config.server.baseUrl,
+      eventsPath: this.endpoints.events,
+    });
     this.queryManager = new QueryManagerService();
 
     this.indexedDbService.attachPorts(this.elmApp);
+    this.sseManager.setOnMessage(this.handleLiveSyncMessage);
+    this.webSocketManager.setOnMessage(this.handleLiveSyncMessage);
     this.sseManager.attachPorts(this.elmApp);
+    this.webSocketManager.attachPorts(this.elmApp);
     this.queryManager.attachPorts(this.elmApp);
 
     if (this.elmApp.ports.errorOut) {
@@ -89,15 +107,27 @@ export class PyreClient {
   }
 
   onSyncProgress(callback: (progress: SyncProgress) => void): () => void {
-    return this.sseManager.onSyncProgress(callback);
+    this.syncProgressCallbacks.add(callback);
+    if (this.lastSyncProgress) {
+      callback(this.lastSyncProgress);
+    }
+    return () => {
+      this.syncProgressCallbacks.delete(callback);
+    };
   }
 
   onSession(callback: (sessionId: string) => void): () => void {
-    return this.sseManager.onSession(callback);
+    this.sessionCallbacks.add(callback);
+    if (this.sessionId) {
+      callback(this.sessionId);
+    }
+    return () => {
+      this.sessionCallbacks.delete(callback);
+    };
   }
 
   getSessionId(): string | null {
-    return this.sseManager.getSessionId();
+    return this.sessionId;
   }
 
   run<Input = unknown>(
@@ -115,7 +145,34 @@ export class PyreClient {
 
   disconnect(): void {
     this.sseManager.disconnect();
+    this.webSocketManager.disconnect();
+    this.sessionId = null;
   }
+
+  private handleLiveSyncMessage = (message: LiveSyncMessage): void => {
+    if (message.type === 'connected' && message.sessionId) {
+      this.sessionId = message.sessionId;
+      this.sessionCallbacks.forEach((callback) => {
+        callback(message.sessionId!);
+      });
+    }
+
+    if (message.type === 'syncProgress' && message.data) {
+      const progress = message.data as SyncProgress;
+      this.lastSyncProgress = progress;
+      this.syncProgressCallbacks.forEach((callback) => {
+        callback(progress);
+      });
+    }
+
+    if (message.type === 'syncComplete' && this.lastSyncProgress) {
+      const progress = { ...this.lastSyncProgress, complete: true };
+      this.lastSyncProgress = progress;
+      this.syncProgressCallbacks.forEach((callback) => {
+        callback(progress);
+      });
+    }
+  };
 
   async deleteDatabase(): Promise<void> {
     await this.storage.deleteDatabase();
