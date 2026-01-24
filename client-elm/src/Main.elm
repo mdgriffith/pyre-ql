@@ -21,7 +21,7 @@ import Platform
 
 type alias Flags =
     { schema : Data.Schema.SchemaMetadata
-    , sseConfig : SSE.SSEConfig
+    , server : SSE.SSEConfig
     }
 
 
@@ -33,7 +33,7 @@ type alias Model =
     { schema : Data.Schema.SchemaMetadata
     , db : Db.Db
     , queryManager : QueryManager.Model
-    , sseConfig : SSE.SSEConfig
+    , server : SSE.SSEConfig
     , syncStatus : SyncStatus
     }
 
@@ -67,12 +67,12 @@ init flags =
     ( { schema = flags.schema
       , db = Db.init
       , queryManager = QueryManager.init
-      , sseConfig = flags.sseConfig
+      , server = flags.server
       , syncStatus = NotStarted
       }
     , Cmd.batch
         [ IndexedDb.requestInitialData
-        , SSE.connect flags.sseConfig
+        , SSE.connect flags.server
         ]
     )
 
@@ -261,11 +261,13 @@ handleQueryManagerIncoming incoming model =
         QueryManager.UnregisterQuery _ ->
             ( model, [] )
 
-        QueryManager.SendMutation hash baseUrl input ->
+        QueryManager.SendMutation hash baseUrl headers input ->
             -- Mutations are handled via HTTP request
             ( model
-            , [ Http.post
-                    { url = baseUrl ++ "/" ++ hash
+            , [ Http.request
+                    { method = "POST"
+                    , headers = List.map (\( key, value ) -> Http.header key value) headers
+                    , url = baseUrl ++ "/" ++ hash
                     , body = Http.jsonBody input
                     , expect =
                         Http.expectStringResponse
@@ -292,6 +294,8 @@ handleQueryManagerIncoming incoming model =
                                             Err err ->
                                                 Err (Http.BadBody (Decode.errorToString err))
                             )
+                    , timeout = Nothing
+                    , tracker = Nothing
                     }
               ]
             )
@@ -389,9 +393,8 @@ main =
                                 { tables = Dict.empty
                                 , queryFieldToTable = Dict.empty
                                 }
-                            , sseConfig =
+                            , server =
                                 { baseUrl = ""
-                                , userId = 0
                                 }
                             }
         , update = update
@@ -403,7 +406,7 @@ decodeFlags : Decode.Decoder Flags
 decodeFlags =
     Decode.map2 Flags
         (Decode.field "schema" Data.Schema.decodeSchemaMetadata)
-        (Decode.field "sseConfig" SSE.decodeSSEConfig)
+        (Decode.field "server" SSE.decodeSSEConfig)
 
 
 reExecuteAllQueries : Data.Schema.SchemaMetadata -> Db.Db -> QueryManager.Model -> ( QueryManager.Model, List (Cmd Msg) )
@@ -432,4 +435,3 @@ reExecuteAllQueries schema db queryManager =
         )
         ( queryManager, [] )
         queryManager.subscriptions
-

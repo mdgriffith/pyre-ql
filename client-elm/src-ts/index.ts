@@ -3,9 +3,9 @@ import type { SchemaMetadata } from '../../client/src/types';
 import { IndexedDBStorage, IndexedDbService } from './service/indexeddb';
 import { QueryManagerService } from './service/query-manager';
 import { SSEManager } from './service/sse';
-import type { ElmApp, SSEConfig, SyncProgress } from './types';
+import type { ElmApp, ServerConfig, ServerEndpoints, SyncProgress } from './types';
 
-export type { SSEConfig, SyncProgress } from './types';
+export type { ServerConfig, ServerEndpoints, SyncProgress } from './types';
 export type { MutationResult } from './service/query-manager';
 
 export interface QueryModule<Input = unknown> {
@@ -22,8 +22,8 @@ export interface QuerySubscription<Input = unknown> {
 
 export interface PyreClientConfig {
   schema: SchemaMetadata;
-  sseConfig: SSEConfig;
-  dbName?: string;
+  server: ServerConfig;
+  indexedDbName?: string;
   onError?: (error: Error) => void;
 }
 
@@ -33,25 +33,37 @@ export class PyreClient {
   private indexedDbService: IndexedDbService;
   private sseManager: SSEManager;
   private queryManager: QueryManagerService;
-  private baseUrl: string;
+  private server: ServerConfig;
+  private endpoints: ServerEndpoints;
   private queryCounter = 0;
 
   constructor(config: PyreClientConfig) {
-    const dbName = config.dbName ?? 'pyre-client';
+    const dbName = config.indexedDbName ?? 'pyre-client';
+    this.server = config.server;
+    this.endpoints = {
+      catchup: '/sync',
+      events: '/sync/events',
+      query: '/db',
+      ...config.server.endpoints,
+    };
 
     const Elm = loadElm(Object.create(globalThis));
 
-    this.baseUrl = config.sseConfig.baseUrl;
     this.elmApp = Elm.Main.init({
       flags: {
         schema: config.schema,
-        sseConfig: config.sseConfig,
+        server: {
+          baseUrl: config.server.baseUrl,
+        },
       },
     });
 
     this.storage = new IndexedDBStorage(dbName);
     this.indexedDbService = new IndexedDbService(this.storage);
-    this.sseManager = new SSEManager();
+    this.sseManager = new SSEManager({
+      baseUrl: config.server.baseUrl,
+      eventsPath: this.endpoints.events,
+    });
     this.queryManager = new QueryManagerService();
 
     this.indexedDbService.attachPorts(this.elmApp);
@@ -160,6 +172,13 @@ export class PyreClient {
     }
 
     const payload = input ?? {};
-    this.queryManager.sendMutation(hash, this.baseUrl, payload, callback);
+    const baseUrl = `${this.server.baseUrl}${this.endpoints.query}`;
+    this.queryManager.sendMutation(
+      hash,
+      baseUrl,
+      payload,
+      callback,
+      this.server.headers
+    );
   }
 }

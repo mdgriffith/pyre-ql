@@ -36,11 +36,18 @@ import { schemaMetadata } from './generated/client/node/schema';
 
 const client = new PyreClient({
   schema: schemaMetadata,
-  sseConfig: {
+  server: {
     baseUrl: 'http://localhost:3000',
-    userId: 1,
+    endpoints: {
+      catchup: '/sync',
+      events: '/sync/events',
+      query: '/db',
+    },
+    headers: {
+      Authorization: 'Bearer token',
+    },
   },
-  dbName: 'pyre-client',
+  indexedDbName: 'pyre-client',
 });
 
 await client.init();

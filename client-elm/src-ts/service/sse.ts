@@ -1,4 +1,9 @@
-import type { ElmApp, SSEConfig, SyncProgress } from '../types';
+import type { ElmApp, SyncProgress } from '../types';
+
+export interface SSEConfig {
+  baseUrl: string;
+  eventsPath: string;
+}
 
 type SyncProgressCallback = (progress: SyncProgress) => void;
 type SessionCallback = (sessionId: string) => void;
@@ -14,7 +19,8 @@ export class SSEManager {
   private sessionCallbacks: Set<SessionCallback> = new Set();
   private lastSyncProgress: SyncProgress | null = null;
 
-  constructor() {
+  constructor(config: SSEConfig) {
+    this.config = config;
     this.clientId = `client_${Math.random().toString(36).substring(2, 15)}_${Date.now()}`;
   }
 
@@ -24,9 +30,9 @@ export class SSEManager {
     if (elmApp.ports.sseOut) {
       elmApp.ports.sseOut.subscribe((message) => {
         console.log('[PyreClient] port sseOut <-', message);
-        const typedMessage = message as { type?: string; config?: SSEConfig };
-        if (typedMessage.type === 'connectSSE' && typedMessage.config) {
-          this.connect(typedMessage.config);
+        const typedMessage = message as { type?: string };
+        if (typedMessage.type === 'connectSSE') {
+          this.connect();
         } else if (typedMessage.type === 'disconnectSSE') {
           this.disconnect();
         }
@@ -58,8 +64,7 @@ export class SSEManager {
     return this.sessionId;
   }
 
-  connect(config: SSEConfig): void {
-    this.config = config;
+  connect(): void {
     this.shouldReconnect = true;
     this.attemptConnect();
   }
@@ -91,7 +96,7 @@ export class SSEManager {
     }
 
     try {
-      const sseUrl = `${this.config.baseUrl}/sync/events?userId=${this.config.userId}&clientId=${encodeURIComponent(this.clientId)}`;
+      const sseUrl = `${this.config.baseUrl}${this.config.eventsPath}?clientId=${encodeURIComponent(this.clientId)}`;
       const eventSource = new EventSource(sseUrl);
 
       eventSource.onopen = () => {

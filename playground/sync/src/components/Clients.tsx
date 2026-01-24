@@ -10,7 +10,7 @@ interface Client {
   requestedUserId: number | null
   connected: boolean
   pyreClient: PyreClient | null
-  dbName?: string | null
+  indexedDbName?: string | null
 }
 
 interface ClientsProps {

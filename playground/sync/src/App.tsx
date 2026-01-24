@@ -15,7 +15,7 @@ interface Client {
   userId: number | null
   requestedUserId: number | null // User-specified userId for connection
   sessionId: string | null
-  dbName: string | null
+  indexedDbName: string | null
 }
 
 interface Event {
@@ -36,7 +36,7 @@ function App() {
       connected: false,
       userId: null,
       requestedUserId: 1, // First client always starts as userId 1
-      dbName: 'pyre-sync-playground-1',
+      indexedDbName: 'pyre-sync-playground-1',
     },
   ])
   const [activeTab, setActiveTab] = useState<'messages' | 'clients'>('clients')
@@ -109,22 +109,21 @@ function App() {
       type: 'query_sent',
       data: {
         message: 'Connecting to server...',
-        url: `ws://localhost:3000/sync?userId=${userId}`,
+        url: 'ws://localhost:3000/sync',
         method: 'WS',
       },
       clientId,
     })
 
-    const dbName = `pyre-sync-playground-${clientId}`
+    const indexedDbName = `pyre-sync-playground-${clientId}`
 
     // Create PyreClient instance
     const pyreClient = new PyreClient({
       schema: schemaMetadata,
-      sseConfig: {
+      server: {
         baseUrl: 'http://localhost:3000',
-        userId: userId,
       },
-      dbName,
+      indexedDbName,
     })
 
     // Store in ref for cleanup
@@ -175,7 +174,7 @@ function App() {
               connected: true,
               userId: userId,
               sessionId,
-              dbName,
+              indexedDbName,
             }
             : c
         )
@@ -223,7 +222,7 @@ function App() {
         connected: false,
         userId: null,
         requestedUserId: newUserId, // Assign next sequential userId
-        dbName: `pyre-sync-playground-${newId}`,
+        indexedDbName: `pyre-sync-playground-${newId}`,
       }
       // Connect immediately after adding
       setTimeout(() => {
@@ -331,9 +330,9 @@ function App() {
     for (const [clientId, pyreClient] of pyreClientsRef.current.entries()) {
       if (pyreClient) {
         const client = clientsRef.current.find((item) => item.id === clientId)
-        if (client?.dbName) {
-          dbNames.push(client.dbName)
-          console.log(`[Reset] Will delete database for client ${clientId}: ${client.dbName}`)
+        if (client?.indexedDbName) {
+          dbNames.push(client.indexedDbName)
+          console.log(`[Reset] Will delete database for client ${clientId}: ${client.indexedDbName}`)
         }
         deletePromises.push(pyreClient.deleteDatabase().catch(err => {
           console.error(`Error deleting database for client ${clientId}:`, err)
@@ -394,7 +393,7 @@ function App() {
         connected: false,
         userId: null,
         requestedUserId: 1,
-        dbName: 'pyre-sync-playground-1',
+        indexedDbName: 'pyre-sync-playground-1',
       },
     ])
     setSelectedClientId('1')

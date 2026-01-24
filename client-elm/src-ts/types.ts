@@ -1,8 +1,15 @@
 import type { SchemaMetadata } from '../../client/src/types';
 
-export interface SSEConfig {
+export interface ServerEndpoints {
+  catchup: string;
+  events: string;
+  query: string;
+}
+
+export interface ServerConfig {
   baseUrl: string;
-  userId: number;
+  endpoints?: Partial<ServerEndpoints>;
+  headers?: Record<string, string>;
 }
 
 export interface SyncProgress {
@@ -43,7 +50,9 @@ export interface ElmApp {
 
 export interface ElmFlags {
   schema: SchemaMetadata;
-  sseConfig: SSEConfig;
+  server: {
+    baseUrl: string;
+  };
 }
 
 export interface ElmModule {

@@ -15,7 +15,6 @@ import Json.Encode as Encode
 
 type alias SSEConfig =
     { baseUrl : String
-    , userId : Int
     }
 
 
@@ -78,7 +77,6 @@ encodeSSEConfig : SSEConfig -> Encode.Value
 encodeSSEConfig config =
     Encode.object
         [ ( "baseUrl", Encode.string config.baseUrl )
-        , ( "userId", Encode.int config.userId )
         ]
 
 
@@ -118,9 +116,8 @@ decodeIncoming =
 
 decodeSSEConfig : Decode.Decoder SSEConfig
 decodeSSEConfig =
-    Decode.map2 SSEConfig
+    Decode.map SSEConfig
         (Decode.field "baseUrl" Decode.string)
-        (Decode.field "userId" Decode.int)
 
 
 decodeSyncProgress : Decode.Decoder SyncProgress

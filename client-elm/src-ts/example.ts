@@ -4,13 +4,13 @@
 
 import { PyreClient } from './index';
 import type { SchemaMetadata } from '../../client/src/types';
-import type { SSEConfig } from './types';
+import type { ServerConfig } from './types';
 
-export function initExample(schemaMetadata: SchemaMetadata, sseConfig: SSEConfig) {
+export function initExample(schemaMetadata: SchemaMetadata, server: ServerConfig) {
   const client = new PyreClient({
     schema: schemaMetadata,
-    sseConfig,
-    dbName: 'pyre-client',
+    server,
+    indexedDbName: 'pyre-client',
   });
 
   client.onSyncProgress((progress) => {

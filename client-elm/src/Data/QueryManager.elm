@@ -41,7 +41,7 @@ type Incoming
     = RegisterQuery String Db.Query.Query Encode.Value String -- queryId, query, input, callbackPort
     | UpdateQueryInput String (Maybe Db.Query.Query) Encode.Value -- queryId, query, newInput
     | UnregisterQuery String -- queryId
-    | SendMutation String String Encode.Value -- hash, baseUrl, input
+    | SendMutation String String (List ( String, String )) Encode.Value -- hash, baseUrl, headers, input
 
 
 type Message
@@ -110,7 +110,7 @@ handleIncoming incoming model =
             , Cmd.none
             )
 
-        SendMutation _ _ _ ->
+        SendMutation _ _ _ _ ->
             -- Mutations are handled by Main, not QueryManager
             ( model, Cmd.none )
 
@@ -709,9 +709,14 @@ decodeIncoming =
                             |> Decode.map UnregisterQuery
 
                     "sendMutation" ->
-                        Decode.map3 SendMutation
+                        Decode.map4 SendMutation
                             (Decode.field "hash" Decode.string)
                             (Decode.field "baseUrl" Decode.string)
+                            (Decode.oneOf
+                                [ Decode.field "headers" decodeHeaders
+                                , Decode.succeed []
+                                ]
+                            )
                             (Decode.field "input" Decode.value)
 
                     _ ->
@@ -721,6 +726,18 @@ decodeIncoming =
 
 
 -- Helper functions
+
+
+decodeHeaders : Decode.Decoder (List ( String, String ))
+decodeHeaders =
+    Decode.list decodeHeader
+
+
+decodeHeader : Decode.Decoder ( String, String )
+decodeHeader =
+    Decode.map2 Tuple.pair
+        (Decode.index 0 Decode.string)
+        (Decode.index 1 Decode.string)
 
 
 sendMessage : Message -> Cmd msg

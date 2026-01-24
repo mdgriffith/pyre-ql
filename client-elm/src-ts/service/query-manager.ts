@@ -68,18 +68,29 @@ export class QueryManagerService {
     console.log('[PyreClient] port receiveQueryManagerMessage ->', unregisterMessage);
   }
 
-  sendMutation(hash: string, baseUrl: string, input: unknown, callback?: MutationResultCallback): void {
+  sendMutation(
+    hash: string,
+    baseUrl: string,
+    input: unknown,
+    callback?: MutationResultCallback,
+    headers?: Record<string, string>
+  ): void {
     if (callback) {
       const callbacks = this.mutationCallbacks.get(hash) ?? [];
       callbacks.push(callback);
       this.mutationCallbacks.set(hash, callbacks);
     }
 
+    const headerPairs = headers
+      ? Object.entries(headers)
+      : undefined;
+
     const mutationMessage = {
       type: 'sendMutation',
       hash,
       baseUrl,
       input,
+      headers: headerPairs,
     };
     this.elmApp?.ports.receiveQueryManagerMessage?.send(mutationMessage);
     console.log('[PyreClient] port receiveQueryManagerMessage ->', mutationMessage);
