@@ -26,6 +26,7 @@ export class QueryManagerService {
 
     if (elmApp.ports.queryManagerOut) {
       elmApp.ports.queryManagerOut.subscribe((message) => {
+        console.log('[PyreClient] port queryManagerOut <-', message);
         this.handleMessage(message as { type?: string }).catch((error) => {
           console.error('[PyreClient] Query manager handler failed:', error);
         });
@@ -35,29 +36,36 @@ export class QueryManagerService {
 
   registerQuery(registration: QueryRegistration, callback: QueryResultCallback): void {
     this.queryCallbacks.set(registration.callbackPort, callback);
-    this.elmApp?.ports.receiveQueryManagerMessage?.send({
+    const registerMessage = {
       type: 'registerQuery',
       queryId: registration.queryId,
       query: registration.query,
       input: registration.input,
       callbackPort: registration.callbackPort,
-    });
+    };
+    this.elmApp?.ports.receiveQueryManagerMessage?.send(registerMessage);
+    console.log('[PyreClient] port receiveQueryManagerMessage ->', registerMessage);
   }
 
-  updateQueryInput(queryId: string, input: unknown): void {
-    this.elmApp?.ports.receiveQueryManagerMessage?.send({
+  updateQueryInput(queryId: string, input: unknown, query?: unknown): void {
+    const updateMessage = {
       type: 'updateQueryInput',
       queryId,
+      query,
       input,
-    });
+    };
+    this.elmApp?.ports.receiveQueryManagerMessage?.send(updateMessage);
+    console.log('[PyreClient] port receiveQueryManagerMessage ->', updateMessage);
   }
 
   unregisterQuery(queryId: string, callbackPort: string): void {
     this.queryCallbacks.delete(callbackPort);
-    this.elmApp?.ports.receiveQueryManagerMessage?.send({
+    const unregisterMessage = {
       type: 'unregisterQuery',
       queryId,
-    });
+    };
+    this.elmApp?.ports.receiveQueryManagerMessage?.send(unregisterMessage);
+    console.log('[PyreClient] port receiveQueryManagerMessage ->', unregisterMessage);
   }
 
   sendMutation(hash: string, baseUrl: string, input: unknown, callback?: MutationResultCallback): void {
@@ -67,12 +75,14 @@ export class QueryManagerService {
       this.mutationCallbacks.set(hash, callbacks);
     }
 
-    this.elmApp?.ports.receiveQueryManagerMessage?.send({
+    const mutationMessage = {
       type: 'sendMutation',
       hash,
       baseUrl,
       input,
-    });
+    };
+    this.elmApp?.ports.receiveQueryManagerMessage?.send(mutationMessage);
+    console.log('[PyreClient] port receiveQueryManagerMessage ->', mutationMessage);
   }
 
   private async handleMessage(message: { type?: string }): Promise<void> {

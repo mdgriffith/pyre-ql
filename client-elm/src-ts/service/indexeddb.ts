@@ -226,6 +226,7 @@ export class IndexedDbService {
 
     if (elmApp.ports.indexedDbOut) {
       elmApp.ports.indexedDbOut.subscribe((message) => {
+        console.log('[PyreClient] port indexedDbOut <-', message);
         this.handleMessage(message as { type?: string; tableGroups?: TableGroup[] }).catch((error) => {
           console.error('[PyreClient] IndexedDB handler failed:', error);
         });
@@ -257,12 +258,12 @@ export class IndexedDbService {
         type: 'initialData',
         data: { tables },
       });
+      console.log('[PyreClient] port receiveIndexedDbMessage ->', { type: 'initialData', data: { tables } });
     } catch (error) {
       console.error('[PyreClient] Failed to load initial data:', error);
-      this.elmApp.ports.receiveIndexedDbMessage.send({
-        type: 'initialData',
-        data: { tables: {} },
-      });
+      const fallbackMessage = { type: 'initialData', data: { tables: {} } };
+      this.elmApp.ports.receiveIndexedDbMessage.send(fallbackMessage);
+      console.log('[PyreClient] port receiveIndexedDbMessage ->', fallbackMessage);
     }
   }
 

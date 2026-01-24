@@ -23,6 +23,7 @@ export class SSEManager {
 
     if (elmApp.ports.sseOut) {
       elmApp.ports.sseOut.subscribe((message) => {
+        console.log('[PyreClient] port sseOut <-', message);
         const typedMessage = message as { type?: string; config?: SSEConfig };
         if (typedMessage.type === 'connectSSE' && typedMessage.config) {
           this.connect(typedMessage.config);
@@ -103,27 +104,33 @@ export class SSEManager {
           if (message.sessionId) {
             this.sessionId = message.sessionId;
             this.emitSession(message.sessionId);
-            this.elmApp?.ports.receiveSSEMessage?.send({
+            const connectedMessage = {
               type: 'connected',
               sessionId: message.sessionId,
-            });
+            };
+            this.elmApp?.ports.receiveSSEMessage?.send(connectedMessage);
+            console.log('[PyreClient] port receiveSSEMessage ->', connectedMessage);
           }
         } catch (error) {
           console.error('Failed to parse SSE connected message:', error);
-          this.elmApp?.ports.receiveSSEMessage?.send({
+          const errorMessage = {
             type: 'error',
             error: 'Failed to parse connection message',
-          });
+          };
+          this.elmApp?.ports.receiveSSEMessage?.send(errorMessage);
+          console.log('[PyreClient] port receiveSSEMessage ->', errorMessage);
         }
       });
 
       eventSource.addEventListener('delta', (event: MessageEvent) => {
         try {
           const message = JSON.parse(event.data) as { data?: unknown };
-          this.elmApp?.ports.receiveSSEMessage?.send({
+          const deltaMessage = {
             type: 'delta',
             data: message.data,
-          });
+          };
+          this.elmApp?.ports.receiveSSEMessage?.send(deltaMessage);
+          console.log('[PyreClient] port receiveSSEMessage ->', deltaMessage);
         } catch (error) {
           console.error('Failed to parse SSE delta message:', error);
         }
@@ -135,10 +142,12 @@ export class SSEManager {
           if (message.data) {
             this.emitSyncProgress(message.data);
           }
-          this.elmApp?.ports.receiveSSEMessage?.send({
+          const progressMessage = {
             type: 'syncProgress',
             data: message.data,
-          });
+          };
+          this.elmApp?.ports.receiveSSEMessage?.send(progressMessage);
+          console.log('[PyreClient] port receiveSSEMessage ->', progressMessage);
         } catch (error) {
           console.error('Failed to parse SSE sync progress message:', error);
         }
@@ -148,9 +157,11 @@ export class SSEManager {
         if (this.lastSyncProgress) {
           this.emitSyncProgress({ ...this.lastSyncProgress, complete: true });
         }
-        this.elmApp?.ports.receiveSSEMessage?.send({
+        const completeMessage = {
           type: 'syncComplete',
-        });
+        };
+        this.elmApp?.ports.receiveSSEMessage?.send(completeMessage);
+        console.log('[PyreClient] port receiveSSEMessage ->', completeMessage);
       });
 
       eventSource.onerror = (error) => {
@@ -162,17 +173,21 @@ export class SSEManager {
             // EventSource will auto-reconnect
           }
         } else if (state === EventSource.CONNECTING && !this.sessionId) {
-          this.elmApp?.ports.receiveSSEMessage?.send({
+          const errorMessage = {
             type: 'error',
             error: 'SSE connection failed',
-          });
+          };
+          this.elmApp?.ports.receiveSSEMessage?.send(errorMessage);
+          console.log('[PyreClient] port receiveSSEMessage ->', errorMessage);
         }
       };
     } catch (error) {
-      this.elmApp?.ports.receiveSSEMessage?.send({
+      const errorMessage = {
         type: 'error',
         error: `SSE connection error: ${error}`,
-      });
+      };
+      this.elmApp?.ports.receiveSSEMessage?.send(errorMessage);
+      console.log('[PyreClient] port receiveSSEMessage ->', errorMessage);
     }
   }
 

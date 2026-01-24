@@ -88,11 +88,17 @@ update msg model =
             let
                 ( updatedDb, dbCmd ) =
                     Db.update (Db.FromIndexedDb model.schema incoming) model.db
+
+                baseModel =
+                    { model | db = updatedDb }
+
+                ( updatedModel, indexedDbCmd ) =
+                    handleIndexedDbIncoming incoming baseModel
             in
-            ( { model | db = updatedDb }
+            ( updatedModel
             , Cmd.batch
                 [ Cmd.map DbMsg dbCmd
-                , handleIndexedDbIncoming incoming model
+                , indexedDbCmd
                 ]
             )
 
@@ -138,12 +144,17 @@ update msg model =
             )
 
 
-handleIndexedDbIncoming : IndexedDb.Incoming -> Model -> Cmd Msg
+handleIndexedDbIncoming : IndexedDb.Incoming -> Model -> ( Model, Cmd Msg )
 handleIndexedDbIncoming incoming model =
     case incoming of
         IndexedDb.InitialDataReceived _ ->
-            -- Database already updated via Db.update
-            Cmd.none
+            let
+                ( updatedQueryManager, cmds ) =
+                    reExecuteAllQueries model.schema model.db model.queryManager
+            in
+            ( { model | queryManager = updatedQueryManager }
+            , Cmd.batch cmds
+            )
 
 
 handleSSEIncoming : SSE.Incoming -> Model -> ( Model, Cmd Msg )
@@ -218,7 +229,7 @@ handleQueryManagerIncoming incoming model =
             , [ QueryManager.queryResult callbackPort resultJson ]
             )
 
-        QueryManager.UpdateQueryInput queryId newInput ->
+        QueryManager.UpdateQueryInput queryId _ newInput ->
             -- QueryManager already updated the subscription
             -- Re-execute query and send result, and update subscription with row IDs
             case Dict.get queryId model.queryManager.subscriptions of
@@ -393,4 +404,32 @@ decodeFlags =
     Decode.map2 Flags
         (Decode.field "schema" Data.Schema.decodeSchemaMetadata)
         (Decode.field "sseConfig" SSE.decodeSSEConfig)
+
+
+reExecuteAllQueries : Data.Schema.SchemaMetadata -> Db.Db -> QueryManager.Model -> ( QueryManager.Model, List (Cmd Msg) )
+reExecuteAllQueries schema db queryManager =
+    Dict.foldl
+        (\_ subscription ( accModel, accCmds ) ->
+            let
+                executionResult =
+                    Db.executeQueryWithTracking schema db subscription.query
+
+                resultJson =
+                    encodeQueryResult executionResult.results
+
+                updatedSubscription =
+                    { subscription | resultRowIds = executionResult.rowIds }
+
+                updatedSubscriptions =
+                    Dict.insert subscription.queryId updatedSubscription accModel.subscriptions
+
+                updatedModel =
+                    { accModel | subscriptions = updatedSubscriptions }
+            in
+            ( updatedModel
+            , QueryManager.queryResult subscription.callbackPort resultJson :: accCmds
+            )
+        )
+        ( queryManager, [] )
+        queryManager.subscriptions
 

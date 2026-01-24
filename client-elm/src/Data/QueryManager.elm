@@ -39,7 +39,7 @@ type Msg
 
 type Incoming
     = RegisterQuery String Db.Query.Query Encode.Value String -- queryId, query, input, callbackPort
-    | UpdateQueryInput String Encode.Value -- queryId, newInput
+    | UpdateQueryInput String (Maybe Db.Query.Query) Encode.Value -- queryId, query, newInput
     | UnregisterQuery String -- queryId
     | SendMutation String String Encode.Value -- hash, baseUrl, input
 
@@ -85,12 +85,15 @@ handleIncoming incoming model =
             , Cmd.none
             )
 
-        UpdateQueryInput queryId newInput ->
+        UpdateQueryInput queryId maybeQuery newInput ->
             case Dict.get queryId model.subscriptions of
                 Just subscription ->
                     let
+                        updatedQuery =
+                            Maybe.withDefault subscription.query maybeQuery
+
                         updatedSubscription =
-                            { subscription | input = newInput }
+                            { subscription | input = newInput, query = updatedQuery }
 
                         updatedSubscriptions =
                             Dict.insert queryId updatedSubscription model.subscriptions
@@ -692,8 +695,13 @@ decodeIncoming =
                             (Decode.field "callbackPort" Decode.string)
 
                     "updateQueryInput" ->
-                        Decode.map2 UpdateQueryInput
+                        Decode.map3 UpdateQueryInput
                             (Decode.field "queryId" Decode.string)
+                            (Decode.oneOf
+                                [ Decode.field "query" Db.Query.decodeQuery |> Decode.map Just
+                                , Decode.succeed Nothing
+                                ]
+                            )
                             (Decode.field "input" Decode.value)
 
                     "unregisterQuery" ->
@@ -750,4 +758,3 @@ subscriptions toMsg toErrorMsg =
                 Err err ->
                     toErrorMsg ("Failed to decode QueryManager message: " ++ Decode.errorToString err)
         )
-

@@ -62,6 +62,7 @@ export class PyreClient {
 
     if (this.elmApp.ports.errorOut) {
       this.elmApp.ports.errorOut.subscribe((message) => {
+        console.log('[PyreClient] port errorOut <-', message);
         const error = new Error(message);
         if (config.onError) {
           config.onError(error);
@@ -142,7 +143,10 @@ export class PyreClient {
         this.queryManager.unregisterQuery(queryId, callbackPort);
       },
       update: (updatedInput: Input) => {
-        this.queryManager.updateQueryInput(queryId, updatedInput);
+        const updatedQuery = queryModule.toQueryShape
+          ? queryModule.toQueryShape(updatedInput)
+          : queryModule.queryShape;
+        this.queryManager.updateQueryInput(queryId, updatedInput, updatedQuery);
       },
     };
   }
