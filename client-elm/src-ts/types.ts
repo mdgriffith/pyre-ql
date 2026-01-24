@@ -52,6 +52,7 @@ export interface ElmFlags {
   schema: SchemaMetadata;
   server: {
     baseUrl: string;
+    catchupPath: string;
   };
 }
 

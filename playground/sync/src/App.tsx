@@ -105,7 +105,25 @@ function App() {
       }
     }
 
-    const queryParams = new URLSearchParams({ userId: String(userId) }).toString()
+    let sessionId: string | null = null
+    try {
+      const loginResponse = await fetch(`http://localhost:3000/login?userId=${encodeURIComponent(String(userId))}`)
+      if (!loginResponse.ok) {
+        throw new Error(`Login failed: ${loginResponse.status}`)
+      }
+      const loginData = await loginResponse.json()
+      sessionId = loginData.sessionId
+    } catch (error: any) {
+      console.error('Failed to login:', error)
+      addEvent({
+        type: 'query_response',
+        data: { error: error.message || 'Failed to login' },
+        clientId,
+      })
+      return
+    }
+
+    const queryParams = new URLSearchParams({ sessionId: String(sessionId) }).toString()
     const indexedDbName = `pyre-sync-playground-${clientId}`
 
     addEvent({
@@ -152,24 +170,9 @@ function App() {
       }
     })
 
-    const unsubscribeSession = pyreClient.onSession((sessionId) => {
-      setClients((prev) =>
-        prev.map((c) =>
-          c.id === clientId
-            ? {
-              ...c,
-              sessionId,
-            }
-            : c
-        )
-      )
-    })
-
     try {
       // Initialize client storage
       await pyreClient.init()
-
-      const sessionId = pyreClient.getSessionId()
 
       setClients((prev) =>
         prev.map((c) =>
@@ -192,7 +195,6 @@ function App() {
         clientId,
       })
     } catch (error: any) {
-      unsubscribeSession()
       console.error('Failed to initialize PyreClient:', error)
       addEvent({
         type: 'query_response',

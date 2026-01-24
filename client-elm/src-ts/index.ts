@@ -54,6 +54,7 @@ export class PyreClient {
         schema: config.schema,
         server: {
           baseUrl: config.server.baseUrl,
+          catchupPath: this.endpoints.catchup,
         },
       },
     });

@@ -18,8 +18,7 @@ interface ConnectedClient {
 const DB_PATH = join(process.cwd(), "test.db");
 const DB_URL = `file:${DB_PATH}`;
 const connectedClients = new Map<string, ConnectedClient>();
-// Track sessions by userId+clientId to reuse on reconnection
-const sessionsByClient = new Map<string, string>(); // "userId_clientId" -> sessionId
+const sessionsById = new Map<string, Record<string, any>>();
 let nextSessionId = 1;
 
 const db = createClient({ url: DB_URL });
@@ -37,37 +36,26 @@ app.get("/", (c) => {
 app.use("*", async (c, next) => {
     c.header("Access-Control-Allow-Origin", "*");
     c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    c.header("Access-Control-Allow-Headers", "Content-Type, X-User-Id");
+    c.header("Access-Control-Allow-Headers", "Content-Type");
     if (c.req.method === "OPTIONS") {
         return new Response(null, {
             status: 204,
             headers: {
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, X-User-Id",
+                "Access-Control-Allow-Headers": "Content-Type",
             },
         });
     }
     await next();
 });
 
-const parseUserId = (value: string | undefined | null) => {
-    if (!value) {
+// Session lookup helper
+const getSession = (sessionId: string | undefined | null) => {
+    if (!sessionId) {
         return null;
     }
-    const parsed = parseInt(value, 10);
-    if (Number.isNaN(parsed) || parsed < 1) {
-        return null;
-    }
-    return parsed;
-};
-
-const getUserIdFromRequest = (c: any) => {
-    const headerUserId = parseUserId(c.req.header("x-user-id"));
-    if (headerUserId) {
-        return headerUserId;
-    }
-    return parseUserId(c.req.query("userId"));
+    return sessionsById.get(sessionId) || null;
 };
 
 // Query metadata endpoint
@@ -85,39 +73,50 @@ app.get("/schema", async (c) => {
     return c.json(introspection);
 });
 
-// SSE endpoint for real-time delta updates
-app.get("/sync/events", async (c) => {
-    const parsedUserId = getUserIdFromRequest(c);
-    const clientId = c.req.query("clientId");
-    
-    if (!parsedUserId) {
+// Login endpoint - creates a session for a userId
+app.get("/login", async (c) => {
+    const userId = c.req.query("userId");
+    if (!userId) {
         c.status(400);
-        return c.json({ error: "userId header or query parameter is required" });
+        return c.json({ error: "userId query parameter is required" });
     }
 
-    // Use userId + clientId as the session key to distinguish between tabs/browsers
-    const sessionKey = clientId ? `${parsedUserId}_${clientId}` : `${parsedUserId}_${Date.now()}`;
-    
-    // Check if we have an existing session for this userId+clientId (reconnection)
-    let sessionId = sessionsByClient.get(sessionKey);
-    let isReconnection = false;
-    
-    if (sessionId && connectedClients.has(sessionId)) {
-        // Reusing existing session (reconnection from same client)
-        isReconnection = true;
-        const timeSinceLastConnection = Date.now(); // Could track this better
-        console.log(`[RECONNECT] Client reconnected via SSE: ${sessionId} (userId: ${parsedUserId}, clientId: ${clientId || 'none'})`);
-    } else {
-        // New session
-        sessionId = `session_${nextSessionId++}`;
-        sessionsByClient.set(sessionKey, sessionId);
-        console.log(`[NEW] Client connected via SSE: ${sessionId} (userId: ${parsedUserId}, clientId: ${clientId || 'none'})`);
+    const parsedUserId = parseInt(userId, 10);
+    if (Number.isNaN(parsedUserId) || parsedUserId < 1) {
+        c.status(400);
+        return c.json({ error: "userId must be a positive integer" });
     }
 
+    const sessionId = `session_${nextSessionId++}`;
     const session = {
         userId: parsedUserId,
         role: "user",
     };
+    sessionsById.set(sessionId, session);
+    return c.json({ sessionId });
+});
+
+// SSE endpoint for real-time delta updates
+app.get("/sync/events", async (c) => {
+    const sessionId = c.req.query("sessionId");
+
+    if (!sessionId) {
+        c.status(400);
+        return c.json({ error: "sessionId query parameter is required" });
+    }
+
+    const session = getSession(sessionId);
+    if (!session) {
+        c.status(404);
+        return c.json({ error: "Session not found" });
+    }
+
+    const isReconnection = connectedClients.has(sessionId);
+    if (isReconnection) {
+        console.log(`[RECONNECT] Client reconnected via SSE: ${sessionId}`);
+    } else {
+        console.log(`[NEW] Client connected via SSE: ${sessionId}`);
+    }
 
     return streamSSE(c, async (stream) => {
         const client: ConnectedClient = {
@@ -168,15 +167,14 @@ app.get("/sync/events", async (c) => {
             }
         } catch (error) {
             // Client disconnected or stream closed
-            console.log(`SSE stream ended for ${sessionId} (userId: ${parsedUserId}, clientId: ${clientId || 'none'}):`, error instanceof Error ? error.message : String(error));
+            console.log(`SSE stream ended for ${sessionId}:`, error instanceof Error ? error.message : String(error));
             // Don't delete the session immediately - EventSource will reconnect
             // Only remove if the client is explicitly disconnected
             const currentClient = connectedClients.get(sessionId!);
             if (currentClient === client) {
                 // Only remove if this is still the active client (not replaced by reconnection)
                 connectedClients.delete(sessionId!);
-                sessionsByClient.delete(sessionKey);
-                console.log(`Client session removed: ${sessionId} (userId: ${parsedUserId}, clientId: ${clientId || 'none'})`);
+                console.log(`Client session removed: ${sessionId}`);
             }
         }
     });
@@ -194,9 +192,10 @@ app.get("/sync", async (c) => {
 
     // Look up client session from connected clients
     const client = connectedClients.get(sessionId);
-    if (!client) {
+    const session = client?.session ?? getSession(sessionId);
+    if (!session) {
         c.status(404);
-        return c.json({ error: "Session not found. Client must be connected via SSE first." });
+        return c.json({ error: "Session not found." });
     }
 
     // Get syncCursor from query params (optional, defaults to empty)
@@ -212,7 +211,7 @@ app.get("/sync", async (c) => {
     }
 
     // Ask pyre to get any data that needs to be synced.
-    const result = await Pyre.catchup(db, syncCursor, client.session, 1000);
+    const result = await Pyre.catchup(db, syncCursor, session, 1000);
     return c.json(result);
 
 });
@@ -222,11 +221,18 @@ app.post("/db/:req", async (c) => {
     const { req } = c.req.param();
     const args = await c.req.json();
     const sessionId = c.req.query("sessionId");
-    const headerUserId = getUserIdFromRequest(c);
+    if (!sessionId) {
+        c.status(400);
+        return c.json({ error: "sessionId query parameter is required" });
+    }
 
     // Get executing session from connected client or use default
-    const client = sessionId ? connectedClients.get(sessionId) : null;
-    const executingSession = client?.session ?? { userId: headerUserId ?? 1, role: "user" };
+    const client = connectedClients.get(sessionId);
+    const executingSession = client?.session ?? getSession(sessionId);
+    if (!executingSession) {
+        c.status(404);
+        return c.json({ error: "Session not found." });
+    }
 
     // Execute query with all connected clients for sync delta calculation
     // Pyre.run can extract session.fields from ConnectedClient objects

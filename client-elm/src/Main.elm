@@ -1,5 +1,6 @@
 module Main exposing (main)
 
+import Data.Catchup as Catchup
 import Data.Error
 import Data.IndexedDb as IndexedDb exposing (Incoming(..))
 import Data.QueryManager as QueryManager exposing (Incoming(..), Msg(..))
@@ -13,6 +14,7 @@ import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
 import Platform
+import String
 
 
 
@@ -21,7 +23,7 @@ import Platform
 
 type alias Flags =
     { schema : Data.Schema.SchemaMetadata
-    , server : SSE.SSEConfig
+    , server : Catchup.ServerConfig
     }
 
 
@@ -33,8 +35,9 @@ type alias Model =
     { schema : Data.Schema.SchemaMetadata
     , db : Db.Db
     , queryManager : QueryManager.Model
-    , server : SSE.SSEConfig
+    , catchup : Catchup.Model
     , syncStatus : SyncStatus
+    , sseStarted : Bool
     }
 
 
@@ -56,6 +59,7 @@ type Msg
     | MutationRequest String String Encode.Value (Result Http.Error Encode.Value)
     | DbMsg Db.Msg
     | Error String
+    | CatchupMsg Catchup.Msg
 
 
 
@@ -67,13 +71,12 @@ init flags =
     ( { schema = flags.schema
       , db = Db.init
       , queryManager = QueryManager.init
-      , server = flags.server
+      , catchup = Catchup.init flags.server
       , syncStatus = NotStarted
+      , sseStarted = False
       }
     , Cmd.batch
-        [ IndexedDb.requestInitialData
-        , SSE.connect flags.server
-        ]
+        [ IndexedDb.requestInitialData ]
     )
 
 
@@ -134,6 +137,9 @@ update msg model =
             , Data.Error.sendError errorMessage
             )
 
+        CatchupMsg catchupMsg ->
+            applyCatchupUpdate (Catchup.update catchupMsg model.catchup model.db) model
+
         DbMsg dbMsg ->
             let
                 ( updatedDb, dbCmd ) =
@@ -151,9 +157,15 @@ handleIndexedDbIncoming incoming model =
             let
                 ( updatedQueryManager, cmds ) =
                     reExecuteAllQueries model.schema model.db model.queryManager
+
+                baseModel =
+                    { model | queryManager = updatedQueryManager }
+
+                ( catchupModel, catchupCmd ) =
+                    applyCatchupUpdate (Catchup.update Catchup.InitialDataLoaded model.catchup model.db) baseModel
             in
-            ( { model | queryManager = updatedQueryManager }
-            , Cmd.batch cmds
+            ( catchupModel
+            , Cmd.batch [ Cmd.batch cmds, catchupCmd ]
             )
 
 
@@ -346,6 +358,85 @@ buildMutationUrl baseUrl hash =
             baseUrl ++ "/" ++ hash
 
 
+applyCatchupUpdate : Catchup.UpdateResult -> Model -> ( Model, Cmd Msg )
+applyCatchupUpdate result model =
+    let
+        updatedModel =
+            { model
+                | catchup = result.model
+                , db = result.db
+                , syncStatus = syncStatusFromCatchup result.model
+            }
+
+        ( sseModel, sseCmd ) =
+            startSseIfReady updatedModel
+
+        ( updatedQueryManager, triggerCmds ) =
+            case result.delta of
+                Just delta ->
+                    QueryManager.notifyTablesChanged model.schema result.db model.queryManager delta
+
+                Nothing ->
+                    ( model.queryManager, [] )
+
+        errorCmd =
+            case result.error of
+                Just message ->
+                    Data.Error.sendError message
+
+                Nothing ->
+                    Cmd.none
+
+        dbCmds =
+            result.dbCmds
+                |> List.map (Cmd.map DbMsg)
+
+        cmds =
+            [ Cmd.map CatchupMsg result.cmd
+            , errorCmd
+            , Cmd.batch triggerCmds
+            , sseCmd
+            ]
+                ++ dbCmds
+    in
+    ( { sseModel | queryManager = updatedQueryManager }
+    , Cmd.batch cmds
+    )
+
+
+syncStatusFromCatchup : Catchup.Model -> SyncStatus
+syncStatusFromCatchup catchupModel =
+    case Catchup.status catchupModel of
+        Catchup.NotStarted ->
+            NotStarted
+
+        Catchup.Syncing progress ->
+            Syncing progress
+
+        Catchup.Synced ->
+            Synced
+
+        Catchup.Error message ->
+            SyncError message
+
+
+startSseIfReady : Model -> ( Model, Cmd Msg )
+startSseIfReady model =
+    case ( model.sseStarted, Catchup.status model.catchup ) of
+        ( False, Catchup.Synced ) ->
+            ( { model | sseStarted = True }
+            , SSE.connect { baseUrl = model.catchup.server.baseUrl }
+            )
+
+        ( False, Catchup.Error _ ) ->
+            ( { model | sseStarted = True }
+            , SSE.connect { baseUrl = model.catchup.server.baseUrl }
+            )
+
+        _ ->
+            ( model, Cmd.none )
+
+
 encodeQueryResult : Dict String (List (Dict String Data.Value.Value)) -> Encode.Value
 encodeQueryResult result =
     Encode.dict identity
@@ -417,6 +508,7 @@ main =
                                 }
                             , server =
                                 { baseUrl = ""
+                                , catchupPath = ""
                                 }
                             }
         , update = update
@@ -428,7 +520,14 @@ decodeFlags : Decode.Decoder Flags
 decodeFlags =
     Decode.map2 Flags
         (Decode.field "schema" Data.Schema.decodeSchemaMetadata)
-        (Decode.field "server" SSE.decodeSSEConfig)
+        (Decode.field "server" decodeServerConfig)
+
+
+decodeServerConfig : Decode.Decoder Catchup.ServerConfig
+decodeServerConfig =
+    Decode.map2 Catchup.ServerConfig
+        (Decode.field "baseUrl" Decode.string)
+        (Decode.field "catchupPath" Decode.string)
 
 
 reExecuteAllQueries : Data.Schema.SchemaMetadata -> Db.Db -> QueryManager.Model -> ( QueryManager.Model, List (Cmd Msg) )
