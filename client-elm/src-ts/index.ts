@@ -25,7 +25,6 @@ export interface PyreClientConfig {
   schema: SchemaMetadata;
   server: ServerConfig;
   indexedDbName?: string;
-  liveSyncTransport?: LiveSyncTransport;
   onError?: (error: Error) => void;
 }
 
@@ -46,7 +45,7 @@ export class PyreClient {
 
   constructor(config: PyreClientConfig) {
     const dbName = config.indexedDbName ?? 'pyre-client';
-    const liveSyncTransport = config.liveSyncTransport ?? 'sse';
+    const liveSyncTransport = config.server.liveSyncTransport ?? 'sse';
     this.server = config.server;
     this.endpoints = {
       catchup: '/sync',

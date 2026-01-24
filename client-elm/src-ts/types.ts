@@ -10,6 +10,7 @@ export interface ServerConfig {
   baseUrl: string;
   endpoints?: Partial<ServerEndpoints>;
   headers?: Record<string, string>;
+  liveSyncTransport?: LiveSyncTransport;
 }
 
 export interface SyncProgress {

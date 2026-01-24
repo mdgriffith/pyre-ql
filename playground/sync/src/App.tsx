@@ -145,6 +145,7 @@ function App() {
       schema: schemaMetadata,
       server: {
         baseUrl: 'http://localhost:3000',
+        liveSyncTransport,
         endpoints: {
           catchup: `/sync?${queryParams}`,
           events: `/sync/events?${queryParams}`,
@@ -152,7 +153,6 @@ function App() {
         },
       },
       indexedDbName,
-      liveSyncTransport,
     })
 
     // Store in ref for cleanup
