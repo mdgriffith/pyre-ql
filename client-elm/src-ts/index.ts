@@ -25,7 +25,6 @@ export interface PyreClientConfig {
   sseConfig: SSEConfig;
   dbName?: string;
   onError?: (error: Error) => void;
-  scope?: any;
 }
 
 export class PyreClient {
@@ -40,8 +39,7 @@ export class PyreClient {
   constructor(config: PyreClientConfig) {
     const dbName = config.dbName ?? 'pyre-client';
 
-    const scope = config.scope ?? (typeof window !== 'undefined' ? window : globalThis);
-    const Elm = loadElm(scope);
+    const Elm = loadElm(Object.create(globalThis));
 
     this.baseUrl = config.sseConfig.baseUrl;
     this.elmApp = Elm.Main.init({

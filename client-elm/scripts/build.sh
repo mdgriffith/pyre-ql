@@ -17,6 +17,9 @@ fi
 
 {
   echo "export function loadElm(scope) {"
+  echo "  if (!scope) {"
+  echo "    throw new Error('Elm scope is required');"
+  echo "  }"
   sed -E 's/\}\(this\)\);[[:space:]]*$/}(scope));/' "$ENGINE_JS"
   echo "  return scope.Elm;"
   echo "}"
