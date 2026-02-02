@@ -557,17 +557,17 @@ fn render_expecting(expecting: &Expecting, in_color: bool) -> String {
             yellow_if(in_color, "id    Int")
         ),
         Expecting::LinkDirective => {
-            let example = format!("{} posts {{ from: id, to: Post.authorUserId }}", 
+            let example = format!("{} (authorId, User.id)", 
                 yellow_if(in_color, "@link"));
-            let example_breakdown = format!("                            {} {}", 
-                cyan_if(in_color, "^^^^"), 
-                cyan_if(in_color, "^^^^^^^^^^^^"));
-            let example_breakdown_connector = format!("                            {}    {}", 
+            let example_breakdown = format!("       {}  {}", 
+                cyan_if(in_color, "^^^^^^^^"), 
+                cyan_if(in_color, "^^^^^^^"));
+            let example_breakdown_connector = format!("        {}         {}", 
                 cyan_if(in_color, "|"), 
                 cyan_if(in_color, "|"));
-            let example_breakdown_labels = format!("                {}    {}", 
-                cyan_if(in_color, "Foreign table"), 
-                cyan_if(in_color, "Foreign key"));
+            let example_breakdown_labels = format!("    {}   {}", 
+                cyan_if(in_color, "Local key"), 
+                cyan_if(in_color, "Foreign table.key"));
 
             return format!(
                 "This {} looks off, I'm expecting something that looks like this:\n\n        {}\n        {}\n        {}\n        {}",
