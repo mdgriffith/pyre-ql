@@ -106,6 +106,25 @@ pub enum ErrorType {
         known_schemas: HashSet<String>,
     },
 
+    // Foreign Key Reference Errors
+    ForeignKeyToUnknownTable {
+        field_name: String,
+        referenced_table: String,
+        existing_tables: Vec<String>,
+    },
+    ForeignKeyToUnknownField {
+        field_name: String,
+        referenced_table: String,
+        referenced_field: String,
+        existing_fields: Vec<String>,
+    },
+    ForeignKeyToNonIdField {
+        field_name: String,
+        referenced_table: String,
+        referenced_field: String,
+        referenced_field_type: String,
+    },
+
     // Query Validation Errors
     UnknownTable {
         found: String,
@@ -837,6 +856,77 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result
         }
 
+        ErrorType::ForeignKeyToUnknownTable {
+            field_name,
+            referenced_table,
+            existing_tables,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "{} references {}, but that table doesn't exist.",
+                yellow_if(in_color, field_name),
+                yellow_if(in_color, &format!("{}.id", referenced_table)),
+            ));
+
+            if !existing_tables.is_empty() {
+                result.push_str("\n\nAvailable tables:\n");
+                for table in existing_tables {
+                    result.push_str(&format!("  - {}\n", cyan_if(in_color, table)));
+                }
+            }
+
+            result
+        }
+
+        ErrorType::ForeignKeyToUnknownField {
+            field_name,
+            referenced_table,
+            referenced_field,
+            existing_fields,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "{} references {}, but the {} table doesn't have a field named {}.",
+                yellow_if(in_color, field_name),
+                yellow_if(in_color, &format!("{}.{}", referenced_table, referenced_field)),
+                cyan_if(in_color, referenced_table),
+                yellow_if(in_color, referenced_field),
+            ));
+
+            if !existing_fields.is_empty() {
+                result.push_str("\n\nAvailable fields:\n");
+                for field in existing_fields {
+                    result.push_str(&format!("  - {}\n", cyan_if(in_color, field)));
+                }
+            }
+
+            result
+        }
+
+        ErrorType::ForeignKeyToNonIdField {
+            field_name,
+            referenced_table,
+            referenced_field,
+            referenced_field_type,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "{} references {}, but {} is a {} not an ID type.",
+                yellow_if(in_color, field_name),
+                yellow_if(in_color, &format!("{}.{}", referenced_table, referenced_field)),
+                yellow_if(in_color, referenced_field),
+                cyan_if(in_color, referenced_field_type),
+            ));
+
+            result.push_str(&format!(
+                "\n\nForeign key references must point to an {} or {} field.",
+                cyan_if(in_color, "Id.Int"),
+                cyan_if(in_color, "Id.Uuid"),
+            ));
+
+            result
+        }
+
         ErrorType::NoPrimaryKey { record } => {
             let mut result = "".to_string();
 
@@ -1287,6 +1377,9 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::LinkToUnknownForeignField { .. } => "Link to Unknown Foreign Field",
         ErrorType::LinkSelectionIsEmpty { .. } => "Link Selection Is Empty",
         ErrorType::LinkToUnknownSchema { .. } => "Link to Unknown Schema",
+        ErrorType::ForeignKeyToUnknownTable { .. } => "Foreign key to unknown table",
+        ErrorType::ForeignKeyToUnknownField { .. } => "Foreign key to unknown field",
+        ErrorType::ForeignKeyToNonIdField { .. } => "Foreign key to non-ID field",
         ErrorType::UnknownTable { .. } => "Unknown Table",
         ErrorType::DuplicateQueryField { .. } => "Duplicate Query Field",
         ErrorType::NoFieldsSelected => "No Fields Selected",

@@ -707,6 +707,119 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                         has_primary_id = true;
                                     }
 
+                                    // Validate foreign key references
+                                    if let ast::ColumnType::ForeignKey {
+                                        table: ref_table,
+                                        field: ref_field,
+                                    } = &column.type_
+                                    {
+                                        // Check if the referenced table exists
+                                        let ref_table_lower =
+                                            crate::ext::string::decapitalize(ref_table);
+                                        match context.tables.get(&ref_table_lower) {
+                                            Some(foreign_table) => {
+                                                // Check if the referenced field exists
+                                                let ref_column = foreign_table
+                                                    .record
+                                                    .fields
+                                                    .iter()
+                                                    .find_map(|f| match f {
+                                                        ast::Field::Column(col)
+                                                            if col.name == *ref_field =>
+                                                        {
+                                                            Some(col)
+                                                        }
+                                                        _ => None,
+                                                    });
+
+                                                match ref_column {
+                                                    Some(ref_col) => {
+                                                        // Check if the referenced field is an ID type
+                                                        if !ref_col.type_.is_id_type() {
+                                                            errors.push(Error {
+                                                                filepath: file.path.clone(),
+                                                                error_type:
+                                                                    ErrorType::ForeignKeyToNonIdField {
+                                                                        field_name: column
+                                                                            .name
+                                                                            .clone(),
+                                                                        referenced_table: ref_table
+                                                                            .clone(),
+                                                                        referenced_field: ref_field
+                                                                            .clone(),
+                                                                        referenced_field_type: ref_col
+                                                                            .type_
+                                                                            .to_string(),
+                                                                    },
+                                                                locations: vec![Location {
+                                                                    contexts: to_range(&start, &end),
+                                                                    primary: to_range(
+                                                                        &column.start_typename,
+                                                                        &column.end_typename,
+                                                                    ),
+                                                                }],
+                                                            });
+                                                        }
+                                                    }
+                                                    None => {
+                                                        // Field doesn't exist
+                                                        let existing_fields: Vec<String> =
+                                                            foreign_table
+                                                                .record
+                                                                .fields
+                                                                .iter()
+                                                                .filter_map(|f| match f {
+                                                                    ast::Field::Column(col) => {
+                                                                        Some(col.name.clone())
+                                                                    }
+                                                                    _ => None,
+                                                                })
+                                                                .collect();
+                                                        errors.push(Error {
+                                                            filepath: file.path.clone(),
+                                                            error_type:
+                                                                ErrorType::ForeignKeyToUnknownField {
+                                                                    field_name: column.name.clone(),
+                                                                    referenced_table: ref_table
+                                                                        .clone(),
+                                                                    referenced_field: ref_field
+                                                                        .clone(),
+                                                                    existing_fields,
+                                                                },
+                                                            locations: vec![Location {
+                                                                contexts: to_range(&start, &end),
+                                                                primary: to_range(
+                                                                    &column.start_typename,
+                                                                    &column.end_typename,
+                                                                ),
+                                                            }],
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                            None => {
+                                                // Table doesn't exist
+                                                let existing_tables: Vec<String> =
+                                                    context.tables.keys().cloned().collect();
+                                                errors.push(Error {
+                                                    filepath: file.path.clone(),
+                                                    error_type: ErrorType::ForeignKeyToUnknownTable {
+                                                        field_name: column.name.clone(),
+                                                        referenced_table: ref_table.clone(),
+                                                        existing_tables,
+                                                    },
+                                                    locations: vec![Location {
+                                                        contexts: to_range(&start, &end),
+                                                        primary: to_range(
+                                                            &column.start_typename,
+                                                            &column.end_typename,
+                                                        ),
+                                                    }],
+                                                });
+                                            }
+                                        }
+                                    }
+
                                     field_names.insert(name.clone());
                                 }
 
