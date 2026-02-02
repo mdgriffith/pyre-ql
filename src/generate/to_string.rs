@@ -221,16 +221,104 @@ fn to_string_variant(namespace: &str, is_first: bool, variant: &ast::Variant) ->
 
     match &variant.fields {
         Some(fields) => {
-            let mut result = format!("  {}{} {{\n", prefix, variant.name);
-            let indent_collection: Indentation = collect_indentation(&fields, 8);
-            for field in fields {
-                result.push_str(&to_string_field(namespace, &indent_collection, &field));
+            // Check if variant should be formatted inline
+            if should_format_variant_inline(fields, &variant.name, prefix) {
+                format_variant_inline(prefix, &variant.name, fields, &variant.inline_comment)
+            } else {
+                // Format as multiline
+                let mut result = format!("  {}{} {{\n", prefix, variant.name);
+                let indent_collection: Indentation = collect_indentation(&fields, 8);
+                for field in fields {
+                    result.push_str(&to_string_field(namespace, &indent_collection, &field));
+                }
+                result.push_str("     }\n");
+                result
             }
-            result.push_str("     }\n");
-            result
         }
-        None => format!("  {}{}\n", prefix, variant.name),
+        None => {
+            let inline_comment = match &variant.inline_comment {
+                Some(comment) => format!(" //{}", comment),
+                None => String::new(),
+            };
+            format!("  {}{}{}\n", prefix, variant.name, inline_comment)
+        }
     }
+}
+
+fn should_format_variant_inline(
+    fields: &Vec<ast::Field>,
+    variant_name: &str,
+    prefix: &str,
+) -> bool {
+    // If there are any ColumnLines, user explicitly wants multiline
+    for field in fields {
+        if matches!(field, ast::Field::ColumnLines { .. }) {
+            return false;
+        }
+        if matches!(field, ast::Field::ColumnComment { .. }) {
+            return false;
+        }
+    }
+
+    // Check if all fields are on the same line in the source
+    let mut first_line: Option<usize> = None;
+    for field in fields {
+        if let ast::Field::Column(col) = field {
+            if let Some(start) = &col.start {
+                match first_line {
+                    None => first_line = Some(start.line.to_usize()),
+                    Some(line) => {
+                        if line != start.line.to_usize() {
+                            // Fields are on different lines
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Calculate the length if formatted inline
+    let inline_str = format_variant_inline(prefix, variant_name, fields, &None);
+    // Check length of the variant line (should be <= 80)
+    let variant_line = inline_str.trim_end();
+
+    variant_line.len() <= 80
+}
+
+fn format_variant_inline(
+    prefix: &str,
+    variant_name: &str,
+    fields: &Vec<ast::Field>,
+    inline_comment: &Option<String>,
+) -> String {
+    let mut result = format!("  {}{} {{ ", prefix, variant_name);
+
+    let mut first = true;
+    for field in fields {
+        if let ast::Field::Column(col) = field {
+            if !first {
+                result.push_str(", ");
+            }
+            result.push_str(&col.name);
+            result.push(' ');
+            result.push_str(&col.type_);
+            if col.nullable {
+                result.push('?');
+            }
+            first = false;
+        }
+    }
+
+    result.push_str(" }");
+
+    if let Some(comment) = inline_comment {
+        result.push_str(" //");
+        result.push_str(comment);
+    }
+
+    result.push_str("\n");
+    result
 }
 
 fn to_string_field(namespace: &str, indent: &Indentation, field: &ast::Field) -> String {
@@ -285,15 +373,21 @@ fn to_string_column(indentation: &Indentation, column: &ast::Column) -> String {
     let directive_indent = " ".repeat(directive_indent_len);
     let directives = to_string_directives(&column.directives);
 
+    let inline_comment = match &column.inline_comment {
+        Some(comment) => format!(" //{}", comment),
+        None => String::new(),
+    };
+
     format!(
-        "{initial_indent}{name}{type_indent}{type_}{nullable}{directive_indent}{directives}\n",
+        "{initial_indent}{name}{type_indent}{type_}{nullable}{directive_indent}{directives}{inline_comment}\n",
         initial_indent = initial_indent,
         name = column.name,
         type_indent = type_indent,
         type_ = column.type_,
         nullable = nullable,
         directive_indent = directive_indent,
-        directives = directives
+        directives = directives,
+        inline_comment = inline_comment
     )
 }
 
@@ -488,7 +582,14 @@ fn to_string_link_details_shorthand(
         added = true
     }
 
-    result.push_str(")\n");
+    result.push_str(")");
+
+    if let Some(comment) = &details.inline_comment {
+        result.push_str(" //");
+        result.push_str(comment);
+    }
+
+    result.push_str("\n");
 
     result
 }

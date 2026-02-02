@@ -66,5 +66,6 @@ fn column_info_to_column(info: &ColumnInfo) -> Column {
         end_name: None,
         start_typename: None,
         end_typename: None,
+        inline_comment: None,
     }
 }
