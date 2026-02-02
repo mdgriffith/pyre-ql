@@ -1,6 +1,7 @@
 import loadElm from '../dist/engine.mjs';
 import type { SchemaMetadata } from '../../client/src/types';
 import { IndexedDBStorage, IndexedDbService } from './service/indexeddb';
+import { QueryClientService } from './service/query-client';
 import { QueryManagerService } from './service/query-manager';
 import { SSEManager, type LiveSyncMessage } from './service/sse';
 import { WebSocketManager } from './service/websocket';
@@ -12,6 +13,7 @@ export type { MutationResult } from './service/query-manager';
 export interface QueryModule<Input = unknown> {
   operation: 'query' | 'insert' | 'update' | 'delete' | 'mutation';
   hash?: string;
+  source?: unknown;
   queryShape?: unknown;
   toQueryShape?: (input: Input) => unknown;
 }
@@ -39,6 +41,7 @@ export class PyreClient {
   private sessionCallbacks: Set<(sessionId: string) => void> = new Set();
   private lastSyncProgress: SyncProgress | null = null;
   private queryManager: QueryManagerService;
+  private queryClient: QueryClientService;
   private server: ServerConfig;
   private endpoints: ServerEndpoints;
   private queryCounter = 0;
@@ -80,6 +83,13 @@ export class PyreClient {
       eventsPath: this.endpoints.events,
     });
     this.queryManager = new QueryManagerService();
+    this.queryClient = new QueryClientService((payload) => {
+      if (config.onError) {
+        config.onError(new Error(payload.message));
+      } else {
+        console.error('[PyreClient] QueryClient error', payload);
+      }
+    });
 
     this.indexedDbService.attachPorts(this.elmApp);
     this.sseManager.setOnMessage(this.handleLiveSyncMessage);
@@ -87,6 +97,7 @@ export class PyreClient {
     this.sseManager.attachPorts(this.elmApp);
     this.webSocketManager.attachPorts(this.elmApp);
     this.queryManager.attachPorts(this.elmApp);
+    this.queryClient.attachPorts(this.elmApp);
 
     if (this.elmApp.ports.errorOut) {
       this.elmApp.ports.errorOut.subscribe((message) => {
@@ -195,25 +206,45 @@ export class PyreClient {
     this.queryCounter += 1;
     const callbackPort = `callback_${queryId}`;
 
-    this.queryManager.registerQuery(
-      {
-        queryId,
-        query: queryShape,
-        input: normalizedInput,
-        callbackPort,
-      },
-      callback
-    );
+    if (this.queryClient.isAvailable()) {
+      const querySource = queryModule.source ?? queryModule.hash ?? queryShape;
+      this.queryClient.registerQuery(
+        {
+          queryId,
+          querySource,
+          input: normalizedInput,
+        },
+        callback
+      );
+    } else {
+      this.queryManager.registerQuery(
+        {
+          queryId,
+          query: queryShape,
+          input: normalizedInput,
+          callbackPort,
+        },
+        callback
+      );
+    }
 
     return {
       unsubscribe: () => {
-        this.queryManager.unregisterQuery(queryId, callbackPort);
+        if (this.queryClient.isAvailable()) {
+          this.queryClient.unregisterQuery(queryId);
+        } else {
+          this.queryManager.unregisterQuery(queryId, callbackPort);
+        }
       },
       update: (updatedInput: Input) => {
         const updatedQuery = queryModule.toQueryShape
           ? queryModule.toQueryShape(updatedInput)
           : queryModule.queryShape;
-        this.queryManager.updateQueryInput(queryId, updatedInput, updatedQuery);
+        if (this.queryClient.isAvailable()) {
+          this.queryClient.updateQueryInput(queryId, updatedInput);
+        } else {
+          this.queryManager.updateQueryInput(queryId, updatedInput, updatedQuery);
+        }
       },
     };
   }

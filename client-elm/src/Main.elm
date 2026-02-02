@@ -3,8 +3,8 @@ module Main exposing (main)
 import Data.Catchup as Catchup
 import Data.Error
 import Data.IndexedDb as IndexedDb exposing (Incoming(..))
-import Data.QueryManager as QueryManager exposing (Incoming(..), Msg(..))
 import Data.LiveSync as LiveSync exposing (Incoming(..))
+import Data.QueryManager as QueryManager exposing (Incoming(..), Msg(..))
 import Data.Schema
 import Data.Value
 import Db exposing (Msg(..))
@@ -58,6 +58,7 @@ type Msg
     = IndexedDbReceived IndexedDb.Incoming
     | LiveSyncReceived LiveSync.Incoming
     | QueryManagerReceived QueryManager.Incoming
+    | QueryClientReceived QueryManager.QueryClientIncoming
     | MutationRequest String String Encode.Value (Result Http.Error Encode.Value)
     | DbMsg Db.Msg
     | Error String
@@ -118,6 +119,15 @@ update msg model =
 
                 ( updatedModel, queryCmds ) =
                     handleQueryManagerIncoming incoming { model | queryManager = updatedQueryManager }
+            in
+            ( updatedModel
+            , Cmd.batch queryCmds
+            )
+
+        QueryClientReceived incoming ->
+            let
+                ( updatedModel, queryCmds ) =
+                    handleQueryClientIncoming incoming model
             in
             ( updatedModel
             , Cmd.batch queryCmds
@@ -224,13 +234,25 @@ handleQueryManagerIncoming incoming model =
                 resultJson =
                     encodeQueryResult executionResult.results
 
+                nextRevision =
+                    case Dict.get queryId model.queryManager.subscriptions of
+                        Just subscription ->
+                            subscription.revision + 1
+
+                        Nothing ->
+                            1
+
                 -- Update subscription with row IDs
                 updatedQueryManager =
                     case Dict.get queryId model.queryManager.subscriptions of
                         Just subscription ->
                             let
                                 updatedSubscription =
-                                    { subscription | resultRowIds = executionResult.rowIds }
+                                    { subscription
+                                        | resultRowIds = executionResult.rowIds
+                                        , revision = nextRevision
+                                        , lastResult = Just executionResult.results
+                                    }
 
                                 updatedSubscriptions =
                                     Dict.insert queryId updatedSubscription model.queryManager.subscriptions
@@ -241,7 +263,7 @@ handleQueryManagerIncoming incoming model =
                             model.queryManager
             in
             ( { model | queryManager = updatedQueryManager }
-            , [ QueryManager.queryResult callbackPort resultJson ]
+            , [ QueryManager.queryFull queryId nextRevision resultJson ]
             )
 
         QueryManager.UpdateQueryInput queryId _ newInput ->
@@ -256,9 +278,16 @@ handleQueryManagerIncoming incoming model =
                         resultJson =
                             encodeQueryResult executionResult.results
 
+                        nextRevision =
+                            subscription.revision + 1
+
                         -- Update subscription with row IDs
                         updatedSubscription =
-                            { subscription | resultRowIds = executionResult.rowIds }
+                            { subscription
+                                | resultRowIds = executionResult.rowIds
+                                , revision = nextRevision
+                                , lastResult = Just executionResult.results
+                            }
 
                         updatedSubscriptions =
                             Dict.insert queryId updatedSubscription model.queryManager.subscriptions
@@ -267,7 +296,7 @@ handleQueryManagerIncoming incoming model =
                             { subscriptions = updatedSubscriptions }
                     in
                     ( { model | queryManager = updatedQueryManager }
-                    , [ QueryManager.queryResult subscription.callbackPort resultJson ]
+                    , [ QueryManager.queryFull queryId nextRevision resultJson ]
                     )
 
                 Nothing ->
@@ -317,6 +346,98 @@ handleQueryManagerIncoming incoming model =
                     , tracker = Nothing
                     }
               ]
+            )
+
+
+handleQueryClientIncoming : QueryManager.QueryClientIncoming -> Model -> ( Model, List (Cmd Msg) )
+handleQueryClientIncoming incoming model =
+    case incoming of
+        QueryManager.QCRegister queryId query input ->
+            -- Register the query and execute it immediately
+            let
+                subscription =
+                    QueryManager.QuerySubscription queryId query input "" Dict.empty 0 Nothing
+
+                updatedSubscriptions =
+                    Dict.insert queryId subscription model.queryManager.subscriptions
+
+                executionResult =
+                    Db.executeQueryWithTracking model.schema model.db query
+
+                resultJson =
+                    encodeQueryResult executionResult.results
+
+                nextRevision =
+                    1
+
+                finalSubscription =
+                    { subscription
+                        | resultRowIds = executionResult.rowIds
+                        , revision = nextRevision
+                        , lastResult = Just executionResult.results
+                    }
+
+                finalSubscriptions =
+                    Dict.insert queryId finalSubscription updatedSubscriptions
+
+                updatedQueryManager =
+                    { subscriptions = finalSubscriptions }
+            in
+            ( { model | queryManager = updatedQueryManager }
+            , [ QueryManager.queryClientFull queryId nextRevision resultJson ]
+            )
+
+        QueryManager.QCUpdateInput queryId newInput ->
+            -- Update the input and re-execute
+            case Dict.get queryId model.queryManager.subscriptions of
+                Just subscription ->
+                    let
+                        updatedSubscription =
+                            { subscription
+                                | input = newInput
+                                , resultRowIds = Dict.empty
+                                , lastResult = Nothing
+                            }
+
+                        executionResult =
+                            Db.executeQueryWithTracking model.schema model.db subscription.query
+
+                        resultJson =
+                            encodeQueryResult executionResult.results
+
+                        nextRevision =
+                            subscription.revision + 1
+
+                        finalSubscription =
+                            { updatedSubscription
+                                | resultRowIds = executionResult.rowIds
+                                , revision = nextRevision
+                                , lastResult = Just executionResult.results
+                            }
+
+                        updatedSubscriptions =
+                            Dict.insert queryId finalSubscription model.queryManager.subscriptions
+
+                        updatedQueryManager =
+                            { subscriptions = updatedSubscriptions }
+                    in
+                    ( { model | queryManager = updatedQueryManager }
+                    , [ QueryManager.queryClientFull queryId nextRevision resultJson ]
+                    )
+
+                Nothing ->
+                    ( model, [] )
+
+        QueryManager.QCUnregister queryId ->
+            let
+                updatedSubscriptions =
+                    Dict.remove queryId model.queryManager.subscriptions
+
+                updatedQueryManager =
+                    { subscriptions = updatedSubscriptions }
+            in
+            ( { model | queryManager = updatedQueryManager }
+            , []
             )
 
 
@@ -488,6 +609,16 @@ subscriptions model =
                         -- Send error to console
                         Error ("Failed to decode QueryManager message: " ++ Decode.errorToString err)
             )
+        , QueryManager.receiveQueryClientIncoming
+            (\result ->
+                case result of
+                    Ok incoming ->
+                        QueryClientReceived incoming
+
+                    Err err ->
+                        -- Send error to console
+                        Error ("Failed to decode QueryClient message: " ++ Decode.errorToString err)
+            )
         ]
 
 
@@ -553,8 +684,15 @@ reExecuteAllQueries schema db queryManager =
                 resultJson =
                     encodeQueryResult executionResult.results
 
+                nextRevision =
+                    subscription.revision + 1
+
                 updatedSubscription =
-                    { subscription | resultRowIds = executionResult.rowIds }
+                    { subscription
+                        | resultRowIds = executionResult.rowIds
+                        , revision = nextRevision
+                        , lastResult = Just executionResult.results
+                    }
 
                 updatedSubscriptions =
                     Dict.insert subscription.queryId updatedSubscription accModel.subscriptions
@@ -563,8 +701,9 @@ reExecuteAllQueries schema db queryManager =
                     { accModel | subscriptions = updatedSubscriptions }
             in
             ( updatedModel
-            , QueryManager.queryResult subscription.callbackPort resultJson :: accCmds
+            , QueryManager.queryFull subscription.queryId nextRevision resultJson :: accCmds
             )
         )
         ( queryManager, [] )
         queryManager.subscriptions
+

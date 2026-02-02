@@ -374,6 +374,8 @@ shouldReExecuteQueryTests =
                         , input = Data.Value.NullValue |> Data.Value.encodeValue
                         , callbackPort = "port1"
                         , resultRowIds = Dict.fromList [ ( "users", Set.fromList [ 1, 2, 3 ] ) ]
+                        , revision = 0
+                        , lastResult = Nothing
                         }
 
                     delta =
@@ -415,6 +417,8 @@ shouldReExecuteQueryTests =
                         , input = Data.Value.NullValue |> Data.Value.encodeValue
                         , callbackPort = "port1"
                         , resultRowIds = Dict.fromList [ ( "users", Set.fromList [ 1, 2, 3 ] ) ]
+                        , revision = 0
+                        , lastResult = Nothing
                         }
 
                     delta =
@@ -462,6 +466,8 @@ shouldReExecuteQueryTests =
                         , input = Data.Value.NullValue |> Data.Value.encodeValue
                         , callbackPort = "port1"
                         , resultRowIds = Dict.fromList [ ( "users", Set.fromList [ 1, 2, 3 ] ) ]
+                        , revision = 0
+                        , lastResult = Nothing
                         }
 
                     delta =
@@ -522,6 +528,8 @@ integrationTests =
                         , input = Data.Value.NullValue |> Data.Value.encodeValue
                         , callbackPort = "port1"
                         , resultRowIds = Dict.fromList [ ( "users", Set.fromList [ 1, 2 ] ) ]
+                        , revision = 0
+                        , lastResult = Nothing
                         }
 
                     -- DB state: users 1 and 2 are admins
@@ -598,6 +606,8 @@ integrationTests =
                         , input = Data.Value.NullValue |> Data.Value.encodeValue
                         , callbackPort = "port1"
                         , resultRowIds = Dict.fromList [ ( "users", Set.fromList [ 1, 2 ] ) ]
+                        , revision = 0
+                        , lastResult = Nothing
                         }
 
                     db =

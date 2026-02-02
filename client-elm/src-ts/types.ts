@@ -36,6 +36,9 @@ export interface ElmPorts {
   queryManagerOut?: {
     subscribe: (callback: (message: unknown) => void) => void;
   };
+  queryClientOut?: {
+    subscribe: (callback: (message: unknown) => void) => void;
+  };
   errorOut?: {
     subscribe: (callback: (message: string) => void) => void;
   };
@@ -49,6 +52,9 @@ export interface ElmPorts {
     send: (message: unknown) => void;
   };
   receiveQueryManagerMessage?: {
+    send: (message: unknown) => void;
+  };
+  receiveQueryClientMessage?: {
     send: (message: unknown) => void;
   };
 }

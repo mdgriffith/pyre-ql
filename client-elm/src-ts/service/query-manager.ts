@@ -1,4 +1,5 @@
 import type { ElmApp } from '../types';
+import { applyQueryDelta } from './query-delta';
 
 export interface QueryRegistration {
   queryId: string;
@@ -16,9 +17,18 @@ export interface MutationResult {
 type QueryResultCallback = (result: unknown) => void;
 type MutationResultCallback = (result: MutationResult) => void;
 
+interface QueryState {
+  queryId: string;
+  callbackPort: string;
+  result: unknown;
+  revision: number;
+}
+
 export class QueryManagerService {
   private elmApp: ElmApp | null = null;
   private queryCallbacks: Map<string, QueryResultCallback> = new Map();
+  private callbackPortToQueryId: Map<string, string> = new Map();
+  private queryStates: Map<string, QueryState> = new Map();
   private mutationCallbacks: Map<string, MutationResultCallback[]> = new Map();
 
   attachPorts(elmApp: ElmApp): void {
@@ -36,6 +46,13 @@ export class QueryManagerService {
 
   registerQuery(registration: QueryRegistration, callback: QueryResultCallback): void {
     this.queryCallbacks.set(registration.callbackPort, callback);
+    this.callbackPortToQueryId.set(registration.callbackPort, registration.queryId);
+    this.queryStates.set(registration.queryId, {
+      queryId: registration.queryId,
+      callbackPort: registration.callbackPort,
+      result: {},
+      revision: 0,
+    });
     const registerMessage = {
       type: 'registerQuery',
       queryId: registration.queryId,
@@ -60,6 +77,8 @@ export class QueryManagerService {
 
   unregisterQuery(queryId: string, callbackPort: string): void {
     this.queryCallbacks.delete(callbackPort);
+    this.callbackPortToQueryId.delete(callbackPort);
+    this.queryStates.delete(queryId);
     const unregisterMessage = {
       type: 'unregisterQuery',
       queryId,
@@ -102,9 +121,65 @@ export class QueryManagerService {
       if (!typedMessage.callbackPort) {
         return;
       }
+      const queryId = this.callbackPortToQueryId.get(typedMessage.callbackPort);
+      if (queryId) {
+        const state = this.queryStates.get(queryId);
+        if (state) {
+          state.result = typedMessage.result ?? {};
+          state.revision += 1;
+        }
+      }
       const callback = this.queryCallbacks.get(typedMessage.callbackPort);
       if (callback) {
         callback(typedMessage.result);
+      }
+      return;
+    }
+
+    if (message.type === 'queryFull') {
+      const typedMessage = message as { queryId?: string; revision?: number; result?: unknown };
+      if (!typedMessage.queryId || typedMessage.revision === undefined) {
+        return;
+      }
+      const state = this.queryStates.get(typedMessage.queryId);
+      if (!state) {
+        return;
+      }
+      if (typedMessage.revision <= state.revision) {
+        return;
+      }
+      state.result = typedMessage.result ?? {};
+      state.revision = typedMessage.revision;
+      const callback = this.queryCallbacks.get(state.callbackPort);
+      if (callback) {
+        callback(state.result);
+      }
+      return;
+    }
+
+    if (message.type === 'queryDelta') {
+      const typedMessage = message as { queryId?: string; revision?: number; delta?: { ops?: unknown[] } };
+      if (!typedMessage.queryId || typedMessage.revision === undefined || !typedMessage.delta) {
+        return;
+      }
+      const state = this.queryStates.get(typedMessage.queryId);
+      if (!state) {
+        return;
+      }
+      if (typedMessage.revision <= state.revision) {
+        return;
+      }
+      const { result, errors } = applyQueryDelta(typedMessage.queryId, state.result, typedMessage.delta as any);
+      if (errors.length > 0) {
+        errors.forEach((error) => {
+          console.warn('[PyreClient] QueryDelta op failed:', error);
+        });
+      }
+      state.result = result;
+      state.revision = typedMessage.revision;
+      const callback = this.queryCallbacks.get(state.callbackPort);
+      if (callback) {
+        callback(state.result);
       }
       return;
     }
