@@ -87,6 +87,8 @@ pub fn to_serialization_type(type_: &str) -> ast::SerializationType {
         "DateTime" => ast::SerializationType::Concrete(ast::ConcreteSerializationType::Integer),
         "Date" => ast::SerializationType::Concrete(ast::ConcreteSerializationType::Text),
         "JSON" => ast::SerializationType::Concrete(ast::ConcreteSerializationType::JsonB),
+        "Id.Int" => ast::SerializationType::Concrete(ast::ConcreteSerializationType::IdInt),
+        "Id.Uuid" => ast::SerializationType::Concrete(ast::ConcreteSerializationType::IdUuid),
         _ => ast::SerializationType::FromType(type_.to_string()),
     }
 }

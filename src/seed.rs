@@ -518,13 +518,13 @@ fn generate_column_value(
     }
 
     // Generate value based on serialization type
-    match &col.serialization_type {
+    match col.type_.to_serialization_type() {
         ast::SerializationType::Concrete(concrete_type) => {
-            generate_concrete_value(concrete_type, col, row_idx, rng, table_name)
+            generate_concrete_value(&concrete_type, col, row_idx, rng, table_name)
         }
         ast::SerializationType::FromType(type_name) => {
             // For named types (like tagged unions), generate a variant
-            generate_named_type_value(type_name, context, rng)
+            generate_named_type_value(&type_name, context, rng)
         }
     }
 }
@@ -611,6 +611,23 @@ fn generate_concrete_value(
             // Generate simple JSON using RNG
             let id = rng.next_u64() % 1000000;
             format!("'{{\"id\": {}}}'", id)
+        }
+        ast::ConcreteSerializationType::IdInt => {
+            // Generate a unique integer ID using RNG
+            let base = rng.next_u64() % 10000;
+            base.to_string()
+        }
+        ast::ConcreteSerializationType::IdUuid => {
+            // Generate a UUID string
+            let uuid = format!(
+                "'{:08x}-{:04x}-{:04x}-{:04x}-{:012x}'",
+                rng.next_u64() as u32,
+                (rng.next_u64() % 65536) as u16,
+                (rng.next_u64() % 65536) as u16,
+                (rng.next_u64() % 65536) as u16,
+                rng.next_u64()
+            );
+            uuid
         }
     }
 }

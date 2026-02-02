@@ -155,7 +155,7 @@ fn add_fields(
                 _ => None,
             });
 
-            match &col.serialization_type {
+            match col.type_.to_serialization_type() {
                 crate::ast::SerializationType::Concrete(concrete) => {
                     columns.push(crate::db::introspect::ColumnInfo {
                         cid: 0,
@@ -174,7 +174,7 @@ fn add_fields(
                     });
                 }
                 crate::ast::SerializationType::FromType(typename) => {
-                    if let Some((_, type_)) = context.types.get(typename) {
+                    if let Some((_, type_)) = context.types.get(&typename) {
                         match type_ {
                             crate::typecheck::Type::OneOf { variants } => {
                                 columns.push(crate::db::introspect::ColumnInfo {

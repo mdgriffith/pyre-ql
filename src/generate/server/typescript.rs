@@ -11,6 +11,55 @@ use std::path::Path;
 
 const DB_ENGINE: &str = include_str!("./static/typescript/db.ts");
 
+/// Collect all unique brands from ID columns in the database
+fn collect_brands(database: &ast::Database) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut brands = HashSet::new();
+
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for definition in &file.definitions {
+                if let ast::Definition::Record { fields, .. } = definition {
+                    for field in fields {
+                        if let ast::Field::Column(column) = field {
+                            // Check if this is an ID type with a brand (non-empty table name)
+                            if let Some(brand) = column.type_.table_name() {
+                                brands.insert(brand.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut brands_vec: Vec<String> = brands.into_iter().collect();
+    brands_vec.sort();
+    brands_vec
+}
+
+/// Convert a column to its TypeScript type representation
+/// For ID types with brands, generates branded types like `UserId` or `string & Post`
+fn column_to_ts_type(column: &ast::Column) -> String {
+    match &column.type_ {
+        ast::ColumnType::IdInt { table } => {
+            if !table.is_empty() {
+                format!("{}Id", table)
+            } else {
+                "number".to_string()
+            }
+        }
+        ast::ColumnType::IdUuid { table } => {
+            if !table.is_empty() {
+                format!("string & {}", table)
+            } else {
+                "string".to_string()
+            }
+        }
+        _ => to_ts_typename(false, &column.type_.to_string()),
+    }
+}
+
 /// Generate all typescript files
 pub fn generate(
     context: &typecheck::Context,
@@ -46,6 +95,28 @@ pub fn generate(
 
 pub fn schema(database: &ast::Database) -> String {
     let mut result = String::new();
+
+    // Collect all unique brands from ID columns
+    let brands = collect_brands(database);
+
+    // Generate phantom type definitions using the brand pattern
+    if !brands.is_empty() {
+        result.push_str("// Branded ID types using intersection types\n");
+        for brand in &brands {
+            result.push_str(&format!(
+                "type {} = {{ readonly __brand: '{}' }}\n",
+                brand, brand
+            ));
+        }
+        result.push_str("\n");
+
+        // Generate type aliases for each brand
+        result.push_str("// ID type aliases\n");
+        for brand in &brands {
+            result.push_str(&format!("type {}Id = number & {}\n", brand, brand));
+        }
+        result.push_str("\n\n");
+    }
 
     for schema in &database.schemas {
         result.push_str("\n\n");
@@ -149,11 +220,12 @@ fn to_string_field(is_first: bool, indent: usize, field: &ast::Field) -> String 
 }
 
 fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> String {
+    let type_str = column_to_ts_type(column);
     if is_first {
         return format!(
             "{}: {};\n",
             crate::ext::string::quote(&column.name),
-            to_ts_typename(false, &column.type_)
+            type_str
         );
     } else {
         let spaces = " ".repeat(indent);
@@ -161,7 +233,7 @@ fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> Stri
             "{}{}: {};\n",
             spaces,
             crate::ext::string::quote(&column.name),
-            to_ts_typename(false, &column.type_)
+            type_str
         );
     }
 }
@@ -257,7 +329,7 @@ fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
                 "{}{}: {},\n",
                 spaces,
                 crate::ext::string::quote(&column.name),
-                to_ts_type_decoder(true, column.nullable, &column.type_)
+                to_ts_type_decoder(true, column.nullable, &column.type_.to_string())
             );
         }
         _ => "".to_string(),
@@ -584,7 +656,7 @@ fn to_query_file(
                 if !first_session_field {
                     result.push_str(",\n");
                 }
-                let type_str = to_ts_type_string(column.nullable, &column.type_);
+                let type_str = to_ts_type_string(column.nullable, &column.type_.to_string());
                 result.push_str(&format!(
                     "  {}: {}",
                     crate::ext::string::quote(field_name),
@@ -743,7 +815,7 @@ fn to_table_field_flat_decoder(
                 "{}\"{}\": {},\n",
                 spaces,
                 ast::get_select_alias(table_alias, query_field),
-                to_ts_type_decoder(true, column.nullable, &column.type_)
+                to_ts_type_decoder(true, column.nullable, &column.type_.to_string())
             ));
         }
         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
@@ -827,7 +899,7 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
                 result.push_str(&format!(
                     "  {}: {},\n",
                     column.name,
-                    to_ts_type_decoder(true, column.nullable, &column.type_)
+                    to_ts_type_decoder(true, column.nullable, &column.type_.to_string())
                 ));
             }
             _ => (),
@@ -841,7 +913,7 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
                 result.push_str(&format!(
                     "  {}: {};\n",
                     column.name,
-                    to_ts_typename(true, &column.type_)
+                    to_ts_typename(true, &column.type_.to_string())
                 ));
             }
             _ => (),

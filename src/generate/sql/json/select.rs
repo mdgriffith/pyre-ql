@@ -546,7 +546,7 @@ fn select_single_json(
                         .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
                     {
                         if let ast::Field::Column(column) = table_field {
-                            return column.type_ == "Bool";
+                            return column.type_.is_bool();
                         }
                     }
                 }
@@ -824,7 +824,7 @@ fn select_type(
     sql: &mut String,
 ) {
     // Handle boolean types: SQLite stores booleans as 0/1, convert to JSON boolean
-    if column.type_ == "Bool" {
+    if column.type_.is_bool() {
         sql.push_str(&format!(
             "jsonb(case when {}.{} = 1 then 'true' else 'false' end)",
             base_table_name, query_field_name
@@ -832,7 +832,12 @@ fn select_type(
         return;
     }
 
-    match context.types.get(&column.type_) {
+    // Look up custom types in the context
+    let type_lookup = column
+        .type_
+        .get_custom_type_name()
+        .and_then(|name| context.types.get(name));
+    match type_lookup {
         None => sql.push_str(&format!("{}.{}", base_table_name, query_field_name)),
         Some((_, type_)) => match type_ {
             typecheck::Type::Integer => {
@@ -985,7 +990,7 @@ fn final_select_formatted_as_json(
                             ));
 
                             // Handle boolean types: SQLite stores booleans as 0/1, convert to JSON boolean
-                            if column.type_ == "Bool" {
+                            if column.type_.is_bool() {
                                 sql.push_str(&format!(
                                     "json(case when {}.{} = 1 then 'true' else 'false' end)",
                                     base_table_name, query_field.name
@@ -1150,7 +1155,12 @@ fn add_concret_fieldnames(
             let query_field_name = query_field.name.clone();
             selected_set.insert(query_field_name.clone());
 
-            match context.types.get(&column.type_) {
+            // Look up custom types in the context
+            let type_lookup = column
+                .type_
+                .get_custom_type_name()
+                .and_then(|name| context.types.get(name));
+            match type_lookup {
                 None => (),
                 Some((_, type_)) => match type_ {
                     typecheck::Type::OneOf { variants, .. } => {

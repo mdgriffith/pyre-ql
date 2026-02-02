@@ -124,7 +124,7 @@ fn generate_typed_response_query(
                             sql.push_str(&format!("      '{}', ", aliased_field_name));
 
                             // Handle boolean types: SQLite stores booleans as 0/1, convert to JSON boolean
-                            if column.type_ == "Bool" {
+                            if matches!(column.type_, ast::ColumnType::Bool) {
                                 sql.push_str(&format!(
                                     "json(case when t.{} = 1 then 'true' else 'false' end)",
                                     string::quote(&query_field.name)

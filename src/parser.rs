@@ -1,5 +1,4 @@
 use crate::ast;
-use crate::platform;
 use nom::bytes::complete::take_while1;
 use nom::character::streaming::{space0, space1};
 use nom::{
@@ -192,6 +191,20 @@ fn parse_typename(input: Text) -> ParseResult<&str> {
     let (input, val) = recognize(tuple((
         take_while1(|c: char| c.is_uppercase()), // First character needs to be uppercase
         many0(alt((alphanumeric1, take_while1(|c: char| c == '_')))), // Followed by alphanumeric or underscores
+    )))(input)?;
+
+    Ok((input, val.fragment()))
+}
+
+/// Parse a typename that may contain dots (e.g., "Id.Int", "Id.Uuid")
+/// This should only be used when parsing column types, not in parse_qualified
+fn parse_typename_with_dots(input: Text) -> ParseResult<&str> {
+    let (input, val) = recognize(tuple((
+        take_while1(|c: char| c.is_uppercase()), // First character needs to be uppercase
+        many0(alt((
+            alphanumeric1,
+            take_while1(|c: char| c == '_' || c == '.'),
+        ))), // Followed by alphanumeric, underscores, or dots
     )))(input)?;
 
     Ok((input, val.fragment()))
@@ -594,7 +607,7 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = cut(opt(tag(":")))(input)?;
     let (input, _) = space0(input)?;
     let (input, start_type_pos) = position(input)?;
-    let (input, type_) = cut(parse_typename)(input)?;
+    let (input, type_) = cut(parse_typename_with_dots)(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, is_nullable) = parse_nullable(input)?;
     let (input, _) = space0(input)?;
@@ -611,9 +624,8 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
         input,
         ast::Field::Column(ast::Column {
             name: name.to_string(),
-            type_: type_.to_string(),
+            type_: ast::ColumnType::from_str(type_),
             nullable: is_nullable,
-            serialization_type: platform::to_serialization_type(type_),
             directives,
             start: Some(to_location(&start_pos)),
             end: Some(to_location(&end_pos)),
@@ -839,7 +851,7 @@ fn parse_variant_field_inline(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = cut(opt(tag(":")))(input)?;
     let (input, _) = space0(input)?;
     let (input, start_type_pos) = position(input)?;
-    let (input, type_) = cut(parse_typename)(input)?;
+    let (input, type_) = cut(parse_typename_with_dots)(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, is_nullable) = parse_nullable(input)?;
     let (input, _) = space0(input)?;
@@ -852,9 +864,8 @@ fn parse_variant_field_inline(input: Text) -> ParseResult<ast::Field> {
         input,
         ast::Field::Column(ast::Column {
             name: name.to_string(),
-            type_: type_.to_string(),
+            type_: ast::ColumnType::from_str(type_),
             nullable: is_nullable,
-            serialization_type: platform::to_serialization_type(type_),
             directives,
             start: Some(to_location(&start_pos)),
             end: Some(to_location(&end_pos)),

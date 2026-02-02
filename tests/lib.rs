@@ -2,6 +2,7 @@ mod ast;
 mod commands;
 mod formatting;
 pub mod helpers;
+mod id_types;
 mod migrations;
 mod parsing;
 mod queries;

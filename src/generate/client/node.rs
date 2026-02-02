@@ -203,11 +203,12 @@ fn to_string_field(is_first: bool, indent: usize, field: &ast::Field) -> String 
 
 fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> String {
     let maybe = if column.nullable { "Maybe " } else { "" };
+    let type_str = column.type_.to_string();
     if is_first {
-        return format!("{} : {}{}\n", column.name, maybe, column.type_);
+        return format!("{} : {}{}\n", column.name, maybe, type_str);
     } else {
         let spaces = " ".repeat(indent);
-        return format!("{}, {} : {}{}\n", spaces, column.name, maybe, column.type_);
+        return format!("{}, {} : {}{}\n", spaces, column.name, maybe, type_str);
     }
 }
 
@@ -357,26 +358,26 @@ fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
     }
 }
 
-fn to_json_type_decoder(type_: &str) -> String {
+fn to_json_type_decoder(type_: &ast::ColumnType) -> String {
     match type_ {
-        "String" => "Decode.string".to_string(),
-        "Int" => "Decode.int".to_string(),
-        "Float" => "Decode.float".to_string(),
-        "DateTime" => "Db.Read.dateTime".to_string(),
-        _ => crate::ext::string::decapitalize(type_).to_string(),
+        ast::ColumnType::String => "Decode.string".to_string(),
+        ast::ColumnType::Int => "Decode.int".to_string(),
+        ast::ColumnType::Float => "Decode.float".to_string(),
+        ast::ColumnType::DateTime => "Db.Read.dateTime".to_string(),
+        _ => crate::ext::string::decapitalize(&type_.to_string()).to_string(),
     }
 }
 
 fn to_type_decoder(column: &ast::Column) -> String {
-    let decoder = match column.type_.as_str() {
-        "String" => "Db.Read.string".to_string(),
-        "Int" => "Db.Read.int".to_string(),
-        "Float" => "Db.Read.float".to_string(),
-        "DateTime" => "Db.Read.dateTime".to_string(),
-        "Boolean" => "Db.Read.bool".to_string(),
+    let decoder = match &column.type_ {
+        ast::ColumnType::String => "Db.Read.string".to_string(),
+        ast::ColumnType::Int => "Db.Read.int".to_string(),
+        ast::ColumnType::Float => "Db.Read.float".to_string(),
+        ast::ColumnType::DateTime => "Db.Read.dateTime".to_string(),
+        ast::ColumnType::Bool => "Db.Read.bool".to_string(),
         _ => format!(
             "Db.Decode.{}",
-            crate::ext::string::decapitalize(&column.type_)
+            crate::ext::string::decapitalize(&column.type_.to_string())
         )
         .to_string(),
     };
@@ -485,7 +486,17 @@ fn to_field_encoder(is_first: bool, indent: usize, field: &ast::Field) -> String
     }
 }
 
-fn to_type_encoder(fieldname: &str, type_: &str) -> String {
+fn to_type_encoder(_fieldname: &str, type_: &ast::ColumnType) -> String {
+    match type_ {
+        ast::ColumnType::String => "Encode.string".to_string(),
+        ast::ColumnType::Int => "Encode.int".to_string(),
+        ast::ColumnType::Float => "Encode.float".to_string(),
+        ast::ColumnType::DateTime => "Db.Encode.dateTime".to_string(),
+        _ => format!("Db.Encode.{}", string::decapitalize(&type_.to_string())).to_string(),
+    }
+}
+
+fn to_type_encoder_str(_fieldname: &str, type_: &str) -> String {
     match type_ {
         "String" => "Encode.string".to_string(),
         "Int" => "Encode.int".to_string(),
@@ -1037,7 +1048,7 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
             result.push_str(&format!(
                 "        [ ( {}, {} input.{} )\n",
                 string::quote(&arg.name),
-                to_type_encoder(&type_string, &type_string),
+                to_type_encoder_str(&arg.name, &type_string),
                 &arg.name
             ));
             is_first = false;
@@ -1045,7 +1056,7 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
             result.push_str(&format!(
                 "        , ( {}, {} input.{})\n",
                 string::quote(&arg.name),
-                to_type_encoder(&type_string, &type_string),
+                to_type_encoder_str(&arg.name, &type_string),
                 &arg.name
             ));
         }
@@ -1323,13 +1334,13 @@ fn to_string_query_field(
     }
 }
 
-fn to_elm_typename(type_: &str) -> String {
+fn to_elm_typename(type_: &ast::ColumnType) -> String {
     match type_ {
-        "String" => type_.to_string(),
-        "Int" => type_.to_string(),
-        "Float" => type_.to_string(),
-        "Bool" => type_.to_string(),
-        "DateTime" => "Time.Posix".to_string(),
-        _ => format!("Db.{}", type_).to_string(),
+        ast::ColumnType::String => "String".to_string(),
+        ast::ColumnType::Int => "Int".to_string(),
+        ast::ColumnType::Float => "Float".to_string(),
+        ast::ColumnType::Bool => "Bool".to_string(),
+        ast::ColumnType::DateTime => "Time.Posix".to_string(),
+        _ => format!("Db.{}", type_.to_string()).to_string(),
     }
 }

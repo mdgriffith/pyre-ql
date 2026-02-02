@@ -55,7 +55,11 @@ type DevActionType
 
     assert_eq!(columns.len(), 1, "Should have one field");
     assert_eq!(columns[0].name, "to", "Field should be named 'to'");
-    assert_eq!(columns[0].type_, "String", "Field should be of type String");
+    assert_eq!(
+        columns[0].type_,
+        ast::ColumnType::String,
+        "Field should be of type String"
+    );
 }
 
 #[test]
@@ -113,21 +117,33 @@ type DevActionType
         columns[0].name, "selector",
         "First field should be 'selector'"
     );
-    assert_eq!(columns[0].type_, "String", "First field should be String");
+    assert_eq!(
+        columns[0].type_,
+        ast::ColumnType::String,
+        "First field should be String"
+    );
     assert_eq!(
         columns[0].nullable, false,
         "First field should not be nullable"
     );
 
     assert_eq!(columns[1].name, "text", "Second field should be 'text'");
-    assert_eq!(columns[1].type_, "String", "Second field should be String");
+    assert_eq!(
+        columns[1].type_,
+        ast::ColumnType::String,
+        "Second field should be String"
+    );
     assert_eq!(
         columns[1].nullable, false,
         "Second field should not be nullable"
     );
 
     assert_eq!(columns[2].name, "clear", "Third field should be 'clear'");
-    assert_eq!(columns[2].type_, "Bool", "Third field should be Bool");
+    assert_eq!(
+        columns[2].type_,
+        ast::ColumnType::Bool,
+        "Third field should be Bool"
+    );
     assert_eq!(columns[2].nullable, true, "Third field should be nullable");
 }
 

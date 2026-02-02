@@ -73,10 +73,7 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
                         ast::Field::Column(id_column()),
                         ast::Field::Column(ast::Column {
                             name: "userId".to_string(),
-                            type_: "Int".to_string(),
-                            serialization_type: ast::SerializationType::Concrete(
-                                ast::ConcreteSerializationType::Integer,
-                            ),
+                            type_: ast::ColumnType::Int,
                             nullable: false,
                             directives: vec![ast::ColumnDirective::PrimaryKey],
                             start: None,

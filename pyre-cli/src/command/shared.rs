@@ -1,4 +1,5 @@
 use pyre::ast;
+use pyre::ast::resolve_id_brands;
 use pyre::error;
 use pyre::filesystem;
 use pyre::generate;
@@ -15,10 +16,7 @@ pub struct Options<'a> {
 pub fn id_column() -> ast::Column {
     ast::Column {
         name: "id".to_string(),
-        type_: "Int".to_string(),
-        serialization_type: ast::SerializationType::Concrete(
-            ast::ConcreteSerializationType::Integer,
-        ),
+        type_: ast::ColumnType::Int,
         nullable: false,
         directives: vec![ast::ColumnDirective::PrimaryKey],
         start: None,
@@ -177,6 +175,9 @@ pub fn parse_database_schemas(
 
         database.schemas.push(schema);
     }
+
+    // Post-process: resolve ID brands for all columns
+    resolve_id_brands(&mut database);
 
     Ok(database)
 }

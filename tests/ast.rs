@@ -432,3 +432,135 @@ fn test_select_type_columns_qualified_table_name() {
 
     // The fact that SQL was generated successfully indicates qualified names are handled correctly
 }
+
+#[test]
+fn test_resolve_id_brands_sets_brand_on_id_columns() {
+    // Test that ID columns (Id.Int or Id.Uuid) get their brand set to the record name
+    let schema_source = r#"
+record User {
+    id Id.Int @id
+    name String
+}
+
+record Post {
+    id Id.Uuid @id
+    title String
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("test.pyre", schema_source.trim(), &mut schema).unwrap();
+
+    let mut database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    // Apply the brand resolution
+    ast::resolve_id_brands(&mut database);
+
+    // Verify that the ID columns now have the correct brand
+    let user_record = database.schemas[0].files[0]
+        .definitions
+        .iter()
+        .find_map(|d| match d {
+            ast::Definition::Record { name, fields, .. } if name == "User" => Some(fields),
+            _ => None,
+        })
+        .unwrap();
+
+    let user_id_column = user_record
+        .iter()
+        .find_map(|f| match f {
+            ast::Field::Column(col) if col.name == "id" => Some(col),
+            _ => None,
+        })
+        .unwrap();
+
+    assert_eq!(
+        user_id_column.type_,
+        ast::ColumnType::IdInt {
+            table: "User".to_string()
+        },
+        "User.id should have table 'User'"
+    );
+
+    let post_record = database.schemas[0].files[0]
+        .definitions
+        .iter()
+        .find_map(|d| match d {
+            ast::Definition::Record { name, fields, .. } if name == "Post" => Some(fields),
+            _ => None,
+        })
+        .unwrap();
+
+    let post_id_column = post_record
+        .iter()
+        .find_map(|f| match f {
+            ast::Field::Column(col) if col.name == "id" => Some(col),
+            _ => None,
+        })
+        .unwrap();
+
+    assert_eq!(
+        post_id_column.type_,
+        ast::ColumnType::IdUuid {
+            table: "Post".to_string()
+        },
+        "Post.id should have table 'Post'"
+    );
+}
+
+#[test]
+fn test_resolve_id_brands_resolves_foreign_key_references() {
+    // Test that foreign key references resolve the brand from the referenced table
+    let schema_source = r#"
+record User {
+    id Id.Int @id
+    name String
+}
+
+record Post {
+    id Id.Int @id
+    authorId User.id
+    title String
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("test.pyre", schema_source.trim(), &mut schema).unwrap();
+
+    let mut database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    // Apply the brand resolution
+    ast::resolve_id_brands(&mut database);
+
+    // Verify that the foreign key column has the correct brand
+    let post_record = database.schemas[0].files[0]
+        .definitions
+        .iter()
+        .find_map(|d| match d {
+            ast::Definition::Record { name, fields, .. } if name == "Post" => Some(fields),
+            _ => None,
+        })
+        .unwrap();
+
+    let author_id_column = post_record
+        .iter()
+        .find_map(|f| match f {
+            ast::Field::Column(col) if col.name == "authorId" => Some(col),
+            _ => None,
+        })
+        .unwrap();
+
+    // The foreign key should reference the User table's id field
+    assert_eq!(
+        author_id_column.type_,
+        ast::ColumnType::ForeignKey {
+            table: "User".to_string(),
+            field: "id".to_string()
+        },
+        "Post.authorId should be a ForeignKey to User.id"
+    );
+}

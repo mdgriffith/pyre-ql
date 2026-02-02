@@ -152,7 +152,7 @@ pub fn insert_to_string(
                             final_statement.push_str(&format!("      '{}', ", aliased_field_name));
 
                             // Handle boolean types: SQLite stores booleans as 0/1, convert to JSON boolean
-                            if column.type_ == "Bool" {
+                            if column.type_.is_bool() {
                                 final_statement.push_str(&format!(
                                     "json(case when t.{} = 1 then 'true' else 'false' end)",
                                     string::quote(&query_field.name)
@@ -499,7 +499,7 @@ fn collect_column_names_recursive(
     for field in fields {
         match field {
             ast::Field::Column(column) => {
-                match &column.serialization_type {
+                match column.type_.to_serialization_type() {
                     ast::SerializationType::Concrete(_) => {
                         // Regular column
                         // If parent_name is Some, it already includes trailing __ (e.g., "status__")
@@ -520,7 +520,7 @@ fn collect_column_names_recursive(
                         column_names.push(base_name.clone());
 
                         // Add variant field columns
-                        if let Some((_, type_)) = context.types.get(typename) {
+                        if let Some((_, type_)) = context.types.get(&typename) {
                             if let typecheck::Type::OneOf { variants } = type_ {
                                 // Variant fields are stored as {columnName}__{fieldName}
                                 // So if base_name is "status", variant fields become "status__reason"
@@ -594,7 +594,7 @@ fn to_table_fieldname(
             }
 
             // Check if this is a union type column
-            match &col.serialization_type {
+            match col.type_.to_serialization_type() {
                 ast::SerializationType::FromType(typename) => {
                     // Union type column - need discriminator + variant-specific columns
                     let mut result = vec![query_field.name.clone()]; // discriminator column
@@ -603,7 +603,7 @@ fn to_table_fieldname(
                     if let Some(set_value) = &query_field.set {
                         if let ast::QueryValue::LiteralTypeValue((_, details)) = set_value {
                             // Get the union type definition
-                            if let Some((_, type_)) = context.types.get(typename) {
+                            if let Some((_, type_)) = context.types.get(&typename) {
                                 if let typecheck::Type::OneOf { variants } = type_ {
                                     // Find the variant being used
                                     if let Some(variant) =
@@ -675,7 +675,8 @@ fn to_field_insert_values(
                 if let ast::QueryValue::LiteralTypeValue((_, details)) = val {
                     // Find the table field to check if it's a union type
                     if let Some(ast::Field::Column(col)) = table_field {
-                        if let ast::SerializationType::FromType(_typename) = &col.serialization_type
+                        if let ast::SerializationType::FromType(_typename) =
+                            col.type_.to_serialization_type()
                         {
                             // This is a union type - need discriminator + variant field values
                             // Add discriminator value (variant name)
@@ -685,9 +686,9 @@ fn to_field_insert_values(
                             if let Some(variant_fields) = &details.fields {
                                 // Get the union type definition to find variant field order
                                 if let ast::SerializationType::FromType(typename) =
-                                    &col.serialization_type
+                                    col.type_.to_serialization_type()
                                 {
-                                    if let Some((_, type_)) = context.types.get(typename) {
+                                    if let Some((_, type_)) = context.types.get(&typename) {
                                         if let typecheck::Type::OneOf { variants } = type_ {
                                             if let Some(variant) =
                                                 variants.iter().find(|v| v.name == details.name)

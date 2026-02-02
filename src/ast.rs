@@ -247,8 +247,7 @@ pub fn ensure_updated_at_field(fields: &mut Vec<Field>) {
     // Create the updatedAt field with @index directive
     let updated_at_field = Field::Column(Column {
         name: "updatedAt".to_string(),
-        type_: "DateTime".to_string(),
-        serialization_type: SerializationType::Concrete(ConcreteSerializationType::DateTime),
+        type_: ColumnType::DateTime,
         nullable: false,
         directives: vec![
             ColumnDirective::Default {
@@ -478,11 +477,195 @@ pub fn collect_links(fields: &Vec<Field>) -> Vec<LinkDetails> {
     links
 }
 
+/// Represents the type of a column in a schema
+#[derive(Debug, Clone, PartialEq)]
+pub enum ColumnType {
+    // Primitive types
+    String,
+    Int,
+    Float,
+    Bool,
+    DateTime,
+    Date,
+    Json,
+
+    // ID types with branding
+    IdInt { table: String },
+    IdUuid { table: String },
+
+    // Foreign key reference (e.g., User.id)
+    ForeignKey { table: String, field: String },
+
+    // Custom/user-defined types
+    Custom(String),
+}
+
+impl ColumnType {
+    /// Convert the ColumnType to its string representation
+    pub fn to_string(&self) -> String {
+        match self {
+            ColumnType::String => "String".to_string(),
+            ColumnType::Int => "Int".to_string(),
+            ColumnType::Float => "Float".to_string(),
+            ColumnType::Bool => "Bool".to_string(),
+            ColumnType::DateTime => "DateTime".to_string(),
+            ColumnType::Date => "Date".to_string(),
+            ColumnType::Json => "Json".to_string(),
+            ColumnType::IdInt { table } => {
+                if table.is_empty() {
+                    "Id.Int".to_string()
+                } else {
+                    format!("Id.Int<{}>", table)
+                }
+            }
+            ColumnType::IdUuid { table } => {
+                if table.is_empty() {
+                    "Id.Uuid".to_string()
+                } else {
+                    format!("Id.Uuid<{}>", table)
+                }
+            }
+            ColumnType::ForeignKey { table, field } => format!("{}.{}", table, field),
+            ColumnType::Custom(name) => name.clone(),
+        }
+    }
+
+    /// Get the serialization type for this column type
+    pub fn to_serialization_type(&self) -> SerializationType {
+        match self {
+            ColumnType::String => SerializationType::Concrete(ConcreteSerializationType::Text),
+            ColumnType::Int => SerializationType::Concrete(ConcreteSerializationType::Integer),
+            ColumnType::Float => SerializationType::Concrete(ConcreteSerializationType::Real),
+            ColumnType::Bool => SerializationType::Concrete(ConcreteSerializationType::Integer),
+            ColumnType::DateTime => {
+                SerializationType::Concrete(ConcreteSerializationType::DateTime)
+            }
+            ColumnType::Date => SerializationType::Concrete(ConcreteSerializationType::Date),
+            ColumnType::Json => SerializationType::Concrete(ConcreteSerializationType::JsonB),
+            ColumnType::IdInt { .. } => {
+                SerializationType::Concrete(ConcreteSerializationType::IdInt)
+            }
+            ColumnType::IdUuid { .. } => {
+                SerializationType::Concrete(ConcreteSerializationType::IdUuid)
+            }
+            ColumnType::ForeignKey { .. } => {
+                // Foreign keys are stored as integers by default
+                SerializationType::Concrete(ConcreteSerializationType::Integer)
+            }
+            ColumnType::Custom(name) => SerializationType::FromType(name.clone()),
+        }
+    }
+
+    /// Check if this type contains a dot (for foreign key detection during parsing)
+    pub fn contains_dot(&self) -> bool {
+        matches!(self, ColumnType::ForeignKey { .. })
+    }
+
+    /// Check if this is an ID type
+    pub fn is_id_type(&self) -> bool {
+        matches!(self, ColumnType::IdInt { .. } | ColumnType::IdUuid { .. })
+    }
+
+    /// Get the table name for ID types or foreign keys
+    pub fn table_name(&self) -> Option<&str> {
+        match self {
+            ColumnType::IdInt { table } | ColumnType::IdUuid { table } => {
+                if table.is_empty() {
+                    None
+                } else {
+                    Some(table)
+                }
+            }
+            ColumnType::ForeignKey { table, .. } => Some(table),
+            _ => None,
+        }
+    }
+
+    /// Get the name of a custom type for looking up in the type context.
+    /// Returns Some(&name) for Custom types, None for built-in types.
+    pub fn get_custom_type_name(&self) -> Option<&str> {
+        match self {
+            ColumnType::Custom(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a Bool type
+    pub fn is_bool(&self) -> bool {
+        matches!(self, ColumnType::Bool)
+    }
+
+    /// Parse a type string into a ColumnType.
+    /// Handles primitive types, ID types, foreign key references, and custom types.
+    pub fn from_str(type_str: &str) -> Self {
+        match type_str {
+            "String" => ColumnType::String,
+            "Int" => ColumnType::Int,
+            "Float" => ColumnType::Float,
+            "Bool" => ColumnType::Bool,
+            "DateTime" => ColumnType::DateTime,
+            "Date" => ColumnType::Date,
+            "JSON" | "Json" => ColumnType::Json,
+            "Id.Int" => ColumnType::IdInt {
+                table: String::new(),
+            },
+            "Id.Uuid" => ColumnType::IdUuid {
+                table: String::new(),
+            },
+            _ => {
+                // Check for foreign key reference (TableName.fieldName pattern)
+                if type_str.contains('.') && !type_str.starts_with("Id.") {
+                    let parts: Vec<&str> = type_str.split('.').collect();
+                    if parts.len() == 2 {
+                        ColumnType::ForeignKey {
+                            table: parts[0].to_string(),
+                            field: parts[1].to_string(),
+                        }
+                    } else {
+                        ColumnType::Custom(type_str.to_string())
+                    }
+                } else {
+                    ColumnType::Custom(type_str.to_string())
+                }
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ColumnType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ColumnType::String => write!(f, "String"),
+            ColumnType::Int => write!(f, "Int"),
+            ColumnType::Float => write!(f, "Float"),
+            ColumnType::Bool => write!(f, "Bool"),
+            ColumnType::DateTime => write!(f, "DateTime"),
+            ColumnType::Date => write!(f, "Date"),
+            ColumnType::Json => write!(f, "Json"),
+            ColumnType::IdInt { table } => {
+                if table.is_empty() {
+                    write!(f, "Id.Int")
+                } else {
+                    write!(f, "Id.Int<{}>", table)
+                }
+            }
+            ColumnType::IdUuid { table } => {
+                if table.is_empty() {
+                    write!(f, "Id.Uuid")
+                } else {
+                    write!(f, "Id.Uuid<{}>", table)
+                }
+            }
+            ColumnType::ForeignKey { table, field } => write!(f, "{}.{}", table, field),
+            ColumnType::Custom(name) => write!(f, "{}", name),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Column {
     pub name: String,
-    pub type_: String,
-    pub serialization_type: SerializationType,
+    pub type_: ColumnType,
     pub nullable: bool,
     pub directives: Vec<ColumnDirective>,
 
@@ -566,7 +749,9 @@ pub enum ConcreteSerializationType {
         vector_type: VectorType,
         dimensionality: u8,
     },
-    JsonB, // This is a blob, but we know it's valid json
+    JsonB,  // This is a blob, but we know it's valid json
+    IdInt,  // Branded integer ID type
+    IdUuid, // Branded UUID ID type (stored as TEXT)
 }
 
 impl ConcreteSerializationType {
@@ -580,6 +765,8 @@ impl ConcreteSerializationType {
             ConcreteSerializationType::DateTime => "INTEGER".to_string(), // DateTime as unix epoch
             ConcreteSerializationType::VectorBlob { .. } => "BLOB".to_string(),
             ConcreteSerializationType::JsonB => "BLOB".to_string(),
+            ConcreteSerializationType::IdInt => "INTEGER".to_string(),
+            ConcreteSerializationType::IdUuid => "TEXT".to_string(),
         }
     }
 }
@@ -821,4 +1008,94 @@ pub enum Operator {
     NotIn,
     Like,
     NotLike,
+}
+
+/// Post-processing pass to resolve ID brands for columns.
+///
+/// This function:
+/// 1. Sets the brand on ID columns (IdInt or IdUuid) with no brand to the record name
+/// 2. For foreign key references (type like "User.id"), resolves the brand from the referenced column
+pub fn resolve_id_brands(database: &mut Database) {
+    // Build a lookup table of table name -> record definition
+    let mut table_lookup: std::collections::HashMap<String, RecordDetails> =
+        std::collections::HashMap::new();
+
+    for schema in database.schemas.iter() {
+        for file in schema.files.iter() {
+            for definition in file.definitions.iter() {
+                if let Definition::Record { name, fields, .. } = definition {
+                    table_lookup.insert(
+                        name.clone(),
+                        RecordDetails {
+                            name: name.clone(),
+                            fields: fields.clone(),
+                            start: None,
+                            end: None,
+                            start_name: None,
+                            end_name: None,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    // Now iterate through all records and their columns to set brands
+    let table_lookup_ref = &table_lookup; // Immutable borrow for lookup
+
+    for schema in database.schemas.iter_mut() {
+        for file in schema.files.iter_mut() {
+            for definition in file.definitions.iter_mut() {
+                if let Definition::Record {
+                    name: record_name,
+                    fields,
+                    ..
+                } = definition
+                {
+                    for field in fields.iter_mut() {
+                        if let Field::Column(ref mut column) = field {
+                            // Check if this is an ID type without a brand
+                            if let ColumnType::IdInt { table } | ColumnType::IdUuid { table } =
+                                &mut column.type_
+                            {
+                                if table.is_empty() {
+                                    // Set brand to the record name for ID types
+                                    *table = record_name.clone();
+                                }
+                            } else if let ColumnType::ForeignKey { table, field } = &column.type_ {
+                                // This is a foreign key reference like "User.id"
+                                // The brand should already be set during parsing, but let's resolve any additional info if needed
+                                let ref_table = table.clone();
+                                let ref_field = field.clone();
+
+                                if let Some(ref_record) = table_lookup_ref.get(&ref_table) {
+                                    // Look up the referenced column to get its brand
+                                    for ref_field_def in ref_record.fields.iter() {
+                                        if let Field::Column(ref_col) = ref_field_def {
+                                            if ref_col.name == ref_field {
+                                                // Check if the referenced column is an ID type with a brand
+                                                if let ColumnType::IdInt { table: ref_brand }
+                                                | ColumnType::IdUuid { table: ref_brand } =
+                                                    &ref_col.type_
+                                                {
+                                                    if !ref_brand.is_empty() {
+                                                        // Use the referenced column's brand
+                                                        column.type_ = ColumnType::ForeignKey {
+                                                            table: ref_brand.clone(),
+                                                            field: ref_field.clone(),
+                                                        };
+                                                    }
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

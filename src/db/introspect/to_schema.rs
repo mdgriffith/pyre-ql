@@ -1,4 +1,4 @@
-use crate::ast::{Column, ColumnDirective, Definition, Field, SchemaFile, SerializationType};
+use crate::ast::{Column, ColumnDirective, ColumnType, Definition, Field, SchemaFile};
 use crate::db::introspect::{ColumnInfo, Introspection};
 
 pub fn to_schema(introspection: &Introspection) -> SchemaFile {
@@ -45,19 +45,18 @@ fn column_info_to_column(info: &ColumnInfo) -> Column {
     // Handle not null constraint
     let nullable = !info.notnull;
 
-    // Basic type mapping from SQLite to our SerializationType
-    let serialization_type = match info.column_type.to_lowercase().as_str() {
-        "integer" => SerializationType::Concrete(crate::ast::ConcreteSerializationType::Integer),
-        "real" => SerializationType::Concrete(crate::ast::ConcreteSerializationType::Real),
-        "text" => SerializationType::Concrete(crate::ast::ConcreteSerializationType::Text),
-        "blob" => SerializationType::Concrete(crate::ast::ConcreteSerializationType::Blob),
-        _ => SerializationType::Concrete(crate::ast::ConcreteSerializationType::Text), // Default to text
+    // Map SQLite column type to ColumnType
+    let type_ = match info.column_type.to_lowercase().as_str() {
+        "integer" => ColumnType::Int,
+        "real" => ColumnType::Float,
+        "text" => ColumnType::String,
+        "blob" => ColumnType::String, // Default to text for blob
+        _ => ColumnType::Custom(info.column_type.clone()), // Use custom for unknown types
     };
 
     Column {
         name: info.name.clone(),
-        type_: info.column_type.clone(),
-        serialization_type,
+        type_,
         nullable,
         directives,
         start: None,

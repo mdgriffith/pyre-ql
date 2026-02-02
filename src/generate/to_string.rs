@@ -132,8 +132,10 @@ fn calculate_directive_column(
                         // Calculate where its directive would start after alignment
                         // type_column is where the type starts, add type length, nullable marker, and space
                         let nullable_space = if column.nullable { 1 } else { 0 };
-                        let directive_start =
-                            field_indent.type_column + column.type_.len() + nullable_space + 1; // space before directive
+                        let directive_start = field_indent.type_column
+                            + column.type_.to_string().len()
+                            + nullable_space
+                            + 1; // space before directive
                         max_directive_start = std::cmp::max(max_directive_start, directive_start);
                     }
                 }
@@ -302,7 +304,7 @@ fn format_variant_inline(
             }
             result.push_str(&col.name);
             result.push(' ');
-            result.push_str(&col.type_);
+            result.push_str(&col.type_.to_string());
             if col.nullable {
                 result.push('?');
             }
@@ -360,8 +362,11 @@ fn to_string_column(indentation: &Indentation, column: &ast::Column) -> String {
                 type_indent_len = indent.type_column - name_plus_colon;
             }
 
-            let name_plus_colon_plus_type =
-                name_plus_colon + type_indent_len + column.type_.len() + nullable.len() + 1;
+            let name_plus_colon_plus_type = name_plus_colon
+                + type_indent_len
+                + column.type_.to_string().len()
+                + nullable.len()
+                + 1;
             if name_plus_colon_plus_type < indent.directive_column && column.directives.len() > 0 {
                 directive_indent_len = indent.directive_column - name_plus_colon_plus_type;
             }

@@ -264,7 +264,6 @@ fn field_equal_ignoring_locations(a: &ast::Field, b: &ast::Field) -> bool {
 fn column_equal_ignoring_locations(a: &ast::Column, b: &ast::Column) -> bool {
     a.name == b.name
         && a.type_ == b.type_
-        && a.serialization_type == b.serialization_type
         && a.nullable == b.nullable
         && column_directives_equal_ignoring_locations(&a.directives, &b.directives)
 }

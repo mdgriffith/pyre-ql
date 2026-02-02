@@ -165,7 +165,7 @@ fn to_subselection(
                     )
                 }
             };
-            match &table_column.serialization_type {
+            match table_column.type_.to_serialization_type() {
                 ast::SerializationType::Concrete(_) => {
                     // A single concrete type
                     let str = format!(
@@ -180,7 +180,7 @@ fn to_subselection(
                     let mut selected = vec![];
                     select_type_columns(
                         context,
-                        typename,
+                        &typename,
                         &source_field,
                         &ast::get_select_alias(table_alias, query_field),
                         &mut selected,

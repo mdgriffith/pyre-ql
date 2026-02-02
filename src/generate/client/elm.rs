@@ -28,6 +28,30 @@ pub fn write_schema(database: &ast::Database) -> String {
 
     result.push_str("module Db exposing (..)\n\nimport Time\n\n\n");
 
+    // Generate generic branded ID types
+    result.push_str("-- Generic branded ID types\n");
+    result.push_str("type Id brand = Id Int\n");
+    result.push_str("type Uuid brand = Uuid String\n\n\n");
+
+    // Collect all unique brands from ID columns
+    let brands = collect_brands(database);
+
+    // Generate phantom types for each brand
+    if !brands.is_empty() {
+        result.push_str("-- Phantom types for each table/entity\n");
+        for brand in &brands {
+            result.push_str(&format!("type {} = {}\n", brand, brand));
+        }
+        result.push_str("\n\n");
+
+        // Generate type aliases for each brand
+        result.push_str("-- Table-specific ID aliases\n");
+        for brand in &brands {
+            result.push_str(&format!("type alias {}Id = Id {}\n", brand, brand));
+        }
+        result.push_str("\n\n");
+    }
+
     result.push_str("type alias DateTime =\n    Time.Posix\n\n\n");
 
     for schema in &database.schemas {
@@ -39,6 +63,33 @@ pub fn write_schema(database: &ast::Database) -> String {
     }
 
     result
+}
+
+/// Collect all unique brands from ID columns in the database
+fn collect_brands(database: &ast::Database) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut brands = HashSet::new();
+
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for definition in &file.definitions {
+                if let ast::Definition::Record { fields, .. } = definition {
+                    for field in fields {
+                        if let ast::Field::Column(column) = field {
+                            // Check if this is an ID type with a brand (non-empty table name)
+                            if let Some(brand) = column.type_.table_name() {
+                                brands.insert(brand.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut brands_vec: Vec<String> = brands.into_iter().collect();
+    brands_vec.sort();
+    brands_vec
 }
 
 fn to_string_definition(definition: &ast::Definition) -> String {
@@ -124,11 +175,35 @@ fn to_string_field(is_first: bool, indent: usize, field: &ast::Field) -> String 
 
 fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> String {
     let maybe = if column.nullable { "Maybe " } else { "" };
+    let type_str = column_to_elm_type(column);
+
     if is_first {
-        return format!("{} : {}{}\n", column.name, maybe, column.type_);
+        return format!("{} : {}{}\n", column.name, maybe, type_str);
     } else {
         let spaces = " ".repeat(indent);
-        return format!("{}, {} : {}{}\n", spaces, column.name, maybe, column.type_);
+        return format!("{}, {} : {}{}\n", spaces, column.name, maybe, type_str);
+    }
+}
+
+/// Convert a column to its Elm type representation
+/// For ID types with brands, generates branded types like `UserId` or `Uuid User`
+fn column_to_elm_type(column: &ast::Column) -> String {
+    match &column.type_ {
+        ast::ColumnType::IdInt { table } => {
+            if !table.is_empty() {
+                format!("{}Id", table)
+            } else {
+                "Int".to_string()
+            }
+        }
+        ast::ColumnType::IdUuid { table } => {
+            if !table.is_empty() {
+                format!("Uuid {}", table)
+            } else {
+                "String".to_string()
+            }
+        }
+        _ => column.type_.to_string(),
     }
 }
 
@@ -294,13 +369,13 @@ fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
     }
 }
 
-fn to_json_type_decoder(type_: &str) -> String {
+fn to_json_type_decoder(type_: &ast::ColumnType) -> String {
     match type_ {
-        "String" => "Decode.string".to_string(),
-        "Int" => "Decode.int".to_string(),
-        "Float" => "Decode.float".to_string(),
-        "DateTime" => "Db.Read.dateTime".to_string(),
-        _ => crate::ext::string::decapitalize(type_).to_string(),
+        ast::ColumnType::String => "Decode.string".to_string(),
+        ast::ColumnType::Int => "Decode.int".to_string(),
+        ast::ColumnType::Float => "Decode.float".to_string(),
+        ast::ColumnType::DateTime => "Db.Read.dateTime".to_string(),
+        _ => crate::ext::string::decapitalize(&type_.to_string()).to_string(),
     }
 }
 
@@ -394,7 +469,17 @@ fn to_field_encoder(indent: usize, field: &ast::Field) -> String {
     }
 }
 
-fn to_type_encoder(type_: &str) -> String {
+fn to_type_encoder(type_: &ast::ColumnType) -> String {
+    match type_ {
+        ast::ColumnType::String => "Encode.string".to_string(),
+        ast::ColumnType::Int => "Encode.int".to_string(),
+        ast::ColumnType::Float => "Encode.float".to_string(),
+        ast::ColumnType::DateTime => "Db.Encode.dateTime".to_string(),
+        _ => format!("Db.Encode.{}", string::decapitalize(&type_.to_string())).to_string(),
+    }
+}
+
+fn to_type_encoder_str(type_: &str) -> String {
     match type_ {
         "String" => "Encode.string".to_string(),
         "Int" => "Encode.int".to_string(),
@@ -656,7 +741,7 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
             result.push_str(&format!(
                 "        [ ( {}, {} input.{} )\n",
                 string::quote(&arg.name),
-                to_type_encoder(&type_string),
+                to_type_encoder_str(&type_string),
                 &arg.name
             ));
             is_first = false;
@@ -664,7 +749,7 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
             result.push_str(&format!(
                 "        , ( {}, {} input.{})\n",
                 string::quote(&arg.name),
-                to_type_encoder(&type_string),
+                to_type_encoder_str(&type_string),
                 &arg.name
             ));
         }
@@ -758,7 +843,6 @@ fn to_query_field_spec_json(context: &typecheck::Context, query_field: &ast::Que
                             limit = Some(*val);
                         }
                     }
-                    _ => {}
                 }
             }
             ast::ArgField::Field(nested_field) => {

@@ -35,7 +35,7 @@ fn field_to_sql_column(
     gathered: &mut Vec<SqlColumnInfo>,
 ) {
     match field {
-        ast::Field::Column(column) => match &column.serialization_type {
+        ast::Field::Column(column) => match column.type_.to_serialization_type() {
             ast::SerializationType::Concrete(concrete) => gathered.push(SqlColumnInfo {
                 name: match parent_name {
                     None => column.name.clone(),
@@ -49,7 +49,7 @@ fn field_to_sql_column(
                 directives: column.directives.clone(),
             }),
             ast::SerializationType::FromType(typename) => {
-                match context.types.get(typename) {
+                match context.types.get(&typename) {
                     Some((_, type_)) => match type_ {
                         Type::OneOf { variants } => {
                             // We need a column for the discriminator
@@ -1060,19 +1060,22 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                     } => {
                         let mut field_names: HashMap<String, Option<Range>> = HashMap::new();
                         for column in ast::collect_columns(fields) {
-                            // Type exists check
-                            if !context.types.contains_key(&column.type_) {
-                                errors.push(Error {
-                                    filepath: file.path.clone(),
-                                    error_type: ErrorType::UnknownType {
-                                        found: column.type_.clone(),
-                                        known_types: context.types.keys().cloned().collect(),
-                                    },
-                                    locations: vec![Location {
-                                        contexts: to_range(start, end),
-                                        primary: to_range(&column.start, &column.end),
-                                    }],
-                                });
+                            // Type exists check - only for custom types
+                            let type_str = column.type_.to_string();
+                            if let Some(custom_type_name) = column.type_.get_custom_type_name() {
+                                if !context.types.contains_key(custom_type_name) {
+                                    errors.push(Error {
+                                        filepath: file.path.clone(),
+                                        error_type: ErrorType::UnknownType {
+                                            found: type_str.clone(),
+                                            known_types: context.types.keys().cloned().collect(),
+                                        },
+                                        locations: vec![Location {
+                                            contexts: to_range(start, end),
+                                            primary: to_range(&column.start, &column.end),
+                                        }],
+                                    });
+                                }
                             }
 
                             // Duplicate field check
@@ -1139,48 +1142,54 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                         for variant in variants {
                             if let Some(fields) = &variant.fields {
                                 for field in ast::collect_columns(&fields) {
-                                    // Check if type exists
-                                    if !context.types.contains_key(&field.type_) {
-                                        let mut contexts: Vec<Range> = vec![];
+                                    let field_type_str = field.type_.to_string();
 
-                                        match to_single_range(&start, &end) {
-                                            None => (),
-                                            Some(new_range) => {
-                                                contexts.push(new_range);
+                                    // Check if type exists - only for custom types
+                                    if let Some(custom_type_name) =
+                                        field.type_.get_custom_type_name()
+                                    {
+                                        if !context.types.contains_key(custom_type_name) {
+                                            let mut contexts: Vec<Range> = vec![];
+
+                                            match to_single_range(&start, &end) {
+                                                None => (),
+                                                Some(new_range) => {
+                                                    contexts.push(new_range);
+                                                }
                                             }
-                                        }
 
-                                        match to_single_range(&variant.start, &variant.end) {
-                                            None => (),
-                                            Some(new_range) => {
-                                                contexts.push(new_range);
+                                            match to_single_range(&variant.start, &variant.end) {
+                                                None => (),
+                                                Some(new_range) => {
+                                                    contexts.push(new_range);
+                                                }
                                             }
-                                        }
 
-                                        errors.push(Error {
-                                            filepath: file.path.clone(),
-                                            error_type: ErrorType::UnknownType {
-                                                found: field.type_.clone(),
-                                                known_types: context
-                                                    .types
-                                                    .keys()
-                                                    .cloned()
-                                                    .collect(),
-                                            },
-                                            locations: vec![Location {
-                                                contexts,
-                                                primary: to_range(
-                                                    &field.start_typename,
-                                                    &field.end_typename,
-                                                ),
-                                            }],
-                                        });
+                                            errors.push(Error {
+                                                filepath: file.path.clone(),
+                                                error_type: ErrorType::UnknownType {
+                                                    found: field_type_str.clone(),
+                                                    known_types: context
+                                                        .types
+                                                        .keys()
+                                                        .cloned()
+                                                        .collect(),
+                                                },
+                                                locations: vec![Location {
+                                                    contexts,
+                                                    primary: to_range(
+                                                        &field.start_typename,
+                                                        &field.end_typename,
+                                                    ),
+                                                }],
+                                            });
+                                        }
                                     }
 
                                     // Check for type collisions between variants
                                     match field_types.get(&field.name) {
                                         Some((existing_type, existing_variant)) => {
-                                            if existing_type != &field.type_ {
+                                            if existing_type != &field_type_str {
                                                 let mut contexts: Vec<Range> = vec![];
 
                                                 match to_single_range(&start, &end) {
@@ -1204,7 +1213,7 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                                                         ErrorType::VariantFieldTypeCollision {
                                                             field: field.name.clone(),
                                                             type_one: existing_type.clone(),
-                                                            type_two: field.type_.clone(),
+                                                            type_two: field_type_str.clone(),
                                                             variant_one: existing_variant
                                                                 .name
                                                                 .clone(),
@@ -1223,7 +1232,7 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                                         None => {
                                             field_types.insert(
                                                 field.name.clone(),
-                                                (field.type_.clone(), variant),
+                                                (field_type_str, variant),
                                             );
                                         }
                                     }
@@ -1388,7 +1397,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                             ParamInfo::Defined {
                                 raw_variable_name: format!("session_{}", col.name),
                                 defined_at: None,
-                                type_: Some(col.type_.clone()),
+                                type_: Some(col.type_.to_string()),
                                 nullable: col.nullable,
                                 used: false,
                                 used_by_top_level_field_alias: HashSet::new(),
@@ -1508,7 +1517,6 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                     primary: used_at.clone().into_iter().collect(),
                 }],
             }),
-            _ => {}
         }
     }
 
@@ -1610,7 +1618,7 @@ fn check_where_args(
                             ast::Field::Column(column) => {
                                 if &column.name == field_name {
                                     is_known_field = true;
-                                    column_type = Some(column.type_.clone());
+                                    column_type = Some(column.type_.to_string());
                                     is_nullable = column.nullable;
                                     // Mark the session variable as used
                                     let session_param_name = ast::session_field_name(column);
@@ -1664,7 +1672,7 @@ fn check_where_args(
                         ast::Field::Column(column) => {
                             if &column.name == field_name {
                                 is_known_field = true;
-                                column_type = Some(column.type_.clone());
+                                column_type = Some(column.type_.to_string());
                                 is_nullable = column.nullable;
                             }
                         }
@@ -2683,6 +2691,7 @@ fn check_field(
     column: &ast::Column,
     field: &ast::QueryField,
 ) {
+    let column_type_str = column.type_.to_string();
     match &field.set {
         Some(set) => {
             check_value(
@@ -2694,14 +2703,18 @@ fn check_field(
                 &mut errors,
                 params,
                 &column.name,
-                &column.type_,
+                &column_type_str,
                 column.nullable,
             );
 
             // If this is a union variant with nested fields (e.g., Success { message = $message }),
             // we need to process the nested fields to mark variables as used
             if let ast::QueryValue::LiteralTypeValue((_, details)) = set {
-                if let Some((_, type_)) = context.types.get(&column.type_) {
+                let type_lookup = column
+                    .type_
+                    .get_custom_type_name()
+                    .and_then(|name| context.types.get(name));
+                if let Some((_, type_)) = type_lookup {
                     if let Type::OneOf { variants } = type_ {
                         // Find the variant that matches
                         if let Some(variant) = variants.iter().find(|v| v.name == details.name) {
@@ -2723,6 +2736,8 @@ fn check_field(
                                         {
                                             if let ast::Field::Column(variant_col) = variant_col {
                                                 // Check the field value to mark variables as used
+                                                let variant_col_type_str =
+                                                    variant_col.type_.to_string();
                                                 check_value(
                                                     context,
                                                     &query_context,
@@ -2732,7 +2747,7 @@ fn check_field(
                                                     &mut errors,
                                                     params,
                                                     &variant_col.name,
-                                                    &variant_col.type_,
+                                                    &variant_col_type_str,
                                                     variant_col.nullable,
                                                 );
                                             }
@@ -2815,6 +2830,8 @@ fn check_field(
                                                 {
                                                     // Check the nested field's set value to mark variables as used
                                                     if let Some(nested_set) = &nested_field.set {
+                                                        let variant_col_type_str =
+                                                            variant_col.type_.to_string();
                                                         check_value(
                                                             context,
                                                             &query_context,
@@ -2824,7 +2841,7 @@ fn check_field(
                                                             &mut errors,
                                                             params,
                                                             &variant_col.name,
-                                                            &variant_col.type_,
+                                                            &variant_col_type_str,
                                                             variant_col.nullable,
                                                         );
                                                     }
@@ -2886,7 +2903,7 @@ fn get_column_reference(fields: &Vec<ast::Field>) -> Vec<(String, String)> {
     for col in fields {
         match col {
             ast::Field::Column(column) => {
-                known_fields.push((column.name.clone(), column.type_.clone()))
+                known_fields.push((column.name.clone(), column.type_.to_string()))
             }
             ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                 known_fields.push((link.link_name.clone(), link.foreign.table.clone()))

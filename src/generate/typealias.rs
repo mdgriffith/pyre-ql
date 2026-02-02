@@ -198,9 +198,10 @@ fn to_query_type_alias(
 
             match table_field {
                 ast::Field::Column(col) => {
+                    let type_str = col.type_.to_string();
                     result.push_str(&(formatter.to_field)(
                         &aliased_name,
-                        &col.type_,
+                        &type_str,
                         FieldMetadata {
                             is_link: false,
                             is_optional: col.nullable,
