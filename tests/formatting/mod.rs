@@ -1,4 +1,5 @@
 mod newlines;
+mod variant_fields;
 
 use pyre::ast;
 use pyre::format;
