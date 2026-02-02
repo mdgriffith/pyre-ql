@@ -106,16 +106,18 @@ pub fn parse_single_schema(
     file.read_to_string(&mut schema_source)?;
 
     match parser::run(&schema_file_path, &schema_source, &mut schema) {
-        Ok(()) => {}
+        Ok(()) => Ok(schema),
         Err(err) => {
             eprintln!(
                 "{}",
                 parser::render_error(&schema_source, err, enable_color)
             );
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Failed to parse schema",
+            ))
         }
     }
-
-    Ok(schema)
 }
 
 pub fn parse_single_schema_from_source(
@@ -130,16 +132,18 @@ pub fn parse_single_schema_from_source(
     };
 
     match parser::run(&schema_file_path, &schema_source, &mut schema) {
-        Ok(()) => {}
+        Ok(()) => Ok(schema),
         Err(err) => {
             eprintln!(
                 "{}",
                 parser::render_error(&schema_source, err, enable_color)
             );
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Failed to parse schema",
+            ))
         }
     }
-
-    Ok(schema)
 }
 
 pub fn parse_database_schemas(
