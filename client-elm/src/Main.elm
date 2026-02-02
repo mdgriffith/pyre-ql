@@ -224,87 +224,6 @@ handleLiveSyncIncoming incoming model =
 handleQueryManagerIncoming : QueryManager.Incoming -> Model -> ( Model, List (Cmd Msg) )
 handleQueryManagerIncoming incoming model =
     case incoming of
-        QueryManager.RegisterQuery queryId query input callbackPort ->
-            -- QueryManager already updated the subscription
-            -- Execute query and send result, and update subscription with row IDs
-            let
-                executionResult =
-                    Db.executeQueryWithTracking model.schema model.db query
-
-                resultJson =
-                    encodeQueryResult executionResult.results
-
-                nextRevision =
-                    case Dict.get queryId model.queryManager.subscriptions of
-                        Just subscription ->
-                            subscription.revision + 1
-
-                        Nothing ->
-                            1
-
-                -- Update subscription with row IDs
-                updatedQueryManager =
-                    case Dict.get queryId model.queryManager.subscriptions of
-                        Just subscription ->
-                            let
-                                updatedSubscription =
-                                    { subscription
-                                        | resultRowIds = executionResult.rowIds
-                                        , revision = nextRevision
-                                        , lastResult = Just executionResult.results
-                                    }
-
-                                updatedSubscriptions =
-                                    Dict.insert queryId updatedSubscription model.queryManager.subscriptions
-                            in
-                            { subscriptions = updatedSubscriptions }
-
-                        Nothing ->
-                            model.queryManager
-            in
-            ( { model | queryManager = updatedQueryManager }
-            , [ QueryManager.queryFull queryId nextRevision resultJson ]
-            )
-
-        QueryManager.UpdateQueryInput queryId _ newInput ->
-            -- QueryManager already updated the subscription
-            -- Re-execute query and send result, and update subscription with row IDs
-            case Dict.get queryId model.queryManager.subscriptions of
-                Just subscription ->
-                    let
-                        executionResult =
-                            Db.executeQueryWithTracking model.schema model.db subscription.query
-
-                        resultJson =
-                            encodeQueryResult executionResult.results
-
-                        nextRevision =
-                            subscription.revision + 1
-
-                        -- Update subscription with row IDs
-                        updatedSubscription =
-                            { subscription
-                                | resultRowIds = executionResult.rowIds
-                                , revision = nextRevision
-                                , lastResult = Just executionResult.results
-                            }
-
-                        updatedSubscriptions =
-                            Dict.insert queryId updatedSubscription model.queryManager.subscriptions
-
-                        updatedQueryManager =
-                            { subscriptions = updatedSubscriptions }
-                    in
-                    ( { model | queryManager = updatedQueryManager }
-                    , [ QueryManager.queryFull queryId nextRevision resultJson ]
-                    )
-
-                Nothing ->
-                    ( model, [] )
-
-        QueryManager.UnregisterQuery _ ->
-            ( model, [] )
-
         QueryManager.SendMutation hash baseUrl headers input ->
             -- Mutations are handled via HTTP request
             let
@@ -701,7 +620,7 @@ reExecuteAllQueries schema db queryManager =
                     { accModel | subscriptions = updatedSubscriptions }
             in
             ( updatedModel
-            , QueryManager.queryFull subscription.queryId nextRevision resultJson :: accCmds
+            , QueryManager.queryClientFull subscription.queryId nextRevision resultJson :: accCmds
             )
         )
         ( queryManager, [] )

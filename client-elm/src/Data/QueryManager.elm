@@ -1,4 +1,4 @@
-port module Data.QueryManager exposing (Incoming(..), Message, Model, Msg(..), QueryClientIncoming(..), QueryDeltaOp(..), QuerySubscription, ReExecuteDecision(..), decodeIncoming, decodeQueryClientIncoming, doesChangeAffectWhereClause, encodeMessage, extractChangedRowIds, extractWhereClauseFields, init, mutationResult, notifyTablesChanged, queryClientDelta, queryClientFull, queryDelta, queryFull, queryResult, receiveIncoming, receiveQueryClientIncoming, sendMessage, shouldReExecuteQuery, subscriptions, update)
+port module Data.QueryManager exposing (Incoming(..), Model, Msg(..), QueryClientIncoming(..), QueryDeltaOp(..), QuerySubscription, ReExecuteDecision(..), decodeIncoming, decodeQueryClientIncoming, doesChangeAffectWhereClause, extractChangedRowIds, extractWhereClauseFields, init, mutationResult, notifyTablesChanged, queryClientDelta, queryClientFull, receiveIncoming, receiveQueryClientIncoming, shouldReExecuteQuery, update)
 
 import Data.Delta
 import Data.Schema
@@ -40,10 +40,7 @@ type Msg
 
 
 type Incoming
-    = RegisterQuery String Db.Query.Query Encode.Value String -- queryId, query, input, callbackPort
-    | UpdateQueryInput String (Maybe Db.Query.Query) Encode.Value -- queryId, query, newInput
-    | UnregisterQuery String -- queryId
-    | SendMutation String String (List ( String, String )) Encode.Value -- hash, baseUrl, headers, input
+    = SendMutation String String (List ( String, String )) Encode.Value -- hash, baseUrl, headers, input
 
 
 {-| Incoming messages from QueryClient (TypeScript side)
@@ -93,48 +90,6 @@ update msg model =
 handleIncoming : Incoming -> Model -> ( Model, Cmd Msg )
 handleIncoming incoming model =
     case incoming of
-        RegisterQuery queryId query input callbackPort ->
-            let
-                subscription =
-                    QuerySubscription queryId query input callbackPort Dict.empty 0 Nothing
-
-                updatedSubscriptions =
-                    Dict.insert queryId subscription model.subscriptions
-            in
-            ( { model | subscriptions = updatedSubscriptions }
-            , Cmd.none
-            )
-
-        UpdateQueryInput queryId maybeQuery newInput ->
-            case Dict.get queryId model.subscriptions of
-                Just subscription ->
-                    let
-                        updatedQuery =
-                            Maybe.withDefault subscription.query maybeQuery
-
-                        updatedSubscription =
-                            { subscription
-                                | input = newInput
-                                , query = updatedQuery
-                                , resultRowIds = Dict.empty
-                                , lastResult = Nothing
-                            }
-
-                        updatedSubscriptions =
-                            Dict.insert queryId updatedSubscription model.subscriptions
-                    in
-                    ( { model | subscriptions = updatedSubscriptions }
-                    , Cmd.none
-                    )
-
-                Nothing ->
-                    ( model, Cmd.none )
-
-        UnregisterQuery queryId ->
-            ( { model | subscriptions = Dict.remove queryId model.subscriptions }
-            , Cmd.none
-            )
-
         SendMutation _ _ _ _ ->
             -- Mutations are handled by Main, not QueryManager
             ( model, Cmd.none )
@@ -152,25 +107,6 @@ notifyTablesChanged schema db model delta =
                 -- Use fine-grained reactivity to decide if re-execution is needed
                 decision =
                     shouldReExecuteQuery schema db subscription delta
-
-                -- Determine which port functions to use based on callbackPort
-                -- Empty callbackPort means this is a QueryClient subscription
-                isQueryClient =
-                    String.isEmpty subscription.callbackPort
-
-                sendFullCmd =
-                    if isQueryClient then
-                        queryClientFull
-
-                    else
-                        queryFull
-
-                sendDeltaCmd =
-                    if isQueryClient then
-                        queryClientDelta
-
-                    else
-                        queryDelta
             in
             case decision of
                 ReExecuteFull ->
@@ -222,7 +158,7 @@ notifyTablesChanged schema db model delta =
                                         { accModel | subscriptions = updatedSubscriptions }
                                 in
                                 ( updatedModel
-                                , sendDeltaCmd subscription.queryId nextRevision ops :: accCmds
+                                , queryClientDelta subscription.queryId nextRevision ops :: accCmds
                                 )
 
                         Err _ ->
@@ -240,7 +176,7 @@ notifyTablesChanged schema db model delta =
                                     { accModel | subscriptions = updatedSubscriptions }
                             in
                             ( updatedModel
-                            , sendFullCmd subscription.queryId nextRevision resultJson :: accCmds
+                            , queryClientFull subscription.queryId nextRevision resultJson :: accCmds
                             )
 
                 NoReExecute ->
@@ -1143,27 +1079,6 @@ decodeIncoming =
         |> Decode.andThen
             (\type_ ->
                 case type_ of
-                    "registerQuery" ->
-                        Decode.map4 RegisterQuery
-                            (Decode.field "queryId" Decode.string)
-                            (Decode.field "query" Db.Query.decodeQuery)
-                            (Decode.field "input" Decode.value)
-                            (Decode.field "callbackPort" Decode.string)
-
-                    "updateQueryInput" ->
-                        Decode.map3 UpdateQueryInput
-                            (Decode.field "queryId" Decode.string)
-                            (Decode.oneOf
-                                [ Decode.field "query" Db.Query.decodeQuery |> Decode.map Just
-                                , Decode.succeed Nothing
-                                ]
-                            )
-                            (Decode.field "input" Decode.value)
-
-                    "unregisterQuery" ->
-                        Decode.field "queryId" Decode.string
-                            |> Decode.map UnregisterQuery
-
                     "sendMutation" ->
                         Decode.map4 SendMutation
                             (Decode.field "hash" Decode.string)

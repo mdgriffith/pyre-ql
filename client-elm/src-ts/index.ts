@@ -204,47 +204,22 @@ export class PyreClient {
 
     const queryId = `query_${this.queryCounter}_${Date.now()}`;
     this.queryCounter += 1;
-    const callbackPort = `callback_${queryId}`;
 
-    if (this.queryClient.isAvailable()) {
-      const querySource = queryModule.source ?? queryModule.hash ?? queryShape;
-      this.queryClient.registerQuery(
-        {
-          queryId,
-          querySource,
-          input: normalizedInput,
-        },
-        callback
-      );
-    } else {
-      this.queryManager.registerQuery(
-        {
-          queryId,
-          query: queryShape,
-          input: normalizedInput,
-          callbackPort,
-        },
-        callback
-      );
-    }
+    this.queryClient.registerQuery(
+      {
+        queryId,
+        querySource: queryShape,
+        input: normalizedInput,
+      },
+      callback
+    );
 
     return {
       unsubscribe: () => {
-        if (this.queryClient.isAvailable()) {
-          this.queryClient.unregisterQuery(queryId);
-        } else {
-          this.queryManager.unregisterQuery(queryId, callbackPort);
-        }
+        this.queryClient.unregisterQuery(queryId);
       },
       update: (updatedInput: Input) => {
-        const updatedQuery = queryModule.toQueryShape
-          ? queryModule.toQueryShape(updatedInput)
-          : queryModule.queryShape;
-        if (this.queryClient.isAvailable()) {
-          this.queryClient.updateQueryInput(queryId, updatedInput);
-        } else {
-          this.queryManager.updateQueryInput(queryId, updatedInput, updatedQuery);
-        }
+        this.queryClient.updateQueryInput(queryId, updatedInput);
       },
     };
   }

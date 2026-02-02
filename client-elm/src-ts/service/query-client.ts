@@ -10,17 +10,17 @@ type QueryResultCallback = (result: unknown) => void;
 
 export type QueryDeltaEnvelope =
   | {
-      type: 'full';
-      queryId: string;
-      revision: number;
-      result: unknown;
-    }
+    type: 'full';
+    queryId: string;
+    revision: number;
+    result: unknown;
+  }
   | {
-      type: 'delta';
-      queryId: string;
-      revision: number;
-      delta: { ops: QueryDeltaOp[] };
-    };
+    type: 'delta';
+    queryId: string;
+    revision: number;
+    delta: { ops: QueryDeltaOp[] };
+  };
 
 export type QueryDeltaOp =
   | { op: 'set-row'; path: string; row: unknown }
@@ -88,6 +88,8 @@ export class QueryClientService {
   }
 
   registerQuery(registration: QueryRegistration, callback: QueryResultCallback): void {
+    console.log('[QueryClient] registerQuery:', registration.queryId);
+
     this.queryStates.set(registration.queryId, {
       input: registration.input,
       result: null,
@@ -102,6 +104,7 @@ export class QueryClientService {
       queryInput: registration.input,
     };
 
+    console.log('[QueryClient] sending register message to Elm:', registerMessage);
     this.elmApp?.ports.receiveQueryClientMessage?.send(registerMessage);
   }
 
@@ -121,6 +124,7 @@ export class QueryClientService {
   }
 
   unregisterQuery(queryId: string): void {
+    console.log('[QueryClient] unregisterQuery:', queryId);
     this.queryStates.delete(queryId);
 
     const unregisterMessage = {
@@ -132,16 +136,23 @@ export class QueryClientService {
   }
 
   private async handleMessage(message: unknown): Promise<void> {
+    console.log('[QueryClient] handleMessage received:', message);
+
     if (!message || typeof message !== 'object') {
+      console.log('[QueryClient] handleMessage: message is not an object');
       return;
     }
 
     const envelope = message as QueryDeltaEnvelope;
     if (envelope.type !== 'full' && envelope.type !== 'delta') {
+      console.log('[QueryClient] handleMessage: unknown type', (message as any).type);
       return;
     }
 
     const state = this.queryStates.get(envelope.queryId);
+    console.log('[QueryClient] handleMessage: queryId =', envelope.queryId, 'state =', state ? 'found' : 'NOT FOUND');
+    console.log('[QueryClient] handleMessage: registered queryIds =', Array.from(this.queryStates.keys()));
+
     if (!state) {
       this.logError({
         message: 'QueryDelta received for unknown query',
@@ -160,9 +171,11 @@ export class QueryClientService {
     }
 
     if (envelope.type === 'full') {
+      console.log('[QueryClient] handleMessage: full result, calling callback with:', envelope.result);
       state.result = envelope.result;
       state.revision = envelope.revision;
       state.callback(state.result);
+      console.log('[QueryClient] handleMessage: callback completed');
       return;
     }
 
