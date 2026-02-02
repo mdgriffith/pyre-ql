@@ -266,7 +266,6 @@ session {
 }
 
 record User {
-    @tablename "users"
     id        Int     @id
     name      String?
     status    String
@@ -274,7 +273,6 @@ record User {
 }
 
 record Post {
-    @tablename "posts"
     id           Int     @id
     createdAt    DateTime @default(now)
     authorUserId Int

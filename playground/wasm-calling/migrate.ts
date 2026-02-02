@@ -123,7 +123,6 @@ export async function runMigration(db: Client, schemaSource: string) {
 
 const schemaSource = `
 record User {
-    @tablename "users"
     accounts      @link(Account.userId)
     posts         @link(Post.authorUserId)
     databaseUsers @link(DatabaseUser.userId)
@@ -144,7 +143,6 @@ record DatabaseUser {
 }
 
 record Account {
-    @tablename "accounts"
     users @link(userId, User.id)
 
     id     Int   @id
