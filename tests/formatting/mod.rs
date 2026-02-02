@@ -1183,3 +1183,40 @@ query GetUsers {
 
     round_trip_query(query_source, &database);
 }
+
+#[test]
+fn test_schema_single_pass_alignment() {
+    // Test that formatting aligns both types and directives in a single pass
+    let schema_source = r#"
+record Task {
+    id String @id
+    description String
+    status TaskStatus
+    createdAt DateTime @default(now)
+    updatedAt DateTime @default(now)
+    maxIterations Int @default(50)
+    currentIteration Int @default(0)
+}
+    "#;
+
+    // Parse original
+    let mut schema1 = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema1).unwrap();
+
+    // Format once
+    format::schema(&mut schema1);
+    let formatted_once = generate::to_string::schema_to_string(&schema1.namespace, &schema1);
+
+    // Parse and format again
+    let mut schema2 = ast::Schema::default();
+    parser::run("schema.pyre", &formatted_once, &mut schema2).unwrap();
+    format::schema(&mut schema2);
+    let formatted_twice = generate::to_string::schema_to_string(&schema2.namespace, &schema2);
+
+    // The output should be identical after one format vs two formats
+    assert_eq!(
+        formatted_once, formatted_twice,
+        "Formatting should be idempotent. First format:\n{}\n\nSecond format:\n{}",
+        formatted_once, formatted_twice
+    );
+}

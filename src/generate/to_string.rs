@@ -88,9 +88,19 @@ fn collect_indentation(fields: &Vec<ast::Field>, indent_minimum: usize) -> Inden
             }
         }
     }
+
+    // Second pass: recalculate directive_column based on actual field lengths at aligned positions
+    let mut updated_collection = BTreeMap::new();
+    for (line_num, mut field_indent) in indent_collection {
+        // Find the maximum directive column by checking actual field lengths in this group
+        let max_directive_col = calculate_directive_column(fields, &field_indent, indent_minimum);
+        field_indent.directive_column = max_directive_col;
+        updated_collection.insert(line_num, field_indent);
+    }
+
     Indentation {
         minimum: indent_minimum,
-        levels: indent_collection,
+        levels: updated_collection,
     }
 }
 
@@ -102,6 +112,37 @@ fn merge_indents(previous_indent: &FieldIndent, indent: &FieldIndent) -> FieldIn
         type_column: std::cmp::max(previous_indent.type_column, indent.type_column),
         directive_column: std::cmp::max(previous_indent.directive_column, indent.directive_column),
     }
+}
+
+fn calculate_directive_column(
+    fields: &Vec<ast::Field>,
+    field_indent: &FieldIndent,
+    _indent_minimum: usize,
+) -> usize {
+    let mut max_directive_start = 0;
+
+    // Find all columns in this alignment group (between line_start and line_end)
+    for field in fields {
+        match field {
+            ast::Field::Column(column) => {
+                if let Some(name_loc) = &column.start_name {
+                    let line = name_loc.line.to_usize();
+                    if line >= field_indent.line_start && line <= field_indent.line_end {
+                        // This column is in the current alignment group
+                        // Calculate where its directive would start after alignment
+                        // type_column is where the type starts, add type length, nullable marker, and space
+                        let nullable_space = if column.nullable { 1 } else { 0 };
+                        let directive_start =
+                            field_indent.type_column + column.type_.len() + nullable_space + 1; // space before directive
+                        max_directive_start = std::cmp::max(max_directive_start, directive_start);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    max_directive_start
 }
 
 #[derive(Clone, Debug)]
