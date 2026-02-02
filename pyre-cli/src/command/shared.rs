@@ -27,6 +27,7 @@ pub fn id_column() -> ast::Column {
         end_name: None,
         start_typename: None,
         end_typename: None,
+        inline_comment: None,
     }
 }
 

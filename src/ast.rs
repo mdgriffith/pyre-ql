@@ -136,6 +136,8 @@ pub struct Variant {
 
     pub start_name: Option<Location>,
     pub end_name: Option<Location>,
+
+    pub inline_comment: Option<String>,
 }
 
 pub fn to_variant(name: &str) -> Variant {
@@ -146,6 +148,7 @@ pub fn to_variant(name: &str) -> Variant {
         end: None,
         start_name: None,
         end_name: None,
+        inline_comment: None,
     }
 }
 
@@ -260,6 +263,7 @@ pub fn ensure_updated_at_field(fields: &mut Vec<Field>) {
         end_name: None,
         start_typename: None,
         end_typename: None,
+        inline_comment: None,
     });
 
     // Add it to the fields
@@ -412,6 +416,7 @@ pub fn to_reciprocal(local_namespace: &str, local_table: &str, link: &LinkDetail
         },
         start_name: None,
         end_name: None,
+        inline_comment: None,
     }
 }
 
@@ -440,6 +445,8 @@ pub struct LinkDetails {
 
     pub start_name: Option<Location>,
     pub end_name: Option<Location>,
+
+    pub inline_comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -487,6 +494,8 @@ pub struct Column {
 
     pub start_typename: Option<Location>,
     pub end_typename: Option<Location>,
+
+    pub inline_comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

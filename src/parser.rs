@@ -364,6 +364,17 @@ fn parse_field_comment(input: Text) -> ParseResult<ast::Field> {
     ))
 }
 
+// Helper to parse optional inline comment (// ... until end of line)
+// Returns the comment text if present, otherwise None
+fn parse_optional_inline_comment(input: Text) -> ParseResult<Option<String>> {
+    let (input, comment) = opt(|input| -> ParseResult<String> {
+        let (input, _) = tag("//")(input)?;
+        let (input, text) = take_until("\n")(input)?;
+        Ok((input, text.to_string()))
+    })(input)?;
+    Ok((input, comment))
+}
+
 fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
     let (input, start_pos) = position(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaAtDirective);
@@ -558,6 +569,12 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
         })(input)?;
 
         let (input, foreign) = parse_qualified(input)?;
+        let (input, _) = tag(")")(input)?;
+        let (input, _) = space0(input)?;
+        let (input, inline_comment) = parse_optional_inline_comment(input)?;
+        let (input, _) = newline(input)?;
+        let (input, _) = space0(input)?;
+
         let link_details = ast::LinkDetails {
             link_name: name.to_string(),
             local_ids: vec![first_arg.unwrap_or("id".to_string())],
@@ -565,11 +582,8 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
             foreign: foreign,
             start_name: Some(to_location(&start_pos)),
             end_name: Some(to_location(&end_name_pos)),
+            inline_comment,
         };
-        let (input, _) = tag(")")(input)?;
-        let (input, _) = space0(input)?;
-        let (input, _) = newline(input)?;
-        let (input, _) = space0(input)?;
 
         return Ok((
             input,
@@ -589,6 +603,7 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
     let (input, end_pos) = position(input)?;
 
     let (input, _) = space0(input)?;
+    let (input, inline_comment) = parse_optional_inline_comment(input)?;
     let (input, _) = newline(input)?;
     let (input, _) = space0(input)?;
 
@@ -608,6 +623,8 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
 
             start_typename: Some(to_location(&start_type_pos)),
             end_typename: Some(to_location(&end_type_pos)),
+
+            inline_comment,
         }),
     ))
 }
@@ -620,12 +637,15 @@ fn parse_nullable(input: Text) -> ParseResult<bool> {
 fn parse_column_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
     let (input, _) = tag("@")(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaFieldAtDirective);
-    cut(alt((
+    let (input, directive) = cut(alt((
         parse_directive_named("id", ast::ColumnDirective::PrimaryKey),
         parse_directive_named("unique", ast::ColumnDirective::Unique),
         parse_directive_named("index", ast::ColumnDirective::Index),
         parse_default_directive,
-    )))(input)
+    )))(input)?;
+    // Consume trailing spaces after directive to allow multiple directives on same line
+    let (input, _) = space0(input)?;
+    Ok((input, directive))
 }
 
 fn parse_default_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
@@ -737,8 +757,13 @@ fn parse_variant(input: Text) -> ParseResult<ast::Variant> {
     let (input, start_pos) = position(input)?;
     let (input, name) = parse_typename(input)?;
     let (input, end_name_pos) = position(input)?;
+    let (input, _) = space0(input)?;
+
+    // Try to parse optional inline comment after variant name
+    let (input, inline_comment) = parse_optional_inline_comment(input)?;
+
     let (input, _) = multispace0(input)?;
-    let (input, optional_fields) = opt(with_braces(parse_field))(input)?;
+    let (input, optional_fields) = opt(parse_variant_fields)(input)?;
     let (input, end_pos) = position(input)?;
 
     Ok((
@@ -751,7 +776,97 @@ fn parse_variant(input: Text) -> ParseResult<ast::Variant> {
 
             start_name: Some(to_location(&start_pos)),
             end_name: Some(to_location(&end_name_pos)),
+
+            inline_comment,
         },
+    ))
+}
+
+fn parse_variant_fields(input: Text) -> ParseResult<Vec<ast::Field>> {
+    let (input, _) = tag("{")(input)?;
+    let (input, _) = multispace0(input)?;
+
+    // Try different formats using alt
+    let (input, fields) = alt((
+        // Empty braces
+        |input| {
+            let (input, _) = tag("}")(input)?;
+            Ok((input, vec![]))
+        },
+        // Comma-separated inline format: { field1 Type1, field2 Type2, ... }
+        |input| {
+            let (input, fields) = separated_list1(
+                |input| {
+                    let (input, _) = multispace0(input)?;
+                    let (input, _) = tag(",")(input)?;
+                    let (input, _) = multispace0(input)?;
+                    Ok((input, ()))
+                },
+                parse_variant_field_inline,
+            )(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = tag("}")(input)?;
+            Ok((input, fields))
+        },
+        // Single inline field without comma: { field Type }
+        |input| {
+            let (input, field) = parse_variant_field_inline(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = tag("}")(input)?;
+            Ok((input, vec![field]))
+        },
+        // Multiline format (existing behavior): { \n  field Type\n  ... }
+        |input| {
+            let (input, fields) = many0(parse_field)(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = tag("}")(input)?;
+            Ok((input, fields))
+        },
+    ))(input)?;
+
+    Ok((input, fields))
+}
+
+fn parse_variant_field_inline(input: Text) -> ParseResult<ast::Field> {
+    // Parse a field in inline format (no newline required at end)
+    let (input, _) = multispace0(input)?;
+    let (input, start_pos) = position(input)?;
+    let input = expecting(input, crate::error::Expecting::SchemaColumn);
+    let (input, name) = parse_fieldname(input)?;
+    let (input, end_name_pos) = position(input)?;
+
+    let (input, _) = space0(input)?;
+    let (input, _) = cut(opt(tag(":")))(input)?;
+    let (input, _) = space0(input)?;
+    let (input, start_type_pos) = position(input)?;
+    let (input, type_) = cut(parse_typename)(input)?;
+    let (input, end_type_pos) = position(input)?;
+    let (input, is_nullable) = parse_nullable(input)?;
+    let (input, _) = space0(input)?;
+    let (input, directives) = many0(parse_column_directive)(input)?;
+
+    let (input, end_pos) = position(input)?;
+    let (input, _) = space0(input)?;
+
+    Ok((
+        input,
+        ast::Field::Column(ast::Column {
+            name: name.to_string(),
+            type_: type_.to_string(),
+            nullable: is_nullable,
+            serialization_type: platform::to_serialization_type(type_),
+            directives,
+            start: Some(to_location(&start_pos)),
+            end: Some(to_location(&end_pos)),
+
+            start_name: Some(to_location(&start_pos)),
+            end_name: Some(to_location(&end_name_pos)),
+
+            start_typename: Some(to_location(&start_type_pos)),
+            end_typename: Some(to_location(&end_type_pos)),
+
+            inline_comment: None,
+        }),
     ))
 }
 

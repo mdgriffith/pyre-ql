@@ -75,6 +75,7 @@ fn test_linked_to_unique_field_with_primary_key() {
         },
         start_name: None,
         end_name: None,
+        inline_comment: None,
     };
 
     // The link points to "id" which is a PRIMARY KEY, so it should be unique
@@ -99,6 +100,7 @@ fn test_linked_to_unique_field_with_unique_constraint() {
         },
         start_name: None,
         end_name: None,
+        inline_comment: None,
     };
 
     // The link points to "email" which has @unique, so it should be unique
@@ -143,6 +145,7 @@ fn test_linked_to_unique_field_with_non_unique_field() {
         },
         start_name: None,
         end_name: None,
+        inline_comment: None,
     };
 
     // The link points to "name" which has no unique constraint, so it should NOT be unique
@@ -196,6 +199,7 @@ record TestRecord {
         },
         start_name: None,
         end_name: None,
+        inline_comment: None,
     };
 
     // Should detect as unique because "id" is a PRIMARY KEY

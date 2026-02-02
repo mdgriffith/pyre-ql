@@ -68,6 +68,7 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
                             },
                             start_name: None,
                             end_name: None,
+                            inline_comment: None,
                         })),
                         ast::Field::Column(id_column()),
                         ast::Field::Column(ast::Column {
@@ -84,6 +85,7 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
                             end_name: None,
                             start_typename: None,
                             end_typename: None,
+                            inline_comment: None,
                         }),
                     ],
                     start: None,
