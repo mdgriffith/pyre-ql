@@ -10,6 +10,13 @@ codegen-units = 1 # Reduce number of codegen units to increase optimization
 panic = "abort"   # Remove panic unwinding code
 strip = true      # Strip debug symbols
 
+# Disable wasm-opt to avoid bulk-memory compatibility issues
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false
+
 [lib]
 crate-type = ["cdylib"]
 path = "src/lib.rs"
