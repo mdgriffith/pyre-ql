@@ -29,7 +29,7 @@ record DatabaseUser {
 }
 
 record Account {
-    @tablename "accounts"
+    @tablename("accounts")
     users @link(userId, User.id)
 
     id     Int   @id
