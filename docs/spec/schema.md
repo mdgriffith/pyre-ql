@@ -48,6 +48,32 @@ status Status
 action Action
 ```
 
+**ID Types:**
+Branded type-safe identifiers that prevent mixing IDs from different tables:
+```pyre
+id Id.Int @id         -- Integer primary key (branded as TableId)
+externalId Id.Uuid    -- UUID identifier (branded as Uuid Table)
+```
+
+ID types are stored in the database using their underlying representation (`INTEGER` for `Id.Int`, `TEXT` for `Id.Uuid`), but the generated client code uses branded types to prevent accidental misuse. For example, a `UserId` cannot be passed where a `PostId` is expected.
+
+**Foreign Key Field References:**
+Reference the ID field of another table to get the correct branded type:
+```pyre
+record User {
+    id Id.Int @id
+    name String
+}
+
+record Post {
+    id Id.Int @id
+    authorId User.id     -- Has type UserId, references User.id
+    title String
+}
+```
+
+The syntax `TableName.fieldName` creates a foreign key that uses the same branded ID type as the referenced field. This ensures type safety when working with relationships.
+
 ### Column Directives
 
 Directives modify column behavior:
@@ -270,29 +296,29 @@ record User {
     @tablename("users")
     @public
     
-    id Int @id
+    id Id.Int @id
     name String?
     email String? @unique
     status Status
     createdAt DateTime @default(now)
     
-    posts @link(Post.authorUserId)
+    posts @link(Post.authorId)
     accounts @link(Account.userId)
 }
 
 record Post {
     @watch
     @allow(query) { published = True }
-    @allow(insert, update, delete) { authorUserId = Session.userId }
+    @allow(insert, update, delete) { authorId = Session.userId }
     
-    id Int @id
+    id Id.Int @id
     createdAt DateTime @default(now)
-    authorUserId Int
+    authorId User.id
     title String
     content String
     published Bool @default(False)
     
-    users @link(authorUserId, User.id)
+    users @link(authorId, User.id)
 }
 ```
 
