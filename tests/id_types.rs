@@ -233,7 +233,10 @@ record Post {
 
             // Verify existing_fields are provided for helpful error messages
             if let Some(error) = fk_error {
-                if let ErrorType::ForeignKeyToUnknownField { existing_fields, .. } = &error.error_type {
+                if let ErrorType::ForeignKeyToUnknownField {
+                    existing_fields, ..
+                } = &error.error_type
+                {
                     assert!(
                         existing_fields.contains(&"id".to_string()),
                         "Error should list 'id' as an existing field"
@@ -288,8 +291,8 @@ record Post {
                         referenced_field,
                         referenced_field_type,
                     }
-                    if field_name == "authorId" 
-                        && referenced_table == "User" 
+                    if field_name == "authorId"
+                        && referenced_table == "User"
                         && referenced_field == "name"
                         && referenced_field_type == "String"
                 )

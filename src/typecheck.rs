@@ -719,18 +719,17 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                         match context.tables.get(&ref_table_lower) {
                                             Some(foreign_table) => {
                                                 // Check if the referenced field exists
-                                                let ref_column = foreign_table
-                                                    .record
-                                                    .fields
-                                                    .iter()
-                                                    .find_map(|f| match f {
-                                                        ast::Field::Column(col)
-                                                            if col.name == *ref_field =>
-                                                        {
-                                                            Some(col)
-                                                        }
-                                                        _ => None,
-                                                    });
+                                                let ref_column =
+                                                    foreign_table.record.fields.iter().find_map(
+                                                        |f| match f {
+                                                            ast::Field::Column(col)
+                                                                if col.name == *ref_field =>
+                                                            {
+                                                                Some(col)
+                                                            }
+                                                            _ => None,
+                                                        },
+                                                    );
 
                                                 match ref_column {
                                                     Some(ref_col) => {
@@ -803,11 +802,12 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                                     context.tables.keys().cloned().collect();
                                                 errors.push(Error {
                                                     filepath: file.path.clone(),
-                                                    error_type: ErrorType::ForeignKeyToUnknownTable {
-                                                        field_name: column.name.clone(),
-                                                        referenced_table: ref_table.clone(),
-                                                        existing_tables,
-                                                    },
+                                                    error_type:
+                                                        ErrorType::ForeignKeyToUnknownTable {
+                                                            field_name: column.name.clone(),
+                                                            referenced_table: ref_table.clone(),
+                                                            existing_tables,
+                                                        },
                                                     locations: vec![Location {
                                                         contexts: to_range(&start, &end),
                                                         primary: to_range(
