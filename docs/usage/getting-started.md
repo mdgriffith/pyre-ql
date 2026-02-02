@@ -18,7 +18,6 @@ Create a `pyre/` directory in your project root and add a `schema.pyre` file:
 
 ```pyre
 record User {
-    @tablename "users"
     accounts @link(Account.userId)
     posts    @link(Post.authorUserId)
 
@@ -29,7 +28,6 @@ record User {
 }
 
 record Account {
-    @tablename "accounts"
     id     Int   @id
     userId Int
     name   String
@@ -38,7 +36,6 @@ record Account {
 }
 
 record Post {
-    @tablename "posts"
     id           Int     @id
     createdAt    DateTime @default(now)
     authorUserId Int
