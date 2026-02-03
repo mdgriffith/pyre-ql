@@ -197,7 +197,7 @@ pub async fn migrate(
                         pyre::db::migrate::SCHEMA_TABLE,
                         &pyre::ext::string::quote(pyre::db::migrate::SCHEMA_TABLE),
                     );
-                    conn.execute_batch(&format!("{}\n\n{}", migration_table_sql, schema_table_sql))
+                    conn.execute_batch(&format!("{};\n\n{};", migration_table_sql, schema_table_sql))
                         .await
                         .unwrap();
 
