@@ -101,15 +101,21 @@ pub fn render_real_where_field(
 
 pub fn render_value(value: &ast::QueryValue) -> String {
     match value {
-        ast::QueryValue::Fn(func) => format!(
-            "{}({})",
-            func.name,
-            func.args
-                .iter()
-                .map(|value| render_value(value))
-                .collect::<Vec<String>>()
-                .join(", ")
-        ),
+        ast::QueryValue::Fn(func) => {
+            if func.name == "now" && func.args.is_empty() {
+                "CURRENT_TIMESTAMP".to_string()
+            } else {
+                format!(
+                    "{}({})",
+                    func.name,
+                    func.args
+                        .iter()
+                        .map(|value| render_value(value))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            }
+        }
         ast::QueryValue::Variable((_, var)) => {
             format!("${}", var.name)
         }

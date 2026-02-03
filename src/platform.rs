@@ -72,6 +72,7 @@ pub fn add_builtin(fns: &mut HashMap<String, FuncDefinition>) {
     insert_fn(fns, FuncDefinition { name: "nullif".to_string(), arg_types: vec!["String".to_string(), "String".to_string()], return_type: "String".to_string() });
 
     // Other Functions
+    insert_fn(fns, FuncDefinition { name: "now".to_string(), arg_types: vec![], return_type: "DateTime".to_string() });
     insert_fn(fns, FuncDefinition { name: "total_changes".to_string(), arg_types: vec![], return_type: "Int".to_string() });
     insert_fn(fns, FuncDefinition { name: "changes".to_string(), arg_types: vec![], return_type: "Int".to_string() });
     insert_fn(fns, FuncDefinition { name: "last_insert_rowid".to_string(), arg_types: vec![], return_type: "Int".to_string() });

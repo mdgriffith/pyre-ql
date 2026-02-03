@@ -1037,7 +1037,7 @@ fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefin
     let (input, _) = space0(input)?;
 
     let (input, start_type_pos) = position(input)?;
-    let (input, typename) = cut(opt(parse_typename))(input)?;
+    let (input, typename) = cut(opt(parse_typename_with_dots))(input)?;
     let (input, nullable_marker) = opt(char('?'))(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
@@ -1514,12 +1514,28 @@ fn parse_fn(input: Text) -> ParseResult<ast::QueryValue> {
     let (input, start_pos) = position(input)?;
     let (input, name) = parse_fieldname(input)?;
     let (input, end_name_pos) = position(input)?;
-    let (input, _) = tag("(")(input)?;
-    let (input, start_args_pos) = position(input)?;
-    let (input, args) = separated_list1(char(','), parse_value)(input)?;
-    let (input, end_args_pos) = position(input)?;
-    let (input, _) = tag(")")(input)?;
-    let (input, end_pos) = position(input)?;
+    let (input, maybe_paren) = opt(tag("("))(input)?;
+
+    let (input, args, end_pos, location_arg) = if maybe_paren.is_some() {
+        let (input, start_args_pos) = position(input)?;
+        let (input, args) = separated_list0(char(','), parse_value)(input)?;
+        let (input, end_args_pos) = position(input)?;
+        let (input, _) = tag(")")(input)?;
+        let (input, end_pos) = position(input)?;
+
+        let location_arg = ast::Range {
+            start: to_location(&start_args_pos),
+            end: to_location(&end_args_pos),
+        };
+
+        (input, args, end_pos, location_arg)
+    } else {
+        let location_arg = ast::Range {
+            start: to_location(&start_pos),
+            end: to_location(&end_name_pos),
+        };
+        (input, vec![], end_name_pos.clone(), location_arg)
+    };
 
     let range = ast::Range {
         start: to_location(&start_pos),
@@ -1535,10 +1551,7 @@ fn parse_fn(input: Text) -> ParseResult<ast::QueryValue> {
                 start: to_location(&start_pos),
                 end: to_location(&end_name_pos),
             },
-            location_arg: ast::Range {
-                start: to_location(&start_args_pos),
-                end: to_location(&end_args_pos),
-            },
+            location_arg,
         }),
     ))
 }
