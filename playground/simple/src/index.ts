@@ -37,16 +37,16 @@ async function runDemo() {
   // Create some users
   console.log('Creating users...');
 
-  await CreateUser(db, {
+  await CreateUser(db, adminSession, {
     name: 'Alice',
     email: 'alice@example.com'
-  }, adminSession);
+  });
   console.log('✓ Created Alice');
 
-  await CreateUser(db, {
+  await CreateUser(db, adminSession, {
     name: 'Bob',
     email: 'bob@example.com'
-  }, adminSession);
+  });
   console.log('✓ Created Bob');
 
   // Get all users
@@ -60,7 +60,7 @@ async function runDemo() {
 
   // Get a specific user
   console.log('\nGetting user by ID...');
-  const userResult = await GetUser(db, { id: 1 }, adminSession);
+  const userResult = await GetUser(db, adminSession, { id: 1 });
   if (userResult.user.length > 0) {
     const user = userResult.user[0];
     console.log(`Found: ${user.name} <${user.email}>`);
@@ -69,33 +69,33 @@ async function runDemo() {
 
   // Update a user
   console.log('\nUpdating user...');
-  await UpdateUser(db, {
+  await UpdateUser(db, adminSession, {
     id: 1,
     name: 'Alice Smith',
     email: 'alice.smith@example.com'
-  }, adminSession);
+  });
   console.log('✓ Updated Alice');
 
   // Create posts
   console.log('\nCreating posts...');
 
-  await CreatePost(db, {
+  await CreatePost(db, adminSession, {
     title: 'Hello World',
     content: 'My first post!',
     published: true
-  }, adminSession);
+  });
   console.log('✓ Created public post for Alice');
 
-  await CreatePost(db, {
+  await CreatePost(db, adminSession, {
     title: 'Draft Post',
     content: 'Work in progress...',
     published: false
-  }, adminSession);
+  });
   console.log('✓ Created draft post for Alice');
 
   // Get posts for a user
   console.log('\nGetting posts for user 1 (as admin)...');
-  const posts = await GetUserPosts(db, { userId: 1 }, adminSession);
+  const posts = await GetUserPosts(db, adminSession, { userId: 1 });
   console.log(`Found ${posts.post.length} posts:`);
   for (const post of posts.post) {
     const status = post.published ? 'published' : 'draft';
@@ -105,7 +105,7 @@ async function runDemo() {
   // Demonstrate permissions
   console.log('\n--- Permission Demo ---');
   console.log('User 2 trying to see user 1\'s posts (should only see published)...');
-  const user2Posts = await GetUserPosts(db, { userId: 1 }, userSession);
+  const user2Posts = await GetUserPosts(db, userSession, { userId: 1 });
   console.log(`User 2 can see ${user2Posts.post.length} posts:`);
   for (const post of user2Posts.post) {
     console.log(`  - "${post.title}" (published: ${post.published})`);
@@ -113,7 +113,7 @@ async function runDemo() {
 
   // Clean up
   console.log('\n--- Cleanup ---');
-  await DeleteUser(db, { id: 2 }, adminSession);
+  await DeleteUser(db, adminSession, { id: 2 });
   console.log('✓ Deleted Bob');
 
   console.log('\n=== Demo Complete ===');

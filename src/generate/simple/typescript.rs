@@ -348,13 +348,14 @@ fn generate_query_function(
     result.push_str(&format!("\nexport async function {}(\n", query.name));
     result.push_str("  db: Client,\n");
 
-    // Add input parameter if there are args
-    if !query.args.is_empty() {
-        result.push_str(&format!("  input: {},\n", input_type_name));
-    }
-
     // Add session parameter
-    result.push_str("  session: Session\n");
+    result.push_str("  session: Session");
+    if !query.args.is_empty() {
+        result.push_str(",\n");
+        result.push_str(&format!("  input: {}\n", input_type_name));
+    } else {
+        result.push_str("\n");
+    }
     result.push_str("): Promise<");
 
     result.push_str(&format!("{}> {{\n", return_type_name));
@@ -364,10 +365,12 @@ fn generate_query_function(
     result.push_str("  const args: Record<string, any> = {};\n\n");
 
     // Add input args
-    for arg in &query.args {
-        result.push_str(&format!("  if (input.{} !== undefined) {{\n", arg.name));
-        result.push_str(&format!("    args['{}'] = input.{};\n", arg.name, arg.name));
-        result.push_str("  }\n");
+    if !query.args.is_empty() {
+        for arg in &query.args {
+            result.push_str(&format!("  if (input.{} !== undefined) {{\n", arg.name));
+            result.push_str(&format!("    args['{}'] = input.{};\n", arg.name, arg.name));
+            result.push_str("  }\n");
+        }
     }
 
     // Add session args
