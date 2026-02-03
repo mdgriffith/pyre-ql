@@ -1,0 +1,69 @@
+// Query to get all users
+query GetAllUsers {
+    user {
+        id
+        name
+        email
+        createdAt
+    }
+}
+
+// Query to get a single user by ID
+query GetUser($id: Int) {
+    user {
+        @where { id == $id }
+        id
+        name
+        email
+        createdAt
+    }
+}
+
+// Query to get user's posts
+query GetUserPosts($userId: Int) {
+    post {
+        @where { authorUserId == $userId }
+        id
+        authorUserId
+        title
+        content
+        published
+        createdAt
+    }
+}
+
+// Insert a new user
+insert CreateUser($name: String, $email: String) {
+    user {
+        name = $name
+        email = $email
+    }
+}
+
+// Insert a new post for the current user
+insert CreatePost($title: String, $content: String, $published: Bool) {
+    post {
+        authorUserId = Session.userId
+        title = $title
+        content = $content
+        published = $published
+    }
+}
+
+// Update a user
+update UpdateUser($id: Int, $name: String, $email: String) {
+    user {
+        @where { id == $id }
+        id
+        name = $name
+        email = $email
+    }
+}
+
+// Delete a user
+delete DeleteUser($id: Int) {
+    user {
+        @where { id == $id }
+        id
+    }
+}
