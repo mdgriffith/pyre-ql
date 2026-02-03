@@ -14,7 +14,7 @@ pub mod typealias;
 
 pub enum Client {
     Elm,
-    Node,
+    Typescript,
 }
 
 pub enum Server {
@@ -24,12 +24,11 @@ pub enum Server {
 pub fn generate_schema(
     context: &typecheck::Context,
     database: &ast::Database,
-    base_out_dir: &Path,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
-    write_client_schema(&Client::Elm, context, database, base_out_dir, files);
-    write_client_schema(&Client::Node, context, database, base_out_dir, files);
-    write_server_schema(&Server::Typescript, context, database, base_out_dir, files)
+    write_client_schema(&Client::Elm, context, database, files);
+    write_client_schema(&Client::Typescript, context, database, files);
+    write_server_schema(&Server::Typescript, context, database, files)
 }
 
 // CLIENT
@@ -38,7 +37,6 @@ fn write_client_schema(
     client: &Client,
     context: &typecheck::Context,
     database: &ast::Database,
-    base_out_dir: &Path,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
     // Target directory is
@@ -50,7 +48,9 @@ fn write_client_schema(
     // client/{lang} (relative path)
     match client {
         Client::Elm => generate::client::elm::generate(&out_dir, database, files),
-        Client::Node => generate::client::node::generate(context, &out_dir, database, files),
+        Client::Typescript => {
+            generate::client::typescript::generate(context, &out_dir, database, files)
+        }
     }
 }
 
@@ -60,7 +60,6 @@ fn write_server_schema(
     lang: &Server,
     context: &typecheck::Context,
     database: &ast::Database,
-    base_out_dir: &Path,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
     // Target directory is
@@ -81,7 +80,7 @@ fn write_server_schema(
 fn to_client_dir_path(client: &Client, out_dir: &Path) -> PathBuf {
     match client {
         Client::Elm => out_dir.join("elm"),
-        Client::Node => out_dir.join("node"),
+        Client::Typescript => out_dir.join("typescript"),
     }
 }
 
@@ -111,7 +110,7 @@ pub fn write_queries(
         files,
     );
     write_client_queries(
-        &Client::Node,
+        &Client::Typescript,
         context,
         query_list,
         all_query_info,
@@ -151,8 +150,8 @@ fn write_client_queries(
         Client::Elm => {
             generate::client::elm::generate_queries(&context, &query_list, &out_dir, files)
         }
-        Client::Node => {
-            generate::client::node::generate_queries(&context, &query_list, &out_dir, files)
+        Client::Typescript => {
+            generate::client::typescript::generate_queries(&context, &query_list, &out_dir, files)
         }
     }
 }

@@ -51,7 +51,7 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
             let mut files: Vec<filesystem::GeneratedFile<String>> = Vec::new();
 
             // Generate schema files
-            generate::generate_schema(&context, &schema, out_dir, &mut files);
+            generate::generate_schema(&context, &schema, &mut files);
 
             // Collect all queries from all files first
             let mut all_queries = ast::QueryList {
