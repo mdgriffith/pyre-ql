@@ -8,6 +8,7 @@ use crate::typecheck;
 
 pub mod client;
 pub mod server;
+pub mod simple;
 pub mod sql;
 pub mod to_string;
 pub mod typealias;
@@ -28,7 +29,8 @@ pub fn generate_schema(
 ) {
     write_client_schema(&Client::Elm, context, database, files);
     write_client_schema(&Client::Typescript, context, database, files);
-    write_server_schema(&Server::Typescript, context, database, files)
+    write_server_schema(&Server::Typescript, context, database, files);
+    write_simple_schema(context, database, files);
 }
 
 // CLIENT
@@ -90,6 +92,17 @@ fn to_server_dir_path(server: &Server, out_dir: &Path) -> PathBuf {
     }
 }
 
+// SIMPLE
+
+fn write_simple_schema(
+    context: &typecheck::Context,
+    database: &ast::Database,
+    files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
+) {
+    let simple_dir = Path::new("simple");
+    generate::simple::typescript::generate(context, database, &simple_dir, files);
+}
+
 // WRITE QUERIES
 
 pub fn write_queries(
@@ -128,7 +141,14 @@ pub fn write_queries(
         files,
         true, // Generate runner file with all queries
     );
-    ()
+    write_simple_queries(
+        context,
+        query_list,
+        all_query_info,
+        database,
+        base_out_dir,
+        files,
+    );
 }
 
 // CLIENT
@@ -185,4 +205,26 @@ fn write_server_queries(
             )
         }
     }
+}
+
+// SIMPLE
+
+fn write_simple_queries(
+    context: &typecheck::Context,
+    query_list: &ast::QueryList,
+    all_query_info: &HashMap<String, typecheck::QueryInfo>,
+    database: &ast::Database,
+    _base_out_dir: &Path,
+    files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
+) {
+    // Use relative path: simple/ (relative to base_out_dir)
+    let simple_dir = Path::new("simple");
+    generate::simple::typescript::generate_queries(
+        context,
+        all_query_info,
+        query_list,
+        database,
+        &simple_dir,
+        files,
+    );
 }
