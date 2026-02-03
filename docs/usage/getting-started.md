@@ -4,13 +4,17 @@ Pyre is a schema and query language for building typesafe persistence using SQLi
 
 ## Overview
 
-The typical Pyre workflow consists of:
+Pyre supports two setups depending on how you want to run queries:
 
-1. **Create a schema** - Define your data models
-2. **Apply migrations** - Sync your database schema
-3. **Write queries** - Define queries, inserts, updates, and deletes
-4. **Generate code** - Generate type-safe client and server code
-5. **Use in your application** - Integrate the generated code
+1. **Sync (client/server)** - Generate server query handlers and a typesafe client that calls them.
+2. **Simple (direct SQLite)** - Generate standalone TypeScript functions that execute SQL directly against SQLite.
+
+Choose one of the following guides:
+
+- [Sync setup](./sync.md)
+- [Simple setup](./simple.md)
+
+Both setups use the same schema/query language, but differ in how you execute queries.
 
 ## Step 1: Create a Schema
 
@@ -249,4 +253,3 @@ your-project/
 - Explore the [playground examples](../playground/) for more complex usage
 - Check out the CLI help: `pyre --help`
 - Read about advanced features in the schema and query syntax
-
