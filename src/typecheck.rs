@@ -177,8 +177,25 @@ pub fn empty_context() -> Context {
     context
         .types
         .insert("DateTime".to_string(), (DefInfo::Builtin, Type::String));
+    context
+        .types
+        .insert("Id.Int".to_string(), (DefInfo::Builtin, Type::String));
+    context
+        .types
+        .insert("Id.Uuid".to_string(), (DefInfo::Builtin, Type::String));
 
     context
+}
+
+fn known_types_for_error(context: &Context) -> Vec<String> {
+    context
+        .types
+        .iter()
+        .filter_map(|(name, (_, type_))| match type_ {
+            Type::Record(_) => None,
+            _ => Some(name.clone()),
+        })
+        .collect()
 }
 
 fn is_capitalized(s: &str) -> bool {
@@ -478,6 +495,15 @@ fn to_single_range(start: &Option<ast::Location>, end: &Option<ast::Location>) -
     }
 }
 
+fn query_param_type_for_column(table: &ast::RecordDetails, column: &ast::Column) -> String {
+    if column.type_.is_id_type() {
+        let table_name = column.type_.table_name().unwrap_or(table.name.as_str());
+        format!("{}.{}", table_name, column.name)
+    } else {
+        column.type_.to_string()
+    }
+}
+
 /// Gathers information for a context.
 /// Also checks for a number of errors
 pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>> {
@@ -544,32 +570,41 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                         let mut fields_with_updated_at = fields.clone();
                         ast::ensure_updated_at_field(&mut fields_with_updated_at);
 
+                        let record_details = ast::RecordDetails {
+                            name: name.clone(),
+                            fields: fields_with_updated_at.clone(),
+                            start: start.clone(),
+                            end: end.clone(),
+                            start_name: start_name.clone(),
+                            end_name: end_name.clone(),
+                        };
+
                         context.types.insert(
                             name.clone(),
                             (
                                 DefInfo::Def(to_single_range(start_name, end_name)),
-                                Type::Record(ast::RecordDetails {
-                                    name: name.clone(),
-                                    fields: fields_with_updated_at.clone(),
-                                    start: start.clone(),
-                                    end: end.clone(),
-                                    start_name: start_name.clone(),
-                                    end_name: end_name.clone(),
-                                }),
+                                Type::Record(record_details.clone()),
                             ),
                         );
+
+                        for field in &record_details.fields {
+                            if let ast::Field::Column(column) = field {
+                                if column.type_.is_id_type() {
+                                    let type_name =
+                                        query_param_type_for_column(&record_details, column);
+                                    context
+                                        .types
+                                        .entry(type_name)
+                                        .or_insert((DefInfo::Builtin, Type::String));
+                                }
+                            }
+                        }
+
                         context.tables.insert(
                             crate::ext::string::decapitalize(&name),
                             Table {
                                 schema: schema.namespace.clone(),
-                                record: ast::RecordDetails {
-                                    name: name.clone(),
-                                    fields: fields_with_updated_at,
-                                    start: start.clone(),
-                                    end: end.clone(),
-                                    start_name: start_name.clone(),
-                                    end_name: end_name.clone(),
-                                },
+                                record: record_details,
                                 sync_layer: 0, // Will be computed later
                                 filepath: file.path.clone(),
                             },
@@ -1183,7 +1218,7 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                                         filepath: file.path.clone(),
                                         error_type: ErrorType::UnknownType {
                                             found: type_str.clone(),
-                                            known_types: context.types.keys().cloned().collect(),
+                                            known_types: known_types_for_error(context),
                                         },
                                         locations: vec![Location {
                                             contexts: to_range(start, end),
@@ -1290,11 +1325,7 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                                                 filepath: file.path.clone(),
                                                 error_type: ErrorType::UnknownType {
                                                     found: field_type_str.clone(),
-                                                    known_types: context
-                                                        .types
-                                                        .keys()
-                                                        .cloned()
-                                                        .collect(),
+                                                    known_types: known_types_for_error(context),
                                                 },
                                                 locations: vec![Location {
                                                     contexts,
@@ -1502,7 +1533,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                         filepath: context.current_filepath.clone(),
                         error_type: ErrorType::UnknownType {
                             found: type_.clone(),
-                            known_types: context.types.keys().cloned().collect(),
+                            known_types: known_types_for_error(context),
                         },
                         locations: vec![Location {
                             contexts: vec![],
@@ -1763,7 +1794,7 @@ fn check_where_args(
                             ast::Field::Column(column) => {
                                 if &column.name == field_name {
                                     is_known_field = true;
-                                    column_type = Some(column.type_.to_string());
+                                    column_type = Some(query_param_type_for_column(table, column));
                                     is_nullable = column.nullable;
                                     // Mark the session variable as used
                                     let session_param_name = ast::session_field_name(column);
@@ -1817,7 +1848,7 @@ fn check_where_args(
                         ast::Field::Column(column) => {
                             if &column.name == field_name {
                                 is_known_field = true;
-                                column_type = Some(column.type_.to_string());
+                                column_type = Some(query_param_type_for_column(table, column));
                                 is_nullable = column.nullable;
                             }
                         }
@@ -2670,6 +2701,7 @@ fn check_table_query(
                                     params,
                                     operation,
                                     errors,
+                                    &table.record,
                                     column,
                                     field,
                                 )
@@ -2833,10 +2865,11 @@ fn check_field(
     params: &mut HashMap<String, ParamInfo>,
     operation: &ast::QueryOperation,
     mut errors: &mut Vec<Error>,
+    table: &ast::RecordDetails,
     column: &ast::Column,
     field: &ast::QueryField,
 ) {
-    let column_type_str = column.type_.to_string();
+    let column_type_str = query_param_type_for_column(table, column);
     match &field.set {
         Some(set) => {
             check_value(

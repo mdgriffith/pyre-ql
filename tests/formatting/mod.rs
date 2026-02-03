@@ -963,6 +963,22 @@ session {
     }
 }
 
+fn create_id_type_database() -> ast::Database {
+    let schema_source = r#"
+record Task {
+    @public
+    id Id.Int @id
+    description String
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).unwrap();
+    ast::Database {
+        schemas: vec![schema],
+    }
+}
+
 #[test]
 fn test_query_round_trip_simple_select() {
     let database = create_test_database();
@@ -983,7 +999,7 @@ query GetUsers {
 fn test_query_round_trip_with_params() {
     let database = create_test_database();
     let query_source = r#"
-query GetUser($id: Int) {
+ query GetUser($id: Int) {
     user {
         @where { id == $id }
         id
@@ -994,6 +1010,30 @@ query GetUser($id: Int) {
     "#;
 
     round_trip_query(query_source, &database);
+}
+
+#[test]
+fn test_query_format_infers_id_type_param() {
+    let database = create_id_type_database();
+    let query_source = r#"
+query GetTask($id) {
+    task {
+        @where { id == $id }
+        id
+        description
+    }
+}
+    "#;
+
+    let mut query_list = parser::parse_query("query.pyre", query_source).unwrap();
+    format::query_list(&database, &mut query_list);
+    let formatted = generate::to_string::query(&query_list);
+
+    assert!(
+        formatted.contains("$id: Task.id"),
+        "Formatted output should include Task.id type. Got:\n{}",
+        formatted
+    );
 }
 
 #[test]

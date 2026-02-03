@@ -1281,12 +1281,59 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
                 colored_param
             ));
 
-            result.push_str("\n\n    Here are the types I know:\n\n");
+            let mut basic_types = Vec::new();
+            let mut custom_types = Vec::new();
+            let mut reference_types = Vec::new();
 
-            let mut sorted_types: Vec<String> = known_types.clone();
-            sorted_types.sort();
-            for typename in sorted_types {
-                result.push_str(&format!("        {}\n", cyan_if(in_color, &typename)));
+            let basic_type_names = [
+                "Bool", "DateTime", "Float", "Id.Int", "Id.Uuid", "Int", "String",
+            ];
+
+            for typename in known_types {
+                if basic_type_names.contains(&typename.as_str()) {
+                    basic_types.push(typename);
+                } else if typename.contains('.') && !typename.starts_with("Id.") {
+                    reference_types.push(typename);
+                } else {
+                    custom_types.push(typename);
+                }
+            }
+
+            let mut sorted_basic = Vec::new();
+            for name in basic_type_names {
+                if basic_types.iter().any(|t| t.as_str() == name) {
+                    sorted_basic.push(name.to_string());
+                }
+            }
+
+            custom_types.sort();
+            reference_types.sort();
+
+            result.push_str("\n\n    Basic types:\n\n");
+            if sorted_basic.is_empty() {
+                result.push_str("        (none)\n");
+            } else {
+                for typename in sorted_basic {
+                    result.push_str(&format!("        {}\n", cyan_if(in_color, &typename)));
+                }
+            }
+
+            result.push_str("\n    Custom types:\n\n");
+            if custom_types.is_empty() {
+                result.push_str("        (none)\n");
+            } else {
+                for typename in custom_types {
+                    result.push_str(&format!("        {}\n", cyan_if(in_color, &typename)));
+                }
+            }
+
+            result.push_str("\n    References:\n\n");
+            if reference_types.is_empty() {
+                result.push_str("        (none)\n");
+            } else {
+                for typename in reference_types {
+                    result.push_str(&format!("        {}\n", cyan_if(in_color, &typename)));
+                }
             }
 
             result

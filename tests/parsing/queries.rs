@@ -63,6 +63,25 @@ fn test_valid_query_with_params() {
 }
 
 #[test]
+fn test_valid_query_with_id_type_param() {
+    let query_source = r#"
+        query GetTask($id: Task.id) {
+            task {
+                @where { id == $id }
+                id
+                description
+            }
+        }
+    "#;
+
+    let result = parser::parse_query("query.pyre", query_source);
+    assert!(
+        result.is_ok(),
+        "Valid query with Task.id param should parse successfully"
+    );
+}
+
+#[test]
 fn test_valid_query_with_nested_fields() {
     let query_source = r#"
         query GetUsers {
@@ -138,6 +157,24 @@ fn test_valid_query_with_sort_desc() {
     assert!(
         result.is_ok(),
         "Valid query with sort desc should parse successfully"
+    );
+}
+
+#[test]
+fn test_valid_query_with_bare_function_value() {
+    let query_source = r#"
+        update TaskComplete($id: Task.id) {
+            task {
+                @where { id == $id }
+                completedAt = now
+            }
+        }
+    "#;
+
+    let result = parser::parse_query("query.pyre", query_source);
+    assert!(
+        result.is_ok(),
+        "Valid query with bare function value should parse successfully"
     );
 }
 
