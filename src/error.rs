@@ -241,6 +241,7 @@ pub enum DefInfo {
 pub struct VariantDef {
     pub typename: String,
     pub variant_name: String,
+    pub filepath: String,
     pub range: Option<Range>,
 }
 
@@ -350,6 +351,7 @@ fn render_highlight_location(
 
     let mut last_line_index: usize = 0;
     let mut first_rendered = false;
+    let mut rendered_contexts = vec![false; location.contexts.len()];
 
     // Helper function to check if a line number is in any primary range
     let line_in_primary = |line: u32| -> bool {
@@ -359,29 +361,33 @@ fn render_highlight_location(
             .any(|primary| primary.start.line <= line && line <= primary.end.line)
     };
 
-    for context in &location.contexts {
-        // Skip rendering context lines that overlap with primary lines
-        if line_in_primary(context.start.line) {
-            continue;
-        }
-
-        if first_rendered && context.start.line.to_usize() > last_line_index + 1 {
-            rendered.push_str(&divider(indent, enable_color))
-        }
-        rendered.push_str(&get_line(
-            &file_contents,
-            false,
-            context.start.line,
-            enable_color,
-        ));
-        rendered.push_str("\n");
-
-        first_rendered = true;
-        last_line_index = context.start.line.to_usize();
-        indent += 1;
-    }
     let mut first_primary_rendered = false;
+    let mut context_index = 0;
     for primary in &location.primary {
+        while context_index < location.contexts.len()
+            && location.contexts[context_index].start.line <= primary.start.line
+        {
+            let context = &location.contexts[context_index];
+            // Skip rendering context lines that overlap with primary lines
+            if !line_in_primary(context.start.line) {
+                if first_rendered && context.start.line.to_usize() > last_line_index + 1 {
+                    rendered.push_str(&divider(indent, enable_color))
+                }
+                rendered.push_str(&get_line(
+                    &file_contents,
+                    false,
+                    context.start.line,
+                    enable_color,
+                ));
+                rendered.push_str("\n");
+
+                first_rendered = true;
+                last_line_index = context.start.line.to_usize();
+                indent += 1;
+                rendered_contexts[context_index] = true;
+            }
+            context_index += 1;
+        }
         if primary.start.line.to_usize() > last_line_index + 1
             && (first_rendered || first_primary_rendered)
         {
@@ -413,7 +419,30 @@ fn render_highlight_location(
         first_primary_rendered = true;
     }
 
-    for context in location.contexts.iter().rev() {
+    while context_index < location.contexts.len() {
+        let context = &location.contexts[context_index];
+        // Skip rendering context lines that overlap with primary lines
+        if !line_in_primary(context.start.line) {
+            if first_rendered && context.start.line.to_usize() > last_line_index + 1 {
+                rendered.push_str(&divider(indent, enable_color))
+            }
+            rendered.push_str(&get_line(
+                &file_contents,
+                false,
+                context.start.line,
+                enable_color,
+            ));
+            rendered.push_str("\n");
+
+            first_rendered = true;
+            last_line_index = context.start.line.to_usize();
+            indent += 1;
+            rendered_contexts[context_index] = true;
+        }
+        context_index += 1;
+    }
+
+    for (context_index, context) in location.contexts.iter().enumerate().rev() {
         // Skip rendering context lines that overlap with primary lines
         if line_in_primary(context.end.line) {
             continue;
@@ -421,7 +450,13 @@ fn render_highlight_location(
 
         // Only decrement indent if the corresponding start line was actually rendered
         // (i.e., not skipped because it overlapped with a primary line)
-        let start_line_was_rendered = !line_in_primary(context.start.line);
+        let start_line_was_rendered = rendered_contexts[context_index];
+
+        // If this context is a single-line range and we already rendered its start line,
+        // don't render it again as an end line.
+        if start_line_was_rendered && context.start.line == context.end.line {
+            continue;
+        }
 
         if last_line_index == context.end.line.to_usize() {
             // Skip if we've already rendered this line - don't change indent
@@ -468,10 +503,10 @@ fn highlight_line(range: &Range, enable_color: bool) -> String {
     if range.start.column < range.end.column && range.start.line == range.end.line {
         // Columns are 1-based, so subtract 1 for 0-based string indexing
         // But position() captures BEFORE consuming, so we need to add 1 to get the actual character position
-        let indent = " ".repeat(range.start.column);
+        let indent = " ".repeat(range.start.column.saturating_sub(1));
         let highlight = "^".repeat(range.end.column - range.start.column);
         format!(
-            "    {}{}{}",
+            "    {} {}{}",
             color::gray(enable_color, "|"),
             indent,
             color::red(enable_color, &highlight)
@@ -479,10 +514,10 @@ fn highlight_line(range: &Range, enable_color: bool) -> String {
     } else if range.start.column == range.end.column && range.start.line == range.end.line {
         // Columns are 1-based, so subtract 1 for 0-based string indexing
         // But position() captures BEFORE consuming, so we need to add 1 to get the actual character position
-        let indent = " ".repeat(range.start.column);
+        let indent = " ".repeat(range.start.column.saturating_sub(1));
         let highlight = "^";
         format!(
-            "    {}{}{}",
+            "    {} {}{}",
             color::gray(enable_color, "|"),
             indent,
             color::red(enable_color, &highlight)
@@ -888,7 +923,10 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result.push_str(&format!(
                 "{} references {}, but the {} table doesn't have a field named {}.",
                 yellow_if(in_color, field_name),
-                yellow_if(in_color, &format!("{}.{}", referenced_table, referenced_field)),
+                yellow_if(
+                    in_color,
+                    &format!("{}.{}", referenced_table, referenced_field)
+                ),
                 cyan_if(in_color, referenced_table),
                 yellow_if(in_color, referenced_field),
             ));
@@ -913,7 +951,10 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result.push_str(&format!(
                 "{} references {}, but {} is a {} not an ID type.",
                 yellow_if(in_color, field_name),
-                yellow_if(in_color, &format!("{}.{}", referenced_table, referenced_field)),
+                yellow_if(
+                    in_color,
+                    &format!("{}.{}", referenced_table, referenced_field)
+                ),
                 yellow_if(in_color, referenced_field),
                 cyan_if(in_color, referenced_field_type),
             ));
@@ -1303,16 +1344,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             variant_one,
             variant_two,
         } => {
-            format!(
-                "Fields with the same name across variants must have the same type.\n\n    {}.{} {}\n    {}.{} {}",
-                cyan_if(in_color, variant_one),
-                yellow_if(in_color, field),
-                yellow_if(in_color, type_one),
-                cyan_if(in_color, variant_two),
-                yellow_if(in_color, field),
-                yellow_if(in_color, type_two)
-               
-            )
+            format!("Fields with the same name across variants must have the same type.",)
         }
         ErrorType::MigrationTableDropped { table_name } => {
             format!(

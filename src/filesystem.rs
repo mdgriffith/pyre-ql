@@ -22,10 +22,22 @@ pub fn is_schema_file(file_path: &str) -> bool {
 }
 
 pub fn get_schema_source<'a>(filepath: &'a str, found: &'a Found) -> Option<&'a str> {
+    if filepath.is_empty() {
+        return None;
+    }
     // Search through all namespaces
     for schema_files in found.schema_files.values() {
         for schema_file in schema_files {
             if schema_file.path == filepath {
+                return Some(&schema_file.content);
+            }
+        }
+    }
+    let filepath_path = Path::new(filepath);
+    for schema_files in found.schema_files.values() {
+        for schema_file in schema_files {
+            let schema_path = Path::new(&schema_file.path);
+            if schema_path.ends_with(filepath_path) {
                 return Some(&schema_file.content);
             }
         }

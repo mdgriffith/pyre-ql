@@ -25,6 +25,207 @@ fn check_schema_and_get_layers(schema_source: &str) -> std::collections::HashMap
 }
 
 #[test]
+fn test_variant_field_collision_highlight_positions() {
+    let schema_source = r#"
+type DevEventType
+   = Mouse {
+        kind DevMouseKind
+     }
+   | Keyboard {
+        kind DevKeyKind
+     }
+
+type DevMouseKind
+   = Click
+   | Move
+
+type DevKeyKind
+   = Down
+   | Up
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    match schema_result {
+        Ok(_) => {
+            panic!("Expected schema typechecking to fail due to variant field type collision");
+        }
+        Err(errors) => {
+            let collision_error = errors
+                .iter()
+                .find(|e| matches!(&e.error_type, ErrorType::VariantFieldTypeCollision { .. }));
+
+            assert!(
+                collision_error.is_some(),
+                "Expected VariantFieldTypeCollision error"
+            );
+
+            let error = collision_error.unwrap();
+            let formatted = error::format_error(schema_source, error, false);
+            let lines: Vec<&str> = formatted.lines().collect();
+
+            let caret_lines: Vec<&str> = lines
+                .iter()
+                .filter(|line| line.contains('^'))
+                .cloned()
+                .collect();
+            assert!(
+                caret_lines.len() >= 2,
+                "Expected at least two highlighted ranges. Got:\n{}",
+                formatted
+            );
+
+            assert!(
+                !formatted.contains("Mouse.kind") && !formatted.contains("Keyboard.kind"),
+                "Expected no variant summary lines after the message. Got:\n{}",
+                formatted
+            );
+
+            let last_caret_line = lines
+                .iter()
+                .rposition(|line| line.contains('^'))
+                .expect("Expected at least one caret line");
+            let trailing_context = lines
+                .iter()
+                .skip(last_caret_line + 1)
+                .any(|line| line.trim_start().starts_with('|'));
+            assert!(
+                !trailing_context,
+                "Expected no trailing context lines after variants. Got:\n{}",
+                formatted
+            );
+
+            assert!(
+                formatted.contains("Mouse {") && formatted.contains("Keyboard {"),
+                "Expected both variant names to be visible. Got:\n{}",
+                formatted
+            );
+
+            let mouse_line_index = lines
+                .iter()
+                .position(|line| line.contains("Mouse {"))
+                .expect("Expected Mouse variant line");
+            let mouse_field_line_index = lines
+                .iter()
+                .position(|line| line.contains("DevMouseKind"))
+                .expect("Expected DevMouseKind line");
+            assert!(
+                mouse_line_index < mouse_field_line_index,
+                "Mouse variant line should appear before its field type. Got:\n{}",
+                formatted
+            );
+            if let Some(next_line) = lines.get(mouse_line_index + 1) {
+                assert!(
+                    !next_line.contains('^'),
+                    "Variant name line should not be highlighted. Got:\n{}",
+                    formatted
+                );
+            }
+
+            let keyboard_line_index = lines
+                .iter()
+                .position(|line| line.contains("Keyboard {"))
+                .expect("Expected Keyboard variant line");
+            let keyboard_field_line_index = lines
+                .iter()
+                .position(|line| line.contains("DevKeyKind"))
+                .expect("Expected DevKeyKind line");
+            assert!(
+                keyboard_line_index < keyboard_field_line_index,
+                "Keyboard variant line should appear before its field type. Got:\n{}",
+                formatted
+            );
+            if let Some(next_line) = lines.get(keyboard_line_index + 1) {
+                assert!(
+                    !next_line.contains('^'),
+                    "Variant name line should not be highlighted. Got:\n{}",
+                    formatted
+                );
+            }
+
+            let check_alignment = |needle: &str| {
+                let line_index = lines
+                    .iter()
+                    .position(|line| line.contains(needle))
+                    .expect("Expected line containing field type");
+                let code_line = lines[line_index];
+                let caret_line = lines
+                    .get(line_index + 1)
+                    .expect("Expected caret line after field line");
+
+                let code_index = code_line
+                    .find(needle)
+                    .expect("Expected to find needle in code line");
+                let caret_index = caret_line
+                    .find('^')
+                    .expect("Expected to find caret in caret line");
+
+                assert_eq!(
+                    caret_index, code_index,
+                    "Caret should align with '{}'. Got:\n{}",
+                    needle, formatted
+                );
+            };
+
+            check_alignment("DevMouseKind");
+            check_alignment("DevKeyKind");
+        }
+    }
+}
+
+#[test]
+fn test_duplicate_variant_error_renders_code() {
+    let schema_source = r#"
+type DevSource
+   = Browser
+   | Server
+   | Worker
+   | Root
+   | Browser
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("pyre/schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    match schema_result {
+        Ok(_) => {
+            panic!("Expected schema typechecking to fail due to duplicate variant");
+        }
+        Err(errors) => {
+            let duplicate_error = errors
+                .iter()
+                .find(|e| matches!(&e.error_type, ErrorType::DuplicateVariant { .. }));
+
+            assert!(duplicate_error.is_some(), "Expected DuplicateVariant error");
+
+            let error = duplicate_error.unwrap();
+            assert_eq!(
+                error.filepath, "pyre/schema.pyre",
+                "Expected error filepath to match schema file"
+            );
+
+            let formatted = error::format_error(schema_source, error, false);
+            assert!(
+                formatted.contains("Browser") && formatted.contains("^^^^^^"),
+                "Expected highlighted code in error output. Got:\n{}",
+                formatted
+            );
+        }
+    }
+}
+
+#[test]
 fn test_simple_linear_dependency() {
     // A -> B -> C
     // Expected: A=0, B=1, C=2

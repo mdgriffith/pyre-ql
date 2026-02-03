@@ -145,7 +145,7 @@ record Post {
     // Verify schema.ts was generated
     let schema_path = ctx
         .workspace_path
-        .join("pyre/generated/client/node/schema.ts");
+        .join("pyre/generated/client/typescript/schema.ts");
     assert!(schema_path.exists(), "schema.ts should be generated");
 
     // Read and verify the generated schema

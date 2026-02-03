@@ -113,8 +113,8 @@ pub struct Context {
     pub types: HashMap<String, (DefInfo, Type)>,
     pub tables: HashMap<String, Table>,
 
-    // All variants by their variant name
-    // Used to check if there are multiple types with the same name.
+    // All variants by type name + variant name.
+    // Used to check if there are multiple variants with the same name in a type.
     // Tracks the location of type definitions so they can be reported in the error.
     pub variants: HashMap<String, (Option<Range>, Vec<VariantDef>)>,
 }
@@ -626,15 +626,17 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                             let variant_def = VariantDef {
                                 typename: name.clone(),
                                 variant_name: variant.name.clone(),
+                                filepath: file.path.clone(),
                                 range: to_single_range(&variant.start_name, &variant.end_name),
                             };
 
                             let type_range = to_single_range(&start, &end);
 
                             // Add variant to the map, creating a new entry with type range if it doesn't exist
+                            let variant_key = format!("{}::{}", name, variant.name);
                             context
                                 .variants
-                                .entry(variant.name.clone())
+                                .entry(variant_key)
                                 .or_insert_with(|| (type_range, Vec::new()))
                                 .1
                                 .push(variant_def);
@@ -1129,7 +1131,7 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
             }
 
             errors.push(Error {
-                filepath: context.current_filepath.clone(),
+                filepath: base_variant.filepath.clone(),
                 error_type: ErrorType::DuplicateVariant {
                     base_variant,
                     duplicates,
@@ -1249,13 +1251,19 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                         end,
                     } => {
                         // Track field types across variants
-                        let mut field_types: HashMap<String, (String, &ast::Variant)> =
-                            HashMap::new();
+                        let mut field_types: HashMap<
+                            String,
+                            (String, String, Option<Range>, Option<Range>),
+                        > = HashMap::new();
 
                         for variant in variants {
                             if let Some(fields) = &variant.fields {
                                 for field in ast::collect_columns(&fields) {
                                     let field_type_str = field.type_.to_string();
+                                    let field_range =
+                                        to_single_range(&field.start_typename, &field.end_typename);
+                                    let variant_range =
+                                        to_single_range(&variant.start, &variant.end);
 
                                     // Check if type exists - only for custom types
                                     if let Some(custom_type_name) =
@@ -1301,23 +1309,46 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
 
                                     // Check for type collisions between variants
                                     match field_types.get(&field.name) {
-                                        Some((existing_type, existing_variant)) => {
+                                        Some((
+                                            existing_type,
+                                            existing_variant_name,
+                                            existing_field_range,
+                                            existing_variant_range,
+                                        )) => {
                                             if existing_type != &field_type_str {
                                                 let mut contexts: Vec<Range> = vec![];
 
-                                                match to_single_range(&start, &end) {
-                                                    None => (),
-                                                    Some(new_range) => {
-                                                        contexts.push(new_range);
-                                                    }
+                                                if let Some(type_start) = start {
+                                                    contexts.push(Range {
+                                                        start: type_start.clone(),
+                                                        end: type_start.clone(),
+                                                    });
                                                 }
 
-                                                match to_single_range(&variant.start, &variant.end)
+                                                if let Some(existing_range) =
+                                                    existing_variant_range.clone()
                                                 {
-                                                    None => (),
-                                                    Some(new_range) => {
-                                                        contexts.push(new_range);
-                                                    }
+                                                    contexts.push(Range {
+                                                        start: existing_range.start.clone(),
+                                                        end: existing_range.start.clone(),
+                                                    });
+                                                }
+
+                                                if let Some(current_range) = variant_range.clone() {
+                                                    contexts.push(Range {
+                                                        start: current_range.start.clone(),
+                                                        end: current_range.start.clone(),
+                                                    });
+                                                }
+
+                                                let mut primary_ranges: Vec<Range> = Vec::new();
+                                                if let Some(existing_range) =
+                                                    existing_field_range.clone()
+                                                {
+                                                    primary_ranges.push(existing_range);
+                                                }
+                                                if let Some(current_range) = field_range.clone() {
+                                                    primary_ranges.push(current_range);
                                                 }
 
                                                 errors.push(Error {
@@ -1327,17 +1358,13 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                                                             field: field.name.clone(),
                                                             type_one: existing_type.clone(),
                                                             type_two: field_type_str.clone(),
-                                                            variant_one: existing_variant
-                                                                .name
+                                                            variant_one: existing_variant_name
                                                                 .clone(),
                                                             variant_two: variant.name.clone(),
                                                         },
                                                     locations: vec![Location {
                                                         contexts,
-                                                        primary: to_range(
-                                                            &field.start_typename,
-                                                            &field.end_typename,
-                                                        ),
+                                                        primary: primary_ranges,
                                                     }],
                                                 });
                                             }
@@ -1345,7 +1372,12 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                                         None => {
                                             field_types.insert(
                                                 field.name.clone(),
-                                                (field_type_str, variant),
+                                                (
+                                                    field_type_str,
+                                                    variant.name.clone(),
+                                                    field_range,
+                                                    variant_range,
+                                                ),
                                             );
                                         }
                                     }
