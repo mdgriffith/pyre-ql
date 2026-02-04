@@ -254,7 +254,8 @@ fn to_query_shape(context: &typecheck::Context, query: &ast::Query) -> String {
                 result.push_str(&format!("  {}: {{\n", string::quote(&field_name)));
 
                 // Convert query fields to QueryShape format
-                result.push_str(&to_query_field_spec(context, query_field));
+                let table = context.tables.get(&query_field.name);
+                result.push_str(&to_query_field_spec(context, query_field, table));
 
                 result.push_str("\n  }");
             }
@@ -266,12 +267,14 @@ fn to_query_shape(context: &typecheck::Context, query: &ast::Query) -> String {
     result
 }
 
-fn to_query_field_spec(context: &typecheck::Context, query_field: &ast::QueryField) -> String {
+fn to_query_field_spec(
+    context: &typecheck::Context,
+    query_field: &ast::QueryField,
+    table: Option<&typecheck::Table>,
+) -> String {
     let mut result = String::new();
     let mut is_first = true;
-
-    // Get table info for relationship detection
-    let table = context.tables.get(&query_field.name);
+    let table = table.or_else(|| context.tables.get(&query_field.name));
 
     // Extract special directives (@where, @sort, @limit)
     let mut sort_clauses: Vec<String> = Vec::new();
@@ -279,6 +282,26 @@ fn to_query_field_spec(context: &typecheck::Context, query_field: &ast::QueryFie
 
     // Collect all field selections and args
     let mut field_selections: Vec<(String, bool, bool)> = Vec::new(); // (name, is_relationship, has_nested_fields)
+    let mut selected_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let mut explicit_columns: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(table_info) = table {
+        for arg_field in &query_field.fields {
+            if let ast::ArgField::Field(nested_field) = arg_field {
+                if nested_field.name == "*" {
+                    continue;
+                }
+                if let Some(ast::Field::Column(column)) = table_info
+                    .record
+                    .fields
+                    .iter()
+                    .find(|&f| ast::has_field_or_linkname(f, &nested_field.name))
+                {
+                    explicit_columns.insert(column.name.clone());
+                }
+            }
+        }
+    }
 
     for arg_field in &query_field.fields {
         match arg_field {
@@ -307,6 +330,22 @@ fn to_query_field_spec(context: &typecheck::Context, query_field: &ast::QueryFie
                 }
             }
             ast::ArgField::Field(nested_field) => {
+                if nested_field.name == "*" {
+                    if let Some(table_info) = table {
+                        for table_field in &table_info.record.fields {
+                            if let ast::Field::Column(column) = table_field {
+                                if explicit_columns.contains(&column.name) {
+                                    continue;
+                                }
+                                if selected_names.insert(column.name.clone()) {
+                                    field_selections.push((column.name.clone(), false, false));
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 // Check if this is a relationship field
                 let is_relationship = if let Some(table_info) = table {
                     let links = ast::collect_links(&table_info.record.fields);
@@ -321,11 +360,13 @@ fn to_query_field_spec(context: &typecheck::Context, query_field: &ast::QueryFie
                         .iter()
                         .any(|f| matches!(f, ast::ArgField::Field(_)));
 
-                field_selections.push((
-                    nested_field.name.clone(),
-                    is_relationship,
-                    has_nested_fields,
-                ));
+                if selected_names.insert(nested_field.name.clone()) {
+                    field_selections.push((
+                        nested_field.name.clone(),
+                        is_relationship,
+                        has_nested_fields,
+                    ));
+                }
             }
             _ => {}
         }
@@ -345,8 +386,22 @@ fn to_query_field_spec(context: &typecheck::Context, query_field: &ast::QueryFie
                 ast::ArgField::Field(qf) if qf.name == field_name => Some(qf),
                 _ => None,
             }) {
+                let nested_table = table.and_then(|table_info| {
+                    table_info
+                        .record
+                        .fields
+                        .iter()
+                        .find_map(|field| match field {
+                            ast::Field::FieldDirective(ast::FieldDirective::Link(link))
+                                if link.link_name == field_name =>
+                            {
+                                typecheck::get_linked_table(context, link)
+                            }
+                            _ => None,
+                        })
+                });
                 result.push_str(&format!("    {}: {{\n", string::quote(&field_name)));
-                result.push_str(&to_query_field_spec(context, nested_field));
+                result.push_str(&to_query_field_spec(context, nested_field, nested_table));
                 result.push_str("\n    }");
             }
         } else if is_relationship {

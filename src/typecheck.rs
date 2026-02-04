@@ -2229,6 +2229,7 @@ fn check_value(
 ) {
     if table_type_string == "Json" {
         if let ast::QueryValue::Variable(_) = value {
+            mark_as_used(query_context, value, params);
             return;
         }
 
@@ -2704,19 +2705,80 @@ fn check_table_query(
 
                 let aliased_name = ast::get_aliased_name(field);
 
-                if queried_fields.get(&aliased_name).is_some() {
-                    errors.push(Error {
-                        filepath: context.current_filepath.clone(),
-                        error_type: ErrorType::DuplicateQueryField {
-                            field: aliased_name.clone(),
-                        },
-                        locations: vec![Location {
-                            contexts: to_range(&query.start, &query.end),
-                            primary: to_range(&field.start_fieldname, &field.end_fieldname),
-                        }],
-                    });
-                } else {
-                    queried_fields.insert(aliased_name.clone(), field.set.is_some());
+                if field.name != "*" {
+                    if queried_fields.get(&aliased_name).is_some() {
+                        errors.push(Error {
+                            filepath: context.current_filepath.clone(),
+                            error_type: ErrorType::DuplicateQueryField {
+                                field: aliased_name.clone(),
+                            },
+                            locations: vec![Location {
+                                contexts: to_range(&query.start, &query.end),
+                                primary: to_range(&field.start_fieldname, &field.end_fieldname),
+                            }],
+                        });
+                    } else {
+                        queried_fields.insert(aliased_name.clone(), field.set.is_some());
+                    }
+                }
+
+                if field.name == "*" {
+                    if field.alias.is_some() {
+                        errors.push(Error {
+                            filepath: context.current_filepath.clone(),
+                            error_type: ErrorType::InvalidWildcardSelection {
+                                reason: error::InvalidWildcardReason::Aliased,
+                            },
+                            locations: vec![Location {
+                                contexts: to_range(&query.start, &query.end),
+                                primary: to_range(&field.start_fieldname, &field.end_fieldname),
+                            }],
+                        });
+                    }
+
+                    if field.set.is_some() {
+                        errors.push(Error {
+                            filepath: context.current_filepath.clone(),
+                            error_type: ErrorType::InvalidWildcardSelection {
+                                reason: error::InvalidWildcardReason::Assigned,
+                            },
+                            locations: vec![Location {
+                                contexts: to_range(&query.start, &query.end),
+                                primary: to_range(&field.start_fieldname, &field.end_fieldname),
+                            }],
+                        });
+                    }
+
+                    if !field.fields.is_empty() {
+                        errors.push(Error {
+                            filepath: context.current_filepath.clone(),
+                            error_type: ErrorType::InvalidWildcardSelection {
+                                reason: error::InvalidWildcardReason::HasNestedSelections,
+                            },
+                            locations: vec![Location {
+                                contexts: to_range(&query.start, &query.end),
+                                primary: to_range(&field.start_fieldname, &field.end_fieldname),
+                            }],
+                        });
+                    }
+
+                    if matches!(
+                        operation,
+                        ast::QueryOperation::Insert | ast::QueryOperation::Update
+                    ) {
+                        errors.push(Error {
+                            filepath: context.current_filepath.clone(),
+                            error_type: ErrorType::InvalidWildcardSelection {
+                                reason: error::InvalidWildcardReason::UsedInInsertOrUpdate,
+                            },
+                            locations: vec![Location {
+                                contexts: to_range(&query.start, &query.end),
+                                primary: to_range(&field.start_fieldname, &field.end_fieldname),
+                            }],
+                        });
+                    }
+
+                    continue;
                 }
 
                 let mut is_known_field = false;

@@ -764,6 +764,51 @@ record User {
     name String
     @public
 }
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    // Query with nullable parameter used against non-nullable column
+    // This should fail - nullable params cannot be used with non-nullable columns
+    let query_source = r#"
+        query GetUserByName($name: String?) {
+            user {
+                @where { name == $name }
+                id
+                name
+            }
+        }
+    "#;
+
+    let query_list =
+        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
+
+    let result = typecheck::check_queries(&query_list, &context);
+
+    match result {
+        Ok(_) => {
+            panic!("Nullable parameter with non-nullable column should fail typechecking");
+        }
+        Err(errors) => {
+            // Should fail with a type mismatch error
+            let has_type_mismatch = errors
+                .iter()
+                .any(|e| matches!(&e.error_type, error::ErrorType::TypeMismatch { .. }));
+            assert!(
+                has_type_mismatch,
+                "Should have a TypeMismatch error for nullable param with non-nullable column. Errors: {:?}",
+                errors
+            );
+        }
+    }
+}
 
 #[test]
 fn test_json_param_only() {
@@ -814,58 +859,10 @@ record Task {
     match invalid_result {
         Ok(_) => panic!("Json literals should fail typechecking"),
         Err(errors) => {
-            let has_type_mismatch = errors.iter().any(|error| {
-                matches!(
-                    error.error_type,
-                    ErrorType::LiteralTypeMismatch { .. }
-                )
-            });
-            assert!(has_type_mismatch, "Expected LiteralTypeMismatch error");
-        }
-    }
-}
-"#;
-
-    let mut schema_ast = ast::Schema::default();
-    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
-
-    let database = ast::Database {
-        schemas: vec![schema_ast],
-    };
-
-    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
-
-    // Query with nullable parameter used against non-nullable column
-    // This should fail - nullable params cannot be used with non-nullable columns
-    let query_source = r#"
-        query GetUserByName($name: String?) {
-            user {
-                @where { name == $name }
-                id
-                name
-            }
-        }
-    "#;
-
-    let query_list =
-        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
-
-    let result = typecheck::check_queries(&query_list, &context);
-
-    match result {
-        Ok(_) => {
-            panic!("Nullable parameter with non-nullable column should fail typechecking");
-        }
-        Err(errors) => {
-            // Should fail with a type mismatch error
             let has_type_mismatch = errors
                 .iter()
-                .any(|e| matches!(&e.error_type, error::ErrorType::TypeMismatch { .. }));
-            assert!(
-                has_type_mismatch,
-                "Should have a TypeMismatch error for nullable param with non-nullable column. Errors: {:?}",
-                errors
-            );
+                .any(|error| matches!(error.error_type, ErrorType::LiteralTypeMismatch { .. }));
+            assert!(has_type_mismatch, "Expected LiteralTypeMismatch error");
         }
     }
 }
@@ -977,6 +974,112 @@ record Post {
             assert!(
                 has_type_mismatch,
                 "Should have a TypeMismatch error for nullable param in INSERT SET with non-nullable column. Errors: {:?}",
+                errors
+            );
+        }
+    }
+}
+
+#[test]
+fn test_wildcard_disallowed_in_update() {
+    let schema = r#"
+record User {
+    id   Int    @id
+    name String
+    @public
+}
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    let query_source = r#"
+        update UpdateUser($id: Int) {
+            user {
+                @where { id == $id }
+                *
+            }
+        }
+    "#;
+
+    let query_list =
+        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
+
+    let result = typecheck::check_queries(&query_list, &context);
+
+    match result {
+        Ok(_) => panic!("Wildcard should be disallowed in update queries"),
+        Err(errors) => {
+            let has_invalid_wildcard = errors.iter().any(|e| {
+                matches!(
+                    &e.error_type,
+                    error::ErrorType::InvalidWildcardSelection {
+                        reason: error::InvalidWildcardReason::UsedInInsertOrUpdate
+                    }
+                )
+            });
+            assert!(
+                has_invalid_wildcard,
+                "Expected InvalidWildcardSelection error. Errors: {:?}",
+                errors
+            );
+        }
+    }
+}
+
+#[test]
+fn test_wildcard_disallowed_in_insert() {
+    let schema = r#"
+record User {
+    id   Int    @id
+    name String
+    @public
+}
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    let query_source = r#"
+        insert CreateUser($name: String) {
+            user {
+                name = $name
+                *
+            }
+        }
+    "#;
+
+    let query_list =
+        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
+
+    let result = typecheck::check_queries(&query_list, &context);
+
+    match result {
+        Ok(_) => panic!("Wildcard should be disallowed in insert queries"),
+        Err(errors) => {
+            let has_invalid_wildcard = errors.iter().any(|e| {
+                matches!(
+                    &e.error_type,
+                    error::ErrorType::InvalidWildcardSelection {
+                        reason: error::InvalidWildcardReason::UsedInInsertOrUpdate
+                    }
+                )
+            });
+            assert!(
+                has_invalid_wildcard,
+                "Expected InvalidWildcardSelection error. Errors: {:?}",
                 errors
             );
         }

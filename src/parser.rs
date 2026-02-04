@@ -222,6 +222,10 @@ fn parse_fieldname(input: Text) -> ParseResult<&str> {
     Ok((input, val.fragment()))
 }
 
+fn parse_fieldname_or_star(input: Text) -> ParseResult<&str> {
+    alt((value("*", tag("*")), parse_fieldname))(input)
+}
+
 fn parse_qualified(input: Text) -> ParseResult<ast::Qualified> {
     let (input, first) = parse_typename(input)?;
     let (input, _) = tag(".")(input)?;
@@ -1161,7 +1165,7 @@ fn parse_query_arg_field(input: Text) -> ParseResult<ast::ArgField> {
 fn parse_query_field(input: Text) -> ParseResult<ast::QueryField> {
     let (input, _) = multispace0(input)?;
     let (input, start_pos) = position(input)?;
-    let (input, name_or_alias) = parse_fieldname(input)?;
+    let (input, name_or_alias) = parse_fieldname_or_star(input)?;
     let (input, alias_or_name) = opt(parse_alias)(input)?;
     let (input, end_fieldname_pos) = position(input)?;
     let (input, _) = multispace0(input)?;

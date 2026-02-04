@@ -90,6 +90,9 @@ pub fn select_to_string(
 
     let mut last_link_index = 0;
     for (i, query_field) in all_query_fields.iter().enumerate() {
+        if query_field.name == "*" {
+            continue;
+        }
         if let Some(table_field) = table
             .record
             .fields
@@ -124,6 +127,9 @@ pub fn select_to_string(
     let mut has_links = false;
 
     for query_field in all_query_fields.iter() {
+        if query_field.name == "*" {
+            continue;
+        }
         match table
             .record
             .fields
@@ -530,6 +536,24 @@ fn select_single_json(
     let new_fieldnames =
         &to_fieldnames(context, query_aliased_as, table, &query_table_field.fields);
     let mut first_field = true;
+    let mut explicit_columns = HashSet::new();
+    for field in &query_table_field.fields {
+        if let ast::ArgField::Field(query_field) = field {
+            if query_field.name == "*" {
+                continue;
+            }
+            if let Some(ast::Field::Column(column)) = table
+                .record
+                .fields
+                .iter()
+                .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
+            {
+                explicit_columns.insert(column.name.clone());
+            }
+        }
+    }
+
+    let mut rendered_columns: HashSet<String> = HashSet::new();
     for field in new_fieldnames {
         if !first_field {
             json_object.push_str(",\n");
@@ -683,9 +707,49 @@ fn select_formatted_as_json(
 
     // Compose main json payload
     let mut first_field = true;
+    let mut explicit_columns = HashSet::new();
+    for field in &query_table_field.fields {
+        if let ast::ArgField::Field(query_field) = field {
+            if query_field.name == "*" {
+                continue;
+            }
+            if let Some(ast::Field::Column(column)) = table
+                .record
+                .fields
+                .iter()
+                .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
+            {
+                explicit_columns.insert(column.name.clone());
+            }
+        }
+    }
+    let mut rendered_columns: HashSet<String> = HashSet::new();
     for field in &query_table_field.fields {
         match field {
             ast::ArgField::Field(query_field) => {
+                if query_field.name == "*" {
+                    for table_field in &table.record.fields {
+                        if let ast::Field::Column(column) = table_field {
+                            if explicit_columns.contains(&column.name) {
+                                continue;
+                            }
+                            if rendered_columns.insert(column.name.clone()) {
+                                render_json_column(
+                                    indent,
+                                    &indent_str,
+                                    context,
+                                    &base_table_name,
+                                    &column.name,
+                                    &column.name,
+                                    column,
+                                    &mut first_field,
+                                    sql,
+                                );
+                            }
+                        }
+                    }
+                    continue;
+                }
                 if let Some(table_field) = table
                     .record
                     .fields
@@ -696,22 +760,19 @@ fn select_formatted_as_json(
 
                     match table_field {
                         ast::Field::Column(table_column) => {
-                            if !first_field {
-                                sql.push_str(",\n");
+                            if rendered_columns.insert(aliased_field_name.clone()) {
+                                render_json_column(
+                                    indent,
+                                    &indent_str,
+                                    context,
+                                    &base_table_name,
+                                    &aliased_field_name,
+                                    &query_field.name,
+                                    table_column,
+                                    &mut first_field,
+                                    sql,
+                                );
                             }
-
-                            sql.push_str(&format!("{}    '{}', ", indent_str, aliased_field_name));
-
-                            select_type(
-                                indent + 6,
-                                context,
-                                table_column,
-                                &base_table_name,
-                                &query_field.name,
-                                sql,
-                            );
-
-                            first_field = false;
                         }
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                             if !first_field {
@@ -729,7 +790,7 @@ fn select_formatted_as_json(
 
                                 sql.push_str(&format!(
                                     "{}    '{}', temp__{}.{}",
-                                    indent_str,
+                                    &indent_str,
                                     aliased_field_name,
                                     query_field.name,
                                     aliased_field_name,
@@ -739,7 +800,7 @@ fn select_formatted_as_json(
                                 // Use jsonb() to ensure type compatibility with jsonb_group_array result
                                 sql.push_str(&format!(
                                     "{}    '{}', coalesce(temp__{}.{}, jsonb('[]'))",
-                                    indent_str,
+                                    &indent_str,
                                     aliased_field_name,
                                     query_field.name,
                                     aliased_field_name,
@@ -936,6 +997,61 @@ fn select_type(
     }
 }
 
+fn render_json_column(
+    indent: usize,
+    indent_str: &str,
+    context: &typecheck::Context,
+    base_table_name: &str,
+    field_name: &str,
+    column_name: &str,
+    column: &ast::Column,
+    first_field: &mut bool,
+    sql: &mut String,
+) {
+    if !*first_field {
+        sql.push_str(",\n");
+    }
+
+    sql.push_str(&format!("{}    '{}', ", indent_str, field_name));
+
+    select_type(
+        indent + 6,
+        context,
+        column,
+        base_table_name,
+        column_name,
+        sql,
+    );
+
+    *first_field = false;
+}
+
+fn render_final_json_column(
+    indent_str: &str,
+    base_table_name: &str,
+    field_name: &str,
+    column_name: &str,
+    column: &ast::Column,
+    first_field: &mut bool,
+    sql: &mut String,
+) {
+    if !*first_field {
+        sql.push_str(",\n");
+    }
+
+    sql.push_str(&format!("{}      '{}', ", indent_str, field_name));
+    if column.type_.is_bool() {
+        sql.push_str(&format!(
+            "json(case when {}.{} = 1 then 'true' else 'false' end)",
+            base_table_name, column_name
+        ));
+    } else {
+        sql.push_str(&format!("{}.{}", base_table_name, column_name));
+    }
+
+    *first_field = false;
+}
+
 /*
 This is slightly different than the others.
 
@@ -968,9 +1084,50 @@ fn final_select_formatted_as_json(
 
     // Compose main json payload
     let mut first_field = true;
+    let mut explicit_columns = HashSet::new();
+    for field in &query_table_field.fields {
+        if let ast::ArgField::Field(query_field) = field {
+            if query_field.name == "*" {
+                continue;
+            }
+            if let Some(ast::Field::Column(column)) = table
+                .record
+                .fields
+                .iter()
+                .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
+            {
+                explicit_columns.insert(column.name.clone());
+            }
+        }
+    }
+
+    let mut rendered_columns: HashSet<String> = HashSet::new();
+
     for field in &query_table_field.fields {
         match field {
             ast::ArgField::Field(query_field) => {
+                if query_field.name == "*" {
+                    for table_field in &table.record.fields {
+                        if let ast::Field::Column(column) = table_field {
+                            if explicit_columns.contains(&column.name) {
+                                continue;
+                            }
+                            if rendered_columns.insert(column.name.clone()) {
+                                render_final_json_column(
+                                    &indent_str,
+                                    &base_table_name,
+                                    &column.name,
+                                    &column.name,
+                                    column,
+                                    &mut first_field,
+                                    sql,
+                                );
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 if let Some(table_field) = table
                     .record
                     .fields
@@ -981,24 +1138,17 @@ fn final_select_formatted_as_json(
 
                     match table_field {
                         ast::Field::Column(column) => {
-                            if !first_field {
-                                sql.push_str(",\n");
+                            if rendered_columns.insert(aliased_field_name.clone()) {
+                                render_final_json_column(
+                                    &indent_str,
+                                    &base_table_name,
+                                    &aliased_field_name,
+                                    &query_field.name,
+                                    column,
+                                    &mut first_field,
+                                    sql,
+                                );
                             }
-                            sql.push_str(&format!(
-                                "{}      '{}', ",
-                                indent_str, aliased_field_name
-                            ));
-
-                            // Handle boolean types: SQLite stores booleans as 0/1, convert to JSON boolean
-                            if column.type_.is_bool() {
-                                sql.push_str(&format!(
-                                    "json(case when {}.{} = 1 then 'true' else 'false' end)",
-                                    base_table_name, query_field.name
-                                ));
-                            } else {
-                                sql.push_str(&format!("{}.{}", base_table_name, query_field.name));
-                            }
-                            first_field = false;
                         }
                         ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
                             if !first_field {
@@ -1126,6 +1276,15 @@ fn to_fieldnames(
     for field in query_fields {
         match field {
             ast::ArgField::Field(query_field) => {
+                if query_field.name == "*" {
+                    for table_field in &table.record.fields {
+                        if let ast::Field::Column(column) = table_field {
+                            add_column_fieldnames(context, column, &mut selected_set);
+                        }
+                    }
+                    continue;
+                }
+
                 if let Some(table_field) = table
                     .record
                     .fields
@@ -1194,6 +1353,45 @@ fn add_concret_fieldnames(
         }
         _ => (),
     }
+}
+
+fn add_column_fieldnames(
+    context: &typecheck::Context,
+    column: &ast::Column,
+    selected_set: &mut HashSet<String>,
+) {
+    selected_set.insert(column.name.clone());
+
+    let type_lookup = column
+        .type_
+        .get_custom_type_name()
+        .and_then(|name| context.types.get(name));
+    match type_lookup {
+        None => (),
+        Some((_, type_)) => match type_ {
+            typecheck::Type::OneOf { variants, .. } => {
+                for variant in variants {
+                    match &variant.fields {
+                        None => (),
+                        Some(fields) => {
+                            for field in fields {
+                                match field {
+                                    ast::Field::Column(inner_column) => {
+                                        selected_set.insert(format!(
+                                            "{}__{}",
+                                            column.name, &inner_column.name
+                                        ));
+                                    }
+                                    _ => (),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => (),
+        },
+    };
 }
 
 /*

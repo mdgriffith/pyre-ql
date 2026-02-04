@@ -9,6 +9,7 @@ pub struct TypeFormatter {
     pub to_field_separator: Box<dyn Fn(bool) -> String>,
 }
 
+#[derive(Clone, Copy)]
 pub struct FieldMetadata {
     pub is_link: bool,
     pub is_optional: bool,
@@ -171,23 +172,48 @@ fn to_query_type_alias(
 
     let alias_stack = push_alias_stack(query_field, alias_stack);
 
-    let last_field_index = fields
-        .iter()
-        .rposition(|field| {
-            let table_field = table
-                .fields
-                .iter()
-                .find(|&f| ast::has_field_or_linkname(f, &field.name));
-            matches!(
-                table_field,
-                Some(ast::Field::Column(_))
-                    | Some(ast::Field::FieldDirective(ast::FieldDirective::Link(_)))
-            )
-        })
-        .unwrap_or(0);
+    let mut explicit_columns: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for field in fields.iter() {
+        if field.name == "*" {
+            continue;
+        }
+        if let Some(ast::Field::Column(column)) = table
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(f, &field.name))
+        {
+            explicit_columns.insert(column.name.clone());
+        }
+    }
 
-    for (i, field) in fields.iter().enumerate() {
-        let is_last = i == last_field_index;
+    let mut rendered_fields: Vec<(String, String, FieldMetadata)> = Vec::new();
+    let mut wildcard_rendered = false;
+
+    for field in fields.iter() {
+        if field.name == "*" {
+            if wildcard_rendered {
+                continue;
+            }
+            wildcard_rendered = true;
+
+            for table_field in &table.fields {
+                if let ast::Field::Column(column) = table_field {
+                    if explicit_columns.contains(&column.name) {
+                        continue;
+                    }
+                    rendered_fields.push((
+                        column.name.clone(),
+                        column.type_.to_string(),
+                        FieldMetadata {
+                            is_link: false,
+                            is_optional: column.nullable,
+                            is_array_relationship: false,
+                        },
+                    ));
+                }
+            }
+            continue;
+        }
 
         if let Some(table_field) = table
             .fields
@@ -195,24 +221,19 @@ fn to_query_type_alias(
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
         {
             let aliased_name = ast::get_aliased_name(field);
-
             match table_field {
                 ast::Field::Column(col) => {
-                    let type_str = col.type_.to_string();
-                    result.push_str(&(formatter.to_field)(
-                        &aliased_name,
-                        &type_str,
+                    rendered_fields.push((
+                        aliased_name,
+                        col.type_.to_string(),
                         FieldMetadata {
                             is_link: false,
                             is_optional: col.nullable,
                             is_array_relationship: false,
                         },
                     ));
-                    result.push_str(&(formatter.to_field_separator)(is_last));
                 }
                 ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-                    // Determine relationship type: if local_ids contains the primary key, it's one-to-many (array)
-                    // Otherwise, it's many-to-one or one-to-one (optional object)
                     let primary_key_name = ast::get_primary_id_field_name(&table.fields);
                     let is_one_to_many = link.local_ids.iter().all(|id| {
                         primary_key_name
@@ -221,29 +242,33 @@ fn to_query_type_alias(
                             .unwrap_or(false)
                     });
 
-                    // Check if link points to unique fields for optionality (many-to-one/one-to-one can be null)
                     let linked_to_unique =
                         if let Some(linked_table) = typecheck::get_linked_table(context, link) {
                             ast::linked_to_unique_field_with_record(link, &linked_table.record)
                         } else {
-                            // Fallback to simple check if table not found
                             ast::linked_to_unique_field(link)
                         };
 
-                    result.push_str(&(formatter.to_field)(
-                        &aliased_name,
-                        &get_name(&alias_stack, &aliased_name),
+                    rendered_fields.push((
+                        aliased_name.clone(),
+                        get_name(&alias_stack, &aliased_name),
                         FieldMetadata {
                             is_link: true,
-                            is_optional: !is_one_to_many && linked_to_unique, // Optional only for many-to-one/one-to-one
+                            is_optional: !is_one_to_many && linked_to_unique,
                             is_array_relationship: is_one_to_many,
                         },
                     ));
-                    result.push_str(&(formatter.to_field_separator)(is_last));
                 }
                 _ => {}
             }
         }
+    }
+
+    let last_index = rendered_fields.len().saturating_sub(1);
+    for (i, (name, type_, metadata)) in rendered_fields.iter().enumerate() {
+        let is_last = i == last_index;
+        result.push_str(&(formatter.to_field)(name, type_, metadata.clone()));
+        result.push_str(&(formatter.to_field_separator)(is_last));
     }
 
     result.push_str(&(formatter.to_type_def_end)());

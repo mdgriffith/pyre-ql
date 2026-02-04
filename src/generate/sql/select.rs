@@ -105,8 +105,57 @@ pub fn to_selection(
     is_top_level: bool,
 ) -> Vec<String> {
     let mut result = vec![];
+    let mut explicit_columns = std::collections::HashSet::new();
 
     for field in fields {
+        if field.name == "*" {
+            continue;
+        }
+        if let Some(table_field) = table
+            .record
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
+        {
+            if let ast::Field::Column(column) = table_field {
+                explicit_columns.insert(column.name.clone());
+            }
+        }
+    }
+
+    for field in fields {
+        if field.name == "*" {
+            for table_field in &table.record.fields {
+                if let ast::Field::Column(column) = table_field {
+                    if explicit_columns.contains(&column.name) {
+                        continue;
+                    }
+                    let wildcard_field = ast::QueryField {
+                        name: column.name.clone(),
+                        alias: None,
+                        set: None,
+                        directives: vec![],
+                        fields: vec![],
+                        start: None,
+                        end: None,
+                        start_fieldname: None,
+                        end_fieldname: None,
+                    };
+                    result.append(&mut to_subselection(
+                        context,
+                        table,
+                        table_alias,
+                        &table_field,
+                        query_info,
+                        &wildcard_field,
+                        table_alias_kind,
+                        is_top_level,
+                    ));
+                }
+            }
+            continue;
+        }
+
         if let Some(table_field) = table
             .record
             .fields

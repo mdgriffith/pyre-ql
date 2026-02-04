@@ -133,6 +133,9 @@ pub enum ErrorType {
     DuplicateQueryField {
         field: String,
     },
+    InvalidWildcardSelection {
+        reason: InvalidWildcardReason,
+    },
     NoFieldsSelected,
     UnknownField {
         found: String,
@@ -243,6 +246,14 @@ pub struct VariantDef {
     pub variant_name: String,
     pub filepath: String,
     pub range: Option<Range>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum InvalidWildcardReason {
+    Aliased,
+    Assigned,
+    HasNestedSelections,
+    UsedInInsertOrUpdate,
 }
 
 /*
@@ -779,6 +790,21 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
                 yellow_if(in_color, field)
             ));
 
+            result
+        }
+        ErrorType::InvalidWildcardSelection { reason } => {
+            let mut result = "".to_string();
+            let message = match reason {
+                InvalidWildcardReason::Aliased => "Wildcard fields cannot be aliased.",
+                InvalidWildcardReason::Assigned => "Wildcard fields cannot be assigned.",
+                InvalidWildcardReason::HasNestedSelections => {
+                    "Wildcard fields cannot have nested selections."
+                }
+                InvalidWildcardReason::UsedInInsertOrUpdate => {
+                    "Wildcard fields are not allowed in inserts or updates."
+                }
+            };
+            result.push_str(&format!("{}\n", message));
             result
         }
         ErrorType::UnknownTable { found, existing } => {
@@ -1461,6 +1487,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::ForeignKeyToNonIdField { .. } => "Foreign key to non-ID field",
         ErrorType::UnknownTable { .. } => "Unknown Table",
         ErrorType::DuplicateQueryField { .. } => "Duplicate Query Field",
+        ErrorType::InvalidWildcardSelection { .. } => "Invalid Wildcard Selection",
         ErrorType::NoFieldsSelected => "No Fields Selected",
         ErrorType::UnknownField { .. } => "Unknown Field",
         ErrorType::MultipleLimits { .. } => "Multiple Limits",
