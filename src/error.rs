@@ -1286,7 +1286,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             let mut reference_types = Vec::new();
 
             let basic_type_names = [
-                "Bool", "DateTime", "Float", "Id.Int", "Id.Uuid", "Int", "String",
+                "Bool", "DateTime", "Float", "Json", "Id.Int", "Id.Uuid", "Int", "String",
             ];
 
             for typename in known_types {

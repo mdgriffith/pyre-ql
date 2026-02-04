@@ -179,6 +179,9 @@ pub fn empty_context() -> Context {
         .insert("DateTime".to_string(), (DefInfo::Builtin, Type::String));
     context
         .types
+        .insert("Json".to_string(), (DefInfo::Builtin, Type::String));
+    context
+        .types
         .insert("Id.Int".to_string(), (DefInfo::Builtin, Type::String));
     context
         .types
@@ -2224,8 +2227,38 @@ fn check_value(
     table_type_string: &str,
     is_nullable: bool,
 ) {
+    if table_type_string == "Json" {
+        if let ast::QueryValue::Variable(_) = value {
+            return;
+        }
+
+        let found = match value {
+            ast::QueryValue::String(_) => "String",
+            ast::QueryValue::Int(_) => "Int",
+            ast::QueryValue::Float(_) => "Float",
+            ast::QueryValue::Bool(_) => "Bool",
+            ast::QueryValue::Null(_) => "Null",
+            ast::QueryValue::Fn(_) => "Function",
+            ast::QueryValue::LiteralTypeValue(_) => "Literal",
+            ast::QueryValue::Variable(_) => "Variable",
+        };
+
+        errors.push(Error {
+            filepath: context.current_filepath.clone(),
+            error_type: ErrorType::LiteralTypeMismatch {
+                expecting_type: table_type_string.to_string(),
+                found: found.to_string(),
+            },
+            locations: vec![Location {
+                contexts: vec![],
+                primary: to_range(start, end),
+            }],
+        });
+        return;
+    }
+
     match value {
-        ast::QueryValue::String((range, _)) => {
+        ast::QueryValue::String((range, value)) => {
             if table_type_string != "String" {
                 errors.push(Error {
                     filepath: context.current_filepath.clone(),

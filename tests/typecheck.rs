@@ -764,6 +764,66 @@ record User {
     name String
     @public
 }
+
+#[test]
+fn test_json_param_only() {
+    let schema = r#"
+record Task {
+    @public
+    id Id.Int @id
+    metadata Json
+}
+"#;
+
+    let mut schema_ast = ast::Schema::default();
+    parser::run("schema.pyre", schema, &mut schema_ast).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema_ast],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
+
+    let valid_query = r#"
+        update SetTaskMetadata($id: Task.id, $metadata: Json) {
+            task {
+                @where { id == $id }
+                metadata = $metadata
+            }
+        }
+    "#;
+
+    let valid_query_list =
+        parser::parse_query("query.pyre", valid_query).expect("Failed to parse query");
+    let valid_result = typecheck::check_queries(&valid_query_list, &context);
+    assert!(valid_result.is_ok(), "Valid Json literal should typecheck");
+
+    let invalid_query = r#"
+        update SetTaskMetadata($id: Task.id) {
+            task {
+                @where { id == $id }
+                metadata = "{invalid}"
+            }
+        }
+    "#;
+
+    let invalid_query_list =
+        parser::parse_query("query.pyre", invalid_query).expect("Failed to parse query");
+    let invalid_result = typecheck::check_queries(&invalid_query_list, &context);
+
+    match invalid_result {
+        Ok(_) => panic!("Json literals should fail typechecking"),
+        Err(errors) => {
+            let has_type_mismatch = errors.iter().any(|error| {
+                matches!(
+                    error.error_type,
+                    ErrorType::LiteralTypeMismatch { .. }
+                )
+            });
+            assert!(has_type_mismatch, "Expected LiteralTypeMismatch error");
+        }
+    }
+}
 "#;
 
     let mut schema_ast = ast::Schema::default();
