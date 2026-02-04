@@ -78,6 +78,22 @@ query GetData {
 }
 ```
 
+### Select All Scalar Fields (`*`)
+
+Use `*` to select all scalar fields for a record. This excludes relationship fields by default.
+
+```pyre
+query ListTasks {
+    task {
+        *
+    }
+}
+```
+
+**Notes**
+- `*` expands to all scalar columns (non-relationship fields).
+- Relationship traversal still requires explicit nested selection blocks.
+
 ### Insert
 
 Inserts new records.
@@ -198,6 +214,7 @@ query QueryName($param1: Type, $param2: Type?) {
 - `DateTime`
 - `Date`
 - Custom types (tagged unions)
+- Schema-derived types (see "Schema-Derived Query Inputs")
 
 **Nullable Parameters:**
 Append `?` to make parameters optional:
@@ -284,6 +301,8 @@ Filters records using conditions.
 
 **Note**: Multiple `@where` clauses are combined with AND. Use `||` within a single `@where` for OR conditions.
 
+**Note**: `@where(Null)` means no conditions (equivalent to omitting `@where`).
+
 ### @sort
 
 Orders results.
@@ -312,6 +331,56 @@ Limits the number of results.
 @limit(10)
 @limit($limitValue)
 ```
+
+### @set
+
+Applies a schema-derived input object to a record for inserts and updates.
+
+```pyre
+insert TaskCreate($input: Task.CreateInput) {
+    task {
+        @set($input)
+    }
+}
+
+update TaskUpdate($id: Task.id, $input: Task.UpdateInput) {
+    task {
+        @where { id == $id }
+        @set($input)
+    }
+}
+```
+
+**Notes**
+- `CreateInput` requires all non-nullable fields without defaults.
+- `UpdateInput` fields are optional; omitted fields are unchanged and explicit `Null` clears the field.
+
+### @if
+
+Conditionally includes a field or nested block based on a boolean parameter.
+
+```pyre
+query TaskGetWithRelations($id: Task.id, $includeSubtasks: Bool) {
+    task {
+        @where { id == $id }
+        id
+        description
+        subtasks @if($includeSubtasks) {
+            id
+            description
+            status
+            priority
+            createdAt
+        }
+    }
+}
+```
+
+Here is an example querying a `Task` table.
+
+**Notes**
+- If the condition is false, the field is omitted from the result.
+- `@if` can be applied to scalar fields or nested selections.
 
 ## Where Clause Operators
 
@@ -420,6 +489,181 @@ dateStr = date("now")
 - String: `upper`, `lower`, `length`, `substr`, `trim`, `replace`
 - Math: `max`, `min`, `abs`, `round`, `floor`, `ceil`
 - Date: `date`, `time`, `datetime`, `strftime`
+
+## Schema-Derived Query Inputs
+
+Pyre can generate schema-derived input types and CRUD queries to reduce boilerplate while
+keeping all operations explicit and type-safe.
+
+### `{Table}.Options`
+
+Represents common query options for a table.
+
+```text
+Task.Options
+  where: Task.Conditions
+  orderBy: List Task.OrderBy
+  limit: Int
+  include: Task.Includes
+```
+
+### `{Table}.Conditions`
+
+Represents allowed filter conditions for a table based on schema and permissions.
+
+```text
+Task.Conditions
+  id: Task.IdCondition
+  status: Task.StatusCondition
+  createdAt: Task.CreatedAtCondition
+  ...
+```
+
+**JSON format**
+
+The JSON representation mirrors the `WhereArg` structure in the AST:
+
+```json
+{
+  "status": "active",
+  "$or": [
+    { "priority": { "$gte": 3 } },
+    { "assigneeId": { "$in": [1, 2, 3] } }
+  ]
+}
+```
+
+Session variables can be referenced as values using a `$session` object:
+
+```json
+{
+  "assigneeId": { "$eq": { "$session": "userId" } },
+  "role": { "$eq": { "$session": "role" } }
+}
+```
+
+Supported operators:
+- `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`
+- `$in`, `$nin`
+- `$like`, `$nlike`
+
+Notes:
+- A plain value (e.g. `"status": "active"`) is treated as `$eq`.
+- `$and`/`$or` take a list of condition objects.
+- `Null` means “no conditions”.
+- Session variables can appear in value positions via `{ "$session": "fieldName" }`.
+
+### `{Table}.OrderBy`
+
+Represents allowed sort fields for a table.
+
+```text
+Task.OrderBy
+  field: Task.SortableField
+  direction: SortDirection
+```
+
+Notes:
+- `{Table}.Options.orderBy` is always a list; use an empty list for “no sorting”.
+
+### `{Table}.Includes`
+
+Represents which relationships should be included by default queries.
+
+```text
+Task.Includes
+  subtasks: Bool
+  assignee: Bool
+  project: Bool
+```
+
+### Example: Options in a Query
+
+```pyre
+query TaskGet($options: Task.Options) {
+    task {
+        @where($options.where)
+        @sort($options.orderBy)
+        @limit($options.limit)
+        *
+        subtasks @if($options.include.subtasks) {
+            *
+        }
+        assignee @if($options.include.assignee) {
+            *
+        }
+    }
+}
+```
+
+### Auto-Generated CRUD Queries
+
+For each table, Pyre can generate basic CRUD queries that use schema-derived inputs.
+These queries are explicit and can be customized or overridden by user-defined queries.
+
+**Select (List)**
+```pyre
+query TaskGet($options: Task.Options) {
+    task {
+        @where($options.where)
+        @sort($options.orderBy)
+        @limit($options.limit)
+        *
+        subtasks @if($options.include.subtasks) {
+            *
+        }
+        assignee @if($options.include.assignee) {
+            *
+        }
+    }
+}
+```
+
+**Select (Single by ID)**
+```pyre
+query TaskGetById($id: Task.id) {
+    task {
+        @where { id == $id }
+        *
+    }
+}
+```
+
+**Insert**
+```pyre
+insert TaskCreate($input: Task.CreateInput) {
+    task {
+        @set($input)
+    }
+}
+```
+
+**Update**
+```pyre
+update TaskUpdate($id: Task.id, $input: Task.UpdateInput) {
+    task {
+        @where { id == $id }
+        @set($input)
+    }
+}
+```
+
+**Delete**
+```pyre
+delete TaskDelete($id: Task.id) {
+    task {
+        @where { id == $id }
+        id
+    }
+}
+```
+
+**Notes**
+- `CreateInput` and `UpdateInput` are derived from schema + permissions.
+- The auto-generated queries are meant as defaults; explicit queries can override them.
+- `CreateInput` requires all non-nullable fields without defaults.
+- `UpdateInput` fields are optional; omitted fields are unchanged and explicit `Null` clears the field.
+- Auto-generated `Get` queries include relationships only when their `Options.include` flag is true.
 
 ## Examples
 
@@ -540,4 +784,3 @@ query GetPublishedPosts($limit: Int) {
 9. **Limit placement**: `@limit` can appear anywhere in the field list, but typically appears after `@where` and `@sort`.
 
 10. **Field aliases**: Aliases only affect the output structure, not the query logic. You cannot use aliases in `@where` clauses.
-
