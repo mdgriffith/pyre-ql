@@ -71,7 +71,7 @@ pub fn to_sql(diff: &Diff) -> Vec<SqlAndParams> {
                         record_diff.name, column.name
                     )));
                 }
-                RecordChange::ModifiedField { name, changes } => {
+                RecordChange::ModifiedField { name, .. } => {
                     // For SQLite, we can't directly modify columns, so we need to recreate the table
                     // This would require more complex migration logic
                     sql_statements.push(SqlAndParams::Sql(format!(

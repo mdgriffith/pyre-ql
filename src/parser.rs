@@ -187,7 +187,7 @@ fn parse_comment(input: Text) -> ParseResult<ast::Definition> {
         },
     ))
 }
-fn parse_typename(input: Text) -> ParseResult<&str> {
+fn parse_typename(input: Text<'_>) -> ParseResult<'_, &str> {
     let (input, val) = recognize(tuple((
         take_while1(|c: char| c.is_uppercase()), // First character needs to be uppercase
         many0(alt((alphanumeric1, take_while1(|c: char| c == '_')))), // Followed by alphanumeric or underscores
@@ -198,7 +198,7 @@ fn parse_typename(input: Text) -> ParseResult<&str> {
 
 /// Parse a typename that may contain dots (e.g., "Id.Int", "Id.Uuid")
 /// This should only be used when parsing column types, not in parse_qualified
-fn parse_typename_with_dots(input: Text) -> ParseResult<&str> {
+fn parse_typename_with_dots(input: Text<'_>) -> ParseResult<'_, &str> {
     let (input, val) = recognize(tuple((
         take_while1(|c: char| c.is_uppercase()), // First character needs to be uppercase
         many0(alt((
@@ -210,7 +210,7 @@ fn parse_typename_with_dots(input: Text) -> ParseResult<&str> {
     Ok((input, val.fragment()))
 }
 
-fn parse_fieldname(input: Text) -> ParseResult<&str> {
+fn parse_fieldname(input: Text<'_>) -> ParseResult<'_, &str> {
     let (input, val) = recognize(tuple((
         alt((
             take_while1(|c: char| c.is_lowercase()), // First character must be lowercase
@@ -222,7 +222,7 @@ fn parse_fieldname(input: Text) -> ParseResult<&str> {
     Ok((input, val.fragment()))
 }
 
-fn parse_fieldname_or_star(input: Text) -> ParseResult<&str> {
+fn parse_fieldname_or_star(input: Text<'_>) -> ParseResult<'_, &str> {
     alt((value("*", tag("*")), parse_fieldname))(input)
 }
 
@@ -1705,7 +1705,7 @@ pub fn parse_string(input: Text) -> ParseResult<ast::QueryValue> {
     Ok((input, ast::QueryValue::String((range, value.to_string()))))
 }
 
-fn parse_string_literal(input: Text) -> ParseResult<&str> {
+fn parse_string_literal(input: Text<'_>) -> ParseResult<'_, &str> {
     let (input, _) = tag("\"")(input)?;
     let (input, value) = take_until("\"")(input)?;
     let (input, _) = tag("\"")(input)?;

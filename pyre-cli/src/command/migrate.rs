@@ -61,7 +61,7 @@ pub async fn migrate<'a>(
                             println!("Migration finished!");
                         }
                         Err(migration_error) => {
-                            println!("{:?}", migration_error);
+                            println!("{}", migration_error.format_error());
                         }
                     }
                 }
@@ -117,7 +117,7 @@ pub async fn push<'a>(
         Err(error_list) => {
             error::report_and_exit(error_list, &paths, options.enable_color);
         }
-        Ok(context) => {
+        Ok(_context) => {
             let connection_result = db::connect(&database.to_string(), auth).await;
             match connection_result {
                 Err(err) => {

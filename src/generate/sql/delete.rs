@@ -5,8 +5,6 @@ use crate::generate::sql::to_sql;
 use crate::typecheck;
 
 pub fn delete_to_string(
-    context: &typecheck::Context,
-    _query: &ast::Query,
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     query_field: &ast::QueryField,
@@ -22,7 +20,6 @@ pub fn delete_to_string(
 
     let mut where_clause = String::new();
     to_sql::render_where(
-        context,
         table,
         query_info,
         query_field,
@@ -65,7 +62,6 @@ pub fn delete_to_string(
     statements.push(to_sql::ignore(sql));
 
     // Always generate the typed response query - mutations must return typed data
-    let query_field_name = &query_field.name;
     let primary_table_name = select::get_tablename(
         &select::TableAliasKind::Normal,
         table,
@@ -79,8 +75,7 @@ pub fn delete_to_string(
     // Generate affected rows query if requested
     // Execute this BEFORE the final selection to avoid lock conflicts
     if include_affected_rows {
-        let affected_rows_sql =
-            generate_affected_rows_query(context, query_info, table, query_field, &temp_table_name);
+        let affected_rows_sql = generate_affected_rows_query(table, &temp_table_name);
         // Insert before the final selection (which now always exists)
         let final_idx = statements.len() - 1;
         statements.insert(final_idx, to_sql::include(affected_rows_sql));
@@ -154,13 +149,7 @@ fn generate_typed_response_query(
     sql
 }
 
-fn generate_affected_rows_query(
-    _context: &typecheck::Context,
-    _query_info: &typecheck::QueryInfo,
-    table: &typecheck::Table,
-    _query_field: &ast::QueryField,
-    temp_table_name: &str,
-) -> String {
+fn generate_affected_rows_query(table: &typecheck::Table, temp_table_name: &str) -> String {
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
     let columns = ast::collect_columns(&table.record.fields);
 

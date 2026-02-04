@@ -1,8 +1,6 @@
 use pyre::ast;
 
 use libsql;
-use serde;
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::Read;
@@ -76,60 +74,6 @@ pub async fn connect(
             Ok(connected) => return Ok(connected),
             Err(e) => return Err(DbError::DatabaseError(e)),
         }
-    }
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
-struct Table {
-    name: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
-struct ForeignKey {
-    id: usize,
-    seq: usize,
-    table: String,
-    from: String,
-    to: String,
-    on_update: String,
-    on_delete: String,
-
-    #[serde(rename = "match")]
-    match_: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
-struct ColumnInfo {
-    cid: usize,
-    name: String,
-    #[serde(rename = "type")]
-    column_type: String,
-    #[serde(deserialize_with = "deserialize_notnull")]
-    notnull: bool,
-    dflt_value: Option<String>,
-
-    #[serde(deserialize_with = "deserialize_notnull")]
-    pk: bool,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
-struct MigrationRun {
-    name: String,
-}
-
-fn deserialize_notnull<'de, D>(deserializer: D) -> Result<bool, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let i: i32 = serde::Deserialize::deserialize(deserializer)?;
-    match i {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(serde::de::Error::custom("unexpected value")),
     }
 }
 
@@ -271,13 +215,10 @@ pub fn read_migration_items(migration_folder: &Path) -> Result<Vec<String>, std:
 }
 
 pub struct Migrations {
-    pub file_map: HashMap<String, bool>,
     pub file_contents: Vec<(String, String)>,
 }
 
 pub fn read_migration_folder(migration_folder: &Path) -> Result<Migrations, std::io::Error> {
-    // Initialize the HashMap and Vec
-    let mut file_map: HashMap<String, bool> = HashMap::new();
     let mut file_contents: Vec<(String, String)> = Vec::new();
 
     for entry in fs::read_dir(migration_folder)? {
@@ -288,9 +229,6 @@ pub fn read_migration_folder(migration_folder: &Path) -> Result<Migrations, std:
             let migrate_file_path = path.join("migration.sql");
             if migrate_file_path.is_file() {
                 if let Some(folder_name) = path.file_name().and_then(|name| name.to_str()) {
-                    // Insert the folder name into the HashMap with a value of false
-                    file_map.insert(folder_name.to_string(), false);
-
                     // Read the file contents
                     let mut file = fs::File::open(&migrate_file_path)?;
                     let mut contents = String::new();
@@ -303,8 +241,5 @@ pub fn read_migration_folder(migration_folder: &Path) -> Result<Migrations, std:
         }
     }
 
-    Ok(Migrations {
-        file_map,
-        file_contents,
-    })
+    Ok(Migrations { file_contents })
 }

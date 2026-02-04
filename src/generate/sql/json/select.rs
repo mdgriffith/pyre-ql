@@ -116,7 +116,6 @@ pub fn select_to_string(
     let initial_selection = initial_select(
         initial_indent,
         context,
-        query,
         query_info,
         table,
         query_table_field,
@@ -215,7 +214,6 @@ pub fn get_json_temp_table_name(query_field: &ast::QueryField) -> String {
 pub fn initial_select(
     indent: usize,
     context: &typecheck::Context,
-    query: &ast::Query,
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     query_field: &ast::QueryField,
@@ -226,12 +224,7 @@ pub fn initial_select(
     result.push_str("select ");
 
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
-    let fieldnames = &to_fieldnames(
-        context,
-        &ast::get_aliased_name(&query_field),
-        table,
-        &query_field.fields,
-    );
+    let fieldnames = &to_fieldnames(context, table, &query_field.fields);
     result.push_str(&fieldnames.join(", "));
     result.push_str("\n");
     result.push_str(&indent_str);
@@ -240,7 +233,6 @@ pub fn initial_select(
     result.push_str("\n");
 
     to_sql::render_where(
-        context,
         table,
         query_info,
         query_field,
@@ -340,12 +332,7 @@ fn select_linked(
 
     let mut field_names: Vec<String> = Vec::new();
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
-    let new_fieldnames = &to_fieldnames(
-        context,
-        &ast::get_aliased_name(&query_field),
-        table,
-        &query_field.fields,
-    );
+    let new_fieldnames = &to_fieldnames(context, table, &query_field.fields);
     field_names.push(link.foreign.fields.clone().join(", "));
     field_names.append(&mut new_fieldnames.clone());
     // field_names.push
@@ -380,20 +367,17 @@ fn select_linked(
     }
 
     // Check if render_where will add a WHERE clause
-    let mut has_where = false;
     let mut where_check = String::new();
     to_sql::render_where(
-        context,
         table,
         query_info,
         query_field,
         &ast::QueryOperation::Query,
         &mut where_check,
     );
-    has_where = where_check.contains("where");
+    let has_where = where_check.contains("where");
 
     to_sql::render_where(
-        context,
         table,
         query_info,
         query_field,
@@ -533,8 +517,7 @@ fn select_single_json(
 
     // Compose main json payload
     let mut json_object = String::new();
-    let new_fieldnames =
-        &to_fieldnames(context, query_aliased_as, table, &query_table_field.fields);
+    let new_fieldnames = &to_fieldnames(context, table, &query_table_field.fields);
     let mut first_field = true;
     let mut explicit_columns = HashSet::new();
     for field in &query_table_field.fields {
@@ -553,7 +536,6 @@ fn select_single_json(
         }
     }
 
-    let mut rendered_columns: HashSet<String> = HashSet::new();
     for field in new_fieldnames {
         if !first_field {
             json_object.push_str(",\n");
@@ -1267,7 +1249,6 @@ fn to_temp_table_alias(query_field: &ast::QueryField, table: &typecheck::Table) 
 
 fn to_fieldnames(
     context: &typecheck::Context,
-    table_alias: &str,
     table: &typecheck::Table,
     query_fields: &Vec<ast::ArgField>,
 ) -> Vec<String> {

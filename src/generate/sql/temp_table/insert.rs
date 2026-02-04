@@ -42,7 +42,6 @@ pub fn insert_to_string(
     statements.push(to_sql::ignore(initial_select(
         0,
         context,
-        query,
         table,
         query_table_field,
     )));
@@ -232,7 +231,6 @@ pub fn get_temp_table_name(query_field: &ast::QueryField) -> String {
 pub fn initial_select(
     indent: usize,
     context: &typecheck::Context,
-    query: &ast::Query,
     table: &typecheck::Table,
     query_table_field: &ast::QueryField,
 ) -> String {
@@ -242,7 +240,6 @@ pub fn initial_select(
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
     let new_fieldnames = &to_fieldnames(
         context,
-        &ast::get_aliased_name(&query_table_field),
         table,
         &ast::collect_query_fields(&query_table_field.fields),
     );
@@ -269,12 +266,7 @@ pub fn initial_select(
         field_names.join(", ")
     );
 
-    let values = &to_field_insert_values(
-        context,
-        &ast::get_aliased_name(&query_table_field),
-        table,
-        &all_query_fields,
-    );
+    let values = &to_field_insert_values(context, table, &all_query_fields);
 
     let mut final_values = values.clone();
     if has_updated_at_field && !updated_at_explicitly_set {
@@ -289,7 +281,7 @@ pub fn initial_select(
     result
 }
 
-pub fn insert_linked(
+fn insert_linked(
     indent: usize,
     context: &typecheck::Context,
     query: &ast::Query,
@@ -307,7 +299,6 @@ pub fn insert_linked(
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
     let new_fieldnames = &to_fieldnames(
         context,
-        &ast::get_aliased_name(&query_table_field),
         table,
         &ast::collect_query_fields(&query_table_field.fields),
     );
@@ -549,7 +540,6 @@ fn collect_column_names_recursive(
 
 fn to_fieldnames(
     context: &typecheck::Context,
-    table_alias: &str,
     table: &typecheck::Table,
     query_fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
@@ -563,26 +553,15 @@ fn to_fieldnames(
             .find(|&f| ast::has_field_or_linkname(&f, &field.name))
             .unwrap();
 
-        let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
-
-        result.append(&mut to_table_fieldname(
-            2,
-            context,
-            &table_name,
-            table_alias,
-            &table_field,
-            &field,
-        ));
+        result.append(&mut to_table_fieldname(2, context, &table_field, &field));
     }
 
     result
 }
 
 fn to_table_fieldname(
-    indent: usize,
+    _indent: usize,
     context: &typecheck::Context,
-    table_name: &str,
-    table_alias: &str,
     table_field: &ast::Field,
     query_field: &ast::QueryField,
 ) -> Vec<String> {
@@ -647,7 +626,6 @@ fn to_table_fieldname(
 // Insert
 fn to_field_insert_values(
     context: &typecheck::Context,
-    table_alias: &str,
     table: &typecheck::Table,
     fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {

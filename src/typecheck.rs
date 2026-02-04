@@ -865,7 +865,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
 
                                 ast::Field::FieldDirective(ast::FieldDirective::TableName((
                                     tablename_range,
-                                    tablename,
+                                    _tablename,
                                 ))) => tablenames.push(convert_range(tablename_range)),
 
                                 ast::Field::FieldDirective(ast::FieldDirective::Permissions(
@@ -1096,7 +1096,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                 }
 
                                 // Check for overlaps
-                                for (op, ranges) in operation_coverage {
+                                for (_op, ranges) in operation_coverage {
                                     if ranges.len() > 1 {
                                         errors.push(Error {
                                             filepath: file.path.clone(),
@@ -1144,7 +1144,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
 // Check for duplicate variants
 fn check_schema_definitions(context: &Context, database: &ast::Database, errors: &mut Vec<Error>) {
     let vars = context.variants.clone();
-    for (variant_name, (maybe_type_range, mut instances)) in vars {
+    for (_variant_name, (maybe_type_range, mut instances)) in vars {
         if instances.len() > 1 {
             let base_variant = instances.remove(0); // remove and use the first variant as the base
             let duplicates = instances; // the rest are duplicates
@@ -1208,8 +1208,8 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                         fields,
                         start,
                         end,
-                        start_name,
-                        end_name,
+                        start_name: _start_name,
+                        end_name: _end_name,
                     } => {
                         let mut field_names: HashMap<String, Option<Range>> = HashMap::new();
                         for column in ast::collect_columns(fields) {
@@ -1283,7 +1283,7 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                         }
                     }
                     ast::Definition::Tagged {
-                        name,
+                        name: _name,
                         variants,
                         start,
                         end,
@@ -1657,7 +1657,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
         match &param_info {
             ParamInfo::Defined {
                 defined_at,
-                type_,
+                type_: _type_,
                 used,
                 type_inferred,
                 from_session,
@@ -1780,7 +1780,7 @@ fn check_where_args(
         ast::WhereArg::Column(
             is_session_var,
             field_name,
-            operator,
+            _operator,
             query_val,
             field_name_range,
         ) => {
@@ -1941,7 +1941,7 @@ fn check_permissions_where_args(
             is_session_var,
             field_name,
             _operator,
-            query_val,
+            _query_val,
             field_name_range,
         ) => {
             if *is_session_var {
@@ -2259,7 +2259,7 @@ fn check_value(
     }
 
     match value {
-        ast::QueryValue::String((range, value)) => {
+        ast::QueryValue::String((range, _value)) => {
             if table_type_string != "String" {
                 errors.push(Error {
                     filepath: context.current_filepath.clone(),
@@ -2477,7 +2477,7 @@ fn check_value(
         }
         ast::QueryValue::LiteralTypeValue((range, details)) => {
             match context.types.get(table_type_string) {
-                Some((type_info, type_)) => {
+                Some((_type_info, type_)) => {
                     match type_ {
                         Type::OneOf { variants } => {
                             let mut found_variant = false;

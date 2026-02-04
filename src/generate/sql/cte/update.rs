@@ -4,8 +4,6 @@ use crate::generate::sql::to_sql;
 use crate::typecheck;
 
 pub fn update_to_string(
-    context: &typecheck::Context,
-    query: &ast::Query,
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     query_field: &ast::QueryField,
@@ -45,7 +43,6 @@ pub fn update_to_string(
     result.push_str("\n");
     let mut where_clause = String::new();
     to_sql::render_where(
-        context,
         table,
         query_info,
         query_field,
@@ -61,7 +58,6 @@ pub fn update_to_string(
     statements.push(to_sql::ignore(result));
 
     // Always generate the typed response query - mutations must return typed data
-    let query_field_name = &query_field.name;
     // Use the same table_name as the UPDATE statement for consistency
     let typed_response_sql =
         generate_typed_response_query(table, query_field, &table_name, &where_clause);
@@ -70,8 +66,7 @@ pub fn update_to_string(
     // Generate affected rows query if requested
     // Execute this BEFORE the final selection to avoid lock conflicts
     if include_affected_rows {
-        let affected_rows_sql =
-            generate_affected_rows_query(context, query_info, table, query_field, &where_clause);
+        let affected_rows_sql = generate_affected_rows_query(table, &where_clause);
         // Insert before the final selection (which now always exists)
         let final_idx = statements.len() - 1;
         statements.insert(final_idx, to_sql::include(affected_rows_sql));
@@ -156,13 +151,7 @@ fn generate_typed_response_query(
     sql
 }
 
-fn generate_affected_rows_query(
-    _context: &typecheck::Context,
-    query_info: &typecheck::QueryInfo,
-    table: &typecheck::Table,
-    query_field: &ast::QueryField,
-    where_clause: &str,
-) -> String {
+fn generate_affected_rows_query(table: &typecheck::Table, where_clause: &str) -> String {
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
     let columns = ast::collect_columns(&table.record.fields);
 

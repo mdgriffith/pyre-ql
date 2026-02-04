@@ -396,7 +396,7 @@ pub fn calculate_sync_deltas(
     for (session_id, session_data) in connected_sessions {
         let mut visible_rows = Vec::new();
 
-        for (flat_idx, (group_idx, row_idx, row_obj)) in flat_rows.iter().enumerate() {
+        for (_flat_idx, (group_idx, row_idx, row_obj)) in flat_rows.iter().enumerate() {
             let table_name = &affected_row_groups[*group_idx].table_name;
 
             let permission = table_map

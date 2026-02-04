@@ -114,7 +114,6 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
                     &all_queries,
                     &all_query_info_combined,
                     &schema,
-                    out_dir,
                     &mut files,
                 );
             }

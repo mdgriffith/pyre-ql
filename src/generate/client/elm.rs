@@ -6,8 +6,6 @@ use crate::generate::typealias;
 use crate::typecheck;
 use std::path::Path;
 
-mod rectangle;
-
 const ELM_DELTA_MODULE: &str = include_str!("./static/elm/src/Db/Delta.elm");
 
 pub fn generate(
@@ -1133,7 +1131,7 @@ fn generate_field_lens(
         result.push_str(&format!("{}NestedFields name =\n", field_name));
         result.push_str("    case name of\n");
 
-        for (nested_name, nested_type, is_optional) in &nested_fields {
+        for (nested_name, _nested_type, is_optional) in &nested_fields {
             let lens_constructor = if *is_optional {
                 "Db.Delta.maybeField"
             } else {
@@ -1220,7 +1218,7 @@ fn generate_nested_field_lens(
         result.push_str(&format!("{}NestedFields name =\n", field_name));
         result.push_str("    case name of\n");
 
-        for (nested_name, nested_nested_type, nested_is_optional) in &nested_fields {
+        for (nested_name, _nested_nested_type, nested_is_optional) in &nested_fields {
             let lens_constructor = if *nested_is_optional {
                 "Db.Delta.maybeField"
             } else {

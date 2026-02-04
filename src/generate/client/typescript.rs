@@ -9,7 +9,6 @@ use std::path::Path;
 pub fn generate(
     context: &typecheck::Context,
     base_path: &Path,
-    database: &ast::Database,
     files: &mut Vec<filesystem::GeneratedFile<String>>,
 ) {
     // Generate schema metadata file

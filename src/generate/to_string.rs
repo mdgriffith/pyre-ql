@@ -630,7 +630,6 @@ pub fn query(query_list: &ast::QueryList) -> String {
 
     let mut result = String::new();
     // Skip trailing QueryLines - we'll handle them with normalization
-    let mut queries_iter = query_list.queries.iter();
     let mut last_non_lines_idx = None;
 
     // Find the last non-QueryLines element

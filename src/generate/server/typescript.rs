@@ -424,22 +424,6 @@ pub fn literal_quote(s: &str) -> String {
     format!("`{}`", s)
 }
 
-fn format_ts_list(items: Vec<String>) -> String {
-    let mut result = "[ ".to_string();
-    let mut first = true;
-    for item in items {
-        if first {
-            result.push_str(&format!("{}", item));
-        } else {
-            result.push_str(&format!(", {}", item));
-        }
-
-        first = false;
-    }
-    result.push_str("]");
-    result
-}
-
 // A specialized
 fn get_formatted_used_params(
     top_level_field_alias: &str,
@@ -593,27 +577,6 @@ fn to_query_file(
     }
 
     result.push_str("];\n\n\n");
-
-    // Rectangle data decoder
-    // result.push_str("export const ReturnRectangle = Ark.type({\n");
-    // for field in &query.fields {
-    //     match field {
-    //         ast::TopLevelQueryField::Field(query_field) => {
-    //             let table = context.tables.get(&query_field.name).unwrap();
-
-    //             to_flat_query_decoder(
-    //                 context,
-    //                 &ast::get_aliased_name(&query_field),
-    //                 &table.record,
-    //                 &ast::collect_query_fields(&query_field.fields),
-    //                 &mut result,
-    //             );
-    //         }
-    //         ast::TopLevelQueryField::Lines { .. } => {}
-    //         ast::TopLevelQueryField::Comment { .. } => {}
-    //     }
-    // }
-    // result.push_str("});\n\n");
 
     let session_args = get_session_args(&query_info.variables);
 
@@ -779,63 +742,6 @@ fn to_ts_type_string(nullable: bool, type_: &str) -> String {
         format!("{}?", base_type)
     } else {
         base_type.to_string()
-    }
-}
-
-fn to_flat_query_decoder(
-    context: &typecheck::Context,
-    table_alias: &str,
-    table: &ast::RecordDetails,
-    fields: &Vec<&ast::QueryField>,
-    result: &mut String,
-) {
-    for field in fields {
-        if let Some(table_field) = table
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &field.name))
-        {
-            to_table_field_flat_decoder(2, context, table_alias, table_field, field, result);
-        }
-    }
-}
-
-fn to_table_field_flat_decoder(
-    indent: usize,
-    context: &typecheck::Context,
-    table_alias: &str,
-    table_field: &ast::Field,
-    query_field: &ast::QueryField,
-    result: &mut String,
-) {
-    match table_field {
-        ast::Field::Column(column) => {
-            let spaces = " ".repeat(indent);
-            result.push_str(&format!(
-                "{}\"{}\": {},\n",
-                spaces,
-                ast::get_select_alias(table_alias, query_field),
-                to_ts_type_decoder(true, column.nullable, &column.type_.to_string())
-            ));
-        }
-        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            match typecheck::get_linked_table(context, &link) {
-                Some(table) => {
-                    to_flat_query_decoder(
-                        context,
-                        &ast::get_aliased_name(&query_field),
-                        &table.record,
-                        &ast::collect_query_fields(&query_field.fields),
-                        result,
-                    );
-                }
-                None => {
-                    eprintln!("Error: Linked table for link '{}' was not found in typecheck context. This should not happen after successful typechecking. Skipping link generation.", link.link_name);
-                }
-            }
-        }
-
-        _ => (),
     }
 }
 

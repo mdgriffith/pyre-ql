@@ -30,7 +30,7 @@ pub fn generate_schema(
     write_client_schema(&Client::Elm, context, database, files);
     write_client_schema(&Client::Typescript, context, database, files);
     write_server_schema(&Server::Typescript, context, database, files);
-    write_simple_schema(context, database, files);
+    write_simple_schema(database, files);
 }
 
 // CLIENT
@@ -50,9 +50,7 @@ fn write_client_schema(
     // client/{lang} (relative path)
     match client {
         Client::Elm => generate::client::elm::generate(&out_dir, database, files),
-        Client::Typescript => {
-            generate::client::typescript::generate(context, &out_dir, database, files)
-        }
+        Client::Typescript => generate::client::typescript::generate(context, &out_dir, files),
     }
 }
 
@@ -95,12 +93,11 @@ fn to_server_dir_path(server: &Server, out_dir: &Path) -> PathBuf {
 // SIMPLE
 
 fn write_simple_schema(
-    context: &typecheck::Context,
     database: &ast::Database,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
     let simple_dir = Path::new("simple");
-    generate::simple::typescript::generate(context, database, &simple_dir, files);
+    generate::simple::typescript::generate(database, &simple_dir, files);
 }
 
 // WRITE QUERIES
@@ -110,45 +107,20 @@ pub fn write_queries(
     query_list: &ast::QueryList,
     all_query_info: &HashMap<String, typecheck::QueryInfo>,
     database: &ast::Database,
-    base_out_dir: &Path,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
-    write_client_queries(
-        &Client::Elm,
-        context,
-        query_list,
-        all_query_info,
-        database,
-        base_out_dir,
-        files,
-    );
-    write_client_queries(
-        &Client::Typescript,
-        context,
-        query_list,
-        all_query_info,
-        database,
-        base_out_dir,
-        files,
-    );
+    write_client_queries(&Client::Elm, context, query_list, files);
+    write_client_queries(&Client::Typescript, context, query_list, files);
     write_server_queries(
         &Server::Typescript,
         context,
         query_list,
         all_query_info,
         database,
-        base_out_dir,
         files,
         true, // Generate runner file with all queries
     );
-    write_simple_queries(
-        context,
-        query_list,
-        all_query_info,
-        database,
-        base_out_dir,
-        files,
-    );
+    write_simple_queries(context, query_list, all_query_info, database, files);
 }
 
 // CLIENT
@@ -157,9 +129,6 @@ fn write_client_queries(
     client: &Client,
     context: &typecheck::Context,
     query_list: &ast::QueryList,
-    all_query_info: &HashMap<String, typecheck::QueryInfo>,
-    database: &ast::Database,
-    base_out_dir: &Path,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
     // Create relative path: client/{lang} (relative to base_out_dir)
@@ -184,7 +153,6 @@ fn write_server_queries(
     query_list: &ast::QueryList,
     all_query_info: &HashMap<String, typecheck::QueryInfo>,
     database: &ast::Database,
-    base_out_dir: &Path,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
     generate_runner_file: bool,
 ) {
@@ -214,7 +182,6 @@ fn write_simple_queries(
     query_list: &ast::QueryList,
     all_query_info: &HashMap<String, typecheck::QueryInfo>,
     database: &ast::Database,
-    _base_out_dir: &Path,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
     // Use relative path: simple/ (relative to base_out_dir)

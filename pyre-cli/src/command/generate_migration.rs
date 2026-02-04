@@ -99,7 +99,7 @@ pub async fn generate_migration<'a>(
                                     }
                                     pyre::generate::sql::to_sql::SqlAndParams::SqlWithParams {
                                         sql,
-                                        args,
+                                        args: _args,
                                     } => {
                                         all_sql_as_string.push_str(&sql);
                                         // for arg in args {

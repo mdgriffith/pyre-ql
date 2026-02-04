@@ -12,7 +12,6 @@ use std::path::Path;
 /// Generate typesafe standalone TypeScript functions for direct SQLite usage
 /// This is for the "simple" use case - no client/server, no sync, just direct DB calls
 pub fn generate(
-    context: &typecheck::Context,
     database: &ast::Database,
     base_out_dir: &Path,
     files: &mut Vec<filesystem::GeneratedFile<String>>,

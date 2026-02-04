@@ -33,7 +33,6 @@ With 'where' it's the same conceptual problem.
 */
 pub fn select_to_string(
     context: &typecheck::Context,
-    query: &ast::Query,
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     query_field: &ast::QueryField,
@@ -70,7 +69,6 @@ pub fn select_to_string(
 
     // WHERE
     to_sql::render_where(
-        context,
         table,
         query_info,
         query_field,

@@ -154,7 +154,6 @@ pub fn operator(op: &ast::Operator) -> String {
 // WHERE
 
 pub fn render_where(
-    context: &typecheck::Context,
     table: &typecheck::Table,
     query_info: &typecheck::QueryInfo,
     query_field: &ast::QueryField,
@@ -185,80 +184,6 @@ pub fn render_where(
         let combined = ast::WhereArg::And(wheres.clone());
         let where_str = render_where_arg(&combined, table, query_info, query_field);
         result.push_str(&format!(" {}\n", where_str));
-    }
-}
-
-fn to_where(
-    context: &typecheck::Context,
-    table: &typecheck::Table,
-    query_info: &typecheck::QueryInfo,
-    query_fields: &Vec<&ast::QueryField>,
-    operation: &ast::QueryOperation,
-) -> Vec<String> {
-    let mut result: Vec<String> = vec![];
-
-    for query_field in query_fields {
-        let table_field = &table
-            .record
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-            .unwrap();
-
-        result.append(&mut to_subwhere(
-            context,
-            table,
-            table_field,
-            operation,
-            query_info,
-            query_field,
-        ));
-    }
-
-    result
-}
-
-fn to_subwhere(
-    context: &typecheck::Context,
-    table: &typecheck::Table,
-    table_field: &ast::Field,
-    operation: &ast::QueryOperation,
-    query_info: &typecheck::QueryInfo,
-    query_field: &ast::QueryField,
-) -> Vec<String> {
-    match table_field {
-        ast::Field::Column(_) => {
-            let mut wheres = ast::collect_wheres(&query_field.fields);
-
-            // Add any permissions from the table
-            match ast::get_permissions(&table.record, operation) {
-                Some(perms) => {
-                    wheres.push(perms);
-                }
-                None => {}
-            }
-            let mut result = vec![];
-
-            for where_arg in &wheres {
-                result.push(render_where_arg(&where_arg, table, query_info, query_field));
-            }
-            return result;
-        }
-        ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
-            let link_table = typecheck::get_linked_table(context, &link).unwrap();
-
-            let inner_list = to_where(
-                context,
-                link_table,
-                query_info,
-                &ast::collect_query_fields(&query_field.fields),
-                operation,
-            );
-
-            return inner_list;
-        }
-
-        _ => vec![],
     }
 }
 

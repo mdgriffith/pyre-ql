@@ -256,7 +256,6 @@ pub struct Table {
 // Intermediates
 
 #[derive(Debug, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct DbTable {
     pub name: String,
 }
@@ -356,7 +355,6 @@ impl TryFrom<String> for ForeignKeyMatch {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[allow(dead_code)]
 pub struct ForeignKey {
     pub id: usize,
     pub seq: usize,
@@ -388,7 +386,6 @@ pub struct ForeignKey {
 //   },
 // ]
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[allow(dead_code)]
 pub struct ColumnInfo {
     pub cid: usize,
     pub name: String,
@@ -408,7 +405,6 @@ pub struct ColumnInfo {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct MigrationRun {
     pub name: String,
 }

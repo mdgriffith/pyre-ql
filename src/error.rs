@@ -1410,13 +1410,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
-        ErrorType::VariantFieldTypeCollision {
-            field,
-            type_one,
-            type_two,
-            variant_one,
-            variant_two,
-        } => {
+        ErrorType::VariantFieldTypeCollision { .. } => {
             format!("Fields with the same name across variants must have the same type.",)
         }
         ErrorType::MigrationTableDropped { table_name } => {
@@ -1428,14 +1422,14 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
         ErrorType::MigrationColumnDropped {
             table_name,
             column_name,
-            added_columns,
+            ..
         } => {
             format!("The column {} has been dropped from the table {}. This might be causing issues in your query. Consider adding the column back or updating your query to use the new column format.", yellow_if(in_color, column_name), yellow_if(in_color, table_name))
         }
         ErrorType::MigrationColumnModified {
             table_name,
             column_name,
-            changes,
+            ..
         } => {
             format!("The column {} has been modified in the table {}. This might be causing issues in your query. Consider updating your query to use the new column format.", yellow_if(in_color, column_name), yellow_if(in_color, table_name))
         }

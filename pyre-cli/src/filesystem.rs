@@ -99,7 +99,7 @@ pub fn collect_filepaths(dir: &Path) -> io::Result<filesystem::Found> {
                 Some(os_file_name) => {
                     match os_file_name.to_str() {
                         None => continue,
-                        Some(file_name) => {
+                        Some(_file_name) => {
                             // Check if the file is `schema.pyre`
                             if filesystem::is_schema_file(relative_path.to_str().unwrap()) {
                                 let mut file = fs::File::open(file_str)?;

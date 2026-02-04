@@ -7,7 +7,7 @@ use pyre::filesystem;
 use pyre::parser;
 use pyre::typecheck;
 
-pub fn check(options: &Options, files: Vec<String>, json: bool) -> io::Result<()> {
+pub fn check(options: &Options, _files: Vec<String>, json: bool) -> io::Result<()> {
     let paths = crate::filesystem::collect_filepaths(&options.in_dir)?;
 
     // Build a map of schema filepaths to their contents for error formatting
