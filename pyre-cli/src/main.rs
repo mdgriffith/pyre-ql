@@ -92,15 +92,6 @@ enum Commands {
         migration_dir: String,
     },
 
-    /// Create new resources
-    New {
-        #[command(subcommand)]
-        resource: NewCommands,
-    },
-}
-
-#[derive(Subcommand)]
-enum NewCommands {
     /// Generate a migration
     Migration {
         /// The migration name.
@@ -120,6 +111,7 @@ enum NewCommands {
         #[arg(long, default_value = "pyre/migrations")]
         migration_dir: String,
     },
+
 }
 
 #[tokio::main]
@@ -173,25 +165,23 @@ async fn main() -> io::Result<()> {
                 command::migrate(&options, database, auth, migration_dir, namespace).await?;
             }
         }
-        Commands::New { resource } => match resource {
-            NewCommands::Migration {
+        Commands::Migration {
+            name,
+            db,
+            auth,
+            migration_dir,
+            namespace,
+        } => {
+            command::generate_migration(
+                &options,
                 name,
                 db,
                 auth,
-                migration_dir,
+                Path::new(migration_dir),
                 namespace,
-            } => {
-                command::generate_migration(
-                    &options,
-                    name,
-                    db,
-                    auth,
-                    Path::new(migration_dir),
-                    namespace,
-                )
-                .await?;
-            }
-        },
+            )
+            .await?;
+        }
     }
     Ok(())
 }
