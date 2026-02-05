@@ -224,7 +224,7 @@ async fn test_limit_with_session_variable() -> Result<(), TestError> {
         }
     "#;
 
-    let mut session = std::collections::HashMap::new();
+    let session = std::collections::HashMap::new();
     // Session variables are typically used for permissions, not limit values
     // So we'll just test that limit works independently
 

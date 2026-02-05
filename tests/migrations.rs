@@ -1,13 +1,114 @@
-#[path = "helpers/mod.rs"]
-mod helpers;
+#[path = "helpers/error_basic.rs"]
+mod error;
+#[path = "helpers/schema_migrations.rs"]
+mod schema;
 
-use helpers::schema;
-use helpers::test_database::TestDatabase;
-use helpers::TestError;
+use error::TestError;
+use libsql::Database;
+use pyre::ast;
 use pyre::db::diff;
 use pyre::db::introspect;
 use pyre::parser;
 use pyre::typecheck;
+use tempfile::TempDir;
+
+struct MigrationDatabase {
+    db: Database,
+    temp_dir: TempDir,
+    schema: ast::Schema,
+}
+
+impl MigrationDatabase {
+    async fn new(schema_source: &str) -> Result<Self, TestError> {
+        let temp_dir = TempDir::new().map_err(TestError::Io)?;
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.to_str().ok_or(TestError::InvalidPath)?;
+
+        let db = libsql::Builder::new_local(db_path_str)
+            .build()
+            .await
+            .map_err(TestError::Database)?;
+
+        let mut schema = ast::Schema::default();
+        parser::run("schema.pyre", schema_source, &mut schema)
+            .map_err(|e| TestError::ParseError(parser::render_error(schema_source, e, false)))?;
+
+        let database = ast::Database {
+            schemas: vec![schema.clone()],
+        };
+        let context = typecheck::check_schema(&database)
+            .map_err(|errors| TestError::TypecheckError(format!("{:?}", errors)))?;
+
+        let introspection = introspect::Introspection {
+            tables: vec![],
+            migration_state: introspect::MigrationState::NoMigrationTable,
+            schema: introspect::SchemaResult::Success {
+                schema: ast::Schema::default(),
+                context: typecheck::empty_context(),
+            },
+        };
+
+        let db_diff = diff::diff(&context, &schema, &introspection);
+        let mut migration_sql = diff::to_sql::to_sql(&db_diff);
+
+        match introspection.migration_state {
+            introspect::MigrationState::NoMigrationTable => {
+                migration_sql.insert(
+                    0,
+                    pyre::generate::sql::to_sql::SqlAndParams::Sql(
+                        pyre::db::migrate::CREATE_MIGRATION_TABLE.to_string(),
+                    ),
+                );
+                migration_sql.insert(
+                    1,
+                    pyre::generate::sql::to_sql::SqlAndParams::Sql(
+                        pyre::db::migrate::CREATE_SCHEMA_TABLE.to_string(),
+                    ),
+                );
+            }
+            introspect::MigrationState::MigrationTable { .. } => {}
+        }
+
+        let schema_string = pyre::generate::to_string::schema_to_string("", &schema);
+        migration_sql.push(pyre::generate::sql::to_sql::SqlAndParams::SqlWithParams {
+            sql: pyre::db::migrate::INSERT_SCHEMA.to_string(),
+            args: vec![schema_string],
+        });
+
+        let conn = db.connect().map_err(TestError::Database)?;
+        let tx = conn
+            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
+            .await
+            .map_err(TestError::Database)?;
+
+        for stmt in migration_sql {
+            match stmt {
+                pyre::generate::sql::to_sql::SqlAndParams::Sql(sql) => {
+                    tx.execute_batch(&sql).await.map_err(TestError::Database)?;
+                }
+                pyre::generate::sql::to_sql::SqlAndParams::SqlWithParams { sql, args } => {
+                    let values: Vec<libsql::Value> = args
+                        .into_iter()
+                        .map(libsql::Value::Text)
+                        .collect();
+                    tx.execute(&sql, libsql::params_from_iter(values))
+                        .await
+                        .map_err(TestError::Database)?;
+                }
+            }
+        }
+
+        tx.commit().await.map_err(TestError::Database)?;
+
+        let db = Self {
+            db,
+            temp_dir,
+            schema,
+        };
+        let _ = db.temp_dir.path();
+        Ok(db)
+    }
+}
 
 /// Helper function to create a diff between two schemas
 /// Takes the old schema (as a string) and new schema (as a string) and returns the diff
@@ -16,7 +117,7 @@ async fn create_migration_diff(
     new_schema_source: &str,
 ) -> Result<diff::Diff, TestError> {
     // Create database with old schema
-    let db = TestDatabase::new(old_schema_source).await?;
+    let db = MigrationDatabase::new(old_schema_source).await?;
 
     // Introspect the database to get actual tables
     let conn = db.db.connect().map_err(TestError::Database)?;

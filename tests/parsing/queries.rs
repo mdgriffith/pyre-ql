@@ -624,7 +624,7 @@ fn test_parse_string_column_position() {
     use pyre::parser::Text;
     let (remaining, _) =
         nom::bytes::complete::take_until::<_, _, VerboseError<Text>>("\"")(text).unwrap();
-    let (remaining, result) = parse_string(remaining).unwrap();
+    let (_remaining, result) = parse_string(remaining).unwrap();
 
     match result {
         pyre::ast::QueryValue::String((range, _)) => {
@@ -669,7 +669,7 @@ fn test_parse_variable_column_position() {
     use pyre::parser::Text;
     let (remaining, _) =
         nom::bytes::complete::take_until::<_, _, VerboseError<Text>>("$")(text).unwrap();
-    let (remaining, result) = parse_variable(remaining).unwrap();
+    let (_remaining, result) = parse_variable(remaining).unwrap();
 
     match result {
         pyre::ast::QueryValue::Variable((range, _)) => {

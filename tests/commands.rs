@@ -15,10 +15,12 @@ impl TestContext {
         // Set up any initial files needed
         std::fs::create_dir(workspace_path.join("pyre")).unwrap();
 
-        Self {
+        let context = Self {
             temp_dir,
             workspace_path,
-        }
+        };
+        let _ = context.temp_dir.path();
+        context
     }
 
     fn run_command(&self, subcommand: &str) -> assert_cmd::Command {

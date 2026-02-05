@@ -10,7 +10,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use tempfile::TempDir;
 
-use super::TestError;
+use super::error::TestError;
 use pyre::generate::sql::to_sql::SqlAndParams;
 
 pub struct TestDatabase {
@@ -149,12 +149,14 @@ impl TestDatabase {
 
         tx.commit().await.map_err(TestError::Database)?;
 
-        Ok(TestDatabase {
+        let db = TestDatabase {
             db,
             temp_dir,
             context,
             schema,
-        })
+        };
+        let _ = db.temp_dir.path();
+        Ok(db)
     }
 
     /// Execute a query and return the SQL that would be generated
@@ -913,7 +915,7 @@ fn replace_params_positional(sql: &str, param_names: &[String]) -> String {
     let mut i = 0;
     while let Some(ch) = chars.next() {
         if ch == '$' {
-            let start = i;
+            let _start = i;
             let mut param_name = String::new();
             i += 1; // skip $
             while let Some(&next_ch) = chars.peek() {

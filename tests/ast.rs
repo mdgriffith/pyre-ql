@@ -1,11 +1,8 @@
-#[path = "helpers/mod.rs"]
-mod helpers;
-
 use pyre::ast;
 use pyre::parser;
 use pyre::typecheck;
-
-use helpers::schema;
+#[path = "helpers/schema_v1.rs"]
+mod schema;
 
 /// Test helper to create a simple record with a field that has a specific directive
 fn create_record_with_directive(

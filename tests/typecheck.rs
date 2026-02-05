@@ -16,7 +16,7 @@ fn check_schema_and_get_layers(schema_source: &str) -> std::collections::HashMap
 
     // Extract sync layers for each table
     let mut layers = std::collections::HashMap::new();
-    for (record_name, table) in &context.tables {
+    for (_record_name, table) in &context.tables {
         let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
         layers.insert(table_name, table.sync_layer);
     }

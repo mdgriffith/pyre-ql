@@ -32,17 +32,6 @@ record User {
 }
     "#;
 
-    let query_source = r#"
-insert CreatePost($title: String, $content: String, $published: Bool) {
-    post {
-        userId = Session.userId
-        title = $title
-        content = $content
-        published = $published
-    }
-}
-    "#;
-
     // Parse schema
     let mut schema = ast::Schema::default();
     parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
@@ -77,10 +66,4 @@ insert CreatePost($title: String, $content: String, $published: Bool) {
             return;
         }
     }
-
-    let context = typecheck::check_schema(&database).expect("Failed to typecheck schema");
-
-    // Parse query
-    let query_list =
-        parser::parse_query("query.pyre", query_source).expect("Failed to parse query");
 }

@@ -256,7 +256,6 @@ fn test_query_with_only_comments() {
 
 #[test]
 fn test_empty_file() {
-    let source = "";
     let database = create_test_database();
 
     // Empty file can't be parsed, so create an empty query list manually

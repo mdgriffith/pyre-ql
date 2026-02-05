@@ -1,14 +1,432 @@
-#[path = "helpers/mod.rs"]
-mod helpers;
+#[path = "helpers/error.rs"]
+mod error;
+#[path = "helpers/schema_full.rs"]
+mod schema;
 
-use helpers::schema;
-use helpers::test_database::TestDatabase;
-use helpers::TestError;
+use error::TestError;
+use libsql::Database;
+use pyre::ast;
+use pyre::db::diff;
+use pyre::db::introspect;
+use pyre::db::migrate;
+use pyre::error as pyre_error;
+use pyre::generate::sql::to_sql::SqlAndParams;
+use pyre::parser;
+use pyre::typecheck;
+use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+use tempfile::TempDir;
+
+struct SeedDatabase {
+    db: Database,
+    temp_dir: TempDir,
+    context: typecheck::Context,
+    schema: ast::Schema,
+}
+
+impl SeedDatabase {
+    async fn new(schema_source: &str) -> Result<Self, TestError> {
+        let temp_dir = TempDir::new().map_err(TestError::Io)?;
+        let db_path = temp_dir.path().join("test.db");
+        let db_path_str = db_path.to_str().ok_or(TestError::InvalidPath)?;
+
+        let db = libsql::Builder::new_local(db_path_str)
+            .build()
+            .await
+            .map_err(TestError::Database)?;
+
+        let mut schema = ast::Schema::default();
+        parser::run("schema.pyre", schema_source, &mut schema)
+            .map_err(|e| TestError::ParseError(parser::render_error(schema_source, e, false)))?;
+
+        let database = ast::Database {
+            schemas: vec![schema.clone()],
+        };
+        let context = typecheck::check_schema(&database)
+            .map_err(|errors| TestError::TypecheckError(format_errors(schema_source, &errors)))?;
+
+        let introspection = introspect::Introspection {
+            tables: vec![],
+            migration_state: introspect::MigrationState::NoMigrationTable,
+            schema: introspect::SchemaResult::Success {
+                schema: ast::Schema::default(),
+                context: typecheck::empty_context(),
+            },
+        };
+
+        let db_diff = diff::diff(&context, &schema, &introspection);
+        let mut migration_sql = diff::to_sql::to_sql(&db_diff);
+
+        match introspection.migration_state {
+            introspect::MigrationState::NoMigrationTable => {
+                migration_sql.insert(
+                    0,
+                    SqlAndParams::Sql(migrate::CREATE_MIGRATION_TABLE.to_string()),
+                );
+                migration_sql.insert(
+                    1,
+                    SqlAndParams::Sql(migrate::CREATE_SCHEMA_TABLE.to_string()),
+                );
+            }
+            introspect::MigrationState::MigrationTable { .. } => {}
+        }
+
+        let schema_string = pyre::generate::to_string::schema_to_string("", &schema);
+        migration_sql.push(SqlAndParams::SqlWithParams {
+            sql: migrate::INSERT_SCHEMA.to_string(),
+            args: vec![schema_string],
+        });
+
+        let conn = db.connect().map_err(TestError::Database)?;
+        let tx = conn
+            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
+            .await
+            .map_err(TestError::Database)?;
+
+        for stmt in migration_sql {
+            match stmt {
+                SqlAndParams::Sql(sql) => {
+                    tx.execute_batch(&sql).await.map_err(TestError::Database)?;
+                }
+                SqlAndParams::SqlWithParams { sql, args } => {
+                    let values: Vec<libsql::Value> =
+                        args.into_iter().map(libsql::Value::Text).collect();
+                    tx.execute(&sql, libsql::params_from_iter(values))
+                        .await
+                        .map_err(TestError::Database)?;
+                }
+            }
+        }
+
+        tx.commit().await.map_err(TestError::Database)?;
+
+        let db = Self {
+            db,
+            temp_dir,
+            context,
+            schema,
+        };
+        let _ = db.temp_dir.path();
+        Ok(db)
+    }
+
+    fn generate_query_sql(
+        &self,
+        query_source: &str,
+    ) -> Result<Vec<(bool, SqlAndParams)>, TestError> {
+        let query_list = parser::parse_query("query.pyre", query_source)
+            .map_err(|e| TestError::ParseError(parser::render_error(query_source, e, false)))?;
+
+        let context = &self.context;
+        let query_info = typecheck::check_queries(&query_list, context)
+            .map_err(|errors| TestError::TypecheckError(format_errors(query_source, &errors)))?;
+
+        let query = query_list
+            .queries
+            .iter()
+            .find_map(|q| match q {
+                ast::QueryDef::Query(q) => Some(q),
+                _ => None,
+            })
+            .ok_or(TestError::NoQueryFound)?;
+
+        let info = query_info
+            .get(&query.name)
+            .ok_or(TestError::NoQueryInfoFound)?;
+
+        let table_field = query
+            .fields
+            .iter()
+            .find_map(|f| match f {
+                ast::TopLevelQueryField::Field(f) => Some(f),
+                _ => None,
+            })
+            .ok_or(TestError::NoQueryFound)?;
+
+        let table = context
+            .tables
+            .get(&table_field.name)
+            .ok_or(TestError::NoQueryFound)?;
+
+        let prepared_statements =
+            pyre::generate::sql::to_string(context, query, info, table, table_field);
+
+        let mut sql_statements = Vec::new();
+        for prepared in prepared_statements {
+            sql_statements.push((prepared.include, SqlAndParams::Sql(prepared.sql)));
+        }
+
+        Ok(sql_statements)
+    }
+
+    async fn execute_query_with_params(
+        &self,
+        query_source: &str,
+        params: HashMap<String, libsql::Value>,
+    ) -> Result<Vec<libsql::Rows>, TestError> {
+        let query_list = parser::parse_query("query.pyre", query_source)
+            .map_err(|e| TestError::ParseError(parser::render_error(query_source, e, false)))?;
+
+        let query = query_list
+            .queries
+            .iter()
+            .find_map(|q| match q {
+                ast::QueryDef::Query(q) => Some(q),
+                _ => None,
+            })
+            .ok_or(TestError::NoQueryFound)?;
+
+        let param_names: Vec<String> = query.args.iter().map(|arg| arg.name.clone()).collect();
+        let sql_statements = self.generate_query_sql(query_source)?;
+
+        let conn = self.db.connect().map_err(TestError::Database)?;
+        let mut results = Vec::new();
+
+        for (include, sql_stmt) in sql_statements {
+            match sql_stmt {
+                SqlAndParams::Sql(sql) => {
+                    let mut param_values_for_stmt = Vec::new();
+                    let mut seen_params = std::collections::HashSet::new();
+
+                    let mut chars = sql.chars().peekable();
+                    while let Some(ch) = chars.next() {
+                        if ch == '$' {
+                            let mut param_name = String::new();
+                            while let Some(&next_ch) = chars.peek() {
+                                if next_ch.is_alphanumeric() || next_ch == '_' {
+                                    param_name.push(chars.next().unwrap());
+                                } else {
+                                    break;
+                                }
+                            }
+                            if param_names.contains(&param_name)
+                                && !seen_params.contains(&param_name)
+                            {
+                                seen_params.insert(param_name.clone());
+                                param_values_for_stmt.push(
+                                    params
+                                        .get(&param_name)
+                                        .cloned()
+                                        .unwrap_or(libsql::Value::Null),
+                                );
+                            }
+                        }
+                    }
+
+                    let sql_with_params = if param_names.is_empty() {
+                        sql.clone()
+                    } else {
+                        replace_params_positional(&sql, &param_names)
+                    };
+
+                    if include {
+                        if param_values_for_stmt.is_empty() {
+                            let rows = conn
+                                .query(&sql_with_params, ())
+                                .await
+                                .map_err(TestError::Database)?;
+                            results.push(rows);
+                        } else {
+                            let rows = conn
+                                .query(
+                                    &sql_with_params,
+                                    libsql::params_from_iter(param_values_for_stmt.clone()),
+                                )
+                                .await
+                                .map_err(TestError::Database)?;
+                            results.push(rows);
+                        }
+                    } else {
+                        let has_returning = sql_with_params.to_uppercase().contains("RETURNING");
+                        if has_returning {
+                            if param_values_for_stmt.is_empty() {
+                                let mut rows = conn
+                                    .query(&sql_with_params, ())
+                                    .await
+                                    .map_err(TestError::Database)?;
+                                while rows.next().await.map_err(TestError::Database)?.is_some() {}
+                            } else {
+                                let mut rows = conn
+                                    .query(
+                                        &sql_with_params,
+                                        libsql::params_from_iter(param_values_for_stmt.clone()),
+                                    )
+                                    .await
+                                    .map_err(TestError::Database)?;
+                                while rows.next().await.map_err(TestError::Database)?.is_some() {}
+                            }
+                        } else if param_values_for_stmt.is_empty() {
+                            conn.execute(&sql_with_params, ())
+                                .await
+                                .map_err(TestError::Database)?;
+                        } else {
+                            conn.execute(
+                                &sql_with_params,
+                                libsql::params_from_iter(param_values_for_stmt.clone()),
+                            )
+                            .await
+                            .map_err(TestError::Database)?;
+                        }
+                    }
+                }
+                SqlAndParams::SqlWithParams { sql, args } => {
+                    let mut param_values_for_stmt = Vec::new();
+                    let mut seen_params = std::collections::HashSet::new();
+
+                    let mut chars = sql.chars().peekable();
+                    while let Some(ch) = chars.next() {
+                        if ch == '$' {
+                            let mut param_name = String::new();
+                            while let Some(&next_ch) = chars.peek() {
+                                if next_ch.is_alphanumeric() || next_ch == '_' {
+                                    param_name.push(chars.next().unwrap());
+                                } else {
+                                    break;
+                                }
+                            }
+                            if param_names.contains(&param_name)
+                                && !seen_params.contains(&param_name)
+                            {
+                                seen_params.insert(param_name.clone());
+                                param_values_for_stmt.push(
+                                    params
+                                        .get(&param_name)
+                                        .cloned()
+                                        .unwrap_or(libsql::Value::Null),
+                                );
+                            }
+                        }
+                    }
+
+                    let mut values: Vec<libsql::Value> =
+                        args.into_iter().map(libsql::Value::Text).collect();
+                    values.extend(param_values_for_stmt);
+                    let sql_with_params = if param_names.is_empty() {
+                        sql.clone()
+                    } else {
+                        replace_params_positional(&sql, &param_names)
+                    };
+
+                    if include {
+                        let rows = conn
+                            .query(&sql_with_params, libsql::params_from_iter(values))
+                            .await
+                            .map_err(TestError::Database)?;
+                        results.push(rows);
+                    } else {
+                        conn.execute(&sql_with_params, libsql::params_from_iter(values))
+                            .await
+                            .map_err(TestError::Database)?;
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn execute_query(&self, query_source: &str) -> Result<Vec<libsql::Rows>, TestError> {
+        self.execute_query_with_params(query_source, HashMap::new())
+            .await
+    }
+
+    async fn parse_query_results(
+        &self,
+        rows: Vec<libsql::Rows>,
+    ) -> Result<HashMap<String, Vec<JsonValue>>, TestError> {
+        let mut result = HashMap::new();
+
+        for mut rows_set in rows {
+            let column_count = rows_set.column_count();
+            if column_count == 0 {
+                continue;
+            }
+
+            while let Some(row) = rows_set.next().await.map_err(TestError::Database)? {
+                for i in 0..column_count {
+                    let col_name = rows_set.column_name(i).ok_or(TestError::NoQueryFound)?;
+
+                    if let Ok(json_str) = row.get::<String>(i as i32) {
+                        if let Ok(json_value) = serde_json::from_str::<JsonValue>(&json_str) {
+                            match json_value {
+                                JsonValue::Array(arr) => {
+                                    result
+                                        .entry(col_name.to_string())
+                                        .or_insert_with(Vec::new)
+                                        .extend(arr);
+                                }
+                                JsonValue::Object(_) => {
+                                    result
+                                        .entry(col_name.to_string())
+                                        .or_insert_with(Vec::new)
+                                        .push(json_value);
+                                }
+                                _ => {
+                                    result
+                                        .entry(col_name.to_string())
+                                        .or_insert_with(Vec::new)
+                                        .push(json_value);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    async fn execute_raw(&self, sql: &str) -> Result<libsql::Rows, TestError> {
+        let conn = self.db.connect().map_err(TestError::Database)?;
+        conn.query(sql, ()).await.map_err(TestError::Database)
+    }
+}
+
+fn format_errors(schema_source: &str, errors: &[pyre_error::Error]) -> String {
+    errors
+        .iter()
+        .map(|e| pyre_error::format_error(schema_source, e, false))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn replace_params_positional(sql: &str, param_names: &[String]) -> String {
+    let mut result = sql.to_string();
+    let mut param_order = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let mut chars = result.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '$' {
+            let mut param_name = String::new();
+            while let Some(&next_ch) = chars.peek() {
+                if next_ch.is_alphanumeric() || next_ch == '_' {
+                    param_name.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            if param_names.contains(&param_name) {
+                if !seen.contains(&param_name) {
+                    param_order.push(param_name.clone());
+                    seen.insert(param_name);
+                }
+            }
+        }
+    }
+
+    for name in &param_order {
+        result = result.replace(&format!("${}", name), "?");
+    }
+
+    result
+}
 use pyre::seed;
 
 #[tokio::test]
 async fn test_seed_generates_valid_sql() -> Result<(), TestError> {
-    let db = TestDatabase::new(&schema::full_schema()).await?;
+    let db = SeedDatabase::new(&schema::full_schema()).await?;
 
     // Generate seed data
     let operations = seed::seed_database(&db.schema, &db.context, None);
@@ -36,7 +454,7 @@ async fn test_seed_generates_valid_sql() -> Result<(), TestError> {
 
 #[tokio::test]
 async fn test_seed_data_can_be_queried() -> Result<(), TestError> {
-    let db = TestDatabase::new(&schema::full_schema()).await?;
+    let db = SeedDatabase::new(&schema::full_schema()).await?;
 
     // Generate and execute seed data
     let operations = seed::seed_database(&db.schema, &db.context, None);
@@ -170,7 +588,7 @@ async fn test_seed_data_can_be_queried() -> Result<(), TestError> {
 
 #[tokio::test]
 async fn test_seed_with_custom_options() -> Result<(), TestError> {
-    let db = TestDatabase::new(&schema::full_schema()).await?;
+    let db = SeedDatabase::new(&schema::full_schema()).await?;
 
     // Create custom options with specific row counts
     let mut options = seed::Options::default();
@@ -218,7 +636,7 @@ async fn test_seed_with_custom_options() -> Result<(), TestError> {
 
 #[tokio::test]
 async fn test_seed_foreign_key_relationships() -> Result<(), TestError> {
-    let db = TestDatabase::new(&schema::full_schema()).await?;
+    let db = SeedDatabase::new(&schema::full_schema()).await?;
 
     // Generate seed data
     let operations = seed::seed_database(&db.schema, &db.context, None);
@@ -346,7 +764,7 @@ async fn test_seed_foreign_key_relationships() -> Result<(), TestError> {
 
 #[tokio::test]
 async fn test_seed_with_foreign_key_ratios() -> Result<(), TestError> {
-    let db = TestDatabase::new(&schema::full_schema()).await?;
+    let db = SeedDatabase::new(&schema::full_schema()).await?;
 
     // Create options with custom foreign key ratio
     let mut options = seed::Options::default();
@@ -400,7 +818,7 @@ async fn test_seed_with_foreign_key_ratios() -> Result<(), TestError> {
 
 #[tokio::test]
 async fn test_seed_union_types() -> Result<(), TestError> {
-    let db = TestDatabase::new(&schema::full_schema()).await?;
+    let db = SeedDatabase::new(&schema::full_schema()).await?;
 
     // Generate seed data
     let operations = seed::seed_database(&db.schema, &db.context, None);
@@ -453,7 +871,7 @@ async fn test_seed_union_types() -> Result<(), TestError> {
 
 #[tokio::test]
 async fn test_seed_all_tables_have_data() -> Result<(), TestError> {
-    let db = TestDatabase::new(&schema::full_schema()).await?;
+    let db = SeedDatabase::new(&schema::full_schema()).await?;
 
     // Generate seed data
     let operations = seed::seed_database(&db.schema, &db.context, None);
@@ -497,8 +915,8 @@ async fn test_seed_all_tables_have_data() -> Result<(), TestError> {
 
 #[tokio::test]
 async fn test_seed_deterministic() -> Result<(), TestError> {
-    let db1 = TestDatabase::new(&schema::full_schema()).await?;
-    let db2 = TestDatabase::new(&schema::full_schema()).await?;
+    let db1 = SeedDatabase::new(&schema::full_schema()).await?;
+    let db2 = SeedDatabase::new(&schema::full_schema()).await?;
 
     // Create options with the same seed
     let mut options = seed::Options::default();

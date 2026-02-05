@@ -1,0 +1,95 @@
+pub const STATUS_TYPE: &str = r#"
+type Status
+   = Active
+   | Inactive
+   | Special {
+        reason String
+     }
+"#;
+
+pub const SCHEMA_V1: &str = r#"
+record User {
+    id   Int    @id
+    name String
+    status Status
+    @public
+}
+"#;
+
+pub const SCHEMA_V2: &str = r#"
+record Post {
+    id        Int    @id
+    title     String
+    content   String
+    authorId  Int
+    author    @link(authorId, User.id)
+    @public
+}
+"#;
+
+pub const SCHEMA_V3: &str = r#"
+record Account {
+    id     Int   @id
+    userId Int
+    name   String
+    status String
+    user   @link(userId, User.id)
+    @public
+}
+"#;
+
+pub fn schema_v1_complete() -> String {
+    format!(
+        r#"
+{}
+
+{}
+"#,
+        SCHEMA_V1.trim(),
+        STATUS_TYPE.trim()
+    )
+}
+
+pub fn schema_v2_complete() -> String {
+    format!(
+        r#"
+record User {{
+    id   Int    @id
+    name String
+    status Status
+    posts @link(Post.authorId)
+    @public
+}}
+
+{}
+
+{}
+"#,
+        SCHEMA_V2.trim(),
+        STATUS_TYPE.trim()
+    )
+}
+
+pub fn schema_v3_complete() -> String {
+    format!(
+        r#"
+record User {{
+    id   Int    @id
+    name String
+    status Status
+    posts @link(Post.authorId)
+    accounts @link(Account.userId)
+    @public
+}}
+
+{}
+
+{}
+
+{}
+"#,
+        SCHEMA_V2.trim(),
+        SCHEMA_V3.trim(),
+        STATUS_TYPE.trim()
+    )
+}
