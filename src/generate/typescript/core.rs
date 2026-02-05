@@ -1,0 +1,1023 @@
+use crate::ast;
+use crate::ext::string;
+use crate::filesystem;
+use crate::filesystem::generate_text_file;
+use crate::generate::sql;
+use crate::generate::typealias;
+use crate::typecheck;
+use std::collections::HashMap;
+use std::path::Path;
+
+const SQL_RUNTIME: &str = include_str!("../../../wasm/server/runtime/sql.ts");
+
+pub fn generate_schema(
+    context: &typecheck::Context,
+    database: &ast::Database,
+    base_out_dir: &Path,
+    files: &mut Vec<filesystem::GeneratedFile<String>>,
+) {
+    files.push(generate_text_file(
+        base_out_dir.join("codec.ts"),
+        codec_file(),
+    ));
+    files.push(generate_text_file(
+        base_out_dir.join("types.ts"),
+        generate_schema_types(database),
+    ));
+    files.push(generate_text_file(
+        base_out_dir.join("query-shape.ts"),
+        query_shape_file(),
+    ));
+    files.push(generate_text_file(
+        base_out_dir.join("schema.ts"),
+        to_schema_metadata(context),
+    ));
+    files.push(generate_text_file(
+        base_out_dir.join("queries/sql/types.ts"),
+        sql_types_file(),
+    ));
+    files.push(generate_text_file(
+        base_out_dir.join("runtime/sql.ts"),
+        SQL_RUNTIME.to_string(),
+    ));
+}
+
+pub fn generate_queries(
+    context: &typecheck::Context,
+    all_query_info: &HashMap<String, typecheck::QueryInfo>,
+    query_list: &ast::QueryList,
+    base_out_dir: &Path,
+    files: &mut Vec<filesystem::GeneratedFile<String>>,
+) {
+    let formatter = to_metadata_formatter();
+
+    for operation in &query_list.queries {
+        match operation {
+            ast::QueryDef::Query(q) => {
+                let query_info = all_query_info.get(&q.name);
+                files.push(generate_text_file(
+                    base_out_dir
+                        .join("queries/metadata")
+                        .join(format!("{}.ts", string::decapitalize(&q.name))),
+                    to_query_metadata_file(context, q, query_info, &formatter),
+                ));
+
+                if let Some(query_info) = query_info {
+                    files.push(generate_text_file(
+                        base_out_dir
+                            .join("queries/sql")
+                            .join(format!("{}.ts", string::decapitalize(&q.name))),
+                        to_query_sql_file(context, query_info, q),
+                    ));
+                } else {
+                    eprintln!("Warning: Query '{}' was found but not in typecheck results. Skipping SQL generation.", q.name);
+                }
+            }
+            _ => continue,
+        }
+    }
+}
+
+fn codec_file() -> String {
+    let mut result = String::new();
+    result.push_str("import * as Ark from 'arktype';\n\n");
+    result.push_str(
+        "export const CoercedDate = Ark.type('number').pipe((val) => new Date(val * 1000));\n",
+    );
+    result.push_str("export const CoercedBool = Ark.type('boolean').or('number').pipe((val) => typeof val === 'number' ? val !== 0 : val);\n\n");
+    result.push_str(
+        "export function decodeOrThrow<T>(validator: Ark.Type<T>, data: unknown, label: string = 'data'): T {\n",
+    );
+    result.push_str("  const decoded = validator(data);\n");
+    result.push_str("  if (decoded instanceof Ark.type.errors) {\n");
+    result.push_str("    const errorStr = JSON.stringify(decoded, null, 2);\n");
+    result.push_str("    throw new Error(`Failed to decode ${label}: ${errorStr}`);\n");
+    result.push_str("  }\n");
+    result.push_str("  return decoded as T;\n");
+    result.push_str("}\n");
+    result
+}
+
+fn query_shape_file() -> String {
+    "export type QueryShape = boolean | { [key: string]: QueryShape };\n".to_string()
+}
+
+fn sql_types_file() -> String {
+    let mut result = String::new();
+    result.push_str("export type SqlInfo = {\n");
+    result.push_str("  include: boolean;\n");
+    result.push_str("  params: string[];\n");
+    result.push_str("  sql: string;\n");
+    result.push_str("};\n");
+    result
+}
+
+fn generate_schema_types(database: &ast::Database) -> String {
+    let mut result = String::new();
+
+    result.push_str("// Auto-generated schema types\n");
+    result.push_str("import * as Ark from 'arktype';\n");
+    result.push_str("import { CoercedBool, CoercedDate } from './codec';\n\n");
+
+    // Get session definition
+    let session = database
+        .schemas
+        .iter()
+        .find_map(|s| s.session.clone())
+        .unwrap_or_else(|| ast::default_session_details());
+
+    // Generate Session type
+    result.push_str("// Session type\n");
+    result.push_str("export interface Session {\n");
+    for field in &session.fields {
+        if let ast::Field::Column(col) = field {
+            let type_str = col.type_.to_string();
+            let ts_type = match type_str.as_str() {
+                "String" => "string",
+                "Int" | "Float" => "number",
+                "Bool" => "boolean",
+                "DateTime" => "Date",
+                other => other,
+            };
+            let optional = if col.nullable { "?" } else { "" };
+            result.push_str(&format!("  {}{}: {};\n", col.name, optional, ts_type));
+        }
+    }
+    result.push_str("}\n\n");
+
+    result.push_str("export const SessionValidator = Ark.type({\n");
+    for field in &session.fields {
+        if let ast::Field::Column(col) = field {
+            let type_str = col.type_.to_string();
+            let validator = match type_str.as_str() {
+                "String" => "'string'".to_string(),
+                "Int" | "Float" => "'number'".to_string(),
+                "Bool" => "CoercedBool".to_string(),
+                "DateTime" => "CoercedDate".to_string(),
+                other => format!("'{}'", other),
+            };
+            let validator = if col.nullable {
+                format!("{}.or('null')", validator)
+            } else {
+                validator
+            };
+            result.push_str(&format!("  {}: {},\n", col.name, validator));
+        }
+    }
+    result.push_str("});\n\n");
+
+    // Generate custom type definitions (tagged unions)
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for def in &file.definitions {
+                if let ast::Definition::Tagged { name, variants, .. } = def {
+                    result.push_str(&generate_tagged_union(name, variants));
+                }
+            }
+        }
+    }
+
+    // Generate record types
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for def in &file.definitions {
+                if let ast::Definition::Record { name, fields, .. } = def {
+                    result.push_str(&generate_record_type(name, fields));
+                }
+            }
+        }
+    }
+
+    result
+}
+
+fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
+    let mut result = String::new();
+
+    result.push_str(&format!("export type {} =\n", name));
+    for (i, variant) in variants.iter().enumerate() {
+        let sep = if i == 0 { "  " } else { "| " };
+        result.push_str(&format!("{}", sep));
+
+        if let Some(fields) = &variant.fields {
+            result.push_str(&format!("{{ type_: '{}'; ", variant.name));
+            for field in fields.iter() {
+                if let ast::Field::Column(col) = field {
+                    let type_str = col.type_.to_string();
+                    let ts_type = match type_str.as_str() {
+                        "String" => "string",
+                        "Int" | "Float" => "number",
+                        "Bool" => "boolean",
+                        "DateTime" => "Date",
+                        other => other,
+                    };
+                    let optional = if col.nullable { "?" } else { "" };
+                    result.push_str(&format!("{}: {}{}; ", col.name, ts_type, optional));
+                }
+            }
+            result.push_str("}}\n");
+        } else {
+            result.push_str(&format!("{{ type_: '{}' }}\n", variant.name));
+        }
+    }
+    result.push('\n');
+
+    result.push_str(&format!("export const {} = ", name));
+    for (i, variant) in variants.iter().enumerate() {
+        let prefix = if i == 0 { "Ark.type" } else { ".or" };
+
+        if let Some(fields) = &variant.fields {
+            result.push_str(&format!("{}({{\n", prefix));
+            result.push_str(&format!(
+                "  type_: '{}',\n",
+                string::single_quote(&variant.name)
+            ));
+            for (j, field) in fields.iter().enumerate() {
+                if let ast::Field::Column(col) = field {
+                    let type_str = col.type_.to_string();
+                    let validator = match type_str.as_str() {
+                        "String" => "'string'".to_string(),
+                        "Int" | "Float" => "'number'".to_string(),
+                        "Bool" => "CoercedBool".to_string(),
+                        "DateTime" => "CoercedDate".to_string(),
+                        other => format!("'{}'", other),
+                    };
+                    let validator = if col.nullable {
+                        format!("{}.or('null')", validator)
+                    } else {
+                        validator
+                    };
+                    result.push_str(&format!("  {}: {}", col.name, validator));
+                    if j + 1 < fields.len() {
+                        result.push_str(",\n");
+                    } else {
+                        result.push_str("\n");
+                    }
+                }
+            }
+            result.push_str("})");
+        } else {
+            result.push_str(&format!(
+                "{}({{ type_: '{}' }})",
+                prefix,
+                string::single_quote(&variant.name)
+            ));
+        }
+    }
+    result.push_str(";\n\n");
+
+    result
+}
+
+fn generate_record_type(name: &str, fields: &Vec<ast::Field>) -> String {
+    let mut result = String::new();
+
+    result.push_str(&format!("export interface {} {{\n", name));
+    for field in fields {
+        match field {
+            ast::Field::Column(col) => {
+                let type_str = col.type_.to_string();
+                let ts_type = match type_str.as_str() {
+                    "String" => "string",
+                    "Int" | "Float" => "number",
+                    "Bool" => "boolean",
+                    "DateTime" => "Date",
+                    other => other,
+                };
+                let optional = if col.nullable { "?" } else { "" };
+                result.push_str(&format!("  {}{}: {};\n", col.name, optional, ts_type));
+            }
+            _ => {}
+        }
+    }
+    result.push_str("}\n\n");
+
+    result.push_str(&format!("export const {}Validator = Ark.type({{\n", name));
+    for field in fields {
+        match field {
+            ast::Field::Column(col) => {
+                let type_str = col.type_.to_string();
+                let validator = match type_str.as_str() {
+                    "String" => "'string'".to_string(),
+                    "Int" | "Float" => "'number'".to_string(),
+                    "Bool" => "CoercedBool".to_string(),
+                    "DateTime" => "CoercedDate".to_string(),
+                    other => format!("'{}'", other),
+                };
+                let validator = if col.nullable {
+                    format!("{}.or('null')", validator)
+                } else {
+                    validator
+                };
+                result.push_str(&format!("  {}: {},\n", col.name, validator));
+            }
+            _ => {}
+        }
+    }
+    result.push_str("});\n\n");
+
+    result
+}
+
+fn to_metadata_formatter() -> typealias::TypeFormatter {
+    typealias::TypeFormatter {
+        to_comment: Box::new(|s| format!("// {}\n", s)),
+        to_type_def_start: Box::new(|name| format!("const {} = Ark.type({{\n", name)),
+        to_field: Box::new(
+            |name,
+             type_,
+             typealias::FieldMetadata {
+                 is_link,
+                 is_optional,
+                 is_array_relationship,
+             }| {
+                let (base_type, is_primitive, needs_coercion) = match type_ {
+                    "String" => ("string".to_string(), true, false),
+                    "Int" => ("number".to_string(), true, false),
+                    "Float" => ("number".to_string(), true, false),
+                    "Bool" => ("boolean".to_string(), true, true),
+                    "DateTime" => ("Date".to_string(), true, true),
+                    _ => {
+                        if is_link {
+                            (type_.to_string(), false, false)
+                        } else {
+                            (format!("Decode.{}", type_.to_string()), false, false)
+                        }
+                    }
+                };
+
+                let type_str = if needs_coercion {
+                    match type_ {
+                        "DateTime" => match (is_link, is_array_relationship, is_optional) {
+                            (true, true, _) => "CoercedDate.array()".to_string(),
+                            (true, false, true) => "CoercedDate.or('null')".to_string(),
+                            (true, false, false) => "CoercedDate".to_string(),
+                            (false, _, true) => "CoercedDate.or('null')".to_string(),
+                            (false, _, false) => "CoercedDate".to_string(),
+                        },
+                        "Bool" => match (is_link, is_array_relationship, is_optional) {
+                            (true, true, _) => "CoercedBool.array()".to_string(),
+                            (true, false, true) => "CoercedBool.or('null')".to_string(),
+                            (true, false, false) => "CoercedBool".to_string(),
+                            (false, _, true) => "CoercedBool.or('null')".to_string(),
+                            (false, _, false) => "CoercedBool".to_string(),
+                        },
+                        _ => unreachable!(),
+                    }
+                } else {
+                    match (is_primitive, is_link, is_array_relationship, is_optional) {
+                        (true, true, true, _) => format!("\"{}[]\"", base_type),
+                        (true, true, false, true) => format!("\"{} | null\"", base_type),
+                        (true, true, false, false) => format!("\"{}\"", base_type),
+                        (true, false, _, true) => format!("\"{} | null\"", base_type),
+                        (true, false, _, false) => format!("\"{}\"", base_type),
+                        (false, true, true, _) => format!("{}.array()", base_type),
+                        (false, true, false, true) => format!("{}.or('null')", base_type),
+                        (false, true, false, false) => base_type.to_string(),
+                        (false, false, _, true) => format!("{}.or('null')", base_type),
+                        (false, false, _, false) => base_type.to_string(),
+                    }
+                };
+
+                format!("  {}: {}", name, type_str)
+            },
+        ),
+        to_type_def_end: Box::new(|| "});\n".to_string()),
+        to_field_separator: Box::new(|is_last| {
+            if is_last {
+                "\n".to_string()
+            } else {
+                ",\n".to_string()
+            }
+        }),
+    }
+}
+
+fn to_query_metadata_file(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    query_info: Option<&typecheck::QueryInfo>,
+    formatter: &typealias::TypeFormatter,
+) -> String {
+    let mut return_data = String::new();
+    typealias::return_data_aliases(context, query, &mut return_data, formatter);
+    let uses_coerced_date = return_data.contains("CoercedDate");
+    let uses_coerced_bool = return_data.contains("CoercedBool");
+
+    let mut imports = String::new();
+    imports.push_str("import * as Ark from 'arktype';\n");
+    if uses_coerced_bool || uses_coerced_date {
+        imports.push_str("import { ");
+        if uses_coerced_bool {
+            imports.push_str("CoercedBool");
+        }
+        if uses_coerced_bool && uses_coerced_date {
+            imports.push_str(", ");
+        }
+        if uses_coerced_date {
+            imports.push_str("CoercedDate");
+        }
+        imports.push_str(" } from '../../codec';\n");
+    }
+    imports.push_str("import * as Decode from '../../types';\n");
+    if query.operation == ast::QueryOperation::Query {
+        imports.push_str("import type { QueryShape } from '../../query-shape';\n");
+    }
+
+    let input_block = to_param_type_alias(&query.args).trim_end().to_string();
+
+    let query_shape_block = if query.operation == ast::QueryOperation::Query {
+        Some(to_query_shape(context, query).trim_end().to_string())
+    } else {
+        None
+    };
+
+    let session_args = match query_info {
+        Some(info) => get_session_args(&info.variables),
+        None => "[]".to_string(),
+    };
+
+    let mut meta_block = String::new();
+    meta_block.push_str("export const meta = {\n");
+    meta_block.push_str(&format!("  id: \"{}\",\n", &query.interface_hash));
+    meta_block.push_str(&format!(
+        "  operation: \"{}\" as const,\n",
+        match query.operation {
+            ast::QueryOperation::Query => "query",
+            ast::QueryOperation::Insert => "insert",
+            ast::QueryOperation::Update => "update",
+            ast::QueryOperation::Delete => "delete",
+        }
+    ));
+    meta_block.push_str(&format!("  session_args: {},\n", session_args));
+    meta_block.push_str("  InputValidator,\n");
+    meta_block.push_str("  SessionValidator: Decode.SessionValidator,\n");
+    meta_block.push_str("  ReturnData,\n");
+    if query.operation == ast::QueryOperation::Query {
+        meta_block.push_str("  queryShape,\n");
+        meta_block.push_str("  toQueryShape: (_input: Input) => queryShape,\n");
+    }
+    meta_block.push_str("};\n");
+
+    let result_block = "export type Result = typeof ReturnData.infer;".to_string();
+
+    let mut blocks: Vec<String> = Vec::new();
+    blocks.push(imports.trim_end().to_string());
+    if !input_block.is_empty() {
+        blocks.push(input_block);
+    }
+    if let Some(query_shape_block) = query_shape_block {
+        blocks.push(query_shape_block);
+    }
+    if !return_data.trim().is_empty() {
+        blocks.push(return_data.trim_end().to_string());
+    }
+    blocks.push(result_block);
+    blocks.push(meta_block.trim_end().to_string());
+
+    format!("{}\n", blocks.join("\n\n"))
+}
+
+fn to_query_sql_file(
+    context: &typecheck::Context,
+    query_info: &typecheck::QueryInfo,
+    query: &ast::Query,
+) -> String {
+    let mut result = String::new();
+
+    result.push_str("import type { SqlInfo } from './types';\n\n");
+    result.push_str("export const sql: SqlInfo[] = [");
+
+    let mut written_field = false;
+    for field in &query.fields {
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                match context.tables.get(&query_field.name) {
+                    Some(table) => {
+                        let param_info = get_formatted_used_params(
+                            &ast::get_aliased_name(query_field),
+                            &query_info.variables,
+                        );
+                        let prepared =
+                            sql::to_string(context, query, query_info, table, query_field);
+
+                        for prepped in prepared {
+                            if written_field {
+                                result.push_str(",\n");
+                            }
+                            result.push_str(&format!(
+                                "  {{\n    include: {},\n    params: {},\n    sql: {}\n  }}",
+                                bool_to_ts_bool(prepped.include),
+                                &param_info,
+                                &literal_quote(&prepped.sql)
+                            ));
+                            written_field = true;
+                        }
+                    }
+                    None => {
+                        eprintln!("Error: Table '{}' referenced in query '{}' was not found in typecheck context. This should not happen after successful typechecking. Skipping field generation.", query_field.name, query.name);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    result.push_str("\n];\n");
+    result
+}
+
+fn literal_quote(s: &str) -> String {
+    format!("`{}`", s)
+}
+
+fn get_formatted_used_params(
+    top_level_field_alias: &str,
+    query_params: &HashMap<String, typecheck::ParamInfo>,
+) -> String {
+    let mut formatted = String::new();
+    formatted.push_str("[ ");
+    let mut first_added = false;
+    for (_, param_info) in query_params {
+        match param_info {
+            typecheck::ParamInfo::NotDefinedButUsed { .. } => continue,
+            typecheck::ParamInfo::Defined {
+                used_by_top_level_field_alias,
+                raw_variable_name,
+                ..
+            } => {
+                if used_by_top_level_field_alias.contains(top_level_field_alias) {
+                    if first_added {
+                        formatted.push_str(", ")
+                    }
+                    formatted.push_str(&string::quote(raw_variable_name));
+
+                    first_added = true;
+                }
+            }
+        }
+    }
+    formatted.push_str(" ]");
+    formatted
+}
+
+fn bool_to_ts_bool(bool: bool) -> String {
+    if bool {
+        return "true".to_string();
+    }
+    "false".to_string()
+}
+
+fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
+    let mut result = "[ ".to_string();
+    let mut first = true;
+    for (_name, info) in params {
+        match info {
+            typecheck::ParamInfo::Defined {
+                from_session,
+                used,
+                session_name,
+                ..
+            } => {
+                if *from_session && *used {
+                    match session_name {
+                        None => continue,
+                        Some(session_name_string) => {
+                            if first {
+                                result.push_str(&format!(
+                                    "{}",
+                                    crate::ext::string::quote(session_name_string)
+                                ));
+                            } else {
+                                result.push_str(&format!(
+                                    ", {}",
+                                    crate::ext::string::quote(session_name_string)
+                                ));
+                            }
+                            first = false;
+                        }
+                    }
+                }
+            }
+            _ => continue,
+        }
+    }
+    result.push_str("]");
+    result
+}
+
+fn to_query_shape(context: &typecheck::Context, query: &ast::Query) -> String {
+    let mut result = "const queryShape: QueryShape = {\n".to_string();
+
+    let mut is_first_table = true;
+    for field in &query.fields {
+        match field {
+            ast::TopLevelQueryField::Field(query_field) => {
+                if !is_first_table {
+                    result.push_str(",\n");
+                }
+                is_first_table = false;
+
+                let field_name = ast::get_aliased_name(query_field);
+
+                result.push_str(&format!("  {}: {{\n", string::quote(&field_name)));
+
+                let table = context.tables.get(&query_field.name);
+                result.push_str(&to_query_field_spec(context, query_field, table));
+
+                result.push_str("\n  }");
+            }
+            _ => {}
+        }
+    }
+
+    result.push_str("\n};\n");
+    result
+}
+
+fn to_query_field_spec(
+    context: &typecheck::Context,
+    query_field: &ast::QueryField,
+    table: Option<&typecheck::Table>,
+) -> String {
+    let mut result = String::new();
+    let mut is_first = true;
+    let table = table.or_else(|| context.tables.get(&query_field.name));
+
+    let mut sort_clauses: Vec<String> = Vec::new();
+    let mut limit: Option<i32> = None;
+
+    let mut field_selections: Vec<(String, bool, bool)> = Vec::new();
+    let mut selected_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let mut explicit_columns: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(table_info) = table {
+        for arg_field in &query_field.fields {
+            if let ast::ArgField::Field(nested_field) = arg_field {
+                if nested_field.name == "*" {
+                    continue;
+                }
+                if let Some(ast::Field::Column(column)) = table_info
+                    .record
+                    .fields
+                    .iter()
+                    .find(|&f| ast::has_field_or_linkname(f, &nested_field.name))
+                {
+                    explicit_columns.insert(column.name.clone());
+                }
+            }
+        }
+    }
+
+    for arg_field in &query_field.fields {
+        match arg_field {
+            ast::ArgField::Arg(located_arg) => match &located_arg.arg {
+                ast::Arg::Where(_where_arg) => {}
+                ast::Arg::OrderBy(direction, field_name) => {
+                    let dir_str = match direction {
+                        ast::Direction::Asc => "asc",
+                        ast::Direction::Desc => "desc",
+                    };
+                    sort_clauses.push(format!(
+                        "{{ field: {}, direction: {} }}",
+                        string::quote(field_name),
+                        string::quote(dir_str)
+                    ));
+                }
+                ast::Arg::Limit(query_value) => {
+                    if let ast::QueryValue::Int((_, val)) = query_value {
+                        limit = Some(*val);
+                    }
+                }
+            },
+            ast::ArgField::Field(nested_field) => {
+                if nested_field.name == "*" {
+                    if let Some(table_info) = table {
+                        for table_field in &table_info.record.fields {
+                            if let ast::Field::Column(column) = table_field {
+                                if explicit_columns.contains(&column.name) {
+                                    continue;
+                                }
+                                if selected_names.insert(column.name.clone()) {
+                                    field_selections.push((column.name.clone(), false, false));
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                let is_relationship = if let Some(table_info) = table {
+                    let links = ast::collect_links(&table_info.record.fields);
+                    links.iter().any(|link| link.link_name == nested_field.name)
+                } else {
+                    false
+                };
+
+                let has_nested_fields = !nested_field.fields.is_empty()
+                    && nested_field
+                        .fields
+                        .iter()
+                        .any(|f| matches!(f, ast::ArgField::Field(_)));
+
+                if selected_names.insert(nested_field.name.clone()) {
+                    field_selections.push((
+                        nested_field.name.clone(),
+                        is_relationship,
+                        has_nested_fields,
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for (field_name, is_relationship, has_nested_fields) in field_selections {
+        if !is_first {
+            result.push_str(",\n");
+        }
+        is_first = false;
+
+        if is_relationship && has_nested_fields {
+            if let Some(nested_field) = query_field.fields.iter().find_map(|f| match f {
+                ast::ArgField::Field(qf) if qf.name == field_name => Some(qf),
+                _ => None,
+            }) {
+                let nested_table = table.and_then(|table_info| {
+                    table_info
+                        .record
+                        .fields
+                        .iter()
+                        .find_map(|field| match field {
+                            ast::Field::FieldDirective(ast::FieldDirective::Link(link))
+                                if link.link_name == field_name =>
+                            {
+                                typecheck::get_linked_table(context, link)
+                            }
+                            _ => None,
+                        })
+                });
+                result.push_str(&format!("    {}: {{\n", string::quote(&field_name)));
+                result.push_str(&to_query_field_spec(context, nested_field, nested_table));
+                result.push_str("\n    }");
+            }
+        } else if is_relationship {
+            result.push_str(&format!("    {}: true", string::quote(&field_name)));
+        } else {
+            result.push_str(&format!("    {}: true", string::quote(&field_name)));
+        }
+    }
+
+    if !sort_clauses.is_empty() || limit.is_some() {
+        if !is_first {
+            result.push_str(",\n");
+        }
+
+        if !sort_clauses.is_empty() {
+            if sort_clauses.len() == 1 {
+                result.push_str(&format!("    '@sort': {}", sort_clauses[0]));
+            } else {
+                result.push_str(&format!("    '@sort': [{}]", sort_clauses.join(", ")));
+            }
+        }
+
+        if let Some(limit_val) = limit {
+            if !sort_clauses.is_empty() {
+                result.push_str(",\n");
+            }
+            result.push_str(&format!("    '@limit': {}", limit_val));
+        }
+    }
+
+    result
+}
+
+fn to_schema_metadata(context: &typecheck::Context) -> String {
+    let mut result = String::new();
+    result.push_str("export interface LinkInfo {\n");
+    result.push_str("  type: 'many-to-one' | 'one-to-many' | 'one-to-one';\n");
+    result.push_str("  from: string;\n");
+    result.push_str("  to: {\n");
+    result.push_str("    table: string;\n");
+    result.push_str("    column: string;\n");
+    result.push_str("  };\n");
+    result.push_str("}\n\n");
+
+    result.push_str("export interface IndexInfo {\n");
+    result.push_str("  field: string;\n");
+    result.push_str("  unique: boolean;\n");
+    result.push_str("  primary: boolean;\n");
+    result.push_str("}\n\n");
+
+    result.push_str("export interface TableMetadata {\n");
+    result.push_str("  name: string;\n");
+    result.push_str("  links: Record<string, LinkInfo>;\n");
+    result.push_str("  indices: IndexInfo[];\n");
+    result.push_str("}\n\n");
+
+    result.push_str("export interface SchemaMetadata {\n");
+    result.push_str("  tables: Record<string, TableMetadata>;\n");
+    result.push_str("  queryFieldToTable: Record<string, string>;\n");
+    result.push_str("}\n\n");
+
+    result.push_str("export const schemaMetadata: SchemaMetadata = {\n");
+    result.push_str("  tables: {\n");
+
+    let mut is_first_table = true;
+    for (_record_name, table) in &context.tables {
+        let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+
+        if !is_first_table {
+            result.push_str(",\n");
+        }
+        is_first_table = false;
+
+        result.push_str(&format!("    {}: {{\n", string::quote(&table_name)));
+        result.push_str(&format!("      name: {},\n", string::quote(&table_name)));
+        result.push_str("      links: {\n");
+
+        let links = ast::collect_links(&table.record.fields);
+        let primary_key_name = ast::get_primary_id_field_name(&table.record.fields);
+
+        let mut is_first_rel = true;
+        for link in links {
+            if !is_first_rel {
+                result.push_str(",\n");
+            }
+            is_first_rel = false;
+
+            let is_many_to_one = link
+                .local_ids
+                .iter()
+                .any(|id| primary_key_name.as_ref().map(|pk| id != pk).unwrap_or(true));
+
+            let foreign_table = get_linked_table(context, &link).expect(&format!(
+                "Failed to find linked table '{}' in context. This indicates a schema error.",
+                link.foreign.table
+            ));
+            let foreign_table_name =
+                ast::get_tablename(&foreign_table.record.name, &foreign_table.record.fields);
+
+            let is_one_to_one = if is_many_to_one {
+                let foreign_field_is_unique =
+                    ast::linked_to_unique_field_with_record(&link, &foreign_table.record);
+                let local_field_is_unique = if link.local_ids.len() == 1 {
+                    ast::field_is_unique(&link.local_ids[0], &table.record)
+                } else {
+                    false
+                };
+                foreign_field_is_unique && local_field_is_unique
+            } else {
+                false
+            };
+
+            let link_type = if is_one_to_one {
+                "one-to-one"
+            } else if is_many_to_one {
+                "many-to-one"
+            } else {
+                "one-to-many"
+            };
+
+            let (from_column, to_table, to_column) = if is_many_to_one {
+                (
+                    link.local_ids[0].clone(),
+                    foreign_table_name,
+                    link.foreign.fields[0].clone(),
+                )
+            } else {
+                (
+                    primary_key_name.clone().unwrap_or_else(|| "id".to_string()),
+                    foreign_table_name,
+                    link.foreign.fields[0].clone(),
+                )
+            };
+
+            result.push_str(&format!("        {}: {{\n", string::quote(&link.link_name)));
+            result.push_str(&format!("          type: {},\n", string::quote(link_type)));
+            result.push_str(&format!(
+                "          from: {},\n",
+                string::quote(&from_column)
+            ));
+            result.push_str("          to: {\n");
+            result.push_str(&format!(
+                "            table: {},\n",
+                string::quote(&to_table)
+            ));
+            result.push_str(&format!(
+                "            column: {}\n",
+                string::quote(&to_column)
+            ));
+            result.push_str("          }\n");
+            result.push_str("        }");
+        }
+
+        result.push_str("\n      },\n");
+
+        result.push_str("      indices: [\n");
+
+        let mut is_first_index = true;
+        for field in &table.record.fields {
+            if let ast::Field::Column(column) = field {
+                let is_primary = ast::is_primary_key(column);
+                let is_unique = column
+                    .directives
+                    .iter()
+                    .any(|d| matches!(d, ast::ColumnDirective::Unique));
+                let is_index = column
+                    .directives
+                    .iter()
+                    .any(|d| matches!(d, ast::ColumnDirective::Index));
+
+                if is_primary || is_unique || is_index {
+                    if !is_first_index {
+                        result.push_str(",\n");
+                    }
+                    is_first_index = false;
+
+                    result.push_str("        {\n");
+                    result.push_str(&format!(
+                        "          field: {},\n",
+                        string::quote(&column.name)
+                    ));
+                    result.push_str(&format!(
+                        "          unique: {},\n",
+                        if is_unique || is_primary {
+                            "true"
+                        } else {
+                            "false"
+                        }
+                    ));
+                    result.push_str(&format!(
+                        "          primary: {}\n",
+                        if is_primary { "true" } else { "false" }
+                    ));
+                    result.push_str("        }");
+                }
+            }
+        }
+
+        result.push_str("\n      ]\n");
+        result.push_str("    }");
+    }
+
+    result.push_str("\n  },\n");
+    result.push_str("  queryFieldToTable: {\n");
+
+    let mut is_first_mapping = true;
+    for (_record_name, table) in &context.tables {
+        let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
+        let query_field_name = crate::ext::string::decapitalize(&table.record.name);
+
+        if !is_first_mapping {
+            result.push_str(",\n");
+        }
+        is_first_mapping = false;
+
+        result.push_str(&format!(
+            "    {}: {}",
+            string::quote(&query_field_name),
+            string::quote(&table_name)
+        ));
+    }
+
+    result.push_str("\n  }\n");
+    result.push_str("};\n");
+    result
+}
+
+fn get_linked_table<'a>(
+    context: &'a typecheck::Context,
+    link: &ast::LinkDetails,
+) -> Option<&'a typecheck::Table> {
+    context
+        .tables
+        .get(&crate::ext::string::decapitalize(&link.foreign.table))
+}
+
+fn to_arktype_type(type_: &str) -> String {
+    match type_ {
+        "String" => "\"string\"".to_string(),
+        "Int" => "\"number\"".to_string(),
+        "Bool" => "\"boolean\"".to_string(),
+        "DateTime" => "\"date\"".to_string(),
+        _ => format!("\"{}\"", type_),
+    }
+}
+
+fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
+    let mut result = "const InputValidator = Ark.type({".to_string();
+    let mut is_first = true;
+    for arg in args {
+        let type_string = to_arktype_type(&arg.type_.clone().unwrap_or("unknown".to_string()));
+        if is_first {
+            result.push_str(&format!("\n  {}: {}", arg.name, type_string));
+            is_first = false;
+        } else {
+            result.push_str(&format!(",\n  {}: {}", arg.name, type_string));
+        }
+    }
+    result.push_str("\n});\n");
+    result.push_str("export type Input = typeof InputValidator.infer;");
+    result
+}

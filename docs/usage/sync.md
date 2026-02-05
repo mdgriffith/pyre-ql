@@ -50,16 +50,19 @@ Generated output (default):
 ```
 pyre/generated/
 ├── client/
-│   ├── node/
 │   └── elm/
-└── server/
-    └── typescript/
+└── typescript/
+    ├── core/
+    └── targets/
+        ├── client/
+        ├── server/
+        └── simple/
 ```
 
 ## 4. Server usage (TypeScript)
 
 ```typescript
-import * as Query from "./pyre/generated/server/typescript/query";
+import * as Query from "./pyre/generated/typescript/targets/server/queries";
 
 const env = {
   url: "file:./db/app.db",
@@ -79,10 +82,10 @@ if (result.kind === "success") {
 ## 5. Client usage (TypeScript)
 
 ```typescript
-import { request } from "./pyre/generated/client/node/query";
+import { queries } from "./pyre/generated/typescript/targets/client/queries";
 
-const response = await request("GetUser", { id: 1 });
-console.log(response);
+const query = queries.GetUser;
+console.log(query.id);
 ```
 
 ## Notes

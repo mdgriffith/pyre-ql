@@ -32,7 +32,7 @@ npm run typecheck
 
 ```typescript
 import { PyreClient } from '@pyre/client-elm';
-import { schemaMetadata } from './generated/client/node/schema';
+import { schemaMetadata } from './generated/typescript/targets/client/schema';
 
 const client = new PyreClient({
   schema: schemaMetadata,
@@ -91,7 +91,7 @@ client.run(CreatePost, { title: 'Hello' }, (result) => {
 - `connectSSE`: Connect to SSE endpoint
 - `disconnectSSE`: Disconnect from SSE
 - `queryResult`: Send query results (callbackPort, result)
-- `mutationResult`: Send mutation results (hash, result)
+- `mutationResult`: Send mutation results (id, result)
 
 ### Incoming (TypeScript -> Elm)
 
@@ -104,7 +104,7 @@ client.run(CreatePost, { title: 'Hello' }, (result) => {
 - `receiveRegisterQuery`: Register a new query (queryId, queryShape, input, callbackPort)
 - `receiveUpdateQueryInput`: Update query input (queryId, newInput)
 - `receiveUnregisterQuery`: Unregister a query (queryId)
-- `receiveSendMutation`: Send a mutation (hash, baseUrl, input)
+- `receiveSendMutation`: Send a mutation (id, baseUrl, input)
 
 ## Features
 

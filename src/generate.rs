@@ -12,6 +12,7 @@ pub mod simple;
 pub mod sql;
 pub mod to_string;
 pub mod typealias;
+pub mod typescript;
 
 pub enum Client {
     Elm,
@@ -28,9 +29,24 @@ pub fn generate_schema(
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
     write_client_schema(&Client::Elm, context, database, files);
-    write_client_schema(&Client::Typescript, context, database, files);
-    write_server_schema(&Server::Typescript, context, database, files);
-    write_simple_schema(database, files);
+    let typescript_core_dir = Path::new("typescript/core");
+    let typescript_client_dir = Path::new("typescript/targets/client");
+    let typescript_server_dir = Path::new("typescript/targets/server");
+    let typescript_simple_dir = Path::new("typescript/targets/simple");
+    generate::typescript::core::generate_schema(context, database, typescript_core_dir, files);
+    generate::typescript::targets::client::generate_schema(
+        context,
+        database,
+        typescript_client_dir,
+        files,
+    );
+    generate::typescript::targets::server::generate_schema(
+        context,
+        database,
+        typescript_server_dir,
+        files,
+    );
+    generate::typescript::targets::simple::generate_schema(database, typescript_simple_dir, files);
 }
 
 // CLIENT
@@ -110,17 +126,36 @@ pub fn write_queries(
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
     write_client_queries(&Client::Elm, context, query_list, files);
-    write_client_queries(&Client::Typescript, context, query_list, files);
-    write_server_queries(
-        &Server::Typescript,
+    let typescript_core_dir = Path::new("typescript/core");
+    let typescript_client_dir = Path::new("typescript/targets/client");
+    let typescript_server_dir = Path::new("typescript/targets/server");
+    let typescript_simple_dir = Path::new("typescript/targets/simple");
+    generate::typescript::core::generate_queries(
         context,
-        query_list,
         all_query_info,
-        database,
+        query_list,
+        typescript_core_dir,
         files,
-        true, // Generate runner file with all queries
     );
-    write_simple_queries(context, query_list, all_query_info, database, files);
+    generate::typescript::targets::client::generate_queries(
+        query_list,
+        typescript_client_dir,
+        files,
+    );
+    generate::typescript::targets::server::generate_queries(
+        context,
+        all_query_info,
+        query_list,
+        typescript_server_dir,
+        files,
+    );
+    generate::typescript::targets::simple::generate_queries(
+        context,
+        all_query_info,
+        query_list,
+        typescript_simple_dir,
+        files,
+    );
 }
 
 // CLIENT

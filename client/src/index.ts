@@ -148,7 +148,7 @@ export class PyreClient {
 
   /**
    * Execute a query or mutation with type safety
-   * @param queryModule - Generated query/mutation module with hash, operation, InputValidator, ReturnData, and queryShape (for queries)
+   * @param queryModule - Generated query/mutation module with id, operation, InputValidator, ReturnData, and queryShape (for queries)
    * @param input - Input parameters (optional if query has no parameters)
    * @param callback - Callback function that receives typed results
    * @returns Unsubscribe function (for queries) or void (for mutations)
@@ -160,7 +160,7 @@ export class PyreClient {
     input: T['InputValidator']['infer'] extends Record<string, never> ? undefined : T['InputValidator']['infer'],
     callback: (result: T['ReturnData']['infer']) => void
   ): QuerySubscription<T['InputValidator']['infer']> | void {
-    const queryName = queryModule.hash || 'unknown';
+    const queryName = queryModule.id || 'unknown';
 
     // Decode input if provided
     if (input !== undefined) {
@@ -240,13 +240,13 @@ export class PyreClient {
     callback: (result: T['ReturnData']['infer']) => void,
     queryName: string
   ): void {
-    const hash = queryModule.hash;
-    if (!hash) {
-      this.handleError(new Error('Mutation module missing hash'));
+    const id = queryModule.id;
+    if (!id) {
+      this.handleError(new Error('Mutation module missing id'));
       return;
     }
 
-    const url = `${this.config.baseUrl}/${hash}`;
+    const url = `${this.config.baseUrl}/${id}`;
     const body = input || {};
 
     fetch(url, {

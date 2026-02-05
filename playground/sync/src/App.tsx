@@ -4,7 +4,7 @@ import MessagePane from './components/MessagePane'
 import Clients from './components/Clients'
 import { discoverQueries, QueryMetadata } from './queryDiscovery'
 import { PyreClient } from '@pyre/client-elm'
-import { schemaMetadata } from '../pyre/generated/client/node/schema'
+import { schemaMetadata } from '../pyre/generated/typescript/targets/client/schema'
 import './App.css'
 
 interface Client {

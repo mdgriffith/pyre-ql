@@ -88,16 +88,16 @@ export class QueryManagerService {
   }
 
   sendMutation(
-    hash: string,
+    id: string,
     baseUrl: string,
     input: unknown,
     callback?: MutationResultCallback,
     headers?: Record<string, string>
   ): void {
     if (callback) {
-      const callbacks = this.mutationCallbacks.get(hash) ?? [];
+      const callbacks = this.mutationCallbacks.get(id) ?? [];
       callbacks.push(callback);
-      this.mutationCallbacks.set(hash, callbacks);
+      this.mutationCallbacks.set(id, callbacks);
     }
 
     const headerPairs = headers
@@ -106,7 +106,7 @@ export class QueryManagerService {
 
     const mutationMessage = {
       type: 'sendMutation',
-      hash,
+      id,
       baseUrl,
       input,
       headers: headerPairs,
@@ -185,11 +185,11 @@ export class QueryManagerService {
     }
 
     if (message.type === 'mutationResult') {
-      const typedMessage = message as { hash?: string; result?: MutationResult };
-      if (!typedMessage.hash) {
+      const typedMessage = message as { id?: string; result?: MutationResult };
+      if (!typedMessage.id) {
         return;
       }
-      const callbacks = this.mutationCallbacks.get(typedMessage.hash);
+      const callbacks = this.mutationCallbacks.get(typedMessage.id);
       if (!callbacks || callbacks.length === 0) {
         return;
       }
@@ -198,9 +198,9 @@ export class QueryManagerService {
         callback(typedMessage.result ?? { ok: false, error: 'Missing mutation result' });
       }
       if (callbacks.length === 0) {
-        this.mutationCallbacks.delete(typedMessage.hash);
+        this.mutationCallbacks.delete(typedMessage.id);
       } else {
-        this.mutationCallbacks.set(typedMessage.hash, callbacks);
+        this.mutationCallbacks.set(typedMessage.id, callbacks);
       }
     }
   }

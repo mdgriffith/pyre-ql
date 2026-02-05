@@ -9,7 +9,7 @@
  * ```typescript
  * import { PyreClient } from '@pyre/client';
  * import { registerQueries, cleanup } from '@pyre/client/elm-adapter';
- * import { queries } from './generated/client/node/queries';
+ * import { queries } from './generated/typescript/targets/client/queries';
  * 
  * const client = new PyreClient({ ... });
  * await client.init();

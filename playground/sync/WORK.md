@@ -134,7 +134,7 @@ terminal-sync/
    ```
 
 4. **Query discovery**
-   - Read `pyre/generated/server/typescript/query.ts`
+   - Read `pyre/generated/typescript/targets/server/queries.ts`
    - Extract available queries from the switch statement
    - Map query IDs to query names (may need to generate metadata)
    - Display in dropdown/picker
@@ -173,7 +173,7 @@ terminal-sync/
 **Solution Options**:
 1. Parse `.pyre` query files to extract names
 2. Generate metadata file during `pyre generate`
-3. Use query ID hash as display name (not ideal)
+3. Use query ID as display name (not ideal)
 
 **Chosen**: Parse query files from `pyre/queries/` directory:
 - Read all `.pyre` files
@@ -272,10 +272,9 @@ From mutation result:
 ## Notes for Future AI
 
 - The server needs to initialize WASM before use (see `playground/wasm-calling/syncDeltas.ts`)
-- Query IDs are hashes, need to map them to names from query files
+- Query IDs are IDs, need to map them to names from query files
 - Mutations return `_affectedRows` in a specific result set (not always the last one)
 - Sync deltas are calculated per mutation, not continuously
 - Each WebSocket client needs a unique session with proper session values
 - The TUI should be responsive and handle terminal resizing
 - Use Ink's built-in components where possible for consistency
-

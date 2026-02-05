@@ -203,7 +203,7 @@ fn to_query_file(
     ));
 
     result.push_str(&format!(
-        "export const hash = \"{}\"\n\n",
+        "export const id = \"{}\"\n\n",
         &query.interface_hash
     ));
 
@@ -222,7 +222,7 @@ fn to_query_file(
     // Export the query module as a named export for easy importing
     result.push_str(&format!("\n\nexport const {} = {{\n", query.name));
     result.push_str("  operation,\n");
-    result.push_str("  hash,\n");
+    result.push_str("  id,\n");
     result.push_str("  InputValidator,\n");
     result.push_str("  ReturnData,\n");
     if query.operation == ast::QueryOperation::Query {

@@ -40,7 +40,7 @@ type Msg
 
 
 type Incoming
-    = SendMutation String String (List ( String, String )) Encode.Value -- hash, baseUrl, headers, input
+    = SendMutation String String (List ( String, String )) Encode.Value -- id, baseUrl, headers, input
 
 
 {-| Incoming messages from QueryClient (TypeScript side)
@@ -55,7 +55,7 @@ type Message
     = QueryResult String Encode.Value -- callbackPort, result
     | QueryFull String Int Encode.Value -- queryId, revision, result
     | QueryDelta String Int (List QueryDeltaOp) -- queryId, revision, delta ops
-    | MutationResult String (Result String Encode.Value) -- hash, result
+    | MutationResult String (Result String Encode.Value) -- id, result
 
 
 type QueryDeltaOp
@@ -1048,10 +1048,10 @@ encodeMessage msg =
                   )
                 ]
 
-        MutationResult hash result ->
+        MutationResult id result ->
             Encode.object
                 [ ( "type", Encode.string "mutationResult" )
-                , ( "hash", Encode.string hash )
+                , ( "id", Encode.string id )
                 , ( "result"
                   , case result of
                         Ok value ->
@@ -1081,7 +1081,7 @@ decodeIncoming =
                 case type_ of
                     "sendMutation" ->
                         Decode.map4 SendMutation
-                            (Decode.field "hash" Decode.string)
+                            (Decode.field "id" Decode.string)
                             (Decode.field "baseUrl" Decode.string)
                             (Decode.oneOf
                                 [ Decode.field "headers" decodeHeaders
@@ -1246,8 +1246,8 @@ encodeQueryDeltaOp op =
 
 
 mutationResult : String -> Result String Encode.Value -> Cmd msg
-mutationResult hash result =
-    sendMessage (MutationResult hash result)
+mutationResult id result =
+    sendMessage (MutationResult id result)
 
 
 receiveIncoming : (Result Decode.Error Incoming -> msg) -> Sub msg
@@ -1275,4 +1275,3 @@ subscriptions toMsg toErrorMsg =
                 Err err ->
                     toErrorMsg ("Failed to decode QueryManager message: " ++ Decode.errorToString err)
         )
-

@@ -12,7 +12,7 @@ export type { MutationResult } from './service/query-manager';
 
 export interface QueryModule<Input = unknown> {
   operation: 'query' | 'insert' | 'update' | 'delete' | 'mutation';
-  hash?: string;
+  id?: string;
   source?: unknown;
   queryShape?: unknown;
   toQueryShape?: (input: Input) => unknown;
@@ -229,15 +229,15 @@ export class PyreClient {
     input: Input,
     callback: (result: unknown) => void
   ): void {
-    const hash = queryModule.hash;
-    if (!hash) {
-      throw new Error('Mutation module is missing hash');
+    const id = queryModule.id;
+    if (!id) {
+      throw new Error('Mutation module is missing id');
     }
 
     const payload = input ?? {};
     const baseUrl = `${this.server.baseUrl}${this.endpoints.query}`;
     this.queryManager.sendMutation(
-      hash,
+      id,
       baseUrl,
       payload,
       callback,

@@ -1,5 +1,5 @@
 export interface QueryMetadata {
-  id: string // Hash ID
+  id: string // Query ID
   name: string // Human-readable name
   isMutation: boolean
   inputFields?: Array<{

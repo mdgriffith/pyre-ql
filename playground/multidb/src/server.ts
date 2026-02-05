@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import * as Query from "../pyre/generated/server/typescript/query";
+import * as Query from "../pyre/generated/typescript/targets/server/queries";
 
 const app = new Hono();
 
@@ -52,4 +52,3 @@ const server = {
 };
 
 export default server;
-

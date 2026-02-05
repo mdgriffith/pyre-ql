@@ -95,8 +95,8 @@ pyre generate --out pyre/generated
 ### 4. Use in your TypeScript code
 
 ```typescript
-import { createDb } from './pyre/generated/simple/db';
-import { GetUser, CreateUser, Session } from './pyre/generated/simple';
+import { createDb } from './pyre/generated/typescript/targets/simple/db';
+import { GetUser, CreateUser, Session } from './pyre/generated/typescript/targets/simple';
 
 // Create database connection
 const db = createDb({

@@ -133,16 +133,16 @@ update msg model =
             , Cmd.batch queryCmds
             )
 
-        MutationRequest hash baseUrl input result ->
+        MutationRequest id baseUrl input result ->
             case result of
                 Ok response ->
                     ( model
-                    , QueryManager.mutationResult hash (Ok response)
+                    , QueryManager.mutationResult id (Ok response)
                     )
 
                 Err error ->
                     ( model
-                    , QueryManager.mutationResult hash (Err (httpErrorToString error))
+                    , QueryManager.mutationResult id (Err (httpErrorToString error))
                     )
 
         Error errorMessage ->
@@ -224,11 +224,11 @@ handleLiveSyncIncoming incoming model =
 handleQueryManagerIncoming : QueryManager.Incoming -> Model -> ( Model, List (Cmd Msg) )
 handleQueryManagerIncoming incoming model =
     case incoming of
-        QueryManager.SendMutation hash baseUrl headers input ->
+        QueryManager.SendMutation id baseUrl headers input ->
             -- Mutations are handled via HTTP request
             let
                 url =
-                    buildMutationUrl baseUrl hash
+                    buildMutationUrl baseUrl id
             in
             ( model
             , [ Http.request
@@ -238,7 +238,7 @@ handleQueryManagerIncoming incoming model =
                     , body = Http.jsonBody input
                     , expect =
                         Http.expectStringResponse
-                            (MutationRequest hash baseUrl input)
+                            (MutationRequest id baseUrl input)
                             (\response ->
                                 case response of
                                     Http.BadUrl_ badUrl ->
@@ -384,7 +384,7 @@ httpErrorToString error =
 
 
 buildMutationUrl : String -> String -> String
-buildMutationUrl baseUrl hash =
+buildMutationUrl baseUrl id =
     case String.split "?" baseUrl of
         base :: queryParts ->
             let
@@ -392,13 +392,13 @@ buildMutationUrl baseUrl hash =
                     String.join "?" queryParts
             in
             if String.isEmpty query then
-                base ++ "/" ++ hash
+                base ++ "/" ++ id
 
             else
-                base ++ "/" ++ hash ++ "?" ++ query
+                base ++ "/" ++ id ++ "?" ++ query
 
         [] ->
-            baseUrl ++ "/" ++ hash
+            baseUrl ++ "/" ++ id
 
 
 applyCatchupUpdate : Catchup.UpdateResult -> Model -> ( Model, Cmd Msg )
@@ -625,4 +625,3 @@ reExecuteAllQueries schema db queryManager =
         )
         ( queryManager, [] )
         queryManager.subscriptions
-

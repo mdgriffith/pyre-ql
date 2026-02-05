@@ -1,4 +1,4 @@
-import { createDb } from '../pyre/generated/simple/db';
+import { createDb } from '../pyre/generated/typescript/targets/simple/db';
 import {
   GetAllUsers,
   GetUser,
@@ -8,7 +8,7 @@ import {
   UpdateUser,
   DeleteUser,
   type Session,
-} from '../pyre/generated/simple/index';
+} from '../pyre/generated/typescript/targets/simple/index';
 
 // Create an in-memory database for demo
 const db = createDb({

@@ -165,7 +165,7 @@ export interface QueryShape {
  * Represents a query or mutation module that can be executed by PyreClient
  */
 export interface Query {
-  hash?: string;
+  id?: string;
   operation: 'query' | 'insert' | 'update' | 'delete';
   InputValidator: { infer: any; (input: any): any };
   ReturnData: { infer: any; (input: any): any };
