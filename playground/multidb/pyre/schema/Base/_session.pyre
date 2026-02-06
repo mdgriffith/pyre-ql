@@ -1,7 +1,0 @@
-
-session {
-    userId Int
-}
-
-
-

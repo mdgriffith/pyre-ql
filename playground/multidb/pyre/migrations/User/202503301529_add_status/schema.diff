@@ -1,1 +1,0 @@
-{"added":[],"removed":[{"name":"users","columns":[{"cid":0,"name":"id","type":"INTEGER","notnull":false,"dflt_value":null,"pk":true},{"cid":1,"name":"name","type":"TEXT","notnull":false,"dflt_value":null,"pk":false}],"foreign_keys":[]}],"modified_records":[]}
