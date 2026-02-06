@@ -43,20 +43,20 @@ pub fn generate_queries(
 fn generate_run_file(query_names: &[String]) -> String {
     let mut result = String::new();
     result.push_str("import { toRunner } from '@pyre/server/runtime/runner';\n");
-    result.push_str("export type { Session } from '../../core/decode';\n");
+    result.push_str("export type { Session } from './core/decode';\n");
 
     for query_name in query_names {
         let file_name = string::decapitalize(query_name);
         result.push_str(&format!(
-            "import type {{ Input as {0}InputType, Result as {0}ResultType }} from '../../core/queries/metadata/{1}';\n",
+            "import type {{ Input as {0}InputType, Result as {0}ResultType }} from './core/queries/metadata/{1}';\n",
             query_name, file_name
         ));
         result.push_str(&format!(
-            "import {{ meta as {0}Meta }} from '../../core/queries/metadata/{1}';\n",
+            "import {{ meta as {0}Meta }} from './core/queries/metadata/{1}';\n",
             query_name, file_name
         ));
         result.push_str(&format!(
-            "import {{ sql as {0}Sql }} from '../../core/queries/sql/{1}';\n",
+            "import {{ sql as {0}Sql }} from './core/queries/sql/{1}';\n",
             query_name, file_name
         ));
     }

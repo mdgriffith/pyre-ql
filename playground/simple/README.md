@@ -96,7 +96,7 @@ pyre generate --out pyre/generated
 
 ```typescript
 import { createClient } from '@libsql/client';
-import { GetUser, CreateUser, Session } from './pyre/generated/typescript/targets/run/run';
+import { GetUser, CreateUser, Session } from './pyre/generated/typescript/run';
 
 // Create database connection
 const db = createClient({

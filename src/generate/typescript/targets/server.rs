@@ -29,12 +29,12 @@ pub fn generate_queries(
         if let ast::QueryDef::Query(q) = operation {
             let query_name = q.name.to_string();
             content.push_str(&format!(
-                "import {{ meta as {} }} from '../../core/queries/metadata/{}';\n",
+                "import {{ meta as {} }} from './core/queries/metadata/{}';\n",
                 query_name,
                 crate::ext::string::decapitalize(&query_name)
             ));
             content.push_str(&format!(
-                "import {{ sql as {}Sql }} from '../../core/queries/sql/{}';\n",
+                "import {{ sql as {}Sql }} from './core/queries/sql/{}';\n",
                 query_name,
                 crate::ext::string::decapitalize(&query_name)
             ));
@@ -65,5 +65,5 @@ pub fn generate_queries(
     }
     content.push_str("\n};\n");
 
-    files.push(generate_text_file(base_out_dir.join("queries.ts"), content));
+    files.push(generate_text_file(base_out_dir.join("server.ts"), content));
 }

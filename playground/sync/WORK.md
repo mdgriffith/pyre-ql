@@ -134,7 +134,7 @@ terminal-sync/
    ```
 
 4. **Query discovery**
-   - Read `pyre/generated/typescript/targets/server/queries.ts`
+   - Read `pyre/generated/typescript/server.ts`
    - Extract available queries from the switch statement
    - Map query IDs to query names (may need to generate metadata)
    - Display in dropdown/picker

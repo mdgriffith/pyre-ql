@@ -53,16 +53,15 @@ pyre/generated/
 │   └── elm/
 └── typescript/
     ├── core/
-    └── targets/
-        ├── client/
-        ├── server/
-        └── simple/
+    ├── server.ts
+    ├── run.ts
+    └── core/
 ```
 
 ## 4. Server usage (TypeScript)
 
 ```typescript
-import * as Query from "./pyre/generated/typescript/targets/server/queries";
+import * as Query from "./pyre/generated/typescript/server";
 
 const env = {
   url: "file:./db/app.db",
@@ -82,9 +81,9 @@ if (result.kind === "success") {
 ## 5. Client usage (TypeScript)
 
 ```typescript
-import { queries } from "./pyre/generated/typescript/targets/client/queries";
+import { meta as ListPosts } from "./pyre/generated/typescript/core/queries/metadata/listPosts";
 
-const query = queries.GetUser;
+const query = ListPosts;
 console.log(query.id);
 ```
 

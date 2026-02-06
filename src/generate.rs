@@ -30,23 +30,15 @@ pub fn generate_schema(
 ) {
     write_client_schema(&Client::Elm, context, database, files);
     let typescript_core_dir = Path::new("typescript/core");
-    let typescript_client_dir = Path::new("typescript/targets/client");
-    let typescript_server_dir = Path::new("typescript/targets/server");
-    let typescript_simple_dir = Path::new("typescript/targets/run");
+    let typescript_dir = Path::new("typescript");
     generate::typescript::core::generate_schema(context, database, typescript_core_dir, files);
-    generate::typescript::targets::client::generate_schema(
-        context,
-        database,
-        typescript_client_dir,
-        files,
-    );
     generate::typescript::targets::server::generate_schema(
         context,
         database,
-        typescript_server_dir,
+        typescript_dir,
         files,
     );
-    generate::typescript::targets::simple::generate_schema(database, typescript_simple_dir, files);
+    generate::typescript::targets::simple::generate_schema(database, typescript_dir, files);
 }
 
 // CLIENT
@@ -127,9 +119,7 @@ pub fn write_queries(
 ) {
     write_client_queries(&Client::Elm, context, query_list, files);
     let typescript_core_dir = Path::new("typescript/core");
-    let typescript_client_dir = Path::new("typescript/targets/client");
-    let typescript_server_dir = Path::new("typescript/targets/server");
-    let typescript_simple_dir = Path::new("typescript/targets/run");
+    let typescript_dir = Path::new("typescript");
     generate::typescript::core::generate_queries(
         context,
         all_query_info,
@@ -137,23 +127,18 @@ pub fn write_queries(
         typescript_core_dir,
         files,
     );
-    generate::typescript::targets::client::generate_queries(
-        query_list,
-        typescript_client_dir,
-        files,
-    );
     generate::typescript::targets::server::generate_queries(
         context,
         all_query_info,
         query_list,
-        typescript_server_dir,
+        typescript_dir,
         files,
     );
     generate::typescript::targets::simple::generate_queries(
         context,
         all_query_info,
         query_list,
-        typescript_simple_dir,
+        typescript_dir,
         files,
     );
 }

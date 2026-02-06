@@ -135,7 +135,7 @@ function decodeOrError<T>(validator: Ark.Type<T>, data: unknown, context: string
  * @example
  * ```typescript
  * import { run } from "pyre-wasm/server";
- * import { queries } from "./generated/typescript/targets/server/queries";
+ * import { queries } from "./generated/typescript/server";
  * const result = await run(db, queries, "createPost", args, session, connectedClients);
  * await result.sync((sessionId, message) => { ... });
  * ```

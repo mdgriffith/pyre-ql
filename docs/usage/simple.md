@@ -50,7 +50,7 @@ pyre generate --out pyre/generated
 Generated output (simple target):
 
 ```
-pyre/generated/typescript/targets/run/
+pyre/generated/typescript/
 └── run.ts
 ```
 
@@ -58,7 +58,7 @@ pyre/generated/typescript/targets/run/
 
 ```typescript
 import { createClient } from "@libsql/client";
-import { GetUser, type Session } from "./pyre/generated/typescript/targets/run/run";
+import { GetUser, type Session } from "./pyre/generated/typescript/run";
 
 const db = createClient({ url: "file:./db/app.db" });
 const session: Session = { userId: 1, role: "admin" };

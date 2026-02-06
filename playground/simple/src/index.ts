@@ -8,7 +8,7 @@ import {
   UpdateUser,
   DeleteUser,
   type Session,
-} from '../pyre/generated/typescript/targets/run/run';
+} from '../pyre/generated/typescript/run';
 
 // Create an in-memory database for demo
 const db = createClient({

@@ -151,9 +151,8 @@ This creates generated code in `pyre/generated/`:
 - **TypeScript core** - Shared types/decoders + SQL + metadata
   - `typescript/core/`
 - **TypeScript targets** - Thin adapters for each use case
-  - `typescript/targets/client/`
-  - `typescript/targets/server/`
-  - `typescript/targets/run/`
+  - `typescript/server.ts`
+  - `typescript/run.ts`
 - **Elm client**
   - `client/elm/`
 
@@ -162,7 +161,7 @@ This creates generated code in `pyre/generated/`:
 ### Server Example (TypeScript/Node.js)
 
 ```typescript
-import * as Query from "./pyre/generated/typescript/targets/server/queries";
+import * as Query from "./pyre/generated/typescript/server";
 
 const env = {
     url: "file:./db/playground.db",
@@ -184,11 +183,10 @@ if (result.kind === "success") {
 ### Client Example (TypeScript)
 
 ```typescript
-import { queries } from "./pyre/generated/typescript/targets/client/queries";
+import { meta as MyQuery } from "./pyre/generated/typescript/core/queries/metadata/myQuery";
 
 // Use the generated query metadata with your client runtime
-const query = queries.MyQuery;
-console.log(query.id);
+console.log(MyQuery.id);
 ```
 
 ## Additional Commands

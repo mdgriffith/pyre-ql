@@ -34,7 +34,7 @@ let nextSessionId = 1;
 const db = createClient({ url: DB_URL });
 
 // Import query map - loaded once at startup
-const queryModule = await import(join(process.cwd(), "pyre", "generated", "typescript", "targets", "server", "queries"));
+const queryModule = await import(join(process.cwd(), "pyre", "generated", "typescript", "server"));
 const queries = queryModule.queries;
 
 // Routes
