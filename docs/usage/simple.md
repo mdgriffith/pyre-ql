@@ -50,20 +50,17 @@ pyre generate --out pyre/generated
 Generated output (simple target):
 
 ```
-pyre/generated/typescript/targets/simple/
-├── db.ts
-├── index.ts
-└── queries/
-    └── getUser.ts
+pyre/generated/typescript/targets/run/
+└── run.ts
 ```
 
 ## 4. Use the generated functions
 
 ```typescript
-import { createDb } from "./pyre/generated/typescript/targets/simple/db";
-import { GetUser, type Session } from "./pyre/generated/typescript/targets/simple";
+import { createClient } from "@libsql/client";
+import { GetUser, type Session } from "./pyre/generated/typescript/targets/run/run";
 
-const db = createDb({ url: "file:./db/app.db" });
+const db = createClient({ url: "file:./db/app.db" });
 const session: Session = { userId: 1, role: "admin" };
 
 const result = await GetUser(db, session, { id: 1 });

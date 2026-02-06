@@ -1,42 +1,17 @@
 use crate::ast;
 use crate::filesystem;
 use crate::filesystem::generate_text_file;
-use crate::generate;
-use crate::generate::server::typescript::watched;
 use crate::typecheck;
 use std::collections::HashMap;
 use std::path::Path;
 
-const DB_ENGINE: &str = include_str!("../../server/static/typescript/db.ts");
-
 pub fn generate_schema(
-    context: &typecheck::Context,
-    database: &ast::Database,
-    base_out_dir: &Path,
+    _context: &typecheck::Context,
+    _database: &ast::Database,
+    _base_out_dir: &Path,
     files: &mut Vec<filesystem::GeneratedFile<String>>,
 ) {
-    files.push(generate_text_file(
-        base_out_dir.join("db.ts"),
-        DB_ENGINE.to_string(),
-    ));
-
-    if let Some(config_ts) = to_env(database) {
-        files.push(generate_text_file(
-            base_out_dir.join("db/env.ts"),
-            config_ts,
-        ));
-    }
-
-    files.push(generate_text_file(
-        base_out_dir.join("db/data.ts"),
-        generate::server::typescript::schema(database),
-    ));
-    files.push(generate_text_file(
-        base_out_dir.join("db/decode.ts"),
-        generate::server::typescript::to_schema_decoders(database),
-    ));
-
-    watched::generate(files, context, base_out_dir);
+    let _ = files;
 }
 
 pub fn generate_queries(
@@ -48,9 +23,7 @@ pub fn generate_queries(
 ) {
     let mut content = String::new();
 
-    content.push_str(
-        "import type { QueryMap, QueryMetadata } from '../../../../../../wasm/server';\n",
-    );
+    content.push_str("import type { QueryMap, QueryMetadata } from '@pyre/server/query';\n\n");
 
     for operation in &query_list.queries {
         if let ast::QueryDef::Query(q) = operation {
@@ -93,8 +66,4 @@ pub fn generate_queries(
     content.push_str("\n};\n");
 
     files.push(generate_text_file(base_out_dir.join("queries.ts"), content));
-}
-
-fn to_env(database: &ast::Database) -> Option<String> {
-    generate::server::typescript::to_env(database)
 }

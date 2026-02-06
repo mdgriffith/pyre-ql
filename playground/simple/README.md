@@ -95,11 +95,11 @@ pyre generate --out pyre/generated
 ### 4. Use in your TypeScript code
 
 ```typescript
-import { createDb } from './pyre/generated/typescript/targets/simple/db';
-import { GetUser, CreateUser, Session } from './pyre/generated/typescript/targets/simple';
+import { createClient } from '@libsql/client';
+import { GetUser, CreateUser, Session } from './pyre/generated/typescript/targets/run/run';
 
 // Create database connection
-const db = createDb({
+const db = createClient({
   url: 'file:./db/app.db'
 });
 

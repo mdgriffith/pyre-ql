@@ -7,17 +7,9 @@ use std::path::Path;
 pub fn generate_schema(
     _context: &typecheck::Context,
     _database: &ast::Database,
-    base_out_dir: &Path,
-    files: &mut Vec<filesystem::GeneratedFile<String>>,
+    _base_out_dir: &Path,
+    _files: &mut Vec<filesystem::GeneratedFile<String>>,
 ) {
-    files.push(generate_text_file(
-        base_out_dir.join("schema.ts"),
-        "export { schemaMetadata } from '../../core/schema';\n".to_string(),
-    ));
-    files.push(generate_text_file(
-        base_out_dir.join("types.ts"),
-        "export * from '../../core/types';\n".to_string(),
-    ));
 }
 
 pub fn generate_queries(

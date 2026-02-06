@@ -1,4 +1,4 @@
-import { createDb } from '../pyre/generated/typescript/targets/simple/db';
+import { createClient } from '@libsql/client';
 import {
   GetAllUsers,
   GetUser,
@@ -8,10 +8,10 @@ import {
   UpdateUser,
   DeleteUser,
   type Session,
-} from '../pyre/generated/typescript/targets/simple/index';
+} from '../pyre/generated/typescript/targets/run/run';
 
 // Create an in-memory database for demo
-const db = createDb({
+const db = createClient({
   url: 'file:./db/app.db'
 });
 

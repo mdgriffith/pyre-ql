@@ -1,6 +1,5 @@
 import { Client, InStatement } from "@libsql/client";
 import * as Ark from "arktype";
-import * as wasm from "../pkg/pyre_wasm.js";
 import { buildArgs, formatResultData, toSqlStatements, type SqlInfo } from "./runtime/sql";
 
 export type SessionValue = null | number | string | Uint8Array;
@@ -68,6 +67,51 @@ export interface QueryResult {
     sync(sendToSession: (sessionId: string, message: any) => void): Promise<void>;
 }
 
+export type SyncDeltasFn = (
+    affectedRowGroups: any[],
+    connectedSessions: Map<string, { session: Record<string, SessionValue>; [key: string]: any }>,
+    sendToSession: (sessionId: string, message: any) => void
+) => Promise<void>;
+
+function extractAffectedRowGroups(sql: SqlInfo[], resultSets: any[]): any[] {
+    const groups: any[] = [];
+    const includedResultSets = resultSets.filter((_, index) => sql[index]?.include);
+
+    for (const resultSet of includedResultSets) {
+        if (!resultSet?.columns?.length) {
+            continue;
+        }
+
+        const colName = resultSet.columns[0];
+        if (colName !== "_affectedRows") {
+            continue;
+        }
+
+        for (const row of resultSet.rows || []) {
+            if (!(colName in row)) {
+                continue;
+            }
+
+            const raw = row[colName];
+            let parsed: any;
+
+            if (typeof raw === "string") {
+                parsed = JSON.parse(raw);
+            } else {
+                parsed = raw;
+            }
+
+            if (Array.isArray(parsed)) {
+                groups.push(...parsed);
+            } else if (parsed != null) {
+                groups.push(parsed);
+            }
+        }
+    }
+
+    return groups;
+}
+
 
 function decodeOrError<T>(validator: Ark.Type<T>, data: unknown, context: string): { valid: boolean; error?: string; value?: T } {
     const decoded = validator(data);
@@ -102,7 +146,8 @@ export async function run(
     queryId: string,
     args: any,
     executingSession: Session,
-    connectedSessions?: Map<string, { session: Record<string, SessionValue>;[key: string]: any }>
+    connectedSessions?: Map<string, { session: Record<string, SessionValue>;[key: string]: any }>,
+    syncDeltas?: SyncDeltasFn
 ): Promise<QueryResult> {
     // Look up query metadata
     const query = queryMap[queryId];
@@ -157,9 +202,8 @@ export async function run(
 
     // Execute query
     const resultSets = await db.batch(sqlStatements);
+    const affectedRowGroups: any[] = extractAffectedRowGroups(query.sql, resultSets);
     const response = formatResultData(query.sql, resultSets);
-
-    const affectedRowGroups: any[] = response?._affectedRows ?? [];
 
     // Always create sync function - it will be a no-op if there's nothing to send
     /**
@@ -190,28 +234,11 @@ export async function run(
             return;
         }
 
-        // Pass grouped format directly - WASM keeps it grouped for efficiency
-        const deltasResult = wasm.calculate_sync_deltas(affectedRowGroups, connectedSessions);
-
-        if (typeof deltasResult === "string" && deltasResult.startsWith("Error:")) {
-            console.error("[SyncDeltas] Failed to calculate sync deltas:", deltasResult);
+        if (!syncDeltas) {
             return;
         }
 
-        const result = typeof deltasResult === "string" ? JSON.parse(deltasResult) : deltasResult;
-
-        // Broadcast to each session group
-        for (const group of result.groups) {
-            // Each group already has the filtered table groups (no need to resolve indices)
-            const deltaMessage = {
-                type: "delta",
-                data: group.table_groups
-            };
-
-            for (const sessionId of group.session_ids) {
-                sendToSession(sessionId, deltaMessage);
-            }
-        }
+        await syncDeltas(affectedRowGroups, connectedSessions, sendToSession);
     }
 
     return {

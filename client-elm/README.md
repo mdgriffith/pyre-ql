@@ -32,7 +32,7 @@ npm run typecheck
 
 ```typescript
 import { PyreClient } from '@pyre/client-elm';
-import { schemaMetadata } from './generated/typescript/targets/client/schema';
+import { schemaMetadata } from './generated/typescript/core/schema';
 
 const client = new PyreClient({
   schema: schemaMetadata,

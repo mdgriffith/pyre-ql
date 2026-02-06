@@ -3,9 +3,9 @@ import { streamSSE } from "hono/streaming";
 import { createClient } from "@libsql/client";
 import { join } from "path";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
-import * as Pyre from "../../../wasm/server";
+import * as Sync from "@pyre/server/sync";
 
-await Pyre.init();
+await Sync.init();
 
 const app = new Hono();
 
@@ -34,7 +34,7 @@ let nextSessionId = 1;
 const db = createClient({ url: DB_URL });
 
 // Import query map - loaded once at startup
-const queryModule = await import(join(process.cwd(), "pyre", "generated", "server", "typescript", "query"));
+const queryModule = await import(join(process.cwd(), "pyre", "generated", "typescript", "targets", "server", "queries"));
 const queries = queryModule.queries;
 
 // Routes
@@ -70,17 +70,10 @@ const getSession = (sessionId: string | undefined | null) => {
 
 // Query metadata endpoint
 app.get("/queries", async (c) => {
-    const { discoverQueries } = await import("./client/queryDiscovery.js");
+    const { discoverQueries } = await import("./client/queryDiscovery");
     const queries = discoverQueries();
     return c.json(queries);
 
-});
-
-// Schema endpoint - returns introspection JSON
-app.get("/schema", async (c) => {
-    const { getIntrospectionJson } = await import("../../../wasm/server/schema.js");
-    const introspection = await getIntrospectionJson(db);
-    return c.json(introspection);
 });
 
 // Login endpoint - creates a session for a userId
@@ -222,7 +215,7 @@ app.get("/sync", async (c) => {
     }
 
     // Ask pyre to get any data that needs to be synced.
-    const result = await Pyre.catchup(db, syncCursor, session, 1000);
+    const result = await Sync.catchup(db, syncCursor, session, 1000);
     return c.json(result);
 
 });
@@ -247,7 +240,7 @@ app.post("/db/:req", async (c) => {
 
     // Execute query with all connected clients for sync delta calculation
     // Pyre.run can extract session.fields from ConnectedClient objects
-    const result = await Pyre.run(
+    const result = await Sync.run(
         db,
         queries,
         req,
@@ -302,7 +295,7 @@ app.post("/db/:req", async (c) => {
 // Start server function
 export default async function startServer() {
     // Load schema into WASM cache for sync deltas
-    await Pyre.loadSchemaFromDatabase(db);
+    await Sync.loadSchemaFromDatabase(db);
 
     const port = 3000;
 

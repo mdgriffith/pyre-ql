@@ -1,0 +1,41 @@
+{
+  "name": "@pyre/server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "default": "./index.ts"
+    },
+    "./query": {
+      "types": "./query.ts",
+      "default": "./query.ts"
+    },
+    "./wasm": {
+      "types": "./wasm.ts",
+      "default": "./wasm.ts"
+    },
+    "./schema": {
+      "types": "./schema.ts",
+      "default": "./schema.ts"
+    },
+    "./sync": {
+      "types": "./sync-api.ts",
+      "default": "./sync-api.ts"
+    },
+    "./query-sync": {
+      "types": "./query-sync.ts",
+      "default": "./query-sync.ts"
+    },
+    "./runtime/sql": {
+      "types": "./runtime/sql.ts",
+      "default": "./runtime/sql.ts"
+    },
+    "./runtime/runner": {
+      "types": "./runtime/runner.ts",
+      "default": "./runtime/runner.ts"
+    }
+  }
+}

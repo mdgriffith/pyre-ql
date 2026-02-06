@@ -8,8 +8,6 @@ use crate::typecheck;
 use std::collections::HashMap;
 use std::path::Path;
 
-const SQL_RUNTIME: &str = include_str!("../../../wasm/server/runtime/sql.ts");
-
 pub fn generate_schema(
     context: &typecheck::Context,
     database: &ast::Database,
@@ -17,16 +15,8 @@ pub fn generate_schema(
     files: &mut Vec<filesystem::GeneratedFile<String>>,
 ) {
     files.push(generate_text_file(
-        base_out_dir.join("codec.ts"),
-        codec_file(),
-    ));
-    files.push(generate_text_file(
-        base_out_dir.join("types.ts"),
-        generate_schema_types(database),
-    ));
-    files.push(generate_text_file(
-        base_out_dir.join("query-shape.ts"),
-        query_shape_file(),
+        base_out_dir.join("decode.ts"),
+        generate_decode_file(database),
     ));
     files.push(generate_text_file(
         base_out_dir.join("schema.ts"),
@@ -35,10 +25,6 @@ pub fn generate_schema(
     files.push(generate_text_file(
         base_out_dir.join("queries/sql/types.ts"),
         sql_types_file(),
-    ));
-    files.push(generate_text_file(
-        base_out_dir.join("runtime/sql.ts"),
-        SQL_RUNTIME.to_string(),
     ));
 }
 
@@ -78,9 +64,21 @@ pub fn generate_queries(
     }
 }
 
-fn codec_file() -> String {
+fn sql_types_file() -> String {
     let mut result = String::new();
-    result.push_str("import * as Ark from 'arktype';\n\n");
+    result.push_str("export type SqlInfo = {\n");
+    result.push_str("  include: boolean;\n");
+    result.push_str("  params: string[];\n");
+    result.push_str("  sql: string;\n");
+    result.push_str("};\n");
+    result
+}
+
+fn generate_decode_file(database: &ast::Database) -> String {
+    let mut result = String::new();
+
+    result.push_str("import * as Ark from 'arktype';\n");
+    result.push_str("\n");
     result.push_str(
         "export const CoercedDate = Ark.type('number').pipe((val) => new Date(val * 1000));\n",
     );
@@ -94,30 +92,7 @@ fn codec_file() -> String {
     result.push_str("    throw new Error(`Failed to decode ${label}: ${errorStr}`);\n");
     result.push_str("  }\n");
     result.push_str("  return decoded as T;\n");
-    result.push_str("}\n");
-    result
-}
-
-fn query_shape_file() -> String {
-    "export type QueryShape = boolean | { [key: string]: QueryShape };\n".to_string()
-}
-
-fn sql_types_file() -> String {
-    let mut result = String::new();
-    result.push_str("export type SqlInfo = {\n");
-    result.push_str("  include: boolean;\n");
-    result.push_str("  params: string[];\n");
-    result.push_str("  sql: string;\n");
-    result.push_str("};\n");
-    result
-}
-
-fn generate_schema_types(database: &ast::Database) -> String {
-    let mut result = String::new();
-
-    result.push_str("// Auto-generated schema types\n");
-    result.push_str("import * as Ark from 'arktype';\n");
-    result.push_str("import { CoercedBool, CoercedDate } from './codec';\n\n");
+    result.push_str("}\n\n");
 
     // Get session definition
     let session = database
@@ -172,17 +147,6 @@ fn generate_schema_types(database: &ast::Database) -> String {
             for def in &file.definitions {
                 if let ast::Definition::Tagged { name, variants, .. } = def {
                     result.push_str(&generate_tagged_union(name, variants));
-                }
-            }
-        }
-    }
-
-    // Generate record types
-    for schema in &database.schemas {
-        for file in &schema.files {
-            for def in &file.definitions {
-                if let ast::Definition::Record { name, fields, .. } = def {
-                    result.push_str(&generate_record_type(name, fields));
                 }
             }
         }
@@ -265,56 +229,6 @@ fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
         }
     }
     result.push_str(";\n\n");
-
-    result
-}
-
-fn generate_record_type(name: &str, fields: &Vec<ast::Field>) -> String {
-    let mut result = String::new();
-
-    result.push_str(&format!("export interface {} {{\n", name));
-    for field in fields {
-        match field {
-            ast::Field::Column(col) => {
-                let type_str = col.type_.to_string();
-                let ts_type = match type_str.as_str() {
-                    "String" => "string",
-                    "Int" | "Float" => "number",
-                    "Bool" => "boolean",
-                    "DateTime" => "Date",
-                    other => other,
-                };
-                let optional = if col.nullable { "?" } else { "" };
-                result.push_str(&format!("  {}{}: {};\n", col.name, optional, ts_type));
-            }
-            _ => {}
-        }
-    }
-    result.push_str("}\n\n");
-
-    result.push_str(&format!("export const {}Validator = Ark.type({{\n", name));
-    for field in fields {
-        match field {
-            ast::Field::Column(col) => {
-                let type_str = col.type_.to_string();
-                let validator = match type_str.as_str() {
-                    "String" => "'string'".to_string(),
-                    "Int" | "Float" => "'number'".to_string(),
-                    "Bool" => "CoercedBool".to_string(),
-                    "DateTime" => "CoercedDate".to_string(),
-                    other => format!("'{}'", other),
-                };
-                let validator = if col.nullable {
-                    format!("{}.or('null')", validator)
-                } else {
-                    validator
-                };
-                result.push_str(&format!("  {}: {},\n", col.name, validator));
-            }
-            _ => {}
-        }
-    }
-    result.push_str("});\n\n");
 
     result
 }
@@ -417,12 +331,9 @@ fn to_query_metadata_file(
         if uses_coerced_date {
             imports.push_str("CoercedDate");
         }
-        imports.push_str(" } from '../../codec';\n");
+        imports.push_str(" } from '../../decode';\n");
     }
-    imports.push_str("import * as Decode from '../../types';\n");
-    if query.operation == ast::QueryOperation::Query {
-        imports.push_str("import type { QueryShape } from '../../query-shape';\n");
-    }
+    imports.push_str("import * as Decode from '../../decode';\n");
 
     let input_block = to_param_type_alias(&query.args).trim_end().to_string();
 
@@ -607,7 +518,7 @@ fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
 }
 
 fn to_query_shape(context: &typecheck::Context, query: &ast::Query) -> String {
-    let mut result = "const queryShape: QueryShape = {\n".to_string();
+    let mut result = "const queryShape = {\n".to_string();
 
     let mut is_first_table = true;
     for field in &query.fields {

@@ -32,7 +32,7 @@ pub fn generate_schema(
     let typescript_core_dir = Path::new("typescript/core");
     let typescript_client_dir = Path::new("typescript/targets/client");
     let typescript_server_dir = Path::new("typescript/targets/server");
-    let typescript_simple_dir = Path::new("typescript/targets/simple");
+    let typescript_simple_dir = Path::new("typescript/targets/run");
     generate::typescript::core::generate_schema(context, database, typescript_core_dir, files);
     generate::typescript::targets::client::generate_schema(
         context,
@@ -129,7 +129,7 @@ pub fn write_queries(
     let typescript_core_dir = Path::new("typescript/core");
     let typescript_client_dir = Path::new("typescript/targets/client");
     let typescript_server_dir = Path::new("typescript/targets/server");
-    let typescript_simple_dir = Path::new("typescript/targets/simple");
+    let typescript_simple_dir = Path::new("typescript/targets/run");
     generate::typescript::core::generate_queries(
         context,
         all_query_info,

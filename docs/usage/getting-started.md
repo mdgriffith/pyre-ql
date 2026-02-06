@@ -153,7 +153,7 @@ This creates generated code in `pyre/generated/`:
 - **TypeScript targets** - Thin adapters for each use case
   - `typescript/targets/client/`
   - `typescript/targets/server/`
-  - `typescript/targets/simple/`
+  - `typescript/targets/run/`
 - **Elm client**
   - `client/elm/`
 
