@@ -251,6 +251,6 @@ your-project/
 
 ## Next Steps
 
-- Explore the [playground examples](../playground/) for more complex usage
+- Explore the [playground examples](../../playground/) for more complex usage
 - Check out the CLI help: `pyre --help`
 - Read about advanced features in the schema and query syntax

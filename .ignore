@@ -1,0 +1,8 @@
+target/
+wasm/target/
+node_modules/
+**/node_modules/
+
+packages/client/dist/
+packages/client/elm-stuff/
+src/generate/client/static/elm/elm-stuff/
