@@ -12,7 +12,6 @@
     },
     "dependencies": {
         "@libsql/client": "^0.14.0",
-        "@pyre/client": "file:../../client",
         "@pyre/client-elm": "file:../../client-elm",
         "@pyre/server": "file:../../wasm/server",
         "arktype": "^2.0.0-rc.32",

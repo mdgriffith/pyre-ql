@@ -16,7 +16,6 @@ pub mod typescript;
 
 pub enum Client {
     Elm,
-    Typescript,
 }
 
 pub enum Server {
@@ -28,7 +27,7 @@ pub fn generate_schema(
     database: &ast::Database,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
-    write_client_schema(&Client::Elm, context, database, files);
+    write_client_schema(&Client::Elm, database, files);
     let typescript_core_dir = Path::new("typescript/core");
     let typescript_dir = Path::new("typescript");
     generate::typescript::core::generate_schema(context, database, typescript_core_dir, files);
@@ -45,7 +44,6 @@ pub fn generate_schema(
 
 fn write_client_schema(
     client: &Client,
-    context: &typecheck::Context,
     database: &ast::Database,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
@@ -58,7 +56,6 @@ fn write_client_schema(
     // client/{lang} (relative path)
     match client {
         Client::Elm => generate::client::elm::generate(&out_dir, database, files),
-        Client::Typescript => generate::client::typescript::generate(context, &out_dir, files),
     }
 }
 
@@ -88,7 +85,6 @@ fn write_server_schema(
 fn to_client_dir_path(client: &Client, out_dir: &Path) -> PathBuf {
     match client {
         Client::Elm => out_dir.join("elm"),
-        Client::Typescript => out_dir.join("typescript"),
     }
 }
 
@@ -158,9 +154,6 @@ fn write_client_queries(
     match client {
         Client::Elm => {
             generate::client::elm::generate_queries(&context, &query_list, &out_dir, files)
-        }
-        Client::Typescript => {
-            generate::client::typescript::generate_queries(&context, &query_list, &out_dir, files)
         }
     }
 }
