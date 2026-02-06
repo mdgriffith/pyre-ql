@@ -5,4 +5,9 @@ set -e
 cargo build
 (cd wasm ; wasm-pack build --target web)
 
+mkdir -p packages/server/wasm
+cp wasm/pkg/pyre_wasm.js packages/server/wasm/pyre_wasm.js
+cp wasm/pkg/pyre_wasm_bg.wasm packages/server/wasm/pyre_wasm_bg.wasm
+cp wasm/pkg/pyre_wasm.d.ts packages/server/wasm/pyre_wasm.d.ts
+cp wasm/pkg/pyre_wasm_bg.wasm.d.ts packages/server/wasm/pyre_wasm_bg.wasm.d.ts
 

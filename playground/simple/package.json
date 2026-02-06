@@ -12,8 +12,7 @@
   "dependencies": {
     "@libsql/client": "^0.14.0",
     "@pyre/server": "file:../../packages/server",
-    "arktype": "^2.0.0-rc.32",
-    "pyre-wasm": "file:../../wasm/pkg"
+    "arktype": "^2.0.0-rc.32"
   },
   "devDependencies": {
     "@types/bun": "latest",

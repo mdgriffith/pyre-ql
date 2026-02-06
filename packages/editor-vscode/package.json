@@ -1,5 +1,5 @@
 {
-  "name": "pyre",
+  "name": "pyre-vscode",
   "displayName": "Pyre language support",
   "description": "Language support for Pyre schema and query files",
   "version": "0.0.1",

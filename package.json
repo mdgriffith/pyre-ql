@@ -11,8 +11,5 @@
     "release:pack": "bun run ./scripts/release-pack.mjs",
     "release:smoke": "bun run ./scripts/release-smoke.mjs",
     "release:clean": "bun run ./scripts/release-clean.mjs"
-  },
-  "devDependencies": {
-    "pyre-wasm": "file:./wasm/pkg"
   }
 }

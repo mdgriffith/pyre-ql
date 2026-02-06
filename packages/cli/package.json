@@ -1,0 +1,23 @@
+{
+  "name": "pyre",
+  "version": "0.1.0",
+  "description": "Pyre CLI npm wrapper",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "pyre": "./bin/pyre.js"
+  },
+  "scripts": {
+    "postinstall": "node ./scripts/postinstall.mjs",
+    "typecheck": "node -e \"process.exit(0)\""
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "README.md",
+    "package.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

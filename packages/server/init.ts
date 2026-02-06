@@ -1,4 +1,4 @@
-import initWasm from "pyre-wasm";
+import initWasm from "./wasm/pyre_wasm.js";
 
 /**
  * Initialize Pyre WASM module.
