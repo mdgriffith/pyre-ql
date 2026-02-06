@@ -1,3 +1,5 @@
+import type { ElmApp } from '../types';
+
 export interface SSEConfig {
   baseUrl: string;
   eventsPath: string;

@@ -1,11 +1,17 @@
 import loadElm from '../dist/engine.mjs';
-import type { SchemaMetadata } from '../../client/src/types';
 import { IndexedDBStorage, IndexedDbService } from './service/indexeddb';
 import { QueryClientService } from './service/query-client';
 import { QueryManagerService } from './service/query-manager';
 import { SSEManager, type LiveSyncMessage } from './service/sse';
 import { WebSocketManager } from './service/websocket';
-import type { ElmApp, LiveSyncTransport, ServerConfig, ServerEndpoints, SyncProgress } from './types';
+import type {
+  ElmApp,
+  LiveSyncTransport,
+  SchemaMetadata,
+  ServerConfig,
+  ServerEndpoints,
+  SyncProgress,
+} from './types';
 
 export type { LiveSyncTransport, ServerConfig, ServerEndpoints, SyncProgress } from './types';
 export type { MutationResult } from './service/query-manager';
