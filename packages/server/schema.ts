@@ -1,6 +1,5 @@
 import { Client } from "@libsql/client";
-// Import WASM module from the same package
-import * as wasm from "../pkg/pyre_wasm.js";
+import * as wasm from "pyre-wasm";
 
 /**
  * Load schema from database into WASM cache.

@@ -12,10 +12,11 @@
     },
     "dependencies": {
         "@libsql/client": "^0.14.0",
-        "@pyre/client-elm": "file:../../client-elm",
-        "@pyre/server": "file:../../wasm/server",
+        "@pyre/client": "file:../../packages/client",
+        "@pyre/server": "file:../../packages/server",
         "arktype": "^2.0.0-rc.32",
         "hono": "^4.4.10",
+        "pyre-wasm": "file:../../wasm/pkg",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
         "ws": "^8.18.0"

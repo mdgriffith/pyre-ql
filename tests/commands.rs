@@ -175,10 +175,10 @@ record Post {
         schema_content
     );
 
-    // Verify LinkInfo interface exists
+    // Verify schema types come from @pyre/core
     assert!(
-        schema_content.contains("export interface LinkInfo"),
-        "Schema should export LinkInfo interface. Schema content:\n{}",
+        schema_content.contains("import type { SchemaMetadata } from '@pyre/core';"),
+        "Schema should import SchemaMetadata from @pyre/core. Schema content:\n{}",
         schema_content
     );
 }

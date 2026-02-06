@@ -21,3 +21,4 @@ test.db
 node_modules
 **/.DS_Store
 index.html
+.artifacts

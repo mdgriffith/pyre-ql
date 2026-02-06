@@ -1,7 +1,8 @@
 {
-  "name": "@pyre/client-elm",
+  "name": "@pyre/client",
   "version": "0.1.0",
   "description": "Elm client for Pyre data synchronization and querying",
+  "license": "MIT",
   "type": "module",
   "main": "./src-ts/index.ts",
   "module": "./src-ts/index.ts",
@@ -27,8 +28,19 @@
     "elm"
   ],
   "author": "",
-  "license": "MIT",
+  "dependencies": {
+    "@pyre/core": "0.1.0"
+  },
   "devDependencies": {
     "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist",
+    "src-ts",
+    "README.md",
+    "package.json"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

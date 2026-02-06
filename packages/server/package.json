@@ -1,8 +1,11 @@
 {
   "name": "@pyre/server",
   "version": "0.1.0",
+  "description": "Server runtime for executing generated Pyre queries",
+  "license": "MIT",
   "type": "module",
   "main": "./index.ts",
+  "module": "./index.ts",
   "types": "./index.ts",
   "exports": {
     ".": {
@@ -37,5 +40,27 @@
       "types": "./runtime/runner.ts",
       "default": "./runtime/runner.ts"
     }
+  },
+  "dependencies": {
+    "@pyre/core": "0.1.0",
+    "@libsql/client": "^0.14.0",
+    "arktype": "^2.0.0-rc.32",
+    "pyre-wasm": "file:../../wasm/pkg"
+  },
+  "files": [
+    "index.ts",
+    "init.ts",
+    "query-sync.ts",
+    "query.ts",
+    "runtime",
+    "schema.ts",
+    "sync-api.ts",
+    "sync.ts",
+    "wasm.ts",
+    "README.md",
+    "package.json"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

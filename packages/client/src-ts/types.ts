@@ -1,28 +1,14 @@
-export interface LinkInfo {
-  type: 'many-to-one' | 'one-to-many' | 'one-to-one';
-  from: string;
-  to: {
-    table: string;
-    column: string;
-  };
-}
+import type { SchemaMetadata } from '@pyre/core';
 
-export interface IndexInfo {
-  field: string;
-  unique: boolean;
-  primary: boolean;
-}
-
-export interface TableMetadata {
-  name: string;
-  links: Record<string, LinkInfo>;
-  indices: IndexInfo[];
-}
-
-export interface SchemaMetadata {
-  tables: Record<string, TableMetadata>;
-  queryFieldToTable: Record<string, string>;
-}
+export type {
+  FilterValue,
+  QueryField,
+  QueryShape,
+  SchemaMetadata,
+  SortClause,
+  SortDirection,
+  WhereClause,
+} from '@pyre/core';
 
 export interface ServerEndpoints {
   catchup: string;

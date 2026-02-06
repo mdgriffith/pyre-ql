@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { PyreClient } from '@pyre/client-elm'
+import { PyreClient } from '@pyre/client'
 import { meta as ListUsersAndPosts } from '../../pyre/generated/typescript/core/queries/metadata/listUsersAndPosts'
 import './Clients.css'
 

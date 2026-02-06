@@ -31,7 +31,7 @@ npm run typecheck
 ### Initialization
 
 ```typescript
-import { PyreClient } from '@pyre/client-elm';
+import { PyreClient } from '@pyre/client';
 import { schemaMetadata } from './generated/typescript/core/schema';
 
 const client = new PyreClient({

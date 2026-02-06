@@ -1,0 +1,24 @@
+{
+  "name": "@pyre/core",
+  "version": "0.1.0",
+  "description": "Shared TypeScript contracts for Pyre packages",
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.ts",
+  "module": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "default": "./index.ts"
+    }
+  },
+  "files": [
+    "index.ts",
+    "README.md",
+    "package.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

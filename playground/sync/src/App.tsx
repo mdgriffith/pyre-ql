@@ -3,7 +3,7 @@ import QueryForm from './components/QueryForm'
 import MessagePane from './components/MessagePane'
 import Clients from './components/Clients'
 import { discoverQueries, QueryMetadata } from './queryDiscovery'
-import { PyreClient } from '@pyre/client-elm'
+import { PyreClient } from '@pyre/client'
 import { schemaMetadata } from '../pyre/generated/typescript/core/schema'
 import './App.css'
 

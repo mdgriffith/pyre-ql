@@ -320,6 +320,9 @@ fn to_query_metadata_file(
 
     let mut imports = String::new();
     imports.push_str("import * as Ark from 'arktype';\n");
+    if query.operation == ast::QueryOperation::Query {
+        imports.push_str("import type { QueryShape } from '@pyre/core';\n");
+    }
     if uses_coerced_bool || uses_coerced_date {
         imports.push_str("import { ");
         if uses_coerced_bool {
@@ -518,7 +521,7 @@ fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
 }
 
 fn to_query_shape(context: &typecheck::Context, query: &ast::Query) -> String {
-    let mut result = "const queryShape = {\n".to_string();
+    let mut result = "const queryShape: QueryShape = {\n".to_string();
 
     let mut is_first_table = true;
     for field in &query.fields {
@@ -705,31 +708,7 @@ fn to_query_field_spec(
 
 fn to_schema_metadata(context: &typecheck::Context) -> String {
     let mut result = String::new();
-    result.push_str("export interface LinkInfo {\n");
-    result.push_str("  type: 'many-to-one' | 'one-to-many' | 'one-to-one';\n");
-    result.push_str("  from: string;\n");
-    result.push_str("  to: {\n");
-    result.push_str("    table: string;\n");
-    result.push_str("    column: string;\n");
-    result.push_str("  };\n");
-    result.push_str("}\n\n");
-
-    result.push_str("export interface IndexInfo {\n");
-    result.push_str("  field: string;\n");
-    result.push_str("  unique: boolean;\n");
-    result.push_str("  primary: boolean;\n");
-    result.push_str("}\n\n");
-
-    result.push_str("export interface TableMetadata {\n");
-    result.push_str("  name: string;\n");
-    result.push_str("  links: Record<string, LinkInfo>;\n");
-    result.push_str("  indices: IndexInfo[];\n");
-    result.push_str("}\n\n");
-
-    result.push_str("export interface SchemaMetadata {\n");
-    result.push_str("  tables: Record<string, TableMetadata>;\n");
-    result.push_str("  queryFieldToTable: Record<string, string>;\n");
-    result.push_str("}\n\n");
+    result.push_str("import type { SchemaMetadata } from '@pyre/core';\n\n");
 
     result.push_str("export const schemaMetadata: SchemaMetadata = {\n");
     result.push_str("  tables: {\n");

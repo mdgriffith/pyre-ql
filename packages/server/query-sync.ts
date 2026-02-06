@@ -1,5 +1,5 @@
 import { Client } from "@libsql/client";
-import * as wasm from "../pkg/pyre_wasm.js";
+import * as wasm from "pyre-wasm";
 import {
   run,
   type QueryMap,
