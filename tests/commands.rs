@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use predicates::prelude::*;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -31,11 +32,7 @@ impl TestContext {
     }
 }
 
-#[test]
-fn test_generate_command() {
-    let ctx = TestContext::new();
-
-    // Create a sample schema file (Pyre format, not SQL)
+fn write_basic_schema(ctx: &TestContext) {
     std::fs::write(
         ctx.workspace_path.join("pyre/schema.pyre"),
         r#"
@@ -47,6 +44,14 @@ record User {
         "#,
     )
     .unwrap();
+}
+
+#[test]
+fn test_generate_command() {
+    let ctx = TestContext::new();
+
+    // Create a sample schema file (Pyre format, not SQL)
+    write_basic_schema(&ctx);
 
     ctx.run_command("generate").assert().success();
 
@@ -64,17 +69,7 @@ fn test_format_command() {
     let ctx = TestContext::new();
 
     // Create a schema file (needed for query formatting)
-    std::fs::write(
-        ctx.workspace_path.join("pyre/schema.pyre"),
-        r#"
-record User {
-    id   Int    @id
-    name String
-    @public
-}
-        "#,
-    )
-    .unwrap();
+    write_basic_schema(&ctx);
 
     // Create an unformatted query file (Pyre format, not SQL)
     std::fs::write(
@@ -112,6 +107,64 @@ record User {
         "Formatted content: {}",
         formatted
     );
+}
+
+#[test]
+fn test_migration_creates_migrations_directory_and_file() {
+    let ctx = TestContext::new();
+    write_basic_schema(&ctx);
+
+    ctx.run_command("migration")
+        .arg("--db")
+        .arg(".yak/yak.db")
+        .arg("init")
+        .assert()
+        .success();
+
+    let migration_dir = ctx.workspace_path.join("pyre/migrations");
+    assert!(migration_dir.exists(), "pyre/migrations should be created");
+    assert!(
+        std::fs::read_dir(migration_dir).unwrap().next().is_some(),
+        "pyre/migrations should contain at least one migration folder"
+    );
+}
+
+#[test]
+fn test_migrate_push_creates_local_db_when_parent_directory_missing() {
+    let ctx = TestContext::new();
+    write_basic_schema(&ctx);
+
+    let db_path = ctx.workspace_path.join(".yak/yak.db");
+    assert!(!db_path.exists(), "db should not exist before push");
+
+    let output = ctx
+        .run_command("migrate")
+        .arg(".yak/yak.db")
+        .arg("--push")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.code().is_some(),
+        "migrate --push should execute and exit normally"
+    );
+
+    assert!(db_path.exists(), "db should be created by migrate --push");
+}
+
+#[test]
+fn test_migrate_without_migrations_shows_targeted_error() {
+    let ctx = TestContext::new();
+    write_basic_schema(&ctx);
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("No Migrations Found"))
+        .stdout(predicate::str::contains(
+            "pyre migration --db <database> init",
+        ));
 }
 
 #[test]

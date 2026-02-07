@@ -30,6 +30,8 @@ pub async fn generate_migration<'a>(
         Some(name) => &migration_dir.join(&name),
     };
 
+    crate::filesystem::create_dir_if_not_exists(target_namespace_dir)?;
+
     let connection_result = db::connect(&db.to_string(), auth).await;
     match connection_result {
         Err(e) => {
@@ -77,8 +79,6 @@ pub async fn generate_migration<'a>(
                                 pyre::db::diff::diff(&context, &current_schema, &introspection);
 
                             println!("DB Diff: {:#?}", db_diff);
-
-                            crate::filesystem::create_dir_if_not_exists(migration_dir)?;
 
                             let current_date = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
                             let migration_folder =

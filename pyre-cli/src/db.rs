@@ -14,6 +14,7 @@ pub enum DbError {
     AuthTokenRequired,
     EnvVarNotFound(String),
     DatabaseError(libsql::Error),
+    LocalFilesystemError(std::io::Error, PathBuf),
 }
 
 impl DbError {
@@ -31,8 +32,34 @@ impl DbError {
                 "Database Error",
                 &format!("Database error: {:?}", e),
             ),
+            DbError::LocalFilesystemError(e, path) => pyre::error::format_custom_error(
+                "Local Database Path Error",
+                &format!(
+                    "Failed to create local database directory {}: {}",
+                    path.display(),
+                    e
+                ),
+            ),
         }
     }
+}
+
+fn ensure_local_db_parent_exists(db_path: &str) -> Result<(), DbError> {
+    if db_path == ":memory:" {
+        return Ok(());
+    }
+
+    let path = Path::new(db_path);
+    if let Some(parent) = path.parent() {
+        if parent.as_os_str().is_empty() || parent.exists() {
+            return Ok(());
+        }
+
+        fs::create_dir_all(parent)
+            .map_err(|e| DbError::LocalFilesystemError(e, parent.to_path_buf()))?;
+    }
+
+    Ok(())
 }
 
 fn parse_arg_or_env(arg: &str) -> Result<String, DbError> {
@@ -69,6 +96,8 @@ pub async fn connect(
             }
         }
     } else {
+        ensure_local_db_parent_exists(&db_value)?;
+
         let connected_result = libsql::Builder::new_local(db_value).build().await;
         match connected_result {
             Ok(connected) => return Ok(connected),
@@ -83,6 +112,7 @@ pub async fn connect(
 pub enum MigrationError {
     SqlError(libsql::Error),
     MigrationReadIoError(std::io::Error, PathBuf),
+    NoMigrationsFound(PathBuf),
 }
 
 impl MigrationError {
@@ -99,6 +129,13 @@ impl MigrationError {
                 ),
                 )
             }
+            MigrationError::NoMigrationsFound(path) => pyre::error::format_custom_error(
+                "No Migrations Found",
+                &format!(
+                    "No migrations were found in {}.\n\nRun `pyre migration --db <database> init` to generate your first migration.",
+                    pyre::error::yellow_if(true, &path.display().to_string())
+                ),
+            ),
         }
     }
 }
@@ -118,12 +155,24 @@ pub async fn migrate(
     let migration_file_result = read_migration_folder(migration_folder);
     match migration_file_result {
         Err(err) => {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                return Err(MigrationError::NoMigrationsFound(
+                    migration_folder.to_path_buf(),
+                ));
+            }
+
             return Err(MigrationError::MigrationReadIoError(
                 err,
                 migration_folder.to_path_buf(),
             ));
         }
         Ok(migration_files) => {
+            if migration_files.file_contents.is_empty() {
+                return Err(MigrationError::NoMigrationsFound(
+                    migration_folder.to_path_buf(),
+                ));
+            }
+
             // Read
             let conn_result = db.connect();
             match conn_result {

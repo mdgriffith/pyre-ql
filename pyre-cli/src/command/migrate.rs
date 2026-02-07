@@ -62,6 +62,7 @@ pub async fn migrate<'a>(
                         }
                         Err(migration_error) => {
                             println!("{}", migration_error.format_error());
+                            std::process::exit(1);
                         }
                     }
                 }
