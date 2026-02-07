@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use libsql;
 use predicates::prelude::*;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -150,6 +151,76 @@ fn test_migrate_push_creates_local_db_when_parent_directory_missing() {
     );
 
     assert!(db_path.exists(), "db should be created by migrate --push");
+}
+
+#[tokio::test]
+async fn test_migrate_push_creates_enum_columns_and_records_schema() {
+    let ctx = TestContext::new();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+type TaskStatus
+   = Pending
+   | InProgress
+
+record Task {
+    @public
+    id     Int        @id
+    title  String
+    status TaskStatus
+}
+        "#,
+    )
+    .unwrap();
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .arg("--push")
+        .assert()
+        .success();
+
+    let db_path = ctx.workspace_path.join(".yak/yak.db");
+    let db = libsql::Builder::new_local(db_path.to_str().unwrap())
+        .build()
+        .await
+        .unwrap();
+    let conn = db.connect().unwrap();
+
+    let mut pragma_rows = conn.query("pragma table_info('tasks')", ()).await.unwrap();
+    let mut has_status = false;
+    while let Some(row) = pragma_rows.next().await.unwrap() {
+        let column_name: String = row.get(1).unwrap();
+        if column_name == "status" {
+            has_status = true;
+            break;
+        }
+    }
+
+    assert!(
+        has_status,
+        "tasks.status should exist after migrate --push for enum-backed fields"
+    );
+
+    let mut schema_rows = conn
+        .query(
+            "select schema from _pyre_schema order by created_at desc limit 1",
+            (),
+        )
+        .await
+        .unwrap();
+
+    let schema_row = schema_rows
+        .next()
+        .await
+        .unwrap()
+        .expect("_pyre_schema should contain at least one schema row");
+    let schema_source: String = schema_row.get(0).unwrap();
+
+    assert!(
+        schema_source.contains("status TaskStatus"),
+        "_pyre_schema should store the pushed schema source"
+    );
 }
 
 #[test]

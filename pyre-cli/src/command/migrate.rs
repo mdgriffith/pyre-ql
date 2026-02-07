@@ -7,6 +7,7 @@ use crate::db;
 use pyre::ast;
 use pyre::ast::diff;
 use pyre::error;
+use pyre::generate::sql::to_sql::SqlAndParams;
 use pyre::typecheck;
 
 pub async fn migrate<'a>(
@@ -118,7 +119,7 @@ pub async fn push<'a>(
         Err(error_list) => {
             error::report_and_exit(error_list, &paths, options.enable_color);
         }
-        Ok(_context) => {
+        Ok(current_context) => {
             let connection_result = db::connect(&database.to_string(), auth).await;
             match connection_result {
                 Err(err) => {
@@ -130,7 +131,7 @@ pub async fn push<'a>(
                         Ok(introspection) => {
                             if let pyre::db::introspect::SchemaResult::Success {
                                 schema: ref db_recorded_schema,
-                                context: ref db_context,
+                                ..
                             } = introspection.schema
                             {
                                 let schema_diff =
@@ -146,13 +147,38 @@ pub async fn push<'a>(
                                 // If there are no errors, we can now generate sql.
 
                                 let db_diff = pyre::db::diff::diff(
-                                    db_context,
+                                    &current_context,
                                     &current_schema,
                                     &introspection,
                                 );
 
                                 // Generate sql
-                                let sql = pyre::db::diff::to_sql::to_sql(&db_diff);
+                                let mut sql = pyre::db::diff::to_sql::to_sql(&db_diff);
+
+                                if matches!(
+                                    introspection.migration_state,
+                                    pyre::db::introspect::MigrationState::NoMigrationTable
+                                ) {
+                                    sql.insert(
+                                        0,
+                                        SqlAndParams::Sql(
+                                            pyre::db::migrate::CREATE_MIGRATION_TABLE.to_string(),
+                                        ),
+                                    );
+                                    sql.insert(
+                                        1,
+                                        SqlAndParams::Sql(
+                                            pyre::db::migrate::CREATE_SCHEMA_TABLE.to_string(),
+                                        ),
+                                    );
+                                }
+
+                                let schema_source =
+                                    pyre::generate::to_string::schema_to_string("", current_schema);
+                                sql.push(SqlAndParams::SqlWithParams {
+                                    sql: pyre::db::migrate::INSERT_SCHEMA.to_string(),
+                                    args: vec![schema_source],
+                                });
 
                                 match conn.connect() {
                                     Ok(connected_conn) => {
@@ -166,7 +192,7 @@ pub async fn push<'a>(
                                                 let mut has_error = false;
                                                 for sql_statement in sql {
                                                     match sql_statement {
-                                                        pyre::generate::sql::to_sql::SqlAndParams::Sql(sql_string) => {
+                                                        SqlAndParams::Sql(sql_string) => {
                                                             if let Err(e) = tx.execute(&sql_string, libsql::params_from_iter::<Vec<libsql::Value>>(vec![])).await {
                                                                 eprintln!("Error executing SQL: {:?}", e);
                                                                 eprintln!("SQL statement: {}", sql_string);
@@ -174,7 +200,7 @@ pub async fn push<'a>(
                                                                 break;
                                                             }
                                                         }
-                                                        pyre::generate::sql::to_sql::SqlAndParams::SqlWithParams { sql, args } => {
+                                                        SqlAndParams::SqlWithParams { sql, args } => {
                                                             if let Err(e) = tx.execute(&sql, libsql::params_from_iter(args)).await {
                                                                 eprintln!("Error executing SQL: {:?}", e);
                                                                 eprintln!("SQL statement: {}", sql);
@@ -214,7 +240,7 @@ pub async fn push<'a>(
                                 }
                             } else {
                                 println!(
-                                    "No schema found in the databasefor namespace '{}'",
+                                    "No schema found in the database for namespace '{}'",
                                     real_namespace
                                 );
                                 std::process::exit(1);
