@@ -9,6 +9,7 @@ mod filesystem;
 #[derive(Parser)]
 #[command(name = "pyre")]
 #[command(about = "A CLI tool for pyre operations", long_about = None)]
+#[command(version)]
 #[command(arg_required_else_help = true)]
 struct Cli {
     #[command(subcommand)]
@@ -17,9 +18,6 @@ struct Cli {
     /// The input directory to read from.
     #[arg(long, global = true, default_value = "pyre")]
     r#in: String,
-
-    #[arg(long, global = true)]
-    version: bool,
 }
 
 #[derive(Subcommand)]
@@ -117,11 +115,6 @@ enum Commands {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let cli = Cli::parse();
-
-    if let true = cli.version {
-        println!("0.1.0");
-        return Ok(());
-    }
 
     // Check if stderr is a TTY to determine if we should enable color output.
     // Disable color when output is redirected (e.g., `pyre check 2> errors.txt`)
