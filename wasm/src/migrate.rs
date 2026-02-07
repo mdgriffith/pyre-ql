@@ -2,8 +2,6 @@ use crate::cache;
 use pyre::db::introspect;
 use pyre::db::migrate;
 use pyre::error;
-use serde::Serialize;
-use wasm_bindgen::prelude::*;
 
 const FILEPATH: &str = "schema.pyre";
 

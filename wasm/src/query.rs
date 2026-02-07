@@ -1,17 +1,11 @@
 use crate::cache;
-use log::info;
 use pyre::ast;
-use pyre::ast::diff;
 use pyre::db::introspect;
-use pyre::db::migrate;
 use pyre::error;
 use pyre::generate::sql::to_sql::SqlAndParams;
 use pyre::parser;
 use pyre::typecheck;
-use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen;
-use std::collections::HashMap;
-use wasm_bindgen::prelude::*;
 use web_sys::console;
 
 const QUERY_FILE: &str = "query.pyre";

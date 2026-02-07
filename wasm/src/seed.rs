@@ -1,11 +1,8 @@
-use crate::cache;
 use pyre::ast;
 use pyre::parser;
 use pyre::seed;
 use pyre::typecheck;
 use serde::{Deserialize, Serialize};
-use serde_wasm_bindgen;
-use wasm_bindgen::prelude::*;
 
 const FILEPATH: &str = "schema.pyre";
 

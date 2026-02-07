@@ -1,7 +1,6 @@
 use console_log;
 use js_sys;
 use log::Level;
-use serde::Serialize;
 use wasm_bindgen::prelude::*;
 mod cache;
 mod migrate;

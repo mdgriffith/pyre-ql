@@ -218,21 +218,6 @@ pub fn get_sync_status_sql_wasm(sync_cursor: JsValue, session: JsValue) -> Resul
     }
 }
 
-/// Parse sync status results from SQL query execution
-#[derive(Serialize, Deserialize)]
-pub struct SyncStatusResultWasm {
-    pub tables: Vec<TableSyncStatusWasm>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct TableSyncStatusWasm {
-    pub table_name: String,
-    pub sync_layer: usize,
-    pub needs_sync: bool,
-    pub max_updated_at: Option<i64>,
-    pub permission_hash: String,
-}
-
 /// Generate sync SQL for tables that need syncing
 /// Takes raw sync status rows from SQL query execution and parses them internally
 pub fn get_sync_sql_wasm(
