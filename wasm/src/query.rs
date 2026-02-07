@@ -11,7 +11,6 @@ use pyre::typecheck;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen;
 use std::collections::HashMap;
-// use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use web_sys::console;
 
