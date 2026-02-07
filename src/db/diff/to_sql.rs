@@ -90,7 +90,11 @@ fn column_definition(column: &crate::db::introspect::ColumnInfo) -> String {
     let mut def = format!("`{}` {}", column.name, column.column_type);
 
     if column.pk {
-        def.push_str(" primary key autoincrement");
+        if column.column_type.eq_ignore_ascii_case("INTEGER") {
+            def.push_str(" primary key autoincrement");
+        } else {
+            def.push_str(" primary key");
+        }
     }
 
     if column.notnull {
@@ -102,4 +106,42 @@ fn column_definition(column: &crate::db::introspect::ColumnInfo) -> String {
     }
 
     def
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integer_primary_keys_use_autoincrement() {
+        let col = crate::db::introspect::ColumnInfo {
+            cid: 0,
+            name: "id".to_string(),
+            column_type: "INTEGER".to_string(),
+            notnull: true,
+            default_value: None,
+            pk: true,
+            indexed: false,
+        };
+
+        let sql = column_definition(&col);
+        assert!(sql.contains("primary key autoincrement"));
+    }
+
+    #[test]
+    fn non_integer_primary_keys_do_not_use_autoincrement() {
+        let col = crate::db::introspect::ColumnInfo {
+            cid: 0,
+            name: "id".to_string(),
+            column_type: "TEXT".to_string(),
+            notnull: true,
+            default_value: None,
+            pk: true,
+            indexed: false,
+        };
+
+        let sql = column_definition(&col);
+        assert!(sql.contains("primary key"));
+        assert!(!sql.contains("autoincrement"));
+    }
 }
