@@ -134,7 +134,7 @@ pub async fn push<'a>(
                             } = introspection.schema
                             {
                                 let schema_diff =
-                                    diff::diff_schema(&current_schema, db_recorded_schema);
+                                    diff::diff_schema(db_recorded_schema, &current_schema);
 
                                 // We diff the two schemas and report errors.
 
