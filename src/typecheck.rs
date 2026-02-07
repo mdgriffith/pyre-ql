@@ -228,15 +228,13 @@ fn default_value_display(value: &ast::DefaultValue) -> String {
 fn allowed_defaults_for_column_type(column: &ast::Column) -> Vec<String> {
     let mut allowed = match &column.type_ {
         ast::ColumnType::String => vec!["a string literal".to_string()],
-        ast::ColumnType::Int | ast::ColumnType::IdInt { .. } => {
-            vec!["an integer literal".to_string()]
-        }
+        ast::ColumnType::Int => vec!["an integer literal".to_string()],
         ast::ColumnType::Float => vec!["a number literal".to_string()],
         ast::ColumnType::Bool => vec!["true".to_string(), "false".to_string()],
         ast::ColumnType::DateTime => vec!["now".to_string(), "an integer literal".to_string()],
         ast::ColumnType::Date => vec!["a string literal".to_string()],
         ast::ColumnType::Json => vec!["null".to_string(), "a string literal".to_string()],
-        ast::ColumnType::IdUuid { .. } => vec!["a string literal".to_string()],
+        ast::ColumnType::IdInt { .. } | ast::ColumnType::IdUuid { .. } => vec![],
         ast::ColumnType::ForeignKey { .. } => vec!["an integer or string literal".to_string()],
         ast::ColumnType::Custom(_) => vec!["a literal value matching the field type".to_string()],
     };
@@ -265,7 +263,6 @@ fn is_supported_default_for_column(column: &ast::Column, value: &ast::DefaultVal
                 ast::ColumnType::Int
                     | ast::ColumnType::Float
                     | ast::ColumnType::DateTime
-                    | ast::ColumnType::IdInt { .. }
                     | ast::ColumnType::ForeignKey { .. }
             ),
             ast::QueryValue::Float(_) => {

@@ -1451,12 +1451,25 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             default_value,
             expected,
         } => {
+            if field_type.starts_with("Id.Uuid") || field_type.starts_with("Id.Int") {
+                return format!(
+                    "{} is not allowed to have an @default.",
+                    yellow_if(in_color, field_type)
+                );
+            }
+
+            let expected_text = if expected.is_empty() {
+                "none".to_string()
+            } else {
+                format_yellow_or_list(expected, in_color)
+            };
+
             format!(
                 "The field {} (type {}) has an unsupported default {}.\n\nAllowed defaults here: {}",
                 yellow_if(in_color, field_name),
                 cyan_if(in_color, field_type),
                 yellow_if(in_color, default_value),
-                format_yellow_or_list(expected, in_color)
+                expected_text
             )
         }
         ErrorType::MigrationSchemaNotFound { namespace } => match namespace {

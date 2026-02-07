@@ -256,8 +256,46 @@ record Task {
             );
 
             let formatted = error::format_error(schema_source, default_error.unwrap(), false);
-            assert!(formatted.contains("unsupported default"));
-            assert!(formatted.contains("Allowed defaults"));
+            assert!(
+                formatted.contains("Id.Uuid")
+                    && formatted.contains("is not allowed to have an @default")
+            );
+            assert!(!formatted.contains("Allowed defaults here"));
+        }
+    }
+}
+
+#[test]
+fn test_invalid_id_int_default_has_no_allowed_defaults() {
+    let schema_source = r#"
+record Counter {
+    @public
+    id Id.Int @id @default(1)
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("pyre/schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    match schema_result {
+        Ok(_) => panic!("Expected schema typechecking to fail due to invalid default"),
+        Err(errors) => {
+            let default_error = errors
+                .iter()
+                .find(|e| matches!(&e.error_type, ErrorType::InvalidColumnDefault { .. }))
+                .expect("Expected InvalidColumnDefault error");
+
+            let formatted = error::format_error(schema_source, default_error, false);
+            assert!(
+                formatted.contains("Id.Int")
+                    && formatted.contains("is not allowed to have an @default")
+            );
+            assert!(!formatted.contains("Allowed defaults here"));
         }
     }
 }
