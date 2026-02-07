@@ -228,6 +228,12 @@ pub enum ErrorType {
         tagged_name: String,
         variant_name: String,
     },
+    InvalidColumnDefault {
+        field_name: String,
+        field_type: String,
+        default_value: String,
+        expected: Vec<String>,
+    },
     MigrationSchemaNotFound {
         namespace: Option<String>,
     },
@@ -1439,6 +1445,20 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
         } => {
             format!("The variant {} has been removed from the tagged type {}. This might be causing issues in your query. Consider updating your query to use the new variant format.", yellow_if(in_color, variant_name), yellow_if(in_color, tagged_name))
         }
+        ErrorType::InvalidColumnDefault {
+            field_name,
+            field_type,
+            default_value,
+            expected,
+        } => {
+            format!(
+                "The field {} (type {}) has an unsupported default {}.\n\nAllowed defaults here: {}",
+                yellow_if(in_color, field_name),
+                cyan_if(in_color, field_type),
+                yellow_if(in_color, default_value),
+                format_yellow_or_list(expected, in_color)
+            )
+        }
         ErrorType::MigrationSchemaNotFound { namespace } => match namespace {
             Some(name) => format!(
                 "A migration was attempted for the schema named {}, but it was not found.",
@@ -1507,6 +1527,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::MigrationColumnDropped { .. } => "Column Dropped",
         ErrorType::MigrationColumnModified { .. } => "Column Modified",
         ErrorType::MigrationVariantRemoved { .. } => "Variant Removed",
+        ErrorType::InvalidColumnDefault { .. } => "Invalid Column Default",
         ErrorType::MigrationSchemaNotFound { .. } => "Schema Not Found",
         ErrorType::MigrationMissingSchema => "Missing Schema",
     }

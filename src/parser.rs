@@ -651,14 +651,22 @@ fn parse_nullable(input: Text) -> ParseResult<bool> {
 }
 
 fn parse_column_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
+    let (input, at_pos) = position(input)?;
     let (input, _) = tag("@")(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaFieldAtDirective);
-    let (input, directive) = cut(alt((
+    let (input, mut directive) = cut(alt((
         parse_directive_named("id", ast::ColumnDirective::PrimaryKey),
         parse_directive_named("unique", ast::ColumnDirective::Unique),
         parse_directive_named("index", ast::ColumnDirective::Index),
         parse_default_directive,
     )))(input)?;
+    let (input, end_pos) = position(input)?;
+
+    if let ast::ColumnDirective::Default { start, end, .. } = &mut directive {
+        *start = Some(to_location(&at_pos));
+        *end = Some(to_location(&end_pos));
+    }
+
     // Consume trailing spaces after directive to allow multiple directives on same line
     let (input, _) = space0(input)?;
     Ok((input, directive))
@@ -678,6 +686,8 @@ fn parse_default_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
         ast::ColumnDirective::Default {
             id: default.0,
             value: default.1,
+            start: None,
+            end: None,
         },
     ))
 }

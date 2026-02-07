@@ -209,6 +209,77 @@ fn is_capitalized(s: &str) -> bool {
     }
 }
 
+fn default_value_display(value: &ast::DefaultValue) -> String {
+    match value {
+        ast::DefaultValue::Now => "now".to_string(),
+        ast::DefaultValue::Value(query_value) => match query_value {
+            ast::QueryValue::String((_, s)) => format!("\"{}\"", s),
+            ast::QueryValue::Int((_, i)) => i.to_string(),
+            ast::QueryValue::Float((_, f)) => f.to_string(),
+            ast::QueryValue::Bool((_, b)) => b.to_string(),
+            ast::QueryValue::Null(_) => "null".to_string(),
+            ast::QueryValue::LiteralTypeValue((_, details)) => details.name.clone(),
+            ast::QueryValue::Fn(func) => format!("{}()", func.name),
+            ast::QueryValue::Variable((_, details)) => format!("${}", details.name),
+        },
+    }
+}
+
+fn allowed_defaults_for_column_type(column: &ast::Column) -> Vec<String> {
+    let mut allowed = match &column.type_ {
+        ast::ColumnType::String => vec!["a string literal".to_string()],
+        ast::ColumnType::Int | ast::ColumnType::IdInt { .. } => {
+            vec!["an integer literal".to_string()]
+        }
+        ast::ColumnType::Float => vec!["a number literal".to_string()],
+        ast::ColumnType::Bool => vec!["true".to_string(), "false".to_string()],
+        ast::ColumnType::DateTime => vec!["now".to_string(), "an integer literal".to_string()],
+        ast::ColumnType::Date => vec!["a string literal".to_string()],
+        ast::ColumnType::Json => vec!["null".to_string(), "a string literal".to_string()],
+        ast::ColumnType::IdUuid { .. } => vec!["a string literal".to_string()],
+        ast::ColumnType::ForeignKey { .. } => vec!["an integer or string literal".to_string()],
+        ast::ColumnType::Custom(_) => vec!["a literal value matching the field type".to_string()],
+    };
+
+    if column.nullable {
+        allowed.push("null".to_string());
+    }
+
+    allowed
+}
+
+fn is_supported_default_for_column(column: &ast::Column, value: &ast::DefaultValue) -> bool {
+    match value {
+        ast::DefaultValue::Now => matches!(column.type_, ast::ColumnType::DateTime),
+        ast::DefaultValue::Value(query_value) => match query_value {
+            ast::QueryValue::String(_) => matches!(
+                column.type_,
+                ast::ColumnType::String
+                    | ast::ColumnType::Date
+                    | ast::ColumnType::Json
+                    | ast::ColumnType::IdUuid { .. }
+                    | ast::ColumnType::ForeignKey { .. }
+            ),
+            ast::QueryValue::Int(_) => matches!(
+                column.type_,
+                ast::ColumnType::Int
+                    | ast::ColumnType::Float
+                    | ast::ColumnType::DateTime
+                    | ast::ColumnType::IdInt { .. }
+                    | ast::ColumnType::ForeignKey { .. }
+            ),
+            ast::QueryValue::Float(_) => {
+                matches!(column.type_, ast::ColumnType::Float)
+            }
+            ast::QueryValue::Bool(_) => matches!(column.type_, ast::ColumnType::Bool),
+            ast::QueryValue::Null(_) => column.nullable,
+            ast::QueryValue::Fn(_) => false,
+            ast::QueryValue::Variable(_) => false,
+            ast::QueryValue::LiteralTypeValue(_) => false,
+        },
+    }
+}
+
 pub fn check_schema(db: &ast::Database) -> Result<Context, Vec<Error>> {
     let mut context = populate_context(db)?;
 
@@ -1228,6 +1299,39 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                                             primary: to_range(&column.start, &column.end),
                                         }],
                                     });
+                                }
+                            }
+
+                            for directive in &column.directives {
+                                if let ast::ColumnDirective::Default {
+                                    value,
+                                    start: default_start,
+                                    end: default_end,
+                                    ..
+                                } = directive
+                                {
+                                    let primary =
+                                        if default_start.is_some() && default_end.is_some() {
+                                            to_range(default_start, default_end)
+                                        } else {
+                                            to_range(&column.start, &column.end)
+                                        };
+
+                                    if !is_supported_default_for_column(&column, value) {
+                                        errors.push(Error {
+                                            filepath: file.path.clone(),
+                                            error_type: ErrorType::InvalidColumnDefault {
+                                                field_name: column.name.clone(),
+                                                field_type: column.type_.to_string(),
+                                                default_value: default_value_display(value),
+                                                expected: allowed_defaults_for_column_type(&column),
+                                            },
+                                            locations: vec![Location {
+                                                contexts: to_range(start, end),
+                                                primary,
+                                            }],
+                                        });
+                                    }
                                 }
                             }
 

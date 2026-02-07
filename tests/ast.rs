@@ -129,6 +129,8 @@ fn test_linked_to_unique_field_with_non_unique_field() {
                 },
                 "test".to_string(),
             ))),
+            start: None,
+            end: None,
         },
     );
 

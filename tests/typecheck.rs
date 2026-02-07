@@ -226,6 +226,43 @@ type DevSource
 }
 
 #[test]
+fn test_invalid_uuid_default_is_caught_by_typechecker() {
+    let schema_source = r#"
+record Task {
+    @public
+    id Id.Uuid @id @default(uuid)
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("pyre/schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    match schema_result {
+        Ok(_) => panic!("Expected schema typechecking to fail due to invalid default"),
+        Err(errors) => {
+            let default_error = errors
+                .iter()
+                .find(|e| matches!(&e.error_type, ErrorType::InvalidColumnDefault { .. }));
+
+            assert!(
+                default_error.is_some(),
+                "Expected InvalidColumnDefault error, got: {:?}",
+                errors
+            );
+
+            let formatted = error::format_error(schema_source, default_error.unwrap(), false);
+            assert!(formatted.contains("unsupported default"));
+            assert!(formatted.contains("Allowed defaults"));
+        }
+    }
+}
+
+#[test]
 fn test_simple_linear_dependency() {
     // A -> B -> C
     // Expected: A=0, B=1, C=2

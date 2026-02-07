@@ -294,8 +294,12 @@ fn column_directive_equal_ignoring_locations(
         (ast::ColumnDirective::Unique, ast::ColumnDirective::Unique) => true,
         (ast::ColumnDirective::Index, ast::ColumnDirective::Index) => true,
         (
-            ast::ColumnDirective::Default { id: ida, value: va },
-            ast::ColumnDirective::Default { id: idb, value: vb },
+            ast::ColumnDirective::Default {
+                id: ida, value: va, ..
+            },
+            ast::ColumnDirective::Default {
+                id: idb, value: vb, ..
+            },
         ) => ida == idb && default_value_equal_ignoring_locations(va, vb),
         _ => false,
     }

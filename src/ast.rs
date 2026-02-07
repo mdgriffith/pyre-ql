@@ -253,6 +253,8 @@ pub fn ensure_updated_at_field(fields: &mut Vec<Field>) {
             ColumnDirective::Default {
                 id: "now".to_string(),
                 value: DefaultValue::Now,
+                start: None,
+                end: None,
             },
             ColumnDirective::Index,
         ],
@@ -714,7 +716,12 @@ pub enum ColumnDirective {
     PrimaryKey,
     Unique,
     Index,
-    Default { id: String, value: DefaultValue },
+    Default {
+        id: String,
+        value: DefaultValue,
+        start: Option<Location>,
+        end: Option<Location>,
+    },
     // Check(String),
 }
 

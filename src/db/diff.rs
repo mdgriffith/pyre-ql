@@ -150,7 +150,7 @@ fn add_fields(
 
             let default_value = col.directives.iter().find_map(|d| match d {
                 crate::ast::ColumnDirective::Default { value, .. } => {
-                    return Some(format!("({})", default_value_to_sql(value).unwrap()));
+                    return default_value_to_sql(value).map(|sql| format!("({})", sql));
                 }
                 _ => None,
             });
@@ -226,6 +226,59 @@ fn add_fields(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_default_values_do_not_panic_or_emit_invalid_sql_default() {
+        let fn_default =
+            crate::ast::DefaultValue::Value(crate::ast::QueryValue::Fn(crate::ast::FnDetails {
+                name: "custom".to_string(),
+                args: vec![],
+                location: crate::ast::empty_range(),
+                location_fn_name: crate::ast::empty_range(),
+                location_arg: crate::ast::empty_range(),
+            }));
+
+        let column = crate::ast::Column {
+            name: "status".to_string(),
+            type_: crate::ast::ColumnType::String,
+            nullable: false,
+            directives: vec![crate::ast::ColumnDirective::Default {
+                id: "default".to_string(),
+                value: fn_default,
+                start: None,
+                end: None,
+            }],
+            start: None,
+            end: None,
+            start_name: None,
+            end_name: None,
+            start_typename: None,
+            end_typename: None,
+            inline_comment: None,
+        };
+
+        let fields = vec![crate::ast::Field::Column(column)];
+        let mut columns = Vec::new();
+        let mut seen_fields = std::collections::HashSet::new();
+        let context = crate::typecheck::empty_context();
+
+        add_fields(
+            &context,
+            &fields,
+            &mut columns,
+            None,
+            &mut seen_fields,
+            false,
+        );
+
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].default_value, None);
     }
 }
 
