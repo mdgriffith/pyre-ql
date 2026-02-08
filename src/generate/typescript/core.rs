@@ -4,6 +4,7 @@ use crate::filesystem;
 use crate::filesystem::generate_text_file;
 use crate::generate::sql;
 use crate::generate::typealias;
+use crate::generate::typescript::common;
 use crate::typecheck;
 use std::collections::HashMap;
 use std::path::Path;
@@ -77,21 +78,19 @@ fn sql_types_file() -> String {
 fn generate_decode_file(database: &ast::Database) -> String {
     let mut result = String::new();
 
-    result.push_str("import * as Ark from 'arktype';\n");
+    result.push_str("import { z } from 'zod';\n");
     result.push_str("\n");
+    result.push_str(common::coercion_helpers());
+    result.push_str(common::json_type_definition());
     result.push_str(
-        "export const CoercedDate = Ark.type('number').pipe((val) => new Date(val * 1000));\n",
+        "export function decodeOrThrow<T>(validator: z.ZodType<T>, data: unknown, label: string = 'data'): T {\n",
     );
-    result.push_str("export const CoercedBool = Ark.type('boolean').or('number').pipe((val) => typeof val === 'number' ? val !== 0 : val);\n\n");
-    result.push_str(
-        "export function decodeOrThrow<T>(validator: Ark.Type<T>, data: unknown, label: string = 'data'): T {\n",
-    );
-    result.push_str("  const decoded = validator(data);\n");
-    result.push_str("  if (decoded instanceof Ark.type.errors) {\n");
-    result.push_str("    const errorStr = JSON.stringify(decoded, null, 2);\n");
+    result.push_str("  const decoded = validator.safeParse(data);\n");
+    result.push_str("  if (!decoded.success) {\n");
+    result.push_str("    const errorStr = JSON.stringify(decoded.error, null, 2);\n");
     result.push_str("    throw new Error(`Failed to decode ${label}: ${errorStr}`);\n");
     result.push_str("  }\n");
-    result.push_str("  return decoded as T;\n");
+    result.push_str("  return decoded.data;\n");
     result.push_str("}\n\n");
 
     // Get session definition
@@ -120,19 +119,19 @@ fn generate_decode_file(database: &ast::Database) -> String {
     }
     result.push_str("}\n\n");
 
-    result.push_str("export const SessionValidator = Ark.type({\n");
+    result.push_str("export const SessionValidator = z.object({\n");
     for field in &session.fields {
         if let ast::Field::Column(col) = field {
             let type_str = col.type_.to_string();
             let validator = match type_str.as_str() {
-                "String" => "'string'".to_string(),
-                "Int" | "Float" => "'number'".to_string(),
+                "String" => "z.string()".to_string(),
+                "Int" | "Float" => "z.number()".to_string(),
                 "Bool" => "CoercedBool".to_string(),
                 "DateTime" => "CoercedDate".to_string(),
-                other => format!("'{}'", other),
+                other => format!("z.any() /* {} */", other),
             };
             let validator = if col.nullable {
-                format!("{}.or('null')", validator)
+                format!("{}.optional()", validator)
             } else {
                 validator
             };
@@ -141,94 +140,11 @@ fn generate_decode_file(database: &ast::Database) -> String {
     }
     result.push_str("});\n\n");
 
-    // Generate custom type definitions (tagged unions)
-    for schema in &database.schemas {
-        for file in &schema.files {
-            for def in &file.definitions {
-                if let ast::Definition::Tagged { name, variants, .. } = def {
-                    result.push_str(&generate_tagged_union(name, variants));
-                }
-            }
-        }
+    // Generate custom type definitions (tagged unions) in dependency order
+    let sorted_types = common::sort_types_by_dependency(database);
+    for (name, variants) in sorted_types {
+        result.push_str(&common::generate_tagged_union(&name, &variants));
     }
-
-    result
-}
-
-fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
-    let mut result = String::new();
-
-    result.push_str(&format!("export type {} =\n", name));
-    for (i, variant) in variants.iter().enumerate() {
-        let sep = if i == 0 { "  " } else { "| " };
-        result.push_str(&format!("{}", sep));
-
-        if let Some(fields) = &variant.fields {
-            result.push_str(&format!("{{ type_: '{}'; ", variant.name));
-            for field in fields.iter() {
-                if let ast::Field::Column(col) = field {
-                    let type_str = col.type_.to_string();
-                    let ts_type = match type_str.as_str() {
-                        "String" => "string",
-                        "Int" | "Float" => "number",
-                        "Bool" => "boolean",
-                        "DateTime" => "Date",
-                        other => other,
-                    };
-                    let optional = if col.nullable { "?" } else { "" };
-                    result.push_str(&format!("{}: {}{}; ", col.name, ts_type, optional));
-                }
-            }
-            result.push_str("}}\n");
-        } else {
-            result.push_str(&format!("{{ type_: '{}' }}\n", variant.name));
-        }
-    }
-    result.push('\n');
-
-    result.push_str(&format!("export const {} = ", name));
-    for (i, variant) in variants.iter().enumerate() {
-        let prefix = if i == 0 { "Ark.type" } else { ".or" };
-
-        if let Some(fields) = &variant.fields {
-            result.push_str(&format!("{}({{\n", prefix));
-            result.push_str(&format!(
-                "  type_: '{}',\n",
-                string::single_quote(&variant.name)
-            ));
-            for (j, field) in fields.iter().enumerate() {
-                if let ast::Field::Column(col) = field {
-                    let type_str = col.type_.to_string();
-                    let validator = match type_str.as_str() {
-                        "String" => "'string'".to_string(),
-                        "Int" | "Float" => "'number'".to_string(),
-                        "Bool" => "CoercedBool".to_string(),
-                        "DateTime" => "CoercedDate".to_string(),
-                        other => format!("'{}'", other),
-                    };
-                    let validator = if col.nullable {
-                        format!("{}.or('null')", validator)
-                    } else {
-                        validator
-                    };
-                    result.push_str(&format!("  {}: {}", col.name, validator));
-                    if j + 1 < fields.len() {
-                        result.push_str(",\n");
-                    } else {
-                        result.push_str("\n");
-                    }
-                }
-            }
-            result.push_str("})");
-        } else {
-            result.push_str(&format!(
-                "{}({{ type_: '{}' }})",
-                prefix,
-                string::single_quote(&variant.name)
-            ));
-        }
-    }
-    result.push_str(";\n\n");
 
     result
 }
@@ -236,7 +152,7 @@ fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
 fn to_metadata_formatter() -> typealias::TypeFormatter {
     typealias::TypeFormatter {
         to_comment: Box::new(|s| format!("// {}\n", s)),
-        to_type_def_start: Box::new(|name| format!("const {} = Ark.type({{\n", name)),
+        to_type_def_start: Box::new(|name| format!("const {} = z.object({{\n", name)),
         to_field: Box::new(
             |name,
              type_,
@@ -246,11 +162,15 @@ fn to_metadata_formatter() -> typealias::TypeFormatter {
                  is_array_relationship,
              }| {
                 let (base_type, is_primitive, needs_coercion) = match type_ {
-                    "String" => ("string".to_string(), true, false),
-                    "Int" => ("number".to_string(), true, false),
-                    "Float" => ("number".to_string(), true, false),
-                    "Bool" => ("boolean".to_string(), true, true),
-                    "DateTime" => ("Date".to_string(), true, true),
+                    "String" => ("z.string()".to_string(), true, false),
+                    "Int" => ("z.number()".to_string(), true, false),
+                    "Float" => ("z.number()".to_string(), true, false),
+                    "Bool" => ("z.boolean()".to_string(), true, true),
+                    "DateTime" => ("z.date()".to_string(), true, true),
+                    // Handle Id.Int<TableName> and Id.Uuid<TableName> as primitives
+                    _ if type_.starts_with("Id.Int<") || type_.starts_with("Id.Uuid<") => {
+                        ("z.number()".to_string(), true, false)
+                    }
                     _ => {
                         if is_link {
                             (type_.to_string(), false, false)
@@ -264,31 +184,31 @@ fn to_metadata_formatter() -> typealias::TypeFormatter {
                     match type_ {
                         "DateTime" => match (is_link, is_array_relationship, is_optional) {
                             (true, true, _) => "CoercedDate.array()".to_string(),
-                            (true, false, true) => "CoercedDate.or('null')".to_string(),
+                            (true, false, true) => "CoercedDate.nullable()".to_string(),
                             (true, false, false) => "CoercedDate".to_string(),
-                            (false, _, true) => "CoercedDate.or('null')".to_string(),
+                            (false, _, true) => "CoercedDate.nullable()".to_string(),
                             (false, _, false) => "CoercedDate".to_string(),
                         },
                         "Bool" => match (is_link, is_array_relationship, is_optional) {
                             (true, true, _) => "CoercedBool.array()".to_string(),
-                            (true, false, true) => "CoercedBool.or('null')".to_string(),
+                            (true, false, true) => "CoercedBool.nullable()".to_string(),
                             (true, false, false) => "CoercedBool".to_string(),
-                            (false, _, true) => "CoercedBool.or('null')".to_string(),
+                            (false, _, true) => "CoercedBool.nullable()".to_string(),
                             (false, _, false) => "CoercedBool".to_string(),
                         },
                         _ => unreachable!(),
                     }
                 } else {
                     match (is_primitive, is_link, is_array_relationship, is_optional) {
-                        (true, true, true, _) => format!("\"{}[]\"", base_type),
-                        (true, true, false, true) => format!("\"{} | null\"", base_type),
-                        (true, true, false, false) => format!("\"{}\"", base_type),
-                        (true, false, _, true) => format!("\"{} | null\"", base_type),
-                        (true, false, _, false) => format!("\"{}\"", base_type),
+                        (true, true, true, _) => format!("{}.array()", base_type),
+                        (true, true, false, true) => format!("{}.nullable()", base_type),
+                        (true, true, false, false) => base_type.to_string(),
+                        (true, false, _, true) => format!("{}.nullable()", base_type),
+                        (true, false, _, false) => base_type.to_string(),
                         (false, true, true, _) => format!("{}.array()", base_type),
-                        (false, true, false, true) => format!("{}.or('null')", base_type),
+                        (false, true, false, true) => format!("{}.nullable()", base_type),
                         (false, true, false, false) => base_type.to_string(),
-                        (false, false, _, true) => format!("{}.or('null')", base_type),
+                        (false, false, _, true) => format!("{}.nullable()", base_type),
                         (false, false, _, false) => base_type.to_string(),
                     }
                 };
@@ -319,7 +239,7 @@ fn to_query_metadata_file(
     let uses_coerced_bool = return_data.contains("CoercedBool");
 
     let mut imports = String::new();
-    imports.push_str("import * as Ark from 'arktype';\n");
+    imports.push_str("import { z } from 'zod';\n");
     if query.operation == ast::QueryOperation::Query {
         imports.push_str("import type { QueryShape } from '@pyre/core';\n");
     }
@@ -373,7 +293,7 @@ fn to_query_metadata_file(
     }
     meta_block.push_str("};\n");
 
-    let result_block = "export type Result = typeof ReturnData.infer;".to_string();
+    let result_block = "export type Result = z.infer<typeof ReturnData>;".to_string();
 
     let mut blocks: Vec<String> = Vec::new();
     blocks.push(imports.trim_end().to_string());
@@ -828,7 +748,7 @@ fn to_schema_metadata(context: &typecheck::Context) -> String {
                     result.push_str("        {\n");
                     result.push_str(&format!(
                         "          field: {},\n",
-                        string::quote(&column.name)
+                        crate::ext::string::quote(&column.name)
                     ));
                     result.push_str(&format!(
                         "          unique: {},\n",
@@ -885,21 +805,22 @@ fn get_linked_table<'a>(
         .get(&crate::ext::string::decapitalize(&link.foreign.table))
 }
 
-fn to_arktype_type(type_: &str) -> String {
+fn to_zod_type(type_: &str) -> String {
     match type_ {
-        "String" => "\"string\"".to_string(),
-        "Int" => "\"number\"".to_string(),
-        "Bool" => "\"boolean\"".to_string(),
-        "DateTime" => "\"date\"".to_string(),
-        _ => format!("\"{}\"", type_),
+        "String" => "z.string()".to_string(),
+        "Int" => "z.number()".to_string(),
+        "Float" => "z.number()".to_string(),
+        "Bool" => "z.boolean()".to_string(),
+        "DateTime" => "z.coerce.date()".to_string(),
+        _ => format!("z.any() /* {} */", type_),
     }
 }
 
 fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
-    let mut result = "const InputValidator = Ark.type({".to_string();
+    let mut result = "const InputValidator = z.object({".to_string();
     let mut is_first = true;
     for arg in args {
-        let type_string = to_arktype_type(&arg.type_.clone().unwrap_or("unknown".to_string()));
+        let type_string = to_zod_type(&arg.type_.clone().unwrap_or("unknown".to_string()));
         if is_first {
             result.push_str(&format!("\n  {}: {}", arg.name, type_string));
             is_first = false;
@@ -908,6 +829,6 @@ fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
         }
     }
     result.push_str("\n});\n");
-    result.push_str("export type Input = typeof InputValidator.infer;");
+    result.push_str("export type Input = z.infer<typeof InputValidator>;");
     result
 }

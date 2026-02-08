@@ -7,7 +7,6 @@ use crate::typecheck;
 
 pub mod client;
 pub mod server;
-pub mod simple;
 pub mod sql;
 pub mod to_string;
 pub mod typealias;
