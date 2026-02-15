@@ -1,6 +1,5 @@
 import * as LibSql from '@libsql/client';
 import * as Env from './db/env'
-import * as Ark from 'arktype';
 import * as Watched from './watched';
 
 export type ExecuteResult = SuccessResult | ErrorResult;
@@ -34,10 +33,10 @@ export interface Runner<session, input, output> {
   id: string;
   primary_db: Env.DatabaseKey;
   attached_dbs: Env.DatabaseKey[];
-  session: Ark.Type<session>;
+  session: { safeParse(data: unknown): { success: true; data: session } | { success: false; error: unknown } };
   session_args: string[];
-  input: Ark.Type<input>;
-  output: Ark.Type<output>;
+  input: { safeParse(data: unknown): { success: true; data: input } | { success: false; error: unknown } };
+  output: { safeParse(data: unknown): { success: true; data: output } | { success: false; error: unknown } };
   run: (env: Env.Config, session: session, args: any) => Promise<ExecuteResult>;
 }
 
@@ -51,10 +50,10 @@ export type ToRunnerArgs<session, input, output> = {
   id: string;
   primary_db: Env.DatabaseKey;
   attached_dbs: Env.DatabaseKey[];
-  session: Ark.Type<session>;
+  session: { safeParse(data: unknown): { success: true; data: session } | { success: false; error: unknown } };
   session_args: string[];
-  input: Ark.Type<input>;
-  output: Ark.Type<output>;
+  input: { safeParse(data: unknown): { success: true; data: input } | { success: false; error: unknown } };
+  output: { safeParse(data: unknown): { success: true; data: output } | { success: false; error: unknown } };
   sql: Array<SqlInfo>;
   watch_triggers: Watched.Watched[];
 };
@@ -70,13 +69,12 @@ export const to_runner = <Session, Input, Output>(options: ToRunnerArgs<Session,
     output: options.output,
     run: async (env: Env.Config, session: Session, input: any): Promise<ExecuteResult> => {
       // Validate session
-      const validated_input: any | Ark.ArkErrors = options.input(input);
+      const validated_input = options.input.safeParse(input);
 
-      if (validated_input instanceof Ark.type.errors) {
-        // Extract detailed error message from arktype
+      if (!validated_input.success) {
         let errorMessage = 'Invalid input';
         try {
-          const errors = validated_input;
+          const errors = validated_input.error;
           if (errors && typeof errors === 'object') {
             const errorStr = JSON.stringify(errors, null, 2);
             errorMessage = `Validation failed: ${errorStr}`;
@@ -95,8 +93,8 @@ export const to_runner = <Session, Input, Output>(options: ToRunnerArgs<Session,
       }
 
       // Validate session
-      const validated_session: any | Ark.ArkErrors = options.session(session);
-      if (validated_session instanceof Ark.type.errors) {
+      const validated_session = options.session.safeParse(session);
+      if (!validated_session.success) {
         return {
           kind: 'error',
           errorType: ErrorType.InvalidSession,
@@ -116,10 +114,10 @@ export const to_runner = <Session, Input, Output>(options: ToRunnerArgs<Session,
         };
       }
 
-      const valid_session_args = to_session_args(options.session_args, validated_session);
+      const valid_session_args = to_session_args(options.session_args, validated_session.data);
       const attached_database_args = to_database_args(options.attached_dbs, env);
 
-      const valid_args = stringify_nested_objects({ ...validated_input, ...valid_session_args, ...attached_database_args });
+      const valid_args = stringify_nested_objects({ ...validated_input.data, ...valid_session_args, ...attached_database_args });
 
       // Finished validation, let's prepare the statements.
 
