@@ -1,19 +1,20 @@
 import type { Client } from "@libsql/client";
-import * as Ark from "arktype";
+import type { ZodType } from "zod";
 import { buildArgs, formatResultData, toSqlStatements, type SqlInfo } from "./sql";
+
+type Validator<T> = ZodType<T>;
 
 type RunnerMeta = {
   session_args: string[];
-  ReturnData: Ark.Type<any>;
+  ReturnData: Validator<any>;
 };
 
-function decodeOrThrow<T>(validator: Ark.Type<T>, data: unknown, label: string = "data"): T {
-  const decoded = validator(data);
-  if (decoded instanceof Ark.type.errors) {
-    const errorStr = JSON.stringify(decoded, null, 2);
-    throw new Error(`Failed to decode ${label}: ${errorStr}`);
+function decodeOrThrow<T>(validator: Validator<T>, data: unknown, label: string = "data"): T {
+  const parsed = validator.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(`Failed to decode ${label}: ${String(parsed.error)}`);
   }
-  return decoded as T;
+  return parsed.data;
 }
 
 export function toRunner<Input, Result>(meta: RunnerMeta, sql: SqlInfo[]) {

@@ -44,7 +44,7 @@
   "dependencies": {
     "@pyre/core": "0.1.0",
     "@libsql/client": "^0.14.0",
-    "arktype": "^2.0.0-rc.32"
+    "zod": "^4.1.12"
   },
   "files": [
     "index.ts",

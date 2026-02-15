@@ -1,8 +1,10 @@
 import { Client, InStatement } from "@libsql/client";
-import * as Ark from "arktype";
+import type { ZodType } from "zod";
 import { buildArgs, formatResultData, toSqlStatements, type SqlInfo } from "./runtime/sql";
 
 export type SessionValue = null | number | string | Uint8Array;
+
+type Validator<T> = ZodType<T>;
 
 /**
  * Query metadata containing all information needed to execute a query.
@@ -11,8 +13,8 @@ export interface QueryMetadata {
     id: string;
     sql: SqlInfo[];
     session_args: string[];
-    InputValidator: Ark.Type<any>;
-    SessionValidator: Ark.Type<any>;
+    InputValidator: Validator<any>;
+    SessionValidator: Validator<any>;
 }
 
 /**
@@ -113,13 +115,13 @@ function extractAffectedRowGroups(sql: SqlInfo[], resultSets: any[]): any[] {
 }
 
 
-function decodeOrError<T>(validator: Ark.Type<T>, data: unknown, context: string): { valid: boolean; error?: string; value?: T } {
-    const decoded = validator(data);
-    if (decoded instanceof Ark.type.errors) {
-        const errorStr = JSON.stringify(decoded, null, 2);
+function decodeOrError<T>(validator: Validator<T>, data: unknown, context: string): { valid: boolean; error?: string; value?: T } {
+    const parsed = validator.safeParse(data);
+    if (!parsed.success) {
+        const errorStr = String(parsed.error);
         return { valid: false, error: `${context}: ${errorStr}` };
     }
-    return { valid: true, value: decoded as T };
+    return { valid: true, value: parsed.data };
 }
 
 /**
