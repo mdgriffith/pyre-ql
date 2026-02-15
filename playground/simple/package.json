@@ -3,16 +3,16 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "generate": "pyre generate --in pyre --out pyre/generated",
-    "migrate": "pyre migrate db/app.db --push",
-    "build": "tsc",
+    "generate": "/Users/griff/projects/pyre/target/debug/pyre generate",
+    "migrate": "/Users/griff/projects/pyre/target/debug/pyre migrate db/app.db --push",
+    "build": "/Users/griff/projects/pyre/target/debug/pyre generate && tsc",
     "start": "bun run src/index.ts",
     "dev": "bun run --hot src/index.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",
     "@pyre/server": "file:../../packages/server",
-    "arktype": "^2.0.0-rc.32"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/bun": "latest",
