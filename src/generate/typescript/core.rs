@@ -111,6 +111,14 @@ fn generate_decode_file(database: &ast::Database) -> String {
                 "Int" | "Float" => "number",
                 "Bool" => "boolean",
                 "DateTime" => "Date",
+                _ if type_str == "Id.Int"
+                    || type_str == "Id.Uuid"
+                    || type_str.starts_with("Id.Int<")
+                    || type_str.starts_with("Id.Uuid<")
+                    || type_str.contains('.') =>
+                {
+                    "number"
+                }
                 other => other,
             };
             let optional = if col.nullable { "?" } else { "" };
@@ -128,6 +136,14 @@ fn generate_decode_file(database: &ast::Database) -> String {
                 "Int" | "Float" => "z.number()".to_string(),
                 "Bool" => "CoercedBool".to_string(),
                 "DateTime" => "CoercedDate".to_string(),
+                _ if type_str == "Id.Int"
+                    || type_str == "Id.Uuid"
+                    || type_str.starts_with("Id.Int<")
+                    || type_str.starts_with("Id.Uuid<")
+                    || type_str.contains('.') =>
+                {
+                    "z.number()".to_string()
+                }
                 other => format!("z.any() /* {} */", other),
             };
             let validator = if col.nullable {
@@ -168,7 +184,12 @@ fn to_metadata_formatter() -> typealias::TypeFormatter {
                     "Bool" => ("z.boolean()".to_string(), true, true),
                     "DateTime" => ("z.date()".to_string(), true, true),
                     // Handle Id.Int<TableName> and Id.Uuid<TableName> as primitives
-                    _ if type_.starts_with("Id.Int<") || type_.starts_with("Id.Uuid<") => {
+                    _ if type_ == "Id.Int"
+                        || type_ == "Id.Uuid"
+                        || type_.starts_with("Id.Int<")
+                        || type_.starts_with("Id.Uuid<")
+                        || type_.contains('.') =>
+                    {
                         ("z.number()".to_string(), true, false)
                     }
                     _ => {
@@ -812,6 +833,14 @@ fn to_zod_type(type_: &str) -> String {
         "Float" => "z.number()".to_string(),
         "Bool" => "z.boolean()".to_string(),
         "DateTime" => "z.coerce.date()".to_string(),
+        _ if type_ == "Id.Int"
+            || type_ == "Id.Uuid"
+            || type_.starts_with("Id.Int<")
+            || type_.starts_with("Id.Uuid<")
+            || type_.contains('.') =>
+        {
+            "z.number()".to_string()
+        }
         _ => format!("z.any() /* {} */", type_),
     }
 }

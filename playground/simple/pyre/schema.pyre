@@ -1,25 +1,34 @@
 session {
-    userId Int
+    userId Id.Int
     role String
 }
 
+type PostStatus
+   = Draft
+   | Published {
+       publishedAt DateTime
+   }
+   | Archived {
+       archivedAt DateTime
+   }
+
 record User {
     @public
-    id        Int     @id
+    id        Id.Int     @id
     name      String
     email     String
     createdAt DateTime @default(now)
 }
 
 record Post {
-    @allow(query) { authorUserId == Session.userId || published == true }
+    @allow(query) { authorUserId == Session.userId }
     @allow(insert) { authorUserId == Session.userId }
     @allow(update) { authorUserId == Session.userId }
     @allow(delete) { authorUserId == Session.userId }
-    id           Int     @id
-    authorUserId Int
+    id           Id.Int     @id
+    authorUserId User.id
     title        String
     content      String
-    published    Bool   @default(false)
+    status       PostStatus
     createdAt    DateTime @default(now)
 }

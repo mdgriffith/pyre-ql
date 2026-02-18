@@ -80,16 +80,18 @@ async function runDemo() {
   console.log('\nCreating posts...');
 
   await CreatePost(db, adminSession, {
+    authorUserId: 1,
     title: 'Hello World',
     content: 'My first post!',
-    published: true
+    status: { type_: 'Published', publishedAt: new Date() }
   });
   console.log('✓ Created public post for Alice');
 
   await CreatePost(db, adminSession, {
+    authorUserId: 1,
     title: 'Draft Post',
     content: 'Work in progress...',
-    published: false
+    status: { type_: 'Draft' }
   });
   console.log('✓ Created draft post for Alice');
 
@@ -98,7 +100,7 @@ async function runDemo() {
   const posts = await GetUserPosts(db, adminSession, { userId: 1 });
   console.log(`Found ${posts.post.length} posts:`);
   for (const post of posts.post) {
-    const status = post.published ? 'published' : 'draft';
+    const status = post.status.type_;
     console.log(`  - "${post.title}" (${status})`);
   }
 
@@ -108,7 +110,7 @@ async function runDemo() {
   const user2Posts = await GetUserPosts(db, userSession, { userId: 1 });
   console.log(`User 2 can see ${user2Posts.post.length} posts:`);
   for (const post of user2Posts.post) {
-    console.log(`  - "${post.title}" (published: ${post.published})`);
+    console.log(`  - "${post.title}" (status: ${post.status.type_})`);
   }
 
   // Clean up

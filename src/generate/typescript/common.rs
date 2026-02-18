@@ -182,7 +182,12 @@ pub fn type_to_zod_validator(type_str: &str, nullable: bool) -> String {
         "Bool" => "CoercedBool".to_string(),
         "DateTime" => "CoercedDate".to_string(),
         "Json" => "Json".to_string(),
-        _ if type_str.starts_with("Id.Int<") || type_str.starts_with("Id.Uuid<") => {
+        _ if type_str == "Id.Int"
+            || type_str == "Id.Uuid"
+            || type_str.starts_with("Id.Int<")
+            || type_str.starts_with("Id.Uuid<")
+            || type_str.contains('.') =>
+        {
             "z.number()".to_string()
         }
         other => format!("z.any() /* {} */", other),
@@ -203,7 +208,14 @@ pub fn type_to_ts_type(type_str: &str) -> &str {
         "Bool" => "boolean",
         "DateTime" => "Date",
         "Json" => "Json",
-        _ if type_str.starts_with("Id.Int<") || type_str.starts_with("Id.Uuid<") => "number",
+        _ if type_str == "Id.Int"
+            || type_str == "Id.Uuid"
+            || type_str.starts_with("Id.Int<")
+            || type_str.starts_with("Id.Uuid<")
+            || type_str.contains('.') =>
+        {
+            "number"
+        }
         other => other,
     }
 }

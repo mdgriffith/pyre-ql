@@ -9,7 +9,7 @@ query GetAllUsers {
 }
 
 // Query to get a single user by ID
-query GetUser($id: Int) {
+query GetUser($id: User.id) {
     user {
         @where { id == $id }
         id
@@ -20,14 +20,14 @@ query GetUser($id: Int) {
 }
 
 // Query to get user's posts
-query GetUserPosts($userId: Int) {
+query GetUserPosts($userId: User.id) {
     post {
         @where { authorUserId == $userId }
         id
         authorUserId
         title
         content
-        published
+        status
         createdAt
     }
 }
@@ -41,17 +41,17 @@ insert CreateUser($name: String, $email: String) {
 }
 
 // Insert a new post for the current user
-insert CreatePost($title: String, $content: String, $published: Bool) {
+insert CreatePost($authorUserId: User.id, $title: String, $content: String, $status: PostStatus) {
     post {
-        authorUserId = Session.userId
+        authorUserId = $authorUserId
         title = $title
         content = $content
-        published = $published
+        status = $status
     }
 }
 
 // Update a user
-update UpdateUser($id: Int, $name: String, $email: String) {
+update UpdateUser($id: User.id, $name: String, $email: String) {
     user {
         @where { id == $id }
         id
@@ -61,7 +61,7 @@ update UpdateUser($id: Int, $name: String, $email: String) {
 }
 
 // Delete a user
-delete DeleteUser($id: Int) {
+delete DeleteUser($id: User.id) {
     user {
         @where { id == $id }
         id
