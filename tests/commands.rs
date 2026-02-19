@@ -2,7 +2,11 @@ use assert_cmd::Command;
 use libsql;
 use predicates::prelude::*;
 use std::path::PathBuf;
+use std::process::Command as StdCommand;
 use tempfile::TempDir;
+
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 
 struct TestContext {
     temp_dir: TempDir,
@@ -45,6 +49,305 @@ record User {
         "#,
     )
     .unwrap();
+}
+
+fn write_ai_session_schema_and_query(ctx: &TestContext) {
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+type AiSessionRole
+   = Root
+   | Worker
+   | Reviewer
+
+type AiSessionStatus
+   = Active
+   | Idle
+   | Completed
+   | Failed
+
+record AiSession {
+    @public
+    id              Id.Int        @id
+    sessionKey      String
+    role            AiSessionRole
+    status          AiSessionStatus
+    updatedAt       DateTime      @default(now)
+}
+        "#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/queries.pyre"),
+        r#"
+insert SeedActiveSession {
+    aiSession {
+        sessionKey = "session-1"
+        role = Root
+        status = Active
+    }
+}
+
+query GetAiSessions {
+    aiSession {
+        id
+        status
+        updatedAt
+    }
+}
+        "#,
+    )
+    .unwrap();
+}
+
+fn write_union_payload_schema_and_query(ctx: &TestContext) {
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+type AiSessionStatus
+   = Active
+   | Idle
+   | Completed
+   | Failed
+
+type AiSessionLifecycle
+   = Running
+   | Finished {
+       reason String
+       endedAt DateTime?
+     }
+
+record AiSession {
+    @public
+    id         Id.Int            @id
+    status     AiSessionStatus
+    lifecycle  AiSessionLifecycle
+    updatedAt  DateTime @default(now)
+}
+        "#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/queries.pyre"),
+        r#"
+insert SeedRunningNumber {
+    aiSession {
+        status = Active
+        lifecycle = Running
+    }
+}
+
+insert SeedFinishedDone($endedAt: DateTime) {
+    aiSession {
+        status = Completed
+        lifecycle = Finished {
+            reason = "done"
+            endedAt = $endedAt
+        }
+    }
+}
+
+insert SeedFinishedTimeout($endedAt: DateTime) {
+    aiSession {
+        status = Failed
+        lifecycle = Finished {
+            reason = "timeout"
+            endedAt = $endedAt
+        }
+    }
+}
+
+insert SeedFinishedStringSeconds($endedAt: DateTime) {
+    aiSession {
+        status = Completed
+        lifecycle = Finished {
+            reason = "string-seconds"
+            endedAt = $endedAt
+        }
+    }
+}
+
+insert SeedRunningIdle {
+    aiSession {
+        status = Idle
+        lifecycle = Running
+    }
+}
+
+update UpdateFinishedSession($id: AiSession.id, $updatedAt: DateTime, $endedAt: DateTime) {
+    aiSession {
+        @where { id == $id }
+        lifecycle = Finished {
+            reason = "updated-done"
+            endedAt = $endedAt
+        }
+        updatedAt = $updatedAt
+    }
+}
+
+query GetAiSessions {
+    aiSession {
+        id
+        status
+        lifecycle
+        updatedAt
+    }
+}
+        "#,
+    )
+    .unwrap();
+}
+
+fn bun_is_available() -> bool {
+    StdCommand::new("bun").arg("--version").output().is_ok()
+}
+
+fn ensure_workspace_node_modules(ctx: &TestContext) {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_node_modules = repo_root.join("node_modules");
+    assert!(
+        repo_node_modules.exists(),
+        "Expected root node_modules to exist for bun runtime imports"
+    );
+
+    let workspace_node_modules = ctx.workspace_path.join("node_modules");
+    if !workspace_node_modules.exists() {
+        #[cfg(unix)]
+        symlink(&repo_node_modules, &workspace_node_modules)
+            .expect("Failed to symlink workspace node_modules");
+    }
+}
+
+fn generate_runtime(ctx: &TestContext) {
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .arg("--push")
+        .assert()
+        .success();
+
+    ctx.run_command("generate").assert().success();
+    ensure_workspace_node_modules(ctx);
+}
+
+fn run_bun_verification_script(
+    ctx: &TestContext,
+    script_name: &str,
+    script_source: &str,
+    success_marker: &str,
+    failure_label: &str,
+) {
+    std::fs::write(ctx.workspace_path.join(script_name), script_source).unwrap();
+
+    let output = StdCommand::new("bun")
+        .arg("run")
+        .arg(script_name)
+        .current_dir(&ctx.workspace_path)
+        .output()
+        .expect("Failed to execute bun runtime verification script");
+
+    assert!(
+        output.status.success(),
+        "{} failed\nstdout:\n{}\nstderr:\n{}",
+        failure_label,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(success_marker),
+        "Expected {} marker in bun output. stdout:\n{}",
+        success_marker,
+        stdout
+    );
+}
+
+fn build_payload_union_verify_script(seed_calls: &[&str], expected_rows: &[&str]) -> String {
+    let mut script = String::new();
+
+    script.push_str("import { createClient } from \"@libsql/client\";\n");
+    script.push_str("import {\n");
+    script.push_str("  SeedRunningNumber,\n");
+    script.push_str("  SeedFinishedDone,\n");
+    script.push_str("  SeedFinishedTimeout,\n");
+    script.push_str("  SeedFinishedStringSeconds,\n");
+    script.push_str("  SeedRunningIdle,\n");
+    script.push_str("  UpdateFinishedSession,\n");
+    script.push_str("  GetAiSessions,\n");
+    script.push_str("} from \"./pyre/generated/typescript/run.ts\";\n\n");
+    script.push_str("const db = createClient({ url: \"file:.yak/yak.db\" });\n");
+
+    for call in seed_calls {
+        script.push_str("await ");
+        script.push_str(call);
+        script.push_str(";\n");
+    }
+
+    script.push_str("const result = await GetAiSessions(db, {});\n\n");
+    script.push_str("if (!result || !Array.isArray(result.aiSession) || result.aiSession.length !== 5) {\n");
+    script.push_str("  throw new Error(`Expected exactly 5 aiSession rows, got: ${JSON.stringify(result)}`);\n");
+    script.push_str("}\n\n");
+    script.push_str("function assertDate(label, value) {\n");
+    script.push_str("  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {\n");
+    script.push_str("    throw new Error(`Expected ${label} to be a valid Date, got: ${JSON.stringify(value)}`);\n");
+    script.push_str("  }\n");
+    script.push_str("}\n\n");
+    script.push_str("function assertMaybeDate(label, value) {\n");
+    script.push_str("  if (value === null || value === undefined) {\n");
+    script.push_str("    return;\n");
+    script.push_str("  }\n\n");
+    script.push_str("  assertDate(label, value);\n");
+    script.push_str("}\n\n");
+    script.push_str("const byId = new Map(result.aiSession.map((row) => [row.id, row]));\n\n");
+    script.push_str("const expected = {\n");
+
+    for row in expected_rows {
+        script.push_str("  ");
+        script.push_str(row);
+        script.push_str("\n");
+    }
+
+    script.push_str("};\n\n");
+    script.push_str("for (const [id, shape] of Object.entries(expected)) {\n");
+    script.push_str("  const row = byId.get(Number(id));\n");
+    script.push_str("  if (!row) {\n");
+    script.push_str("    throw new Error(`Missing expected row id=${id}. Rows: ${JSON.stringify(result.aiSession)}`);\n");
+    script.push_str("  }\n\n");
+    script.push_str("  if (typeof row.status !== \"string\") {\n");
+    script.push_str("    throw new Error(`Expected row ${id} status to decode as enum string, got: ${JSON.stringify(row.status)}`);\n");
+    script.push_str("  }\n\n");
+    script.push_str("  if (row.status !== shape.status) {\n");
+    script.push_str("    throw new Error(`Expected row ${id} status ${shape.status}, got: ${JSON.stringify(row.status)}`);\n");
+    script.push_str("  }\n\n");
+    script.push_str("  assertDate(`row ${id}.updatedAt`, row.updatedAt);\n\n");
+    script.push_str("  if (!row.lifecycle || typeof row.lifecycle !== \"object\") {\n");
+    script.push_str("    throw new Error(`Expected row ${id} lifecycle object, got: ${JSON.stringify(row.lifecycle)}`);\n");
+    script.push_str("  }\n\n");
+    script.push_str("  if (row.lifecycle.type_ !== shape.lifecycleType) {\n");
+    script.push_str("    throw new Error(`Expected row ${id} lifecycle.type_ ${shape.lifecycleType}, got: ${JSON.stringify(row.lifecycle.type_)}`);\n");
+    script.push_str("  }\n\n");
+    script.push_str("  if (shape.reason !== undefined) {\n");
+    script.push_str("    if (row.lifecycle.reason !== undefined && row.lifecycle.reason !== shape.reason) {\n");
+    script.push_str("      throw new Error(`Expected row ${id} optional reason ${shape.reason} when present, got: ${JSON.stringify(row.lifecycle.reason)}`);\n");
+    script.push_str("    }\n");
+    script.push_str("  }\n\n");
+    script.push_str("  if (shape.endedAt === \"date\") {\n");
+    script.push_str("    assertDate(`row ${id}.lifecycle.endedAt`, row.lifecycle.endedAt);\n");
+    script.push_str("  } else if (shape.endedAt === \"optional-date\") {\n");
+    script.push_str("    assertMaybeDate(`row ${id}.lifecycle.endedAt`, row.lifecycle.endedAt);\n");
+    script.push_str("  } else if (shape.endedAt === \"nullish\") {\n");
+    script.push_str("    if (row.lifecycle.endedAt !== null && row.lifecycle.endedAt !== undefined) {\n");
+    script.push_str("      throw new Error(`Expected row ${id} endedAt to be null or undefined, got: ${JSON.stringify(row.lifecycle.endedAt)}`);\n");
+    script.push_str("    }\n");
+    script.push_str("  } else {\n");
+    script.push_str("    assertMaybeDate(`row ${id}.lifecycle.endedAt`, row.lifecycle.endedAt);\n");
+    script.push_str("  }\n");
+    script.push_str("}\n\n");
+    script.push_str("console.log(\"payload-union-and-date-check-passed\");\n");
+
+    script
 }
 
 #[test]
@@ -304,5 +607,93 @@ record Post {
         schema_content.contains("import type { SchemaMetadata } from '@pyre/core';"),
         "Schema should import SchemaMetadata from @pyre/core. Schema content:\n{}",
         schema_content
+    );
+}
+
+#[tokio::test]
+async fn test_generated_typescript_runner_decodes_enum_unions_and_dates() {
+    if !bun_is_available() {
+        eprintln!("Skipping bun-based TypeScript runtime test: bun not available");
+        return;
+    }
+
+    let ctx = TestContext::new();
+    write_ai_session_schema_and_query(&ctx);
+
+    generate_runtime(&ctx);
+
+    let verify_script = r#"
+import { createClient } from "@libsql/client";
+import { SeedActiveSession, GetAiSessions } from "./pyre/generated/typescript/run.ts";
+
+const db = createClient({ url: "file:.yak/yak.db" });
+await SeedActiveSession(db, {});
+const result = await GetAiSessions(db, {});
+
+if (!result || !Array.isArray(result.aiSession) || result.aiSession.length === 0) {
+  throw new Error(`Expected aiSession rows, got: ${JSON.stringify(result)}`);
+}
+
+const first = result.aiSession[0];
+if (typeof first.status !== "string") {
+  throw new Error(`Expected status to decode as string union, got: ${JSON.stringify(first.status)}`);
+}
+
+if (!(first.updatedAt instanceof Date) || Number.isNaN(first.updatedAt.getTime())) {
+  throw new Error(`Expected updatedAt to decode to valid Date, got: ${JSON.stringify(first.updatedAt)}`);
+}
+
+if (first.status !== "Active") {
+  throw new Error(`Expected status Active, got: ${String(first.status)}`);
+}
+
+console.log("decoder-check-passed");
+"#;
+
+    run_bun_verification_script(
+        &ctx,
+        "verify-generated-run.ts",
+        verify_script,
+        "decoder-check-passed",
+        "bun runtime verification",
+    );
+}
+
+#[tokio::test]
+async fn test_generated_typescript_runner_decodes_payload_unions_and_datetime_strings() {
+    if !bun_is_available() {
+        eprintln!("Skipping bun-based TypeScript runtime test: bun not available");
+        return;
+    }
+
+    let ctx = TestContext::new();
+    write_union_payload_schema_and_query(&ctx);
+
+    generate_runtime(&ctx);
+
+    let seed_calls = [
+        "SeedRunningNumber(db, {})",
+        "SeedFinishedDone(db, { endedAt: \"2026-01-03T00:00:00.000Z\" })",
+        "SeedFinishedTimeout(db, { endedAt: 1735776000 })",
+        "SeedFinishedStringSeconds(db, { endedAt: \"1735948800\" })",
+        "SeedRunningIdle(db, {})",
+        "UpdateFinishedSession(db, { id: 2, updatedAt: \"2026-02-02T00:00:00.000Z\", endedAt: \"1736035200\" })",
+        "UpdateFinishedSession(db, { id: 3, updatedAt: 1736121600, endedAt: 1736208000 })",
+    ];
+    let expected_rows = [
+        "1: { status: \"Active\", lifecycleType: \"Running\" },",
+        "2: { status: \"Completed\", lifecycleType: \"Finished\", reason: \"updated-done\", endedAt: \"optional-date\" },",
+        "3: { status: \"Failed\", lifecycleType: \"Finished\", reason: \"updated-done\", endedAt: \"optional-date\" },",
+        "4: { status: \"Completed\", lifecycleType: \"Finished\", reason: \"string-seconds\", endedAt: \"optional-date\" },",
+        "5: { status: \"Idle\", lifecycleType: \"Running\" },",
+    ];
+    let verify_script = build_payload_union_verify_script(&seed_calls, &expected_rows);
+
+    run_bun_verification_script(
+        &ctx,
+        "verify-generated-union-run.ts",
+        &verify_script,
+        "payload-union-and-date-check-passed",
+        "bun payload union verification",
     );
 }

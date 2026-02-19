@@ -116,7 +116,30 @@ export const Json: z.ZodType<JsonValue> = z.lazy(() =>
 
 /// Generate the coercion helpers
 pub fn coercion_helpers() -> &'static str {
-    r#"export const CoercedDate = z.number().transform((val) => new Date(val * 1000));
+    r#"export const CoercedDate = z.union([z.number(), z.string(), z.date()]).transform((val) => {
+  if (val instanceof Date) {
+    return val;
+  }
+
+  if (typeof val === 'number') {
+    return new Date(val * 1000);
+  }
+
+  const trimmed = val.trim();
+  if (trimmed.length > 0) {
+    const asNumber = Number(trimmed);
+    if (!Number.isNaN(asNumber)) {
+      return new Date(asNumber * 1000);
+    }
+  }
+
+  const parsed = new Date(val);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid date value: ${val}`);
+  }
+
+  return parsed;
+});
 export const CoercedBool = z.union([z.boolean(), z.number()]).transform((val) => typeof val === 'number' ? val !== 0 : val);
 
 "#
@@ -126,9 +149,46 @@ export const CoercedBool = z.union([z.boolean(), z.number()]).transform((val) =>
 pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
     let mut result = String::new();
 
-    // Generate the Zod decoder using discriminatedUnion
+    let is_enum = variants.iter().all(|variant| variant.fields.is_none());
+
+    if is_enum {
+        let variants_as_literals = variants
+            .iter()
+            .map(|variant| format!("\"{}\"", variant.name))
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        result.push_str(&format!(
+            "export const {} = z.enum([{}]);\n\n",
+            name, variants_as_literals
+        ));
+        result.push_str(&format!(
+            "export type {} = z.infer<typeof {}>;\n\n",
+            name, name
+        ));
+        return result;
+    }
+
+    let mut variant_field_names: Vec<String> = Vec::new();
+    for variant in variants {
+        if let Some(fields) = &variant.fields {
+            for field in fields {
+                if let ast::Field::Column(col) = field {
+                    if !variant_field_names.contains(&col.name) {
+                        variant_field_names.push(col.name.clone());
+                    }
+                }
+            }
+        }
+    }
+    let variant_field_names_literal = variant_field_names
+        .iter()
+        .map(|field_name| format!("\"{}\"", field_name))
+        .collect::<Vec<String>>()
+        .join(", ");
+
     result.push_str(&format!(
-        "export const {} = z.discriminatedUnion(\"type_\", [\n",
+        "const {0}Discriminated = z.discriminatedUnion(\"type_\", [\n",
         name
     ));
     for variant in variants {
@@ -153,9 +213,9 @@ pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
                         other => other,
                     };
                     let validator = if col.nullable {
-                        format!("{}.optional()", validator)
+                        format!("{}.nullish()", validator)
                     } else {
-                        validator.to_string()
+                        format!("{}.optional()", validator)
                     };
                     result.push_str(&format!("    {}: {},\n", col.name, validator));
                 }
@@ -164,6 +224,44 @@ pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
         result.push_str("  }),\n");
     }
     result.push_str("]);\n\n");
+
+    result.push_str(&format!(
+        "export const {0} = z.preprocess((value) => {{\n",
+        name
+    ));
+    result.push_str("  if (typeof value === 'string') {\n");
+    result.push_str("    return { type_: value };\n");
+    result.push_str("  }\n\n");
+    result
+        .push_str("  if (value != null && typeof value === 'object' && !Array.isArray(value)) {\n");
+    result.push_str("    const record = value as Record<string, unknown>;\n");
+    result.push_str("    const normalized = { ...record };\n");
+    result.push_str(&format!(
+        "    const variantFields = [{}];\n",
+        variant_field_names_literal
+    ));
+    result.push_str("    for (const fieldName of variantFields) {\n");
+    result.push_str("      if (!(fieldName in normalized)) {\n");
+    result.push_str(
+        "        const prefixedKey = Object.keys(normalized).find((key) => key.endsWith(`__${fieldName}`));\n",
+    );
+    result.push_str("        if (prefixedKey) {\n");
+    result.push_str("          normalized[fieldName] = normalized[prefixedKey];\n");
+    result.push_str("        }\n");
+    result.push_str("      }\n");
+    result.push_str("    }\n\n");
+    result.push_str(
+        "    if (!('type_' in normalized) && '$' in normalized && typeof normalized.$ === 'string') {\n",
+    );
+    result.push_str(
+        "      const { $: type_, ...rest } = normalized as Record<string, unknown> & { $: string };\n",
+    );
+    result.push_str("      return { type_, ...rest };\n");
+    result.push_str("    }\n\n");
+    result.push_str("    return normalized;\n");
+    result.push_str("  }\n\n");
+    result.push_str("  return value;\n");
+    result.push_str(&format!("}}, {0}Discriminated);\n\n", name));
 
     // Type inference
     result.push_str(&format!(
