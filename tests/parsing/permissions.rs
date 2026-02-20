@@ -223,6 +223,113 @@ record Post {
 }
 
 #[test]
+fn test_star_permission_parses_when_inline_after_record_open_brace() {
+    let schema_source = r#"
+session {
+    userId Int
+    isAdmin Bool
+}
+
+type GameRole
+    = Owner
+    | Member
+
+record Game {
+    @public
+    id Int @id
+}
+
+record User {
+    @public
+    id Int @id
+}
+
+record GameMember {    @allow(*) { userId == Session.userId || invitedByUserId == Session.userId || Session.isAdmin == True }
+    game   @link(gameId, Game.id)
+    user   @link(userId, User.id)
+    inviter @link(invitedByUserId, User.id)
+
+    id               Int @id
+    gameId           Game.id
+    userId           User.id
+    role             GameRole
+    invitedByUserId  User.id?
+    joinedAt         DateTime @default(now)
+    membershipKey    String @unique
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(
+        result.is_ok(),
+        "Inline @allow(*) after record opening brace should parse successfully"
+    );
+}
+
+#[test]
+fn test_star_permission_before_first_column_parses_successfully() {
+    let schema_source = r#"
+session {
+    userId Int
+    isAdmin Bool
+}
+
+type GameRole
+    = Owner
+    | Member
+
+record GameMember {
+    @allow(*) { userId == Session.userId || invitedByUserId == Session.userId || Session.isAdmin == True }
+    id               Int @id
+    userId           Int
+    role             GameRole
+    invitedByUserId  Int?
+    joinedAt         DateTime @default(now)
+    membershipKey    String @unique
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(
+        parse_result.is_ok(),
+        "@allow(*) before the first column should parse successfully"
+    );
+}
+
+#[test]
+fn test_star_permission_with_nullable_or_session_bool_parses_successfully() {
+    let schema_source = r#"
+session {
+    userId Int
+    isAdmin Bool
+}
+
+type GameRole
+    = Owner
+    | Member
+
+record GameMember {
+    id               Int @id
+    userId           Int
+    role             GameRole
+    invitedByUserId  Int?
+    joinedAt         DateTime @default(now)
+    membershipKey    String @unique
+    @allow(*) { userId == Session.userId || invitedByUserId == Session.userId || Session.isAdmin == True }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let parse_result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(
+        parse_result.is_ok(),
+        "GameMember-style @allow(*) expression should parse successfully"
+    );
+}
+
+#[test]
 fn test_permission_with_session_variable() {
     let schema_source = r#"
 session {

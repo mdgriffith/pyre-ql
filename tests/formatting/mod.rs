@@ -883,6 +883,51 @@ record Post {
 }
 
 #[test]
+fn test_allow_multiterm_or_formats_multiline() {
+    let schema_source = r#"
+record Game {
+    @allow(*) { createdByUserId == Session.userId || Session.isAdmin == True }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).unwrap();
+    format::schema(&mut schema);
+    let formatted = generate::to_string::schema_to_string(&schema.namespace, &schema);
+
+    assert!(
+        formatted.contains("@allow(*) {\n        createdByUserId == Session.userId\n        || Session.isAdmin == True\n"),
+        "Expected multi-term @allow OR to format as multi-line. Got:\n{}",
+        formatted
+    );
+}
+
+#[test]
+fn test_allow_single_term_stays_single_line() {
+    let schema_source = r#"
+record Game {
+    @allow(*) { createdByUserId == Session.userId }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).unwrap();
+    format::schema(&mut schema);
+    let formatted = generate::to_string::schema_to_string(&schema.namespace, &schema);
+
+    assert!(
+        formatted.contains("@allow(*) { createdByUserId == Session.userId"),
+        "Expected single-term @allow to stay single-line. Got:\n{}",
+        formatted
+    );
+    assert!(
+        !formatted.contains("@allow(*) {\n"),
+        "Single-term @allow should not be multiline. Got:\n{}",
+        formatted
+    );
+}
+
+#[test]
 fn test_schema_round_trip_links() {
     let schema_source = r#"
 record User {

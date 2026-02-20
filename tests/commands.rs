@@ -200,6 +200,39 @@ query GetAiSessions {
     .unwrap();
 }
 
+fn write_json_schema_and_query(ctx: &TestContext) {
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+record Event {
+    @public
+    id      Id.Int @id
+    payload Json?
+}
+        "#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/queries.pyre"),
+        r#"
+insert SeedEvent($payload: Json) {
+    event {
+        payload = $payload
+    }
+}
+
+query GetEvents {
+    event {
+        id
+        payload
+    }
+}
+        "#,
+    )
+    .unwrap();
+}
+
 fn bun_is_available() -> bool {
     StdCommand::new("bun").arg("--version").output().is_ok()
 }
@@ -695,5 +728,72 @@ async fn test_generated_typescript_runner_decodes_payload_unions_and_datetime_st
         &verify_script,
         "payload-union-and-date-check-passed",
         "bun payload union verification",
+    );
+}
+
+#[tokio::test]
+async fn test_generated_typescript_runner_roundtrips_json_values() {
+    if !bun_is_available() {
+        eprintln!("Skipping bun-based TypeScript runtime test: bun not available");
+        return;
+    }
+
+    let ctx = TestContext::new();
+    write_json_schema_and_query(&ctx);
+
+    generate_runtime(&ctx);
+
+    let verify_script = r#"
+import { createClient } from "@libsql/client";
+import { SeedEvent, GetEvents } from "./pyre/generated/typescript/run.ts";
+
+const db = createClient({ url: "file:.yak/yak.db" });
+
+const expected = [
+  { nested: { count: 2, ok: true }, tags: ["alpha", "beta"] },
+  [1, { deep: "value" }, false],
+  "hello-json",
+  42,
+  null,
+];
+
+for (const payload of expected) {
+  await SeedEvent(db, { payload });
+}
+
+const result = await GetEvents(db, {});
+if (!result || !Array.isArray(result.event)) {
+  throw new Error(`Expected event rows, got: ${JSON.stringify(result)}`);
+}
+
+if (result.event.length !== expected.length) {
+  throw new Error(`Expected ${expected.length} rows, got: ${result.event.length}`);
+}
+
+const rows = [...result.event].sort((a, b) => a.id - b.id);
+for (let i = 0; i < expected.length; i++) {
+  const row = rows[i];
+  const actualJson = JSON.stringify(row.payload);
+  const expectedJson = JSON.stringify(expected[i]);
+  if (actualJson !== expectedJson) {
+    throw new Error(`Payload mismatch at index ${i}. Expected ${expectedJson}, got ${actualJson}`);
+  }
+}
+
+const firstPayload = rows[0]?.payload;
+const payloadAsUnknown = firstPayload as unknown;
+if (payloadAsUnknown === undefined) {
+  throw new Error("Expected first payload to be present");
+}
+
+console.log("json-roundtrip-check-passed");
+"#;
+
+    run_bun_verification_script(
+        &ctx,
+        "verify-generated-json-run.ts",
+        verify_script,
+        "json-roundtrip-check-passed",
+        "bun json runtime verification",
     );
 }
