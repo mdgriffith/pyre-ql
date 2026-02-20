@@ -443,7 +443,8 @@ fn to_string_permissions_details(
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
-                let where_content = format_where_for_braces(&op.where_, indentation.minimum);
+                let where_content =
+                    format_where_for_braces_with_mode(&op.where_, indentation.minimum, true);
                 result.push_str(&format!("{}@allow({}) {}\n", spaces, ops, where_content));
             }
             result
@@ -452,16 +453,28 @@ fn to_string_permissions_details(
 }
 
 fn format_permissions_where(indent: String, where_arg: &ast::WhereArg) -> String {
-    let content = format_where_for_braces(where_arg, indent.len());
+    let content = format_where_for_braces_with_mode(where_arg, indent.len(), true);
     format!("{}@allow(*) {}\n", indent, content)
 }
 
 fn format_where_for_braces(where_arg: &ast::WhereArg, base_indent: usize) -> String {
-    let content = format_where_content(where_arg, base_indent);
+    format_where_for_braces_with_mode(where_arg, base_indent, false)
+}
+
+fn format_where_for_braces_with_mode(
+    where_arg: &ast::WhereArg,
+    base_indent: usize,
+    force_logical_multiline: bool,
+) -> String {
+    let content = format_where_content(where_arg, base_indent, force_logical_multiline);
     format!("{{{} }}", content)
 }
 
-fn format_where_content(where_arg: &ast::WhereArg, base_indent: usize) -> String {
+fn format_where_content(
+    where_arg: &ast::WhereArg,
+    base_indent: usize,
+    force_logical_multiline: bool,
+) -> String {
     // Check if this is a single expression (Column) or multiple expressions (And/Or)
     match where_arg {
         ast::WhereArg::Column(..) => {
@@ -471,8 +484,25 @@ fn format_where_content(where_arg: &ast::WhereArg, base_indent: usize) -> String
         ast::WhereArg::And(args) => {
             if args.len() == 1 {
                 // Single item in And - treat as single expression
-                format_where_content(&args[0], base_indent)
+                format_where_content(&args[0], base_indent, force_logical_multiline)
             } else {
+                // Multiple expressions in permission directives: force multi-line with explicit operators.
+                if force_logical_multiline {
+                    let mut result = String::from("\n");
+                    let inner_indent = " ".repeat(base_indent + 4);
+                    for (i, arg) in args.iter().enumerate() {
+                        if i != 0 {
+                            result.push_str(&format!("{}&& ", inner_indent));
+                        } else {
+                            result.push_str(&inner_indent);
+                        }
+                        result.push_str(&format_where(arg));
+                        result.push_str("\n");
+                    }
+                    result.push_str(&" ".repeat(base_indent));
+                    return result;
+                }
+
                 // Multiple expressions: format as multi-line (newlines act as separators, no commas)
                 let mut result = String::from("\n");
                 let inner_indent = " ".repeat(base_indent + 4);
@@ -486,8 +516,24 @@ fn format_where_content(where_arg: &ast::WhereArg, base_indent: usize) -> String
         ast::WhereArg::Or(args) => {
             if args.len() == 1 {
                 // Single item in Or - treat as single expression
-                format_where_content(&args[0], base_indent)
+                format_where_content(&args[0], base_indent, force_logical_multiline)
             } else {
+                if force_logical_multiline {
+                    let mut result = String::from("\n");
+                    let inner_indent = " ".repeat(base_indent + 4);
+                    for (i, arg) in args.iter().enumerate() {
+                        if i != 0 {
+                            result.push_str(&format!("{}|| ", inner_indent));
+                        } else {
+                            result.push_str(&inner_indent);
+                        }
+                        result.push_str(&format_where(arg));
+                        result.push_str("\n");
+                    }
+                    result.push_str(&" ".repeat(base_indent));
+                    return result;
+                }
+
                 // Check if all items are simple (Column or And/Or with only Column items) - if so, format as single-line
                 let all_simple = args.iter().all(|arg| match arg {
                     ast::WhereArg::Column(..) => true,
