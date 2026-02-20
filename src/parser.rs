@@ -1282,43 +1282,16 @@ fn parse_where_arg_with_or_marker(input: Text) -> ParseResult<(ast::WhereArg, bo
     // Check if this starts with || (which indicates Or grouping)
     let (input_after_check, maybe_leading_and_or) = opt(parse_and_or)(input)?;
 
-    if let Some(AndOr::And) = maybe_leading_and_or {
-        // We have && at the start, so parse the where expression after it
+    let starts_with_or = matches!(maybe_leading_and_or, Some(AndOr::Or));
+    let input = if maybe_leading_and_or.is_some() {
         let (input, _) = multispace0(input_after_check)?;
-        let (input, where_col) = parse_query_where(input)?;
-        Ok((input, (where_col, false)))
-    } else if let Some(AndOr::Or) = maybe_leading_and_or {
-        // We have || at the start, so parse the where expression after it
-        let (input, _) = multispace0(input_after_check)?;
-        let (input, where_col) = parse_query_where(input)?;
-        Ok((input, (where_col, true)))
+        input
     } else {
-        // Normal case: parse a where expression, optionally followed by && or ||
-        let (input, where_col) = parse_query_where(input_after_check)?;
-        // Only consume spaces/tabs, not newlines (newlines are separators in list context)
-        let (input, _) = space0(input)?;
-        let (input, maybe_and_or) = opt(parse_and_or)(input)?;
-        let result = match maybe_and_or {
-            Some(AndOr::And) => {
-                let (input, where_col2) = parse_query_where(input)?;
-                let (input, _) = multispace0(input)?;
-                (
-                    input,
-                    (ast::WhereArg::And(vec![where_col, where_col2]), false),
-                )
-            }
-            Some(AndOr::Or) => {
-                let (input, where_col2) = parse_query_where(input)?;
-                let (input, _) = multispace0(input)?;
-                (
-                    input,
-                    (ast::WhereArg::Or(vec![where_col, where_col2]), false),
-                )
-            }
-            None => (input, (where_col, false)),
-        };
-        Ok(result)
-    }
+        input_after_check
+    };
+
+    let (input, where_arg) = parse_where_arg(input)?;
+    Ok((input, (where_arg, starts_with_or)))
 }
 
 // Helper to group where_args into proper And/Or structures based on || markers
