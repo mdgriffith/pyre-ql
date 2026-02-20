@@ -45,12 +45,61 @@ export function activate(context: vscode.ExtensionContext) {
   const diagnostics = vscode.languages.createDiagnosticCollection('pyre');
   context.subscriptions.push(diagnostics);
 
-  // Listen for document save events and trigger diagnostics
-  vscode.workspace.onDidSaveTextDocument((document) => {
-    if (document.languageId === 'pyre') {
-      checkErrors(document, diagnostics);
+  const checkTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const scheduleCheck = (document: vscode.TextDocument) => {
+    if (document.languageId !== 'pyre') {
+      return;
     }
-  });
+
+    const key = document.uri.toString();
+    const existing = checkTimers.get(key);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      checkTimers.delete(key);
+      checkErrors(document, diagnostics);
+    }, 250);
+
+    checkTimers.set(key, timer);
+  };
+
+  // Listen for document save events and trigger diagnostics
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      scheduleCheck(document);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((document) => {
+      scheduleCheck(document);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      scheduleCheck(event.document);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidCloseTextDocument((document) => {
+      diagnostics.delete(document.uri);
+      const key = document.uri.toString();
+      const existing = checkTimers.get(key);
+      if (existing) {
+        clearTimeout(existing);
+        checkTimers.delete(key);
+      }
+    }),
+  );
+
+  const active = vscode.window.activeTextEditor;
+  if (active) {
+    scheduleCheck(active.document);
+  }
 }
 
 
