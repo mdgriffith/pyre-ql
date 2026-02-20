@@ -329,12 +329,18 @@ fn insert_linked(
     }
 
     for query_field in &all_query_fields {
-        match &query_field.set {
-            None => (),
-            Some(val) => {
-                let str = to_sql::render_value(&val);
+        let table_field = table
+            .record
+            .fields
+            .iter()
+            .find(|&f| ast::has_field_or_linkname(&f, &query_field.name));
+
+        match (&query_field.set, table_field) {
+            (Some(val), Some(ast::Field::Column(column))) => {
+                let str = to_sql::render_column_value(column, &val);
                 insert_values.push(str);
             }
+            _ => (),
         }
     }
 
@@ -689,9 +695,12 @@ fn to_field_insert_values(
                                                             if let Some(value) =
                                                                 field_map.get(&variant_col.name)
                                                             {
-                                                                result.push(to_sql::render_value(
-                                                                    value,
-                                                                ));
+                                                                result.push(
+                                                                    to_sql::render_column_value(
+                                                                        variant_col,
+                                                                        value,
+                                                                    ),
+                                                                );
                                                             }
                                                         }
                                                     }
@@ -708,8 +717,16 @@ fn to_field_insert_values(
                 }
 
                 // Regular value (not a union type or union type without fields)
-                let str = to_sql::render_value(&val);
-                result.push(str);
+                match table_field {
+                    Some(ast::Field::Column(col)) => {
+                        let str = to_sql::render_column_value(col, &val);
+                        result.push(str);
+                    }
+                    _ => {
+                        let str = to_sql::render_value(&val);
+                        result.push(str);
+                    }
+                }
             }
         }
     }

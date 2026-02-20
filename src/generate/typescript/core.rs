@@ -399,9 +399,10 @@ fn get_formatted_used_params(
             typecheck::ParamInfo::Defined {
                 used_by_top_level_field_alias,
                 raw_variable_name,
+                from_session,
                 ..
             } => {
-                if used_by_top_level_field_alias.contains(top_level_field_alias) {
+                if !*from_session || used_by_top_level_field_alias.contains(top_level_field_alias) {
                     if first_added {
                         formatted.push_str(", ")
                     }
@@ -832,7 +833,8 @@ fn to_zod_type(type_: &str) -> String {
         "Int" => "z.number()".to_string(),
         "Float" => "z.number()".to_string(),
         "Bool" => "z.boolean()".to_string(),
-        "DateTime" => "z.coerce.date()".to_string(),
+        "DateTime" => "z.union([z.date(), z.string(), z.number()])".to_string(),
+        "Json" => "z.unknown()".to_string(),
         _ if type_ == "Id.Int"
             || type_ == "Id.Uuid"
             || type_.starts_with("Id.Int<")
@@ -846,10 +848,15 @@ fn to_zod_type(type_: &str) -> String {
 }
 
 fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
-    let mut result = "const InputValidator = z.object({".to_string();
+    let mut result = "const RawInputValidator = z.object({".to_string();
     let mut is_first = true;
+    let mut json_params: Vec<String> = Vec::new();
     for arg in args {
-        let type_string = to_zod_type(&arg.type_.clone().unwrap_or("unknown".to_string()));
+        let type_name = arg.type_.clone().unwrap_or("unknown".to_string());
+        if type_name == "Json" {
+            json_params.push(arg.name.clone());
+        }
+        let type_string = to_zod_type(&type_name);
         if is_first {
             result.push_str(&format!("\n  {}: {}", arg.name, type_string));
             is_first = false;
@@ -858,6 +865,18 @@ fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
         }
     }
     result.push_str("\n});\n");
-    result.push_str("export type Input = z.infer<typeof InputValidator>;");
+
+    if json_params.is_empty() {
+        result.push_str("const InputValidator = RawInputValidator;\n");
+    } else {
+        result.push_str("const InputValidator = RawInputValidator.transform((input) => ({\n");
+        result.push_str("  ...input,\n");
+        for name in json_params {
+            result.push_str(&format!("  {}: JSON.stringify(input.{}),\n", name, name));
+        }
+        result.push_str("}));\n");
+    }
+
+    result.push_str("export type Input = z.infer<typeof RawInputValidator>;");
     result
 }

@@ -136,6 +136,21 @@ pub fn render_value(value: &ast::QueryValue) -> String {
     }
 }
 
+fn render_json_value(value: &ast::QueryValue) -> String {
+    match value {
+        ast::QueryValue::Variable((_, var)) => format!("json(${})", var.name),
+        _ => render_value(value),
+    }
+}
+
+pub fn render_column_value(column: &ast::Column, value: &ast::QueryValue) -> String {
+    if matches!(column.type_, ast::ColumnType::Json) {
+        return render_json_value(value);
+    }
+
+    render_value(value)
+}
+
 pub fn operator(op: &ast::Operator) -> String {
     match op {
         ast::Operator::Equal => "=".to_string(),
@@ -200,7 +215,19 @@ pub fn render_where_arg(
 
             let operator = operator(op);
 
-            let value = render_value(value);
+            let value = if *is_session_var {
+                render_value(value)
+            } else {
+                match table
+                    .record
+                    .fields
+                    .iter()
+                    .find(|field| ast::has_fieldname(field, fieldname))
+                {
+                    Some(ast::Field::Column(column)) => render_column_value(column, value),
+                    _ => render_value(value),
+                }
+            };
             format!("{} {} {}", qualified_column_name, operator, value)
         }
         ast::WhereArg::And(args) => {

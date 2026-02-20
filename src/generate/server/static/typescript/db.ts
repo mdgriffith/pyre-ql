@@ -37,7 +37,7 @@ export interface Runner<session, input, output> {
   session_args: string[];
   input: { safeParse(data: unknown): { success: true; data: input } | { success: false; error: unknown } };
   output: { safeParse(data: unknown): { success: true; data: output } | { success: false; error: unknown } };
-  run: (env: Env.Config, session: session, args: any) => Promise<ExecuteResult>;
+  run: (env: Env.Config, session: session, args: unknown) => Promise<ExecuteResult>;
 }
 
 export type SqlInfo = {
@@ -67,7 +67,7 @@ export const to_runner = <Session, Input, Output>(options: ToRunnerArgs<Session,
     session_args: options.session_args,
     input: options.input,
     output: options.output,
-    run: async (env: Env.Config, session: Session, input: any): Promise<ExecuteResult> => {
+    run: async (env: Env.Config, session: Session, input: unknown): Promise<ExecuteResult> => {
       // Validate session
       const validated_input = options.input.safeParse(input);
 
@@ -114,10 +114,10 @@ export const to_runner = <Session, Input, Output>(options: ToRunnerArgs<Session,
         };
       }
 
-      const valid_session_args = to_session_args(options.session_args, validated_session.data);
+      const valid_session_args = to_session_args(options.session_args, validated_session.data as Record<string, unknown>);
       const attached_database_args = to_database_args(options.attached_dbs, env);
 
-      const valid_args = stringify_nested_objects({ ...validated_input.data, ...valid_session_args, ...attached_database_args });
+      const valid_args = { ...validated_input.data, ...valid_session_args, ...attached_database_args };
 
       // Finished validation, let's prepare the statements.
 
@@ -161,7 +161,7 @@ export const to_runner = <Session, Input, Output>(options: ToRunnerArgs<Session,
           for (const row of result_set.rows) {
             console.log(row);
             if (col_name in row && typeof row[col_name] == 'string') {
-              const parsed = JSON.parse(row[col_name]);
+              const parsed: unknown = JSON.parse(row[col_name]);
               // The parsed value should be an array
               if (Array.isArray(parsed)) {
                 formatted_return_data[col_name] = parsed;
@@ -193,9 +193,9 @@ export const to_runner = <Session, Input, Output>(options: ToRunnerArgs<Session,
   };
 };
 
-type KeyValues = { [key: string]: string };
+type KeyValues = { [key: string]: unknown };
 
-const to_session_args = (allowed_keys: string[], session: any): KeyValues => {
+const to_session_args = (allowed_keys: string[], session: Record<string, unknown>): KeyValues => {
   if (session == null) {
     return {};
   }
@@ -216,24 +216,6 @@ const to_database_args = (attached_databases: Env.DatabaseKey[], env: Env.Config
   }
   return db_args;
 };
-
-const stringify_nested_objects = (obj: Record<string, any>): Record<string, any> => {
-  const result: Record<string, any> = {};
-
-  for (const key in obj) {
-    if (obj.hasOwnProperty(key)) {
-      const value = obj[key];
-      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-        result[key] = JSON.stringify(value);
-      } else {
-        result[key] = value;
-      }
-    }
-  }
-
-  return result;
-};
-
 
 function only_included(sqlItems: SqlInfo[], values: any[]): any[] {
   return values.filter((_, index) => sqlItems[index]?.include);

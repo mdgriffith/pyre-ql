@@ -94,22 +94,10 @@ pub fn sort_types_by_dependency(database: &ast::Database) -> Vec<(String, Vec<as
 
 /// Generate the shared JSON type definition and schema
 pub fn json_type_definition() -> &'static str {
-    r#"// JSON type - represents any valid JSON value
-export type JsonPrimitive = string | number | boolean | null;
-export type JsonObject = { [key: string]: JsonValue };
-export type JsonArray = JsonValue[];
-export type JsonValue = JsonPrimitive | JsonObject | JsonArray;
+    r#"// JSON values are decoded as unknown for type safety
+export type Json = unknown;
 
-export const Json: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([
-    z.string(),
-    z.number(),
-    z.boolean(),
-    z.null(),
-    z.array(Json),
-    z.record(z.string(), Json),
-  ])
-);
+export const Json: z.ZodType<Json> = z.unknown();
 
 "#
 }
@@ -305,7 +293,7 @@ pub fn type_to_ts_type(type_str: &str) -> &str {
         "Int" | "Float" => "number",
         "Bool" => "boolean",
         "DateTime" => "Date",
-        "Json" => "Json",
+        "Json" => "unknown",
         _ if type_str == "Id.Int"
             || type_str == "Id.Uuid"
             || type_str.starts_with("Id.Int<")

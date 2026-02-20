@@ -6,6 +6,7 @@ type Validator<T> = ZodType<T>;
 
 type RunnerMeta = {
   session_args: string[];
+  InputValidator: Validator<any>;
   ReturnData: Validator<any>;
 };
 
@@ -18,10 +19,27 @@ function decodeOrThrow<T>(validator: Validator<T>, data: unknown, label: string 
 }
 
 export function toRunner<Input, Result>(meta: RunnerMeta, sql: SqlInfo[]) {
-  return async (db: Client, session: Record<string, any>, input?: Input): Promise<Result> => {
+  return async (
+    db: Client,
+    inputOrSession?: Input | Record<string, any>,
+    maybeInput?: Input
+  ): Promise<Result> => {
+    const input =
+      maybeInput === undefined
+        ? (inputOrSession as Input | undefined)
+        : maybeInput;
+    const session =
+      maybeInput === undefined ? {} : (inputOrSession as Record<string, any>);
+
+    const validatedInput = decodeOrThrow(
+      meta.InputValidator,
+      input ?? {},
+      "input"
+    ) as Record<string, unknown>;
+
     const args = buildArgs(
-      input as Record<string, any> | undefined,
-      session as Record<string, any>,
+      validatedInput,
+      session,
       meta.session_args,
     );
     const results = await db.batch(toSqlStatements(sql, args));

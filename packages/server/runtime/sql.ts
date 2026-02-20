@@ -6,25 +6,8 @@ export type SqlInfo = {
 
 export type SqlStatement = { sql: string; args: Record<string, any> };
 
-function stringifyNestedObjects(obj: Record<string, any>): Record<string, any> {
-  const result: Record<string, any> = {};
-
-  for (const key in obj) {
-    if (Object.prototype.hasOwnProperty.call(obj, key)) {
-      const value = obj[key];
-      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-        result[key] = JSON.stringify(value);
-      } else {
-        result[key] = value;
-      }
-    }
-  }
-
-  return result;
-}
-
-export function toSessionArgs(sessionArgs: string[], session: Record<string, any>): Record<string, any> {
-  const result: Record<string, any> = {};
+export function toSessionArgs(sessionArgs: string[], session: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
 
   if (session == null) {
     return result;
@@ -40,11 +23,11 @@ export function toSessionArgs(sessionArgs: string[], session: Record<string, any
 }
 
 export function buildArgs(
-  input: Record<string, any> | undefined,
-  session: Record<string, any>,
+  input: Record<string, unknown> | undefined,
+  session: Record<string, unknown>,
   sessionArgs: string[]
-): Record<string, any> {
-  const args: Record<string, any> = {};
+): Record<string, unknown> {
+  const args: Record<string, unknown> = {};
 
   if (input) {
     for (const [key, value] of Object.entries(input)) {
@@ -56,10 +39,10 @@ export function buildArgs(
 
   Object.assign(args, toSessionArgs(sessionArgs, session));
 
-  return stringifyNestedObjects(args);
+  return args;
 }
 
-export function toSqlStatements(sql: SqlInfo[], args: Record<string, any>): SqlStatement[] {
+export function toSqlStatements(sql: SqlInfo[], args: Record<string, unknown>): SqlStatement[] {
   return sql.map(({ sql: statement, params }) => {
     const filtered: Record<string, any> = {};
     for (const key of params) {
@@ -67,13 +50,17 @@ export function toSqlStatements(sql: SqlInfo[], args: Record<string, any>): SqlS
         filtered[key] = args[key];
       }
     }
+
     return { sql: statement, args: filtered };
   });
 }
 
-export function formatResultData(sql: SqlInfo[], resultSets: any[]): Record<string, any> {
-  const formatted: Record<string, any> = {};
-  const values = resultSets.filter((_, index) => sql[index]?.include);
+export function formatResultData(sql: SqlInfo[], resultSets: unknown[]): Record<string, unknown> {
+  const formatted: Record<string, unknown> = {};
+  const values = resultSets.filter((_, index) => sql[index]?.include) as Array<{
+    columns?: string[];
+    rows?: Array<Record<string, unknown>>;
+  }>;
 
   for (const resultSet of values) {
     if (!resultSet?.columns?.length) {
@@ -85,7 +72,7 @@ export function formatResultData(sql: SqlInfo[], resultSets: any[]): Record<stri
     }
     for (const row of resultSet.rows || []) {
       if (colName in row && typeof row[colName] === 'string') {
-        const parsed = JSON.parse(row[colName]);
+        const parsed: unknown = JSON.parse(row[colName]);
         formatted[colName] = Array.isArray(parsed) ? parsed : [parsed];
         break;
       }

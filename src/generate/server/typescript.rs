@@ -331,6 +331,7 @@ pub fn to_env(database: &ast::Database) -> Option<String> {
                     "Int" | "Float" => "z.number()",
                     "Bool" => "z.boolean()",
                     "DateTime" => "z.coerce.date()",
+                    "Json" => "z.unknown()",
                     _ => "z.any()",
                 };
                 let validator = if column.nullable {

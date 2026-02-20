@@ -866,6 +866,11 @@ fn select_type(
     //
     sql: &mut String,
 ) {
+    if matches!(column.type_, ast::ColumnType::Json) {
+        sql.push_str(&format!("jsonb({}.{})", base_table_name, query_field_name));
+        return;
+    }
+
     // Handle boolean types: SQLite stores booleans as 0/1, convert to JSON boolean
     if column.type_.is_bool() {
         sql.push_str(&format!(
@@ -1022,7 +1027,9 @@ fn render_final_json_column(
     }
 
     sql.push_str(&format!("{}      '{}', ", indent_str, field_name));
-    if column.type_.is_bool() {
+    if matches!(column.type_, ast::ColumnType::Json) {
+        sql.push_str(&format!("json({}.{})", base_table_name, column_name));
+    } else if column.type_.is_bool() {
         sql.push_str(&format!(
             "json(case when {}.{} = 1 then 'true' else 'false' end)",
             base_table_name, column_name

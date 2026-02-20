@@ -45,7 +45,7 @@ export interface ConnectedSession {
 export interface QueryResult {
     kind: "success" | "error";
     /** The JSON response to return to the client (only present on success) */
-    response?: any;
+    response?: unknown;
     /** Error details (only present on error) */
     error?: {
         errorType: string;
@@ -76,7 +76,7 @@ export type SyncDeltasFn = (
 ) => Promise<void>;
 
 function extractAffectedRowGroups(sql: SqlInfo[], resultSets: any[]): any[] {
-    const groups: any[] = [];
+    const groups: unknown[] = [];
     const includedResultSets = resultSets.filter((_, index) => sql[index]?.include);
 
     for (const resultSet of includedResultSets) {
@@ -95,7 +95,7 @@ function extractAffectedRowGroups(sql: SqlInfo[], resultSets: any[]): any[] {
             }
 
             const raw = row[colName];
-            let parsed: any;
+            let parsed: unknown;
 
             if (typeof raw === "string") {
                 parsed = JSON.parse(raw);
@@ -204,7 +204,7 @@ export async function run(
 
     // Execute query
     const resultSets = await db.batch(sqlStatements);
-    const affectedRowGroups: any[] = extractAffectedRowGroups(query.sql, resultSets);
+    const affectedRowGroups: unknown[] = extractAffectedRowGroups(query.sql, resultSets);
     const response = formatResultData(query.sql, resultSets);
 
     // Always create sync function - it will be a no-op if there's nothing to send

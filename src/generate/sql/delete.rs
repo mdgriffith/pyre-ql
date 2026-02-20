@@ -124,6 +124,12 @@ fn generate_typed_response_query(
                                     temp_table_name,
                                     string::quote(&query_field.name)
                                 ));
+                            } else if matches!(column.type_, ast::ColumnType::Json) {
+                                sql.push_str(&format!(
+                                    "json({}.{})",
+                                    temp_table_name,
+                                    string::quote(&query_field.name)
+                                ));
                             } else {
                                 sql.push_str(&format!(
                                     "{}.{}",

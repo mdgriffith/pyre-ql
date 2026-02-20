@@ -124,6 +124,11 @@ fn generate_typed_response_query(
                                     "json(case when t.{} = 1 then 'true' else 'false' end)",
                                     string::quote(&query_field.name)
                                 ));
+                            } else if matches!(column.type_, ast::ColumnType::Json) {
+                                sql.push_str(&format!(
+                                    "json(t.{})",
+                                    string::quote(&query_field.name)
+                                ));
                             } else {
                                 sql.push_str(&format!("t.{}", string::quote(&query_field.name)));
                             }
@@ -219,7 +224,7 @@ fn to_field_set_values(table: &typecheck::Table, fields: &Vec<&ast::QueryField>)
 
                     str.push_str(&column.name);
                     str.push_str(" = ");
-                    str.push_str(&to_sql::render_value(&val));
+                    str.push_str(&to_sql::render_column_value(column, &val));
 
                     result.push(str);
                 }
