@@ -193,16 +193,44 @@ pub async fn push<'a>(
                                                 for sql_statement in sql {
                                                     match sql_statement {
                                                         SqlAndParams::Sql(sql_string) => {
-                                                            if let Err(e) = tx.execute(&sql_string, libsql::params_from_iter::<Vec<libsql::Value>>(vec![])).await {
-                                                                eprintln!("Error executing SQL: {:?}", e);
-                                                                eprintln!("SQL statement: {}", sql_string);
+                                                            if let Err(e) = tx
+                                                                .execute(
+                                                                    &sql_string,
+                                                                    libsql::params_from_iter::<
+                                                                        Vec<libsql::Value>,
+                                                                    >(
+                                                                        vec![]
+                                                                    ),
+                                                                )
+                                                                .await
+                                                            {
+                                                                eprintln!(
+                                                                    "Error executing SQL: {:?}",
+                                                                    e
+                                                                );
+                                                                eprintln!(
+                                                                    "SQL statement: {}",
+                                                                    sql_string
+                                                                );
                                                                 has_error = true;
                                                                 break;
                                                             }
                                                         }
-                                                        SqlAndParams::SqlWithParams { sql, args } => {
-                                                            if let Err(e) = tx.execute(&sql, libsql::params_from_iter(args)).await {
-                                                                eprintln!("Error executing SQL: {:?}", e);
+                                                        SqlAndParams::SqlWithParams {
+                                                            sql,
+                                                            args,
+                                                        } => {
+                                                            if let Err(e) = tx
+                                                                .execute(
+                                                                    &sql,
+                                                                    libsql::params_from_iter(args),
+                                                                )
+                                                                .await
+                                                            {
+                                                                eprintln!(
+                                                                    "Error executing SQL: {:?}",
+                                                                    e
+                                                                );
                                                                 eprintln!("SQL statement: {}", sql);
                                                                 has_error = true;
                                                                 break;

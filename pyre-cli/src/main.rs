@@ -109,7 +109,6 @@ enum Commands {
         #[arg(long, default_value = "pyre/migrations")]
         migration_dir: String,
     },
-
 }
 
 #[tokio::main]

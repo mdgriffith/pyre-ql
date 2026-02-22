@@ -190,9 +190,12 @@ pub async fn migrate(
                         pyre::db::migrate::SCHEMA_TABLE,
                         &pyre::ext::string::quote(pyre::db::migrate::SCHEMA_TABLE),
                     );
-                    conn.execute_batch(&format!("{};\n\n{};", migration_table_sql, schema_table_sql))
-                        .await
-                        .unwrap();
+                    conn.execute_batch(&format!(
+                        "{};\n\n{};",
+                        migration_table_sql, schema_table_sql
+                    ))
+                    .await
+                    .unwrap();
 
                     let migration_state = introspect::get_migration_state(&conn).await.unwrap();
 

@@ -14,6 +14,14 @@ pub fn generate(
     files: &mut Vec<GeneratedFile<String>>,
 ) {
     files.push(generate_text_file(
+        base_path.join("Db.elm"),
+        write_schema(database),
+    ));
+    files.push(generate_text_file(
+        base_path.join("Db/Id.elm"),
+        to_schema_ids(database),
+    ));
+    files.push(generate_text_file(
         base_path.join("Db/Decode.elm"),
         to_schema_decoders(database),
     ));
@@ -27,52 +35,92 @@ pub fn generate(
     ));
 }
 
-pub fn write_schema(database: &ast::Database) -> String {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IdKind {
+    Int,
+    Uuid,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ElmLookup {
+    records_by_name: std::collections::HashMap<String, ast::RecordDetails>,
+}
+
+impl ElmLookup {
+    fn from_context(context: &typecheck::Context) -> Self {
+        let mut records_by_name = std::collections::HashMap::new();
+
+        for table in context.tables.values() {
+            records_by_name.insert(table.record.name.to_ascii_lowercase(), table.record.clone());
+        }
+
+        ElmLookup { records_by_name }
+    }
+}
+
+fn to_schema_ids(database: &ast::Database) -> String {
     let mut result = String::new();
 
-    result.push_str("module Db exposing (..)\n\nimport Time\n\n\n");
+    result.push_str("module Db.Id exposing (..)");
+    result.push_str("\n\n");
+    result.push_str("import Json.Decode as Decode\n");
+    result.push_str("import Json.Encode as Encode\n\n\n");
 
-    // Generate generic branded ID types
-    result.push_str("-- Generic branded ID types\n");
-    result.push_str("type Id brand = Id Int\n");
-    result.push_str("type Uuid brand = Uuid String\n\n\n");
+    result.push_str("type Integer guard\n");
+    result.push_str("    = Integer Int\n\n\n");
 
-    // Collect all unique brands from ID columns
-    let brands = collect_brands(database);
+    result.push_str("type Uuid guard\n");
+    result.push_str("    = Uuid String\n\n\n");
 
-    // Generate phantom types for each brand
+    result.push_str("int : Int -> Integer guard\n");
+    result.push_str("int =\n");
+    result.push_str("    Integer\n\n\n");
+
+    result.push_str("uuid : String -> Uuid guard\n");
+    result.push_str("uuid =\n");
+    result.push_str("    Uuid\n\n\n");
+
+    result.push_str("encodeInt : Integer guard -> Encode.Value\n");
+    result.push_str("encodeInt (Integer value) =\n");
+    result.push_str("    Encode.int value\n\n\n");
+
+    result.push_str("encodeUuid : Uuid guard -> Encode.Value\n");
+    result.push_str("encodeUuid (Uuid value) =\n");
+    result.push_str("    Encode.string value\n\n\n");
+
+    result.push_str("decodeInt : Decode.Decoder (Integer guard)\n");
+    result.push_str("decodeInt =\n");
+    result.push_str("    Decode.map int Decode.int\n\n\n");
+
+    result.push_str("decodeUuid : Decode.Decoder (Uuid guard)\n");
+    result.push_str("decodeUuid =\n");
+    result.push_str("    Decode.map uuid Decode.string\n\n\n");
+
+    let brands = collect_id_brands(database);
     if !brands.is_empty() {
-        result.push_str("-- Phantom types for each table/entity\n");
-        for brand in &brands {
-            result.push_str(&format!("type {} = {}\n", brand, brand));
-        }
-        result.push_str("\n\n");
+        result.push_str("-- Branded ID aliases\n\n");
+        for (brand, kind) in brands {
+            result.push_str(&format!("type {}Id\n", brand));
+            result.push_str(&format!("    = {}Id\n\n", brand));
 
-        // Generate type aliases for each brand
-        result.push_str("-- Table-specific ID aliases\n");
-        for brand in &brands {
-            result.push_str(&format!("type alias {}Id = Id {}\n", brand, brand));
-        }
-        result.push_str("\n\n");
-    }
-
-    result.push_str("type alias DateTime =\n    Time.Posix\n\n\n");
-
-    for schema in &database.schemas {
-        for file in &schema.files {
-            for definition in &file.definitions {
-                result.push_str(&to_string_definition(definition));
-            }
+            let base_type = match kind {
+                IdKind::Int => "Integer",
+                IdKind::Uuid => "Uuid",
+            };
+            result.push_str(&format!(
+                "type alias {} = {} {}Id\n\n\n",
+                brand, base_type, brand
+            ));
         }
     }
 
     result
 }
 
-/// Collect all unique brands from ID columns in the database
-fn collect_brands(database: &ast::Database) -> Vec<String> {
-    use std::collections::HashSet;
-    let mut brands = HashSet::new();
+fn collect_id_brands(database: &ast::Database) -> Vec<(String, IdKind)> {
+    use std::collections::HashMap;
+
+    let mut brands: HashMap<String, IdKind> = HashMap::new();
 
     for schema in &database.schemas {
         for file in &schema.files {
@@ -80,9 +128,14 @@ fn collect_brands(database: &ast::Database) -> Vec<String> {
                 if let ast::Definition::Record { fields, .. } = definition {
                     for field in fields {
                         if let ast::Field::Column(column) = field {
-                            // Check if this is an ID type with a brand (non-empty table name)
-                            if let Some(brand) = column.type_.table_name() {
-                                brands.insert(brand.to_string());
+                            match &column.type_ {
+                                ast::ColumnType::IdInt { table } if !table.is_empty() => {
+                                    brands.entry(table.clone()).or_insert(IdKind::Int);
+                                }
+                                ast::ColumnType::IdUuid { table } if !table.is_empty() => {
+                                    brands.entry(table.clone()).or_insert(IdKind::Uuid);
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -91,9 +144,108 @@ fn collect_brands(database: &ast::Database) -> Vec<String> {
         }
     }
 
-    let mut brands_vec: Vec<String> = brands.into_iter().collect();
-    brands_vec.sort();
-    brands_vec
+    let mut out: Vec<(String, IdKind)> = brands.into_iter().collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+fn parse_branded_id_type(type_: &str) -> Option<(IdKind, String)> {
+    if let Some(brand) = type_
+        .strip_prefix("Id.Int<")
+        .and_then(|s| s.strip_suffix('>'))
+    {
+        return Some((IdKind::Int, brand.to_string()));
+    }
+
+    if let Some(brand) = type_
+        .strip_prefix("Id.Uuid<")
+        .and_then(|s| s.strip_suffix('>'))
+    {
+        return Some((IdKind::Uuid, brand.to_string()));
+    }
+
+    None
+}
+
+fn split_foreign_key_type(type_: &str) -> Option<(&str, &str)> {
+    let mut parts = type_.split('.');
+    let table = parts.next()?;
+    let field = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((table, field))
+}
+
+fn find_table<'a>(lookup: &'a ElmLookup, table_name: &str) -> Option<&'a ast::RecordDetails> {
+    lookup.records_by_name.get(&table_name.to_ascii_lowercase())
+}
+
+fn get_id_kind_for_brand(lookup: &ElmLookup, brand: &str) -> Option<IdKind> {
+    let table = find_table(lookup, brand)?;
+
+    for field in &table.fields {
+        if let ast::Field::Column(column) = field {
+            if column.name == "id" {
+                return match &column.type_ {
+                    ast::ColumnType::IdInt { .. } => Some(IdKind::Int),
+                    ast::ColumnType::IdUuid { .. } => Some(IdKind::Uuid),
+                    _ => None,
+                };
+            }
+        }
+    }
+
+    None
+}
+
+fn resolve_foreign_key_column_type(lookup: &ElmLookup, type_: &str) -> Option<ast::ColumnType> {
+    let (table_name, field_name) = split_foreign_key_type(type_)?;
+    let table = find_table(lookup, table_name)?;
+
+    for field in &table.fields {
+        if let ast::Field::Column(column) = field {
+            if column.name == field_name {
+                return Some(column.type_.clone());
+            }
+        }
+    }
+
+    None
+}
+
+fn id_encoder(kind: IdKind) -> &'static str {
+    match kind {
+        IdKind::Int => "Db.Id.encodeInt",
+        IdKind::Uuid => "Db.Id.encodeUuid",
+    }
+}
+
+fn id_decoder(kind: IdKind) -> &'static str {
+    match kind {
+        IdKind::Int => "Db.Id.decodeInt",
+        IdKind::Uuid => "Db.Id.decodeUuid",
+    }
+}
+
+pub fn write_schema(database: &ast::Database) -> String {
+    let mut result = String::new();
+
+    result.push_str("module Db exposing (..)\n\nimport Db.Id\nimport Time\n\n\n");
+
+    result.push_str("type alias DateTime =\n    Time.Posix\n\n\n");
+
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for definition in &file.definitions {
+                if let ast::Definition::Tagged { .. } = definition {
+                    result.push_str(&to_string_definition(definition));
+                }
+            }
+        }
+    }
+
+    result
 }
 
 fn to_string_definition(definition: &ast::Definition) -> String {
@@ -114,6 +266,7 @@ fn to_string_definition(definition: &ast::Definition) -> String {
                 result.push_str(&to_string_variant(is_first, 4, variant));
                 is_first = false;
             }
+            result.push('\n');
             result
         }
         ast::Definition::Record { name, fields, .. } => to_type_alias(name, fields),
@@ -195,14 +348,21 @@ fn column_to_elm_type(column: &ast::Column) -> String {
     match &column.type_ {
         ast::ColumnType::IdInt { table } => {
             if !table.is_empty() {
-                format!("{}Id", table)
+                format!("Db.Id.{}", table)
             } else {
                 "Int".to_string()
             }
         }
         ast::ColumnType::IdUuid { table } => {
             if !table.is_empty() {
-                format!("Uuid {}", table)
+                format!("Db.Id.{}", table)
+            } else {
+                "String".to_string()
+            }
+        }
+        ast::ColumnType::ForeignKey { table, field } => {
+            if field == "id" {
+                format!("Db.Id.{}", table)
             } else {
                 "String".to_string()
             }
@@ -218,7 +378,9 @@ pub fn to_schema_decoders(database: &ast::Database) -> String {
 
     result.push_str("module Db.Decode exposing (..)\n\n");
 
+    result.push_str("import Db exposing (..)\n");
     result.push_str("import Json.Decode as Decode\n");
+    result.push_str("import Db.Id\n");
     result.push_str("import Time\n\n\n");
 
     result.push_str(
@@ -227,7 +389,7 @@ field fieldName_ fieldDecoder_ decoder_ =
     decoder_ |> Decode.andThen (\func -> Decode.field fieldName_ fieldDecoder_ |> Decode.map func)
 
 
-{-| Chain field decoders together, similar to Db.Read.field.
+{-| Chain field decoders together.
 This allows you to build up a decoder by adding fields one at a time.
 
     decodeGame =
@@ -272,14 +434,18 @@ dateTime =
     for schema in &database.schemas {
         for file in &schema.files {
             for definition in &file.definitions {
-                to_decoder_definition(definition, &mut result);
+                to_decoder_definition(database, definition, &mut result);
             }
         }
     }
     result
 }
 
-fn to_decoder_definition(definition: &ast::Definition, result: &mut String) {
+fn to_decoder_definition(
+    database: &ast::Database,
+    definition: &ast::Definition,
+    result: &mut String,
+) {
     match definition {
         ast::Definition::Lines { .. } => (),
         ast::Definition::Session(_) => (),
@@ -292,14 +458,13 @@ fn to_decoder_definition(definition: &ast::Definition, result: &mut String) {
                             &format!("{}_{}", name, variant.name),
                             fields,
                         ));
-                        result.push_str("\n\n");
                     }
                     None => continue,
                 }
             }
 
             result.push_str(&format!(
-                "{} : Db.Read.Decoder Db.{}\n",
+                "{} : Decode.Decoder Db.{}\n",
                 crate::ext::string::decapitalize(name),
                 name
             ));
@@ -310,16 +475,25 @@ fn to_decoder_definition(definition: &ast::Definition, result: &mut String) {
             result.push_str("               case variant_name of\n");
 
             for variant in variants {
-                result.push_str(&to_decoder_variant(18, name, variant));
+                result.push_str(&to_decoder_variant(database, 18, name, variant));
             }
+            result.push_str("                  _ ->\n");
+            result.push_str("                      Decode.fail (\"Unknown variant for ");
+            result.push_str(name);
+            result.push_str(": \" ++ variant_name)\n");
             result.push_str("            )\n");
-            result.push_str("        |> Db.Read.custom\n");
+            result.push_str("\n\n");
         }
         ast::Definition::Record { .. } => (),
     }
 }
 
-fn to_decoder_variant(indent_size: usize, typename: &str, variant: &ast::Variant) -> String {
+fn to_decoder_variant(
+    database: &ast::Database,
+    indent_size: usize,
+    typename: &str,
+    variant: &ast::Variant,
+) -> String {
     let outer_indent = " ".repeat(indent_size);
     let indent = " ".repeat(indent_size + 4);
     let inner_indent = " ".repeat(indent_size + 8);
@@ -337,41 +511,87 @@ fn to_decoder_variant(indent_size: usize, typename: &str, variant: &ast::Variant
             );
 
             for field in fields {
-                result.push_str(&to_variant_field_json_decoder(indent_size + 12, &field));
+                result.push_str(&to_variant_field_json_decoder(
+                    database,
+                    indent_size + 12,
+                    field,
+                ));
             }
-            result.push_str(&format!("{})\n\n", inner_indent));
+            result.push_str(&format!("{})\n", inner_indent));
 
             result
         }
         None => format!(
-            "{}\"{}\" ->\n{}Decode.succeed Db.{} {}\n\n",
-            outer_indent, variant.name, indent, variant.name, "[]"
+            "{}\"{}\" ->\n{}Decode.succeed Db.{}\n",
+            outer_indent, variant.name, indent, variant.name
         ),
     }
 }
 
 // Field directives(specifically @link) is not allowed within a type at the moment
-fn to_variant_field_json_decoder(indent: usize, field: &ast::Field) -> String {
+fn to_variant_field_json_decoder(
+    database: &ast::Database,
+    indent: usize,
+    field: &ast::Field,
+) -> String {
     match field {
         ast::Field::Column(column) => {
             let spaces = " ".repeat(indent);
-            return format!(
-                "{}|> field \"{}\" {}\n",
-                spaces,
-                column.name,
-                to_json_type_decoder(&column.type_)
-            );
+            let field_decoder = to_json_type_decoder(database, &column.type_);
+            let field_decoder = if column.nullable {
+                format!("(Decode.nullable {})", field_decoder)
+            } else {
+                field_decoder
+            };
+            return format!("{}|> field \"{}\" {}\n", spaces, column.name, field_decoder);
         }
         _ => "".to_string(),
     }
 }
 
-fn to_json_type_decoder(type_: &ast::ColumnType) -> String {
+fn id_kind_for_brand(database: &ast::Database, brand: &str) -> Option<IdKind> {
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for definition in &file.definitions {
+                if let ast::Definition::Record { name, fields, .. } = definition {
+                    if !name.eq_ignore_ascii_case(brand) {
+                        continue;
+                    }
+
+                    for field in fields {
+                        if let ast::Field::Column(column) = field {
+                            if column.name == "id" {
+                                return match &column.type_ {
+                                    ast::ColumnType::IdInt { .. } => Some(IdKind::Int),
+                                    ast::ColumnType::IdUuid { .. } => Some(IdKind::Uuid),
+                                    _ => None,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn to_json_type_decoder(database: &ast::Database, type_: &ast::ColumnType) -> String {
     match type_ {
         ast::ColumnType::String => "Decode.string".to_string(),
         ast::ColumnType::Int => "Decode.int".to_string(),
         ast::ColumnType::Float => "Decode.float".to_string(),
-        ast::ColumnType::DateTime => "Db.Read.dateTime".to_string(),
+        ast::ColumnType::DateTime => "dateTime".to_string(),
+        ast::ColumnType::IdInt { .. } => "Db.Id.decodeInt".to_string(),
+        ast::ColumnType::IdUuid { .. } => "Db.Id.decodeUuid".to_string(),
+        ast::ColumnType::ForeignKey { table, field } if field == "id" => {
+            match id_kind_for_brand(database, table) {
+                Some(IdKind::Int) => "Db.Id.decodeInt".to_string(),
+                Some(IdKind::Uuid) => "Db.Id.decodeUuid".to_string(),
+                None => "Db.Id.decodeUuid".to_string(),
+            }
+        }
         _ => crate::ext::string::decapitalize(&type_.to_string()).to_string(),
     }
 }
@@ -382,7 +602,7 @@ pub fn to_schema_encoders(database: &ast::Database) -> String {
     let mut result = String::new();
 
     result.push_str(
-        "module Db.Encode exposing (..)\n\nimport Json.Encode as Encode\nimport Time\n\n\n",
+        "module Db.Encode exposing (..)\n\nimport Db\nimport Db.Id\nimport Json.Encode as Encode\nimport Time\n\n\n",
     );
 
     result.push_str("dateTime : Time.Posix -> Encode.Value\n");
@@ -392,14 +612,14 @@ pub fn to_schema_encoders(database: &ast::Database) -> String {
     for schema in &database.schemas {
         for file in &schema.files {
             for definition in &file.definitions {
-                result.push_str(&to_encoder_definition(definition));
+                result.push_str(&to_encoder_definition(database, definition));
             }
         }
     }
     result
 }
 
-fn to_encoder_definition(definition: &ast::Definition) -> String {
+fn to_encoder_definition(database: &ast::Database, definition: &ast::Definition) -> String {
     match definition {
         ast::Definition::Lines { .. } => "".to_string(),
         ast::Definition::Comment { .. } => "".to_string(),
@@ -416,7 +636,7 @@ fn to_encoder_definition(definition: &ast::Definition) -> String {
             result.push_str("    case input_ of\n");
 
             for variant in variants {
-                result.push_str(&to_encoder_variant(8, name, variant));
+                result.push_str(&to_encoder_variant(database, 8, name, variant));
             }
             result
         }
@@ -424,7 +644,12 @@ fn to_encoder_definition(definition: &ast::Definition) -> String {
     }
 }
 
-fn to_encoder_variant(indent_size: usize, _typename: &str, variant: &ast::Variant) -> String {
+fn to_encoder_variant(
+    database: &ast::Database,
+    indent_size: usize,
+    _typename: &str,
+    variant: &ast::Variant,
+) -> String {
     let outer_indent = " ".repeat(indent_size);
     let indent = " ".repeat(indent_size + 4);
     let inner_indent = " ".repeat(indent_size + 8);
@@ -436,7 +661,7 @@ fn to_encoder_variant(indent_size: usize, _typename: &str, variant: &ast::Varian
             );
 
             for field in fields {
-                result.push_str(&to_field_encoder(indent_size + 8, &field));
+                result.push_str(&to_field_encoder(database, indent_size + 8, field));
             }
             result.push_str(&format!("{}]\n\n", inner_indent));
 
@@ -449,40 +674,79 @@ fn to_encoder_variant(indent_size: usize, _typename: &str, variant: &ast::Varian
     }
 }
 
-fn to_field_encoder(indent: usize, field: &ast::Field) -> String {
+fn to_field_encoder(database: &ast::Database, indent: usize, field: &ast::Field) -> String {
     match field {
         ast::Field::Column(column) => {
             let spaces = " ".repeat(indent);
-            return format!(
-                "{}, ( \"{}\", {} inner_details__.{})\n",
-                spaces,
-                column.name,
-                to_type_encoder(&column.type_),
-                column.name
-            );
+            let encoder = to_type_encoder(database, &column.type_);
+            let value_expr = if column.nullable {
+                format!(
+                    "(Maybe.map {} inner_details__.{} |> Maybe.withDefault Encode.null)",
+                    encoder, column.name
+                )
+            } else {
+                format!("{} inner_details__.{}", encoder, column.name)
+            };
+            return format!("{}, ( \"{}\", {})\n", spaces, column.name, value_expr);
         }
 
         _ => "".to_string(),
     }
 }
 
-fn to_type_encoder(type_: &ast::ColumnType) -> String {
+fn to_type_encoder(database: &ast::Database, type_: &ast::ColumnType) -> String {
     match type_ {
         ast::ColumnType::String => "Encode.string".to_string(),
         ast::ColumnType::Int => "Encode.int".to_string(),
         ast::ColumnType::Float => "Encode.float".to_string(),
-        ast::ColumnType::DateTime => "Db.Encode.dateTime".to_string(),
-        _ => format!("Db.Encode.{}", string::decapitalize(&type_.to_string())).to_string(),
+        ast::ColumnType::DateTime => "dateTime".to_string(),
+        ast::ColumnType::IdInt { .. } => "Db.Id.encodeInt".to_string(),
+        ast::ColumnType::IdUuid { .. } => "Db.Id.encodeUuid".to_string(),
+        ast::ColumnType::ForeignKey { table, field } if field == "id" => {
+            match id_kind_for_brand(database, table) {
+                Some(IdKind::Int) => "Db.Id.encodeInt".to_string(),
+                Some(IdKind::Uuid) => "Db.Id.encodeUuid".to_string(),
+                None => "Db.Id.encodeUuid".to_string(),
+            }
+        }
+        _ => string::decapitalize(&type_.to_string()),
     }
 }
 
-fn to_type_encoder_str(type_: &str) -> String {
+fn to_type_encoder_str(lookup: &ElmLookup, type_: &str) -> String {
     match type_ {
         "String" => "Encode.string".to_string(),
         "Int" => "Encode.int".to_string(),
         "Float" => "Encode.float".to_string(),
+        "Bool" => "Encode.bool".to_string(),
         "DateTime" => "Db.Encode.dateTime".to_string(),
-        _ => format!("Db.Encode.{}", string::decapitalize(type_)).to_string(),
+        _ => {
+            if let Some((kind, _)) = parse_branded_id_type(type_) {
+                return id_encoder(kind).to_string();
+            }
+
+            if let Some((brand, field)) = split_foreign_key_type(type_) {
+                if field == "id" {
+                    if let Some(kind) = get_id_kind_for_brand(lookup, brand) {
+                        return id_encoder(kind).to_string();
+                    }
+                }
+
+                if let Some(col_type) = resolve_foreign_key_column_type(lookup, type_) {
+                    return match col_type {
+                        ast::ColumnType::String => "Encode.string".to_string(),
+                        ast::ColumnType::Int => "Encode.int".to_string(),
+                        ast::ColumnType::Float => "Encode.float".to_string(),
+                        ast::ColumnType::DateTime => "Db.Encode.dateTime".to_string(),
+                        ast::ColumnType::IdInt { .. } => "Db.Id.encodeInt".to_string(),
+                        ast::ColumnType::IdUuid { .. } => "Db.Id.encodeUuid".to_string(),
+                        _ => format!("Db.Encode.{}", string::decapitalize(&col_type.to_string())),
+                    };
+                }
+            }
+
+            format!("Db.Encode.{}", string::decapitalize(type_)).to_string()
+        }
     }
 }
 
@@ -530,23 +794,27 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     use std::rc::Rc;
 
     let type_names: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let elm_lookup = ElmLookup::from_context(context);
 
     // Always include Input
     type_names.borrow_mut().push("Input".to_string());
 
     let mut result = String::new();
 
+    result.push_str("import Db\n");
     result.push_str("import Db.Decode\n");
     result.push_str("import Db.Delta\n");
     result.push_str("import Db.Encode\n");
+    result.push_str("import Db.Id\n");
     result.push_str("import Json.Decode as Decode\n");
     result.push_str("import Json.Encode as Encode\n");
     result.push_str("import Time\n");
     result.push_str("\n\n");
 
-    result.push_str(&to_param_type_alias(&query.args));
+    result.push_str(&to_param_type_alias(&elm_lookup, &query.args));
 
     let type_names_clone = type_names.clone();
+    let elm_lookup_for_types = elm_lookup.clone();
     let formatter = typealias::TypeFormatter {
         to_comment: Box::new(|s| format!("{{-| {} -}}\n", s)),
         to_type_def_start: Box::new(move |name| {
@@ -554,14 +822,14 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
             format!("type alias {} =\n    {{ ", name)
         }),
         to_field: Box::new(
-            |name,
-             type_,
-             typealias::FieldMetadata {
-                 is_link,
-                 is_optional,
-                 is_array_relationship: _,
-             }| {
-                let base_type = to_elm_typename(type_, is_link);
+            move |name,
+                  type_,
+                  typealias::FieldMetadata {
+                      is_link,
+                      is_optional,
+                      is_array_relationship: _,
+                  }| {
+                let base_type = to_elm_typename(&elm_lookup_for_types, type_, is_link);
 
                 let type_str = if is_link {
                     if is_optional {
@@ -594,6 +862,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     // Helpers
 
+    let elm_lookup_for_decoders = elm_lookup.clone();
     let decoder_formatter = typealias::TypeFormatter {
         to_comment: Box::new(|s| format!("{{-| {} -}}\n", s)),
         to_type_def_start: Box::new(|name| {
@@ -603,28 +872,14 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
             )
         }),
         to_field: Box::new(
-            |name,
-             type_,
-             typealias::FieldMetadata {
-                 is_link,
-                 is_optional,
-                 is_array_relationship: _,
-             }| {
-                let decoder = match type_ {
-                    "String" => "Decode.string".to_string(),
-                    "Int" => "Decode.int".to_string(),
-                    "Float" => "Decode.float".to_string(),
-                    "DateTime" => "Db.Decode.dateTime".to_string(),
-                    "Boolean" => "Db.Decode.bool".to_string(),
-                    _ => {
-                        if is_link {
-                            format!("decode{}", &type_).to_string()
-                        } else {
-                            format!("Db.Decode.{}", crate::ext::string::decapitalize(&type_))
-                                .to_string()
-                        }
-                    }
-                };
+            move |name,
+                  type_,
+                  typealias::FieldMetadata {
+                      is_link,
+                      is_optional,
+                      is_array_relationship: _,
+                  }| {
+                let decoder = to_elm_decoder(&elm_lookup_for_decoders, type_, is_link);
 
                 let final_decoder: String = if is_optional {
                     format!("(Decode.nullable {})", decoder)
@@ -643,7 +898,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         to_field_separator: Box::new(|_| "        ".to_string()),
     };
 
-    result.push_str(&to_param_type_encoder(&query.args));
+    result.push_str(&to_param_type_encoder(&elm_lookup, &query.args));
 
     // Top level query decoder
 
@@ -706,24 +961,25 @@ fn generate_empty_return_data(query: &ast::Query) -> String {
     }
 }
 
-fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
+fn to_param_type_alias(lookup: &ElmLookup, args: &Vec<ast::QueryParamDefinition>) -> String {
     let mut result = "type alias Input =\n".to_string();
     result.push_str("    {");
     let mut is_first = true;
     for arg in args {
         let type_string = &arg.type_.clone().unwrap_or("unknown".to_string());
+        let elm_type = to_elm_typename(lookup, type_string, false);
         if is_first {
-            result.push_str(&format!(" {} : {}\n", arg.name, type_string));
+            result.push_str(&format!(" {} : {}\n", arg.name, elm_type));
             is_first = false;
         } else {
-            result.push_str(&format!("    , {} : {}\n", arg.name, type_string));
+            result.push_str(&format!("    , {} : {}\n", arg.name, elm_type));
         }
     }
     result.push_str("    }\n\n\n");
     result
 }
 
-fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
+fn to_param_type_encoder(lookup: &ElmLookup, args: &Vec<ast::QueryParamDefinition>) -> String {
     let mut result = "encode : Input -> Encode.Value\n".to_string();
     result.push_str("encode input =\n");
     result.push_str("    Encode.object");
@@ -741,7 +997,7 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
             result.push_str(&format!(
                 "        [ ( {}, {} input.{} )\n",
                 string::quote(&arg.name),
-                to_type_encoder_str(&type_string),
+                to_type_encoder_str(lookup, &type_string),
                 &arg.name
             ));
             is_first = false;
@@ -749,7 +1005,7 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
             result.push_str(&format!(
                 "        , ( {}, {} input.{})\n",
                 string::quote(&arg.name),
-                to_type_encoder_str(&type_string),
+                to_type_encoder_str(lookup, &type_string),
                 &arg.name
             ));
         }
@@ -758,7 +1014,7 @@ fn to_param_type_encoder(args: &Vec<ast::QueryParamDefinition>) -> String {
     result
 }
 
-fn to_elm_typename(type_: &str, is_link: bool) -> String {
+fn to_elm_typename(lookup: &ElmLookup, type_: &str, is_link: bool) -> String {
     match type_ {
         "String" => type_.to_string(),
         "Int" => type_.to_string(),
@@ -769,8 +1025,62 @@ fn to_elm_typename(type_: &str, is_link: bool) -> String {
             if is_link {
                 type_.to_string()
             } else {
+                if let Some((_, brand)) = parse_branded_id_type(type_) {
+                    return format!("Db.Id.{}", brand);
+                }
+
+                if let Some((table, field)) = split_foreign_key_type(type_) {
+                    if field == "id" {
+                        if let Some(table_def) = find_table(lookup, table) {
+                            return format!("Db.Id.{}", table_def.name);
+                        }
+                        return format!("Db.Id.{}", table);
+                    }
+
+                    if let Some(col_type) = resolve_foreign_key_column_type(lookup, type_) {
+                        return to_elm_typename(lookup, &col_type.to_string(), false);
+                    }
+                }
+
                 format!("Db.{}", type_).to_string()
             }
+        }
+    }
+}
+
+fn to_elm_decoder(lookup: &ElmLookup, type_: &str, is_link: bool) -> String {
+    match type_ {
+        "String" => "Decode.string".to_string(),
+        "Int" => "Decode.int".to_string(),
+        "Float" => "Decode.float".to_string(),
+        "DateTime" => "Db.Decode.dateTime".to_string(),
+        "Bool" | "Boolean" => "Db.Decode.bool".to_string(),
+        _ => {
+            if is_link {
+                return format!("decode{}", type_);
+            }
+
+            if let Some((kind, _)) = parse_branded_id_type(type_) {
+                return id_decoder(kind).to_string();
+            }
+
+            if let Some((brand, field)) = split_foreign_key_type(type_) {
+                if field == "id" {
+                    if let Some(kind) = get_id_kind_for_brand(lookup, brand) {
+                        return id_decoder(kind).to_string();
+                    }
+                }
+
+                if let Some(col_type) = resolve_foreign_key_column_type(lookup, type_) {
+                    return match col_type {
+                        ast::ColumnType::IdInt { .. } => "Db.Id.decodeInt".to_string(),
+                        ast::ColumnType::IdUuid { .. } => "Db.Id.decodeUuid".to_string(),
+                        _ => to_elm_decoder(lookup, &col_type.to_string(), false),
+                    };
+                }
+            }
+
+            format!("Db.Decode.{}", crate::ext::string::decapitalize(type_))
         }
     }
 }
@@ -1113,7 +1423,7 @@ fn generate_field_lens(
     result.push_str(&format!("    , decode = decode{}\n", type_name));
 
     // Generate nested field lookup function
-    let nested_fields = collect_nested_fields_with_type(context, query_field);
+    let nested_fields = collect_nested_fields_with_type(context, query_field, &type_name);
 
     if nested_fields.is_empty() {
         result.push_str("    , nested = Db.Delta.noNested\n");
@@ -1200,7 +1510,7 @@ fn generate_nested_field_lens(
     result.push_str(&format!("    , decode = decode{}\n", type_name));
 
     // Check for further nested fields
-    let nested_fields = collect_nested_fields_with_type(context, query_field);
+    let nested_fields = collect_nested_fields_with_type(context, query_field, type_name);
 
     if nested_fields.is_empty() {
         result.push_str("    , nested = Db.Delta.noNested\n");
@@ -1252,18 +1562,13 @@ fn generate_nested_field_lens(
 fn collect_nested_fields_with_type(
     context: &typecheck::Context,
     query_field: &ast::QueryField,
+    parent_type_name: &str,
 ) -> Vec<(String, String, bool)> {
     let mut nested = Vec::new();
-    let parent_name = ast::get_aliased_name(query_field);
-    let parent_capitalized = string::capitalize(&parent_name);
 
     // Get the table for this query field to determine relationship types
     // context.tables is a HashMap<String, Table>, so iter() yields (&String, &Table)
-    let table = context
-        .tables
-        .iter()
-        .find(|(name, _)| *name == &query_field.name)
-        .map(|(_, t)| t);
+    let table = find_table_for_query_field(context, &query_field.name);
 
     for arg_field in &query_field.fields {
         if let ast::ArgField::Field(nested_field) = arg_field {
@@ -1274,11 +1579,11 @@ fn collect_nested_fields_with_type(
                 .any(|f| matches!(f, ast::ArgField::Field(_)));
             if has_fields {
                 let nested_name = ast::get_aliased_name(nested_field);
-                let nested_type = format!(
-                    "{}_{}",
-                    parent_capitalized,
+                let nested_type = if parent_type_name.is_empty() {
                     string::capitalize(&nested_name)
-                );
+                } else {
+                    format!("{}_{}", parent_type_name, string::capitalize(&nested_name))
+                };
 
                 // Determine if this relationship is optional (Maybe) or an array (List)
                 let is_optional = if let Some(table) = table {
@@ -1292,6 +1597,28 @@ fn collect_nested_fields_with_type(
         }
     }
     nested
+}
+
+fn find_table_for_query_field<'a>(
+    context: &'a typecheck::Context,
+    query_field_name: &str,
+) -> Option<&'a typecheck::Table> {
+    if let Some(table) = context.tables.get(query_field_name) {
+        return Some(table);
+    }
+
+    let decapitalized = string::decapitalize(query_field_name);
+    if let Some(table) = context.tables.get(&decapitalized) {
+        return Some(table);
+    }
+
+    if let Some(singular) = decapitalized.strip_suffix('s') {
+        if let Some(table) = context.tables.get(singular) {
+            return Some(table);
+        }
+    }
+
+    None
 }
 
 /// Determine if a relationship field should be Maybe (optional) or List
@@ -1339,7 +1666,7 @@ fn find_nested_query_field<'a>(
 ) -> Option<&'a ast::QueryField> {
     for arg_field in &query_field.fields {
         if let ast::ArgField::Field(nested_field) = arg_field {
-            if nested_field.name == name {
+            if nested_field.name == name || ast::get_aliased_name(nested_field) == name {
                 return Some(nested_field);
             }
         }

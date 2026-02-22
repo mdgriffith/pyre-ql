@@ -233,8 +233,192 @@ query GetEvents {
     .unwrap();
 }
 
+fn write_game_lens_schema_and_query(ctx: &TestContext) {
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+type GameRole
+   = GM
+   | Player
+   | Observer
+
+record User {
+    @public
+    id    Id.Uuid @id
+    name  String
+    email String
+}
+
+record Game {
+    @public
+    id              Id.Uuid  @id
+    name            String
+    createdByUserId User.id
+    createdAt       DateTime @default(now)
+
+    gameMembers @link(GameMember.gameId)
+    gameInvites @link(GameInvite.gameId)
+}
+
+record GameMember {
+    @public
+    id              Id.Uuid  @id
+    gameId          Game.id
+    userId          User.id
+    role            GameRole
+    joinedAt        DateTime @default(now)
+    invitedByUserId User.id?
+
+    inviter @link(invitedByUserId, User.id)
+    games   @link(gameId, Game.id)
+}
+
+record GameInvite {
+    @public
+    id            Id.Uuid  @id
+    gameId        Game.id
+    inviterUserId User.id
+    token         String
+    message       String?
+    createdAt     DateTime @default(now)
+
+    games @link(gameId, Game.id)
+}
+        "#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/queries.pyre"),
+        r#"
+query GetGame($id: Game.id) {
+    game {
+        @where { id == $id }
+
+        id
+        name
+        createdByUserId
+        createdAt
+        gameMembers {
+            id
+            userId
+            role
+            joinedAt
+            inviter {
+                id
+                name
+                email
+            }
+        }
+        gameInvites {
+            id
+            inviterUserId
+            token
+            message
+            createdAt
+        }
+    }
+}
+        "#,
+    )
+    .unwrap();
+}
+
 fn bun_is_available() -> bool {
     StdCommand::new("bun").arg("--version").output().is_ok()
+}
+
+fn elm_is_available() -> bool {
+    StdCommand::new("elm").arg("--version").output().is_ok()
+}
+
+fn write_elm_build_files(ctx: &TestContext) {
+    let elm_root = ctx.workspace_path.join("pyre/generated/client/elm");
+    assert!(
+        elm_root.exists(),
+        "Expected generated Elm directory to exist"
+    );
+
+    std::fs::write(
+        elm_root.join("elm.json"),
+        r#"{
+    "type": "application",
+    "source-directories": [
+        "."
+    ],
+    "elm-version": "0.19.1",
+    "dependencies": {
+        "direct": {
+            "elm/browser": "1.0.2",
+            "elm/core": "1.0.5",
+            "elm/html": "1.0.0",
+            "elm/json": "1.1.3",
+            "elm/time": "1.0.0"
+        },
+        "indirect": {
+            "elm/url": "1.0.0",
+            "elm/virtual-dom": "1.0.3"
+        }
+    },
+    "test-dependencies": {
+        "direct": {},
+        "indirect": {}
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let mut imports = String::new();
+    imports.push_str("import Db\n");
+    imports.push_str("import Db.Decode\n");
+    imports.push_str("import Db.Delta\n");
+    imports.push_str("import Db.Encode\n");
+    imports.push_str("import Db.Id\n");
+
+    let query_dir = elm_root.join("Query");
+    if query_dir.exists() {
+        let mut query_modules: Vec<String> = std::fs::read_dir(&query_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("elm"))
+            .filter_map(|path| {
+                path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .map(|name| format!("import Query.{}\n", name))
+            })
+            .collect();
+        query_modules.sort();
+        for import in query_modules {
+            imports.push_str(&import);
+        }
+    }
+
+    let main_module = format!(
+        "module Main exposing (main)\n\nimport Browser\nimport Html exposing (Html, text)\n{}\n\nmain : Program () () msg\nmain =\n    Browser.sandbox\n        {{ init = ()\n        , update = \\_ model -> model\n        , view = \\_ -> text \"elm-build-ok\"\n        }}\n",
+        imports
+    );
+
+    std::fs::write(elm_root.join("Main.elm"), main_module).unwrap();
+}
+
+fn run_elm_make_check(ctx: &TestContext) {
+    let elm_root = ctx.workspace_path.join("pyre/generated/client/elm");
+    let output = StdCommand::new("elm")
+        .arg("make")
+        .arg("Main.elm")
+        .arg("--output=elm.js")
+        .current_dir(&elm_root)
+        .output()
+        .expect("Failed to execute elm make");
+
+    assert!(
+        output.status.success(),
+        "elm make failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn ensure_workspace_node_modules(ctx: &TestContext) {
@@ -319,8 +503,12 @@ fn build_payload_union_verify_script(seed_calls: &[&str], expected_rows: &[&str]
     }
 
     script.push_str("const result = await GetAiSessions(db, {});\n\n");
-    script.push_str("if (!result || !Array.isArray(result.aiSession) || result.aiSession.length !== 5) {\n");
-    script.push_str("  throw new Error(`Expected exactly 5 aiSession rows, got: ${JSON.stringify(result)}`);\n");
+    script.push_str(
+        "if (!result || !Array.isArray(result.aiSession) || result.aiSession.length !== 5) {\n",
+    );
+    script.push_str(
+        "  throw new Error(`Expected exactly 5 aiSession rows, got: ${JSON.stringify(result)}`);\n",
+    );
     script.push_str("}\n\n");
     script.push_str("function assertDate(label, value) {\n");
     script.push_str("  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {\n");
@@ -362,7 +550,9 @@ fn build_payload_union_verify_script(seed_calls: &[&str], expected_rows: &[&str]
     script.push_str("    throw new Error(`Expected row ${id} lifecycle.type_ ${shape.lifecycleType}, got: ${JSON.stringify(row.lifecycle.type_)}`);\n");
     script.push_str("  }\n\n");
     script.push_str("  if (shape.reason !== undefined) {\n");
-    script.push_str("    if (row.lifecycle.reason !== undefined && row.lifecycle.reason !== shape.reason) {\n");
+    script.push_str(
+        "    if (row.lifecycle.reason !== undefined && row.lifecycle.reason !== shape.reason) {\n",
+    );
     script.push_str("      throw new Error(`Expected row ${id} optional reason ${shape.reason} when present, got: ${JSON.stringify(row.lifecycle.reason)}`);\n");
     script.push_str("    }\n");
     script.push_str("  }\n\n");
@@ -371,7 +561,9 @@ fn build_payload_union_verify_script(seed_calls: &[&str], expected_rows: &[&str]
     script.push_str("  } else if (shape.endedAt === \"optional-date\") {\n");
     script.push_str("    assertMaybeDate(`row ${id}.lifecycle.endedAt`, row.lifecycle.endedAt);\n");
     script.push_str("  } else if (shape.endedAt === \"nullish\") {\n");
-    script.push_str("    if (row.lifecycle.endedAt !== null && row.lifecycle.endedAt !== undefined) {\n");
+    script.push_str(
+        "    if (row.lifecycle.endedAt !== null && row.lifecycle.endedAt !== undefined) {\n",
+    );
     script.push_str("      throw new Error(`Expected row ${id} endedAt to be null or undefined, got: ${JSON.stringify(row.lifecycle.endedAt)}`);\n");
     script.push_str("    }\n");
     script.push_str("  } else {\n");
@@ -641,6 +833,38 @@ record Post {
         "Schema should import SchemaMetadata from @pyre/core. Schema content:\n{}",
         schema_content
     );
+}
+
+#[test]
+fn test_generated_elm_client_compiles_with_elm_make() {
+    if !elm_is_available() {
+        eprintln!("Skipping elm make test: elm not available");
+        return;
+    }
+
+    let ctx = TestContext::new();
+    write_union_payload_schema_and_query(&ctx);
+
+    ctx.run_command("generate").assert().success();
+
+    write_elm_build_files(&ctx);
+    run_elm_make_check(&ctx);
+}
+
+#[test]
+fn test_generated_elm_client_compiles_nested_lenses() {
+    if !elm_is_available() {
+        eprintln!("Skipping elm make test: elm not available");
+        return;
+    }
+
+    let ctx = TestContext::new();
+    write_game_lens_schema_and_query(&ctx);
+
+    ctx.run_command("generate").assert().success();
+
+    write_elm_build_files(&ctx);
+    run_elm_make_check(&ctx);
 }
 
 #[tokio::test]

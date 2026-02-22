@@ -87,10 +87,8 @@ impl MigrationDatabase {
                     tx.execute_batch(&sql).await.map_err(TestError::Database)?;
                 }
                 pyre::generate::sql::to_sql::SqlAndParams::SqlWithParams { sql, args } => {
-                    let values: Vec<libsql::Value> = args
-                        .into_iter()
-                        .map(libsql::Value::Text)
-                        .collect();
+                    let values: Vec<libsql::Value> =
+                        args.into_iter().map(libsql::Value::Text).collect();
                     tx.execute(&sql, libsql::params_from_iter(values))
                         .await
                         .map_err(TestError::Database)?;

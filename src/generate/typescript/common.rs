@@ -194,7 +194,8 @@ pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
                         "DateTime" => "CoercedDate",
                         "Json" => "Json",
                         _ if type_str.starts_with("Id.Int<")
-                            || type_str.starts_with("Id.Uuid<") =>
+                            || type_str.starts_with("Id.Uuid<")
+                            || type_str.contains('.') =>
                         {
                             "z.number()"
                         }
@@ -303,5 +304,50 @@ pub fn type_to_ts_type(type_str: &str) -> &str {
             "number"
         }
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn column(name: &str, type_: ast::ColumnType) -> ast::Field {
+        ast::Field::Column(ast::Column {
+            name: name.to_string(),
+            type_,
+            nullable: false,
+            directives: vec![],
+            start: None,
+            end: None,
+            start_name: None,
+            end_name: None,
+            start_typename: None,
+            end_typename: None,
+            inline_comment: None,
+        })
+    }
+
+    #[test]
+    fn tagged_union_foreign_key_field_uses_primitive_decoder() {
+        let variants = vec![ast::Variant {
+            name: "InviteUser".to_string(),
+            fields: Some(vec![column(
+                "userId",
+                ast::ColumnType::ForeignKey {
+                    table: "User".to_string(),
+                    field: "id".to_string(),
+                },
+            )]),
+            start: None,
+            end: None,
+            start_name: None,
+            end_name: None,
+            inline_comment: None,
+        }];
+
+        let generated = generate_tagged_union("InviteTarget", &variants);
+
+        assert!(generated.contains("userId: z.number().optional()"));
+        assert!(!generated.contains("userId: User.id.optional()"));
     }
 }

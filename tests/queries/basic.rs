@@ -94,8 +94,14 @@ async fn test_wildcard_selects_scalars_only() -> Result<(), TestError> {
     for user in users {
         assert!(user.get("id").is_some(), "User should have id field");
         assert!(user.get("name").is_some(), "User should have name field");
-        assert!(user.get("status").is_some(), "User should have status field");
-        assert!(user.get("posts").is_none(), "Wildcard should not include posts");
+        assert!(
+            user.get("status").is_some(),
+            "User should have status field"
+        );
+        assert!(
+            user.get("posts").is_none(),
+            "Wildcard should not include posts"
+        );
         assert!(
             user.get("accounts").is_none(),
             "Wildcard should not include accounts"
@@ -127,7 +133,10 @@ async fn test_wildcard_with_explicit_field() -> Result<(), TestError> {
 
     for user in users {
         assert!(user.get("name").is_some(), "User should have name field");
-        assert!(user.get("posts").is_none(), "Wildcard should not include posts");
+        assert!(
+            user.get("posts").is_none(),
+            "Wildcard should not include posts"
+        );
     }
 
     Ok(())
@@ -156,7 +165,10 @@ async fn test_wildcard_multiple_times() -> Result<(), TestError> {
     for user in users {
         assert!(user.get("id").is_some(), "User should have id field");
         assert!(user.get("name").is_some(), "User should have name field");
-        assert!(user.get("status").is_some(), "User should have status field");
+        assert!(
+            user.get("status").is_some(),
+            "User should have status field"
+        );
     }
 
     Ok(())
@@ -189,7 +201,10 @@ async fn test_wildcard_nested_relation() -> Result<(), TestError> {
         assert!(author.get("id").is_some(), "Author should have id");
         assert!(author.get("name").is_some(), "Author should have name");
         assert!(author.get("status").is_some(), "Author should have status");
-        assert!(author.get("posts").is_none(), "Wildcard should not include posts");
+        assert!(
+            author.get("posts").is_none(),
+            "Wildcard should not include posts"
+        );
         assert!(
             author.get("accounts").is_none(),
             "Wildcard should not include accounts"
