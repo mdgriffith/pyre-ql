@@ -339,6 +339,7 @@ fn to_string_field(namespace: &str, indent: &Indentation, field: &ast::Field) ->
 fn to_string_column(indentation: &Indentation, column: &ast::Column) -> String {
     let initial_indent = " ".repeat(indentation.minimum);
     let nullable = if column.nullable { "?" } else { "" };
+    let schema_type = schema_type_to_string(&column.type_);
 
     let mut type_indent_len = 1;
     let mut directive_indent_len = 0;
@@ -362,11 +363,8 @@ fn to_string_column(indentation: &Indentation, column: &ast::Column) -> String {
                 type_indent_len = indent.type_column - name_plus_colon;
             }
 
-            let name_plus_colon_plus_type = name_plus_colon
-                + type_indent_len
-                + column.type_.to_string().len()
-                + nullable.len()
-                + 1;
+            let name_plus_colon_plus_type =
+                name_plus_colon + type_indent_len + schema_type.len() + nullable.len() + 1;
             if name_plus_colon_plus_type < indent.directive_column && column.directives.len() > 0 {
                 directive_indent_len = indent.directive_column - name_plus_colon_plus_type;
             }
@@ -388,12 +386,20 @@ fn to_string_column(indentation: &Indentation, column: &ast::Column) -> String {
         initial_indent = initial_indent,
         name = column.name,
         type_indent = type_indent,
-        type_ = column.type_,
+        type_ = schema_type,
         nullable = nullable,
         directive_indent = directive_indent,
         directives = directives,
         inline_comment = inline_comment
     )
+}
+
+fn schema_type_to_string(type_: &ast::ColumnType) -> String {
+    match type_ {
+        ast::ColumnType::IdInt { .. } => "Id.Int".to_string(),
+        ast::ColumnType::IdUuid { .. } => "Id.Uuid".to_string(),
+        _ => type_.to_string(),
+    }
 }
 
 fn to_string_field_directive(
@@ -607,6 +613,12 @@ fn to_string_link_details_shorthand(
     indentation: &Indentation,
     details: &ast::LinkDetails,
 ) -> String {
+    let effective_namespace = if namespace.is_empty() {
+        ast::DEFAULT_SCHEMANAME
+    } else {
+        namespace
+    };
+
     let spaces = " ".repeat(indentation.minimum);
     let mut result = format!("{}{}", spaces, details.link_name);
 
@@ -654,7 +666,7 @@ fn to_string_link_details_shorthand(
             result.push_str(", ");
         }
 
-        if details.foreign.schema != namespace {
+        if details.foreign.schema != effective_namespace {
             result.push_str(&details.foreign.schema);
             result.push('.');
         }
