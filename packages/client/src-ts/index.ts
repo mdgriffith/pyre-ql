@@ -63,7 +63,9 @@ export class PyreClient {
       ...config.server.endpoints,
     };
 
-    const Elm = loadElm(Object.create(globalThis));
+    const elmScope = Object.create(globalThis) as typeof globalThis & { Elm?: unknown };
+    elmScope.Elm = undefined;
+    const Elm = loadElm(elmScope);
 
     this.elmApp = Elm.Main.init({
       flags: {

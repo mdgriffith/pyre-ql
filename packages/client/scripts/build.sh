@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUT_DIR="$ROOT_DIR/dist"
 ENGINE_JS="$OUTPUT_DIR/engine.js"
 ENGINE_MJS="$OUTPUT_DIR/engine.mjs"
+ELM_NAMESPACE="__PYRE_CLIENT_ELM__"
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -20,8 +21,8 @@ fi
   echo "  if (!scope) {"
   echo "    throw new Error('Elm scope is required');"
   echo "  }"
-  sed -E 's/\}\(this\)\);[[:space:]]*$/}(scope));/' "$ENGINE_JS"
-  echo "  return scope.Elm;"
+  sed -E -e 's/\}\(this\)\);[[:space:]]*$/}(scope));/' -e "s/scope\['Elm'\]/scope['$ELM_NAMESPACE']/g" "$ENGINE_JS"
+  echo "  return scope['$ELM_NAMESPACE'];"
   echo "}"
   echo "export default loadElm;"
 } > "$ENGINE_MJS"
