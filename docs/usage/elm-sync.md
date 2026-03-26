@@ -1,0 +1,123 @@
+# Elm + Sync Runtime Setup
+
+This guide covers using Pyre sync in an Elm app where Elm UI talks to a TypeScript bridge over ports.
+
+## Mental model
+
+There are three layers:
+
+1. **Elm app**
+   - Owns UI state.
+   - Registers/unregisters queries.
+   - Receives query results/deltas.
+
+2. **TypeScript bridge**
+   - Hosts `PyreClient` from `@pyre/client`.
+   - Manages session/login.
+   - Maps Elm port messages to `client.run(...)` subscriptions.
+   - Forwards runtime results back to Elm ports.
+
+3. **Server sync runtime**
+   - `@pyre/server/sync` routes (`/sync`, `/sync/events`, query route).
+   - Computes catchup and live deltas.
+
+Elm should not reimplement sync transport details. Keep transport/stateful runtime concerns in the TS bridge.
+
+## Server requirements (non-optional)
+
+At startup:
+
+1. `await Sync.init()`
+2. Initialize DB/migrations
+3. `await Sync.loadSchemaFromDatabase(db)`
+
+Routes:
+
+- **GET `/sync`** → `Sync.catchup(db, syncCursor, session, pageSize)`
+- **GET `/sync/events`** → stream deltas to connected clients
+- **query route** (e.g. `POST /db/:queryId`) → `Sync.run(db, queries, queryId, args, session, connectedClients)`
+
+If schema/migrations run after startup, reload schema cache before expecting sync to work.
+
+## Client runtime setup
+
+Create one `PyreClient` instance per browser app instance:
+
+```ts
+const client = new PyreClient({
+  schema: schemaMetadata,
+  server: {
+    baseUrl: "http://localhost:3000",
+    liveSyncTransport: "sse",
+    endpoints: {
+      catchup: `/sync?sessionId=${sessionId}`,
+      events: `/sync/events?sessionId=${sessionId}`,
+      query: `/db?sessionId=${sessionId}`,
+    },
+  },
+  indexedDbName: "my-app-pyre",
+  onError: (error) => console.error(error),
+});
+
+await client.init();
+```
+
+Use `client.run(queryModule, input, callback)` to subscribe and keep the returned subscription for `update(...)` / `unsubscribe()`.
+
+## Elm port contract (recommended)
+
+Elm → TS:
+
+- `register`
+- `update-input`
+- `unregister`
+
+Example message:
+
+```json
+{ "type": "register", "queryId": "users-1", "querySource": "ListUsers", "queryInput": {} }
+```
+
+TS → Elm:
+
+- Forward full result snapshots (or deltas if your Elm layer supports them), including:
+  - `queryId`
+  - `querySource`
+  - `revision`
+  - `result`
+
+## Things that are easy to miss
+
+1. **CORS headers for custom headers**
+   - If you send custom request headers, include them in `Access-Control-Allow-Headers`.
+
+2. **Session consistency**
+   - Keep one session per runtime instance. Recreating sessions repeatedly can produce confusing behavior.
+
+3. **Early callback race**
+   - A query callback can fire immediately after registration. Ensure your registration map entry exists before processing callback state.
+
+4. **Fail loudly on decode/contract mismatches**
+   - Log query id/source and decode error details. Silent drops make sync debugging very hard.
+
+5. **One source of truth for query identity**
+   - Use generated metadata/modules to avoid ad-hoc string/id drift.
+
+## Troubleshooting checklist
+
+- `/sync` returns 500
+  - Check server logs first.
+  - Verify `Sync.init()` and `Sync.loadSchemaFromDatabase(db)` ran.
+  - Verify schema/migrations are current.
+
+- Query route works but sync/catchup fails
+  - Usually schema cache/runtime setup issue on server side.
+
+- Elm shows default/empty state forever
+  - Confirm TS bridge receives runtime callback.
+  - Confirm bridge sends to Elm inbound port.
+  - Confirm Elm decoder accepts payload shape.
+
+- Live events never arrive
+  - Confirm `/sync/events` connection stays open.
+  - Confirm connected clients map is populated and used by `Sync.run(...).sync(...)`.
