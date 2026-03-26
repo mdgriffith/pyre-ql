@@ -9,6 +9,8 @@ use pyre::typecheck;
 
 pub fn check(options: &Options, _files: Vec<String>, json: bool) -> io::Result<()> {
     let paths = crate::filesystem::collect_filepaths(&options.in_dir)?;
+    let schema_count = paths.schema_files.len();
+    let query_file_count = paths.query_files.len();
 
     // Build a map of schema filepaths to their contents for error formatting
     let mut schema_file_contents: std::collections::HashMap<String, String> =
@@ -49,6 +51,11 @@ pub fn check(options: &Options, _files: Vec<String>, json: bool) -> io::Result<(
             }
             if has_errors {
                 std::process::exit(1);
+            } else if !json {
+                println!(
+                    "Success: checked {} schema(s) and {} query files",
+                    schema_count, query_file_count,
+                );
             }
         }
         Err(e) => {

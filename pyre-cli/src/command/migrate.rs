@@ -55,11 +55,20 @@ pub async fn migrate<'a>(
             let connection_result = db::connect(&database.to_string(), auth).await;
             match connection_result {
                 Ok(conn) => {
-                    let migration_result =
-                        db::migrate(&conn, &schema, &namespace_migration_dir).await;
+                    let migration_result = db::migrate(
+                        &conn,
+                        db::MigrateOptions {
+                            schema,
+                            migration_folder: &namespace_migration_dir,
+                            migration_root: Path::new(migration_dir),
+                            namespace: namespace.as_deref(),
+                            db_path: database,
+                        },
+                    )
+                    .await;
                     match migration_result {
-                        Ok(()) => {
-                            println!("Migration finished!");
+                        Ok(outcome) => {
+                            println!("{}", outcome.status_line());
                         }
                         Err(migration_error) => {
                             println!("{}", migration_error.format_error());
