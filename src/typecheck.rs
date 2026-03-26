@@ -138,9 +138,9 @@ fn convert_range(range: &ast::Range) -> Range {
 }
 
 pub fn get_linked_table<'a>(context: &'a Context, link: &'a ast::LinkDetails) -> Option<&'a Table> {
-    context
-        .tables
-        .get(&crate::ext::string::decapitalize(&link.foreign.table))
+    context.tables.values().find(|table| {
+        table.schema == link.foreign.schema && table.record.name == link.foreign.table
+    })
 }
 
 pub fn empty_context() -> Context {
@@ -3493,15 +3493,17 @@ fn check_link(
             }],
         })
     } else {
-        let table = context
-            .tables
-            .get(&crate::ext::string::decapitalize(&link.foreign.table));
+        let table = get_linked_table(context, link);
         match table {
             None => errors.push(Error {
                 filepath: context.current_filepath.clone(),
                 error_type: ErrorType::UnknownTable {
                     found: link.foreign.table.clone(),
-                    existing: context.tables.keys().cloned().collect(),
+                    existing: context
+                        .tables
+                        .values()
+                        .map(|table| format!("{}.{}", table.schema, table.record.name))
+                        .collect(),
                 },
                 locations: vec![Location {
                     contexts: vec![],
