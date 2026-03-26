@@ -2,6 +2,21 @@
 
 This document summarizes SQLite-specific behaviors and limitations that affect Pyre's SQL generation and execution.
 
+## Unique Indexes and NULL Semantics
+
+SQLite treats `NULL` values as distinct for uniqueness checks. This means a unique index can contain multiple rows where one or more indexed columns are `NULL`.
+
+**Example:**
+```sql
+CREATE UNIQUE INDEX uniq_memberships_org_user ON memberships(orgId, userId);
+```
+
+If `userId` is nullable, rows like `(orgId = 1, userId = NULL)` can appear more than once.
+
+**Why This Matters:**
+- Pyre's `@unique(...)` follows SQLite behavior.
+- If you need strict uniqueness, make indexed columns `NOT NULL`.
+
 ## RETURNING Clause Limitations
 
 ### Cannot Use RETURNING in Subqueries
