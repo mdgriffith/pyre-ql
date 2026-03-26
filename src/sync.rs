@@ -310,53 +310,33 @@ fn render_permission_where(
 ) -> String {
     match where_arg {
         WhereArg::Column(is_session_var, fieldname, op, value, _field_name_range) => {
-            // Handle session variable column references by replacing with literal
-            let (qualified_column_name, final_value) = if *is_session_var {
-                // Session variable column - replace with literal value
-                // When is_session_var is true, fieldname is the session var name (e.g., "userId")
-                // We replace it: Session.userId = table.userId becomes table.userId = <literal>
-                // Since permissions are typechecked, session variables should always exist
+            let final_value = match value {
+                ast::QueryValue::Variable((_, var)) => {
+                    let session_key = var.session_field.as_ref().expect(
+                        "Permission variables should be session variables, not query parameters",
+                    );
+                    session_value_to_query_value(
+                        session
+                            .get(session_key)
+                            .expect("Session variable should exist after typechecking"),
+                    )
+                }
+                _ => value.clone(),
+            };
+
+            let qualified_column_name = if *is_session_var {
                 let session_value = session
                     .get(fieldname)
                     .expect("Session variable should exist after typechecking");
-                let literal_value = session_value_to_query_value(session_value);
-                // The fieldname becomes a table column (same name, but now it's a table column)
-                let table_name = crate::ext::string::quote(&ast::get_tablename(
-                    &table.record.name,
-                    &table.record.fields,
-                ));
-                let column_name =
-                    format!("{}.{}", table_name, crate::ext::string::quote(fieldname));
-                (column_name, literal_value)
+                crate::generate::sql::to_sql::render_value(&session_value_to_query_value(
+                    session_value,
+                ))
             } else {
-                // Regular table column
                 let table_name = crate::ext::string::quote(&ast::get_tablename(
                     &table.record.name,
                     &table.record.fields,
                 ));
-                let column_name =
-                    format!("{}.{}", table_name, crate::ext::string::quote(fieldname));
-
-                // Replace session variables in the value with literal values
-                // Note: We use var.session_field (e.g., "userId") to look up in the session HashMap,
-                // NOT var.name (e.g., "session_userId") which is only used for rendering as $session_userId
-                let replaced_value = match value {
-                    ast::QueryValue::Variable((_, var)) => {
-                        // Session variables have session_field set (e.g., Some("userId"))
-                        // Query parameters have session_field = None and use var.name instead
-                        // Since permissions are typechecked, session variables should always exist
-                        let session_key = var.session_field.as_ref().expect(
-                            "Permission variables should be session variables, not query parameters"
-                        );
-                        session_value_to_query_value(
-                            session
-                                .get(session_key)
-                                .expect("Session variable should exist after typechecking"),
-                        )
-                    }
-                    _ => value.clone(),
-                };
-                (column_name, replaced_value)
+                format!("{}.{}", table_name, crate::ext::string::quote(fieldname))
             };
 
             let operator_str = crate::generate::sql::to_sql::operator(op);
