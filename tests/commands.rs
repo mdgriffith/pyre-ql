@@ -51,6 +51,50 @@ record User {
     .unwrap();
 }
 
+fn write_multi_namespace_schemas(ctx: &TestContext) {
+    std::fs::create_dir_all(ctx.workspace_path.join("pyre/schema/App")).unwrap();
+    std::fs::create_dir_all(ctx.workspace_path.join("pyre/schema/Auth")).unwrap();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema/App/schema.pyre"),
+        r#"
+record Project {
+    id    Int    @id
+    name  String
+    @public
+}
+        "#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema/Auth/schema.pyre"),
+        r#"
+record Account {
+    id       Int    @id
+    email    String
+    @public
+}
+        "#,
+    )
+    .unwrap();
+}
+
+fn first_migration_sql_path(ctx: &TestContext) -> PathBuf {
+    let migration_root = ctx.workspace_path.join("pyre/migrations");
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&migration_root)
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_dir())
+        .collect();
+    entries.sort();
+
+    entries
+        .first()
+        .expect("expected at least one migration folder")
+        .join("migration.sql")
+}
+
 fn write_ai_session_schema_and_query(ctx: &TestContext) {
     std::fs::write(
         ctx.workspace_path.join("pyre/schema.pyre"),
@@ -659,6 +703,32 @@ fn test_migration_creates_migrations_directory_and_file() {
 }
 
 #[test]
+fn test_check_success_prints_verification_counts() {
+    let ctx = TestContext::new();
+    write_basic_schema(&ctx);
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/queries.pyre"),
+        r#"
+query GetUsers {
+    user {
+        id
+        name
+    }
+}
+        "#,
+    )
+    .unwrap();
+
+    ctx.run_command("check")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Success: checked 1 schema(s) and 1 query files",
+        ));
+}
+
+#[test]
 fn test_migrate_push_creates_local_db_when_parent_directory_missing() {
     let ctx = TestContext::new();
     write_basic_schema(&ctx);
@@ -764,6 +834,114 @@ fn test_migrate_without_migrations_shows_targeted_error() {
         .stdout(predicate::str::contains(
             "pyre migration --db <database> init",
         ));
+}
+
+#[test]
+fn test_migrate_reports_up_to_date_when_no_work_is_needed() {
+    let ctx = TestContext::new();
+    write_basic_schema(&ctx);
+
+    ctx.run_command("migration")
+        .arg("--db")
+        .arg(".yak/yak.db")
+        .arg("init")
+        .assert()
+        .success();
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 migration applied."));
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Up to date, nothing applied."));
+}
+
+#[test]
+fn test_migrate_reports_plus_push_when_reconciliation_is_needed() {
+    let ctx = TestContext::new();
+    write_basic_schema(&ctx);
+
+    ctx.run_command("migration")
+        .arg("--db")
+        .arg(".yak/yak.db")
+        .arg("init")
+        .assert()
+        .success();
+
+    let migration_sql = first_migration_sql_path(&ctx);
+    std::fs::write(migration_sql, "").unwrap();
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 migration applied + push."));
+}
+
+#[tokio::test]
+async fn test_migrate_fails_on_non_pyre_database_with_guidance() {
+    let ctx = TestContext::new();
+    write_basic_schema(&ctx);
+
+    let db_path = ctx.workspace_path.join(".yak/yak.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+
+    let db = libsql::Builder::new_local(db_path.to_str().unwrap())
+        .build()
+        .await
+        .unwrap();
+    let conn = db.connect().unwrap();
+    conn.execute_batch("create table legacy_users (id integer primary key);")
+        .await
+        .unwrap();
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "Non-Pyre or Incompatible Database",
+        ))
+        .stdout(predicate::str::contains("Guidance"));
+}
+
+#[test]
+fn test_migrate_fails_when_requested_namespace_is_missing_in_db_metadata() {
+    let ctx = TestContext::new();
+    write_multi_namespace_schemas(&ctx);
+
+    ctx.run_command("migration")
+        .arg("--db")
+        .arg(".yak/yak.db")
+        .arg("--namespace")
+        .arg("App")
+        .arg("init")
+        .assert()
+        .success();
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .arg("--namespace")
+        .arg("App")
+        .assert()
+        .success();
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .arg("--namespace")
+        .arg("Auth")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "Namespace Missing In Database Metadata",
+        ))
+        .stdout(predicate::str::contains("Requested namespace: Auth"))
+        .stdout(predicate::str::contains("Namespaces found: App"));
 }
 
 #[test]

@@ -332,9 +332,37 @@ fn field_directive_equal_ignoring_locations(
         (ast::FieldDirective::Link(la), ast::FieldDirective::Link(lb)) => {
             link_details_equal_ignoring_locations(la, lb)
         }
+        (ast::FieldDirective::Index(ia), ast::FieldDirective::Index(ib))
+        | (ast::FieldDirective::Unique(ia), ast::FieldDirective::Unique(ib)) => {
+            index_directive_equal_ignoring_locations(ia, ib)
+        }
         (ast::FieldDirective::Permissions(pa), ast::FieldDirective::Permissions(pb)) => {
             permission_details_equal_ignoring_locations(pa, pb)
         }
+        _ => false,
+    }
+}
+
+fn index_directive_equal_ignoring_locations(
+    a: &ast::IndexDirective,
+    b: &ast::IndexDirective,
+) -> bool {
+    if a.columns.len() != b.columns.len() {
+        return false;
+    }
+
+    if !a
+        .columns
+        .iter()
+        .zip(&b.columns)
+        .all(|(ca, cb)| ca.name == cb.name && ca.direction == cb.direction)
+    {
+        return false;
+    }
+
+    match (&a.where_, &b.where_) {
+        (Some(wa), Some(wb)) => where_arg_equal_ignoring_locations(wa, wb),
+        (None, None) => true,
         _ => false,
     }
 }
@@ -859,6 +887,27 @@ record Test {
     defaultNow DateTime @default(now)
     nullableField String?
     @tablename("test_table")
+    @public
+}
+    "#;
+
+    round_trip_schema(schema_source);
+}
+
+#[test]
+fn test_schema_round_trip_table_level_index_directives() {
+    let schema_source = r#"
+record Membership {
+    id        Int @id
+    orgId     Int
+    userId    Int
+    createdAt DateTime
+    deletedAt DateTime?
+
+    @unique(orgId, userId desc)
+    @index(orgId asc, createdAt desc) where {
+        deletedAt = null
+    }
     @public
 }
     "#;

@@ -108,17 +108,10 @@ impl MigrationDatabase {
     }
 }
 
-/// Helper function to create a diff between two schemas
-/// Takes the old schema (as a string) and new schema (as a string) and returns the diff
-async fn create_migration_diff(
-    old_schema_source: &str,
-    new_schema_source: &str,
-) -> Result<diff::Diff, TestError> {
-    // Create database with old schema
-    let db = MigrationDatabase::new(old_schema_source).await?;
-
-    // Introspect the database to get actual tables
-    let conn = db.db.connect().map_err(TestError::Database)?;
+async fn introspect_uninitialized_db(
+    db: &Database,
+) -> Result<introspect::IntrospectionRaw, TestError> {
+    let conn = db.connect().map_err(TestError::Database)?;
     let mut rows = conn
         .query(introspect::INTROSPECT_UNINITIALIZED_SQL, ())
         .await
@@ -134,9 +127,22 @@ async fn create_migration_diff(
         );
     }
 
-    let introspection_raw = introspection_raw.ok_or(TestError::TypecheckError(
+    introspection_raw.ok_or(TestError::TypecheckError(
         "Failed to get introspection result".to_string(),
-    ))?;
+    ))
+}
+
+/// Helper function to create a diff between two schemas
+/// Takes the old schema (as a string) and new schema (as a string) and returns the diff
+async fn create_migration_diff(
+    old_schema_source: &str,
+    new_schema_source: &str,
+) -> Result<diff::Diff, TestError> {
+    // Create database with old schema
+    let db = MigrationDatabase::new(old_schema_source).await?;
+
+    // Introspect the database to get actual tables
+    let introspection_raw = introspect_uninitialized_db(&db.db).await?;
 
     // Recreate the context from the schema since Context doesn't implement Clone
     let database = pyre::ast::Database {
@@ -172,6 +178,54 @@ async fn create_migration_diff(
     let db_diff = diff::diff(&new_context, &new_schema, &introspection);
 
     Ok(db_diff)
+}
+
+#[tokio::test]
+async fn test_introspection_captures_index_metadata() -> Result<(), TestError> {
+    let schema = r#"record Membership {
+    id        Int @id
+    orgId     Int
+    userId    Int
+    createdAt DateTime
+    deletedAt DateTime?
+
+    @unique(orgId, userId desc)
+    @index(orgId asc, createdAt desc) where { deletedAt = null }
+    @public
+}"#;
+
+    let db = MigrationDatabase::new(schema).await?;
+    let introspection_raw = introspect_uninitialized_db(&db.db).await?;
+
+    let memberships = introspection_raw
+        .tables
+        .iter()
+        .find(|t| t.name == "memberships")
+        .expect("memberships table should be present");
+
+    let unique_index = memberships
+        .indexes
+        .iter()
+        .find(|idx| idx.unique && idx.columns.len() == 2)
+        .expect("expected composite unique index to be introspected");
+    assert_eq!(unique_index.columns[0].name, "orgId");
+    assert_eq!(unique_index.columns[0].desc, false);
+    assert_eq!(unique_index.columns[1].name, "userId");
+    assert_eq!(unique_index.columns[1].desc, true);
+
+    let partial_index = memberships
+        .indexes
+        .iter()
+        .find(|idx| !idx.unique && idx.where_clause.is_some())
+        .expect("expected partial index to be introspected");
+    assert!(partial_index
+        .where_clause
+        .as_ref()
+        .unwrap()
+        .to_lowercase()
+        .contains("deletedat"));
+
+    Ok(())
 }
 
 // ============================================================================
@@ -253,6 +307,63 @@ async fn test_migration_add_column() -> Result<(), TestError> {
     assert!(
         has_email_added,
         "Migration should add email column to User table"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_migration_adds_composite_unique_and_partial_ordered_index() -> Result<(), TestError> {
+    let old_schema = r#"record Membership {
+    id        Int @id
+    orgId     Int
+    userId    Int
+    createdAt DateTime
+    deletedAt DateTime?
+    @public
+}"#;
+
+    let new_schema = r#"record Membership {
+    id        Int @id
+    orgId     Int
+    userId    Int
+    createdAt DateTime
+    deletedAt DateTime?
+
+    @unique(orgId, userId desc)
+    @index(orgId, createdAt desc) where { deletedAt = null }
+    @public
+}"#;
+
+    let db_diff = create_migration_diff(old_schema, new_schema).await?;
+    let sql_statements = diff::to_sql::to_sql(&db_diff);
+    let rendered_sql: Vec<String> = sql_statements
+        .into_iter()
+        .filter_map(|stmt| match stmt {
+            pyre::generate::sql::to_sql::SqlAndParams::Sql(sql) => Some(sql),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        rendered_sql
+            .iter()
+            .any(|s| s.contains("create unique index")
+                && s.contains("\"memberships\"")
+                && s.contains("\"orgId\"")
+                && s.contains("\"userId\" desc")),
+        "Expected migration SQL to include composite unique index. SQL:\n{}",
+        rendered_sql.join("\n")
+    );
+
+    assert!(
+        rendered_sql.iter().any(|s| s.contains("create index")
+            && s.contains("\"memberships\"")
+            && s.contains("\"orgId\"")
+            && s.contains("\"createdAt\" desc")
+            && s.to_lowercase().contains(" where ")),
+        "Expected migration SQL to include partial ordered composite index. SQL:\n{}",
+        rendered_sql.join("\n")
     );
 
     Ok(())
