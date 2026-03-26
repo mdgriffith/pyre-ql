@@ -1525,3 +1525,167 @@ record Post {
         }
     }
 }
+
+#[test]
+fn test_link_fails_when_table_exists_in_different_namespace() {
+    let app_source = r#"
+record User {
+    id Int @id
+    @public
+}
+
+record Post {
+    id Int @id
+    userId Int
+    user @link(userId, Auth.User.id)
+    @public
+}
+    "#;
+
+    let auth_source = r#"
+record Account {
+    id Int @id
+    @public
+}
+    "#;
+
+    let mut app_schema = ast::Schema::default();
+    app_schema.namespace = "App".to_string();
+    parser::run("pyre/schema/App/schema.pyre", app_source, &mut app_schema)
+        .expect("App schema should parse");
+
+    let mut auth_schema = ast::Schema::default();
+    auth_schema.namespace = "Auth".to_string();
+    parser::run(
+        "pyre/schema/Auth/schema.pyre",
+        auth_source,
+        &mut auth_schema,
+    )
+    .expect("Auth schema should parse");
+
+    let database = ast::Database {
+        schemas: vec![app_schema, auth_schema],
+    };
+
+    let result = typecheck::check_schema(&database);
+    let errors = result.expect_err("Typecheck should fail for schema-qualified missing table");
+
+    assert!(
+        errors.iter().any(|error| {
+            matches!(
+                &error.error_type,
+                ErrorType::LinkToUnknownTable {
+                    link_name,
+                    unknown_table
+                } if link_name == "user" && unknown_table == "User"
+            )
+        }),
+        "Expected LinkToUnknownTable for Auth.User, got: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_query_allows_cross_namespace_link_traversal() {
+    let app_source = r#"
+record Post {
+    id Int @id
+    userId Int
+    user @link(userId, Auth.User.id)
+    @public
+}
+    "#;
+
+    let auth_source = r#"
+record User {
+    id Int @id
+    email String
+    @public
+}
+    "#;
+
+    let mut app_schema = ast::Schema::default();
+    app_schema.namespace = "App".to_string();
+    parser::run("pyre/schema/App/schema.pyre", app_source, &mut app_schema)
+        .expect("App schema should parse");
+
+    let mut auth_schema = ast::Schema::default();
+    auth_schema.namespace = "Auth".to_string();
+    parser::run(
+        "pyre/schema/Auth/schema.pyre",
+        auth_source,
+        &mut auth_schema,
+    )
+    .expect("Auth schema should parse");
+
+    let database = ast::Database {
+        schemas: vec![app_schema, auth_schema],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Schema should typecheck");
+    let query_source = r#"
+query GetPosts {
+    post {
+        id
+        user {
+            id
+            email
+        }
+    }
+}
+    "#;
+
+    let query_list = parser::parse_query("query.pyre", query_source).expect("Query should parse");
+    let result = typecheck::check_queries(&query_list, &context);
+
+    assert!(
+        result.is_ok(),
+        "Cross-namespace link traversal should typecheck"
+    );
+}
+
+#[test]
+fn test_duplicate_record_name_across_namespaces_fails_today() {
+    let app_source = r#"
+record User {
+    id Int @id
+    @public
+}
+    "#;
+
+    let auth_source = r#"
+record User {
+    id Int @id
+    @public
+}
+    "#;
+
+    let mut app_schema = ast::Schema::default();
+    app_schema.namespace = "App".to_string();
+    parser::run("pyre/schema/App/schema.pyre", app_source, &mut app_schema)
+        .expect("App schema should parse");
+
+    let mut auth_schema = ast::Schema::default();
+    auth_schema.namespace = "Auth".to_string();
+    parser::run(
+        "pyre/schema/Auth/schema.pyre",
+        auth_source,
+        &mut auth_schema,
+    )
+    .expect("Auth schema should parse");
+
+    let database = ast::Database {
+        schemas: vec![app_schema, auth_schema],
+    };
+
+    let result = typecheck::check_schema(&database);
+    let errors = result.expect_err("Duplicate record names across namespaces should fail");
+
+    assert!(
+        errors
+            .iter()
+            .any(|error| matches!(error.error_type, ErrorType::DuplicateDefinition(_))),
+        "Expected DuplicateDefinition error, got: {:?}",
+        errors
+    );
+}

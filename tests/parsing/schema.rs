@@ -79,6 +79,100 @@ record Post {
 }
 
 #[test]
+fn test_unqualified_link_uses_current_namespace() {
+    let schema_source = r#"
+record User {
+    id Int @id
+    @public
+}
+
+record Post {
+    id Int @id
+    authorId Int
+    author @link(authorId, User.id)
+    @public
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    schema.namespace = "App".to_string();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema should parse");
+
+    let post_record = schema
+        .files
+        .iter()
+        .flat_map(|file| file.definitions.iter())
+        .find_map(|definition| match definition {
+            ast::Definition::Record { name, fields, .. } if name == "Post" => Some(fields),
+            _ => None,
+        })
+        .expect("expected Post record");
+
+    let author_link = post_record
+        .iter()
+        .find_map(|field| match field {
+            ast::Field::FieldDirective(ast::FieldDirective::Link(details))
+                if details.link_name == "author" =>
+            {
+                Some(details)
+            }
+            _ => None,
+        })
+        .expect("expected author link");
+
+    assert_eq!(author_link.foreign.schema, "App");
+    assert_eq!(author_link.foreign.table, "User");
+    assert_eq!(author_link.foreign.fields, vec!["id".to_string()]);
+}
+
+#[test]
+fn test_qualified_link_keeps_explicit_namespace() {
+    let schema_source = r#"
+record User {
+    id Int @id
+    @public
+}
+
+record Post {
+    id Int @id
+    authorId Int
+    author @link(authorId, Auth.User.id)
+    @public
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    schema.namespace = "App".to_string();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema should parse");
+
+    let post_record = schema
+        .files
+        .iter()
+        .flat_map(|file| file.definitions.iter())
+        .find_map(|definition| match definition {
+            ast::Definition::Record { name, fields, .. } if name == "Post" => Some(fields),
+            _ => None,
+        })
+        .expect("expected Post record");
+
+    let author_link = post_record
+        .iter()
+        .find_map(|field| match field {
+            ast::Field::FieldDirective(ast::FieldDirective::Link(details))
+                if details.link_name == "author" =>
+            {
+                Some(details)
+            }
+            _ => None,
+        })
+        .expect("expected author link");
+
+    assert_eq!(author_link.foreign.schema, "Auth");
+    assert_eq!(author_link.foreign.table, "User");
+    assert_eq!(author_link.foreign.fields, vec!["id".to_string()]);
+}
+
+#[test]
 fn test_valid_record_with_tablename() {
     let schema_source = r#"
 record User {
