@@ -107,8 +107,52 @@ pub fn convert_parsing_error(err: nom::Err<VerboseError<Text>>) -> Option<crate:
     }
 }
 
+fn offset_to_location(input: &str, offset: usize) -> ast::Location {
+    let mut line = 1usize;
+    let mut column = 1usize;
+    let mut i = 0usize;
+
+    for ch in input.chars() {
+        if i >= offset {
+            break;
+        }
+
+        if ch == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+
+        i += ch.len_utf8();
+    }
+
+    ast::Location {
+        offset,
+        line: line as u32,
+        column: column as usize,
+    }
+}
+
+fn maybe_adjust_link_error_location(input: &str, text: &Text) -> ast::Location {
+    let expecting = &text.extra.expecting;
+    if *expecting != crate::error::Expecting::LinkDirective {
+        return to_location(text);
+    }
+
+    let current_offset = text.location_offset().min(input.len());
+    let prefix = &input[..current_offset];
+
+    if let Some(link_offset) = prefix.rfind("@link(") {
+        return offset_to_location(input, link_offset);
+    }
+
+    to_location(text)
+}
+
 fn convert_error(input: &str, err: VerboseError<Text>, enable_color: bool) -> String {
     if let Some((text, _error_kind)) = err.errors.get(0) {
+        let location = maybe_adjust_link_error_location(input, text);
         let error = crate::error::Error {
             filepath: text.extra.file.to_string(),
             error_type: crate::error::ErrorType::ParsingError(crate::error::ParsingErrorDetails {
@@ -117,8 +161,8 @@ fn convert_error(input: &str, err: VerboseError<Text>, enable_color: bool) -> St
             locations: vec![crate::error::Location {
                 contexts: vec![],
                 primary: vec![crate::error::Range {
-                    start: to_location(text),
-                    end: to_location(text),
+                    start: location.clone(),
+                    end: location,
                 }],
             }],
         };
@@ -297,6 +341,7 @@ fn parse_record(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = cut(multispace0)(input)?;
     let (input, fields) = cut(with_braces(parse_field))(input)?;
     let (input, end_pos) = position(input)?;
+    let (input, _) = hspace0(input)?;
     let (input, _) = alt((line_ending, eof))(input)?;
     // Consume any trailing whitespace (including blank lines) after the definition
     // This allows multiple definitions to be separated by blank lines
@@ -335,6 +380,7 @@ fn parse_session(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = cut(multispace1)(input)?;
     let (input, fields) = cut(with_braces(parse_field))(input)?;
     let (input, end_pos) = position(input)?;
+    let (input, _) = hspace0(input)?;
     let (input, _) = alt((line_ending, eof))(input)?;
     // Consume any trailing whitespace (including blank lines) after the definition
     // This allows multiple definitions to be separated by blank lines
@@ -399,6 +445,8 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
 
     let (input, field_directive) = cut(alt((
         parse_tablename(to_location(&start_pos)),
+        parse_table_index_directive(false),
+        parse_table_index_directive(true),
         parse_table_permission,
         parse_public,
         parse_watch(),
@@ -543,7 +591,7 @@ fn parse_tablename(start_location: ast::Location) -> impl Fn(Text) -> ParseResul
         let (input, _) = tag(")")(input)?;
         let (input, end_pos) = position(input)?;
         let (input, _) = space0(input)?;
-        let (input, _) = newline(input)?;
+        let (input, _) = line_ending(input)?;
         let (input, _) = space0(input)?;
 
         let range = ast::Range {
@@ -556,6 +604,84 @@ fn parse_tablename(start_location: ast::Location) -> impl Fn(Text) -> ParseResul
     }
 }
 
+fn parse_table_index_directive(is_unique: bool) -> impl Fn(Text) -> ParseResult<ast::Field> {
+    move |input: Text| {
+        let (input, _) = if is_unique {
+            tag("unique")(input)?
+        } else {
+            tag("index")(input)?
+        };
+        let (input, _) = space0(input)?;
+        let (input, _) = tag("(")(input)?;
+        let (input, columns) = cut(separated_list1(
+            |input| {
+                let (input, _) = space0(input)?;
+                let (input, _) = tag(",")(input)?;
+                let (input, _) = space0(input)?;
+                Ok((input, ()))
+            },
+            parse_index_column,
+        ))(input)?;
+        let (input, _) = space0(input)?;
+        let (input, _) = cut(tag(")"))(input)?;
+        let (input, _) = space0(input)?;
+
+        let (input, where_) = opt(|input| {
+            let (input, _) = tag("where")(input)?;
+            let (input, _) = multispace0(input)?;
+            let (input, _) = cut(tag("{"))(input)?;
+            let (input, _) = multispace0(input)?;
+
+            let (input, where_args) = separated_list0(
+                |input| {
+                    let (input, _) = space0(input)?;
+                    let (input, _) = parse_block_separator(input)?;
+                    let (input, _) = multispace0(input)?;
+                    Ok((input, ()))
+                },
+                parse_where_arg_with_or_marker,
+            )(input)?;
+
+            let (input, _) = multispace0(input)?;
+            let (input, _) = cut(tag("}"))(input)?;
+
+            Ok((input, Some(group_where_args_with_or(where_args))))
+        })(input)?;
+
+        let details = ast::IndexDirective {
+            columns,
+            where_: where_.flatten(),
+        };
+
+        let field_directive = if is_unique {
+            ast::FieldDirective::Unique(details)
+        } else {
+            ast::FieldDirective::Index(details)
+        };
+
+        Ok((input, ast::Field::FieldDirective(field_directive)))
+    }
+}
+
+fn parse_index_column(input: Text) -> ParseResult<ast::IndexedColumn> {
+    let (input, name) = parse_fieldname(input)?;
+    let (input, _) = space0(input)?;
+    let (input, direction) = opt(alt((tag("asc"), tag("desc"))))(input)?;
+
+    let direction = match direction {
+        Some(dir) if *dir.fragment() == "desc" => ast::SortDirection::Desc,
+        _ => ast::SortDirection::Asc,
+    };
+
+    Ok((
+        input,
+        ast::IndexedColumn {
+            name: name.to_string(),
+            direction,
+        },
+    ))
+}
+
 fn to_location(pos: &Text) -> ast::Location {
     ast::Location {
         offset: pos.location_offset(),
@@ -563,38 +689,59 @@ fn to_location(pos: &Text) -> ast::Location {
         column: pos.get_column(),
     }
 }
+
+fn hspace0(input: Text) -> ParseResult<()> {
+    let (input, _) = take_while(|c: char| c.is_whitespace() && c != '\n')(input)?;
+    Ok((input, ()))
+}
+
 fn parse_column(input: Text) -> ParseResult<ast::Field> {
     let (input, start_pos) = position(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaColumn);
     let (input, name) = parse_fieldname(input)?;
     let (input, end_name_pos) = position(input)?;
 
-    let (input, _) = space0(input)?;
+    let (input, _) = hspace0(input)?;
     let (input, maybe_link) = cut(opt(tag("@link")))(input)?;
 
     if let Some(_) = maybe_link {
+        let input = expecting(input, crate::error::Expecting::LinkDirective);
         let (input, _) = cut(tag("("))(input)?;
         let input = expecting(input, crate::error::Expecting::LinkDirective);
+        let (input, _) = hspace0(input)?;
         // We're parsing either
         //          fieldname @link(local_id, ForeignTable.foreignId)
         //          fieldname @link(ForeignTable.foreignId)
-        let (input, first_arg) = opt(|input| {
-            let (input, first_arg) = parse_fieldname(input)?;
-            let (input, _) = tag(",")(input)?;
-            let (input, _) = space0(input)?;
-            Ok((input, first_arg.to_string()))
-        })(input)?;
+        let starts_like_local_field = input
+            .fragment()
+            .chars()
+            .next()
+            .map(|c| c.is_lowercase() || c == '_')
+            .unwrap_or(false);
 
-        let (input, foreign) = parse_qualified(input)?;
+        let (input, first_arg, foreign) = if starts_like_local_field {
+            // If the first token looks like a local field name, require the explicit form.
+            // This avoids swallowing malformed "@link(authorId User.id)" as shorthand.
+            let (input, first_arg) = cut(parse_fieldname)(input)?;
+            let (input, _) = hspace0(input)?;
+            let (input, _) = cut(tag(","))(input)?;
+            let (input, _) = hspace0(input)?;
+            let (input, foreign) = cut(parse_qualified)(input)?;
+            (input, first_arg.to_string(), foreign)
+        } else {
+            let (input, foreign) = cut(parse_qualified)(input)?;
+            (input, "id".to_string(), foreign)
+        };
+
         let (input, _) = tag(")")(input)?;
-        let (input, _) = space0(input)?;
+        let (input, _) = hspace0(input)?;
         let (input, inline_comment) = parse_optional_inline_comment(input)?;
         let (input, _) = newline(input)?;
         let (input, _) = space0(input)?;
 
         let link_details = ast::LinkDetails {
             link_name: name.to_string(),
-            local_ids: vec![first_arg.unwrap_or("id".to_string())],
+            local_ids: vec![first_arg],
 
             foreign: foreign,
             start_name: Some(to_location(&start_pos)),
@@ -621,7 +768,7 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
 
     let (input, _) = space0(input)?;
     let (input, inline_comment) = parse_optional_inline_comment(input)?;
-    let (input, _) = newline(input)?;
+    let (input, _) = line_ending(input)?;
     let (input, _) = space0(input)?;
 
     Ok((

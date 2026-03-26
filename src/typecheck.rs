@@ -1375,6 +1375,7 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                         if let Some(record_details) =
                             context.tables.get(&crate::ext::string::decapitalize(name))
                         {
+                            check_record_indexes(&record_details.record, &file.path, errors);
                             check_record_permissions(
                                 context,
                                 &record_details.record,
@@ -2134,6 +2135,125 @@ fn check_permissions_where_args(
                         }],
                     });
                 }
+            }
+        }
+    }
+}
+
+fn check_record_indexes(record: &ast::RecordDetails, filepath: &String, errors: &mut Vec<Error>) {
+    let known_fields: Vec<String> = ast::collect_columns(&record.fields)
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+
+    for field in &record.fields {
+        let (directive_name, details) = match field {
+            ast::Field::FieldDirective(ast::FieldDirective::Index(details)) => ("@index", details),
+            ast::Field::FieldDirective(ast::FieldDirective::Unique(details)) => {
+                ("@unique", details)
+            }
+            _ => continue,
+        };
+
+        let mut seen = HashSet::new();
+        for indexed in &details.columns {
+            if !known_fields.contains(&indexed.name) {
+                errors.push(Error {
+                    filepath: filepath.clone(),
+                    error_type: ErrorType::InvalidRecordIndexField {
+                        record: record.name.clone(),
+                        directive: directive_name.to_string(),
+                        field: indexed.name.clone(),
+                        known_fields: known_fields.clone(),
+                    },
+                    locations: vec![Location {
+                        contexts: to_range(&record.start, &record.end),
+                        primary: vec![],
+                    }],
+                });
+            }
+
+            if !seen.insert(indexed.name.clone()) {
+                errors.push(Error {
+                    filepath: filepath.clone(),
+                    error_type: ErrorType::DuplicateRecordIndexField {
+                        record: record.name.clone(),
+                        directive: directive_name.to_string(),
+                        field: indexed.name.clone(),
+                    },
+                    locations: vec![Location {
+                        contexts: to_range(&record.start, &record.end),
+                        primary: vec![],
+                    }],
+                });
+            }
+        }
+
+        if let Some(where_) = &details.where_ {
+            check_record_index_where(
+                where_,
+                &record.name,
+                directive_name,
+                &known_fields,
+                filepath,
+                errors,
+            );
+        }
+    }
+}
+
+fn check_record_index_where(
+    where_arg: &ast::WhereArg,
+    record_name: &str,
+    directive_name: &str,
+    known_fields: &Vec<String>,
+    filepath: &String,
+    errors: &mut Vec<Error>,
+) {
+    match where_arg {
+        ast::WhereArg::And(items) | ast::WhereArg::Or(items) => {
+            for item in items {
+                check_record_index_where(
+                    item,
+                    record_name,
+                    directive_name,
+                    known_fields,
+                    filepath,
+                    errors,
+                );
+            }
+        }
+        ast::WhereArg::Column(is_session_var, field_name, _, value, _) => {
+            if *is_session_var || !known_fields.contains(field_name) {
+                errors.push(Error {
+                    filepath: filepath.clone(),
+                    error_type: ErrorType::InvalidRecordIndexField {
+                        record: record_name.to_string(),
+                        directive: directive_name.to_string(),
+                        field: field_name.clone(),
+                        known_fields: known_fields.clone(),
+                    },
+                    locations: vec![Location {
+                        contexts: vec![],
+                        primary: vec![],
+                    }],
+                });
+            }
+
+            if matches!(value, ast::QueryValue::Variable(_) | ast::QueryValue::Fn(_)) {
+                errors.push(Error {
+                    filepath: filepath.clone(),
+                    error_type: ErrorType::InvalidRecordIndexField {
+                        record: record_name.to_string(),
+                        directive: directive_name.to_string(),
+                        field: field_name.clone(),
+                        known_fields: known_fields.clone(),
+                    },
+                    locations: vec![Location {
+                        contexts: vec![],
+                        primary: vec![],
+                    }],
+                });
             }
         }
     }
