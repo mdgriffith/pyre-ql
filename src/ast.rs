@@ -309,7 +309,34 @@ pub enum FieldDirective {
     Watched(WatchedDetails),
     TableName((Range, String)),
     Link(LinkDetails),
+    Index(IndexDirective),
+    Unique(IndexDirective),
     Permissions(PermissionDetails),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexedColumn {
+    pub name: String,
+    pub direction: SortDirection,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexDirective {
+    pub columns: Vec<IndexedColumn>,
+    pub where_: Option<WhereArg>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterializedIndex {
+    pub unique: bool,
+    pub columns: Vec<IndexedColumn>,
+    pub where_: Option<WhereArg>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -477,6 +504,32 @@ pub fn collect_links(fields: &Vec<Field>) -> Vec<LinkDetails> {
         }
     }
     links
+}
+
+pub fn collect_indexes(fields: &Vec<Field>) -> Vec<MaterializedIndex> {
+    let mut indexes = Vec::new();
+
+    for field in fields {
+        match field {
+            Field::FieldDirective(FieldDirective::Index(details)) => {
+                indexes.push(MaterializedIndex {
+                    unique: false,
+                    columns: details.columns.clone(),
+                    where_: details.where_.clone(),
+                });
+            }
+            Field::FieldDirective(FieldDirective::Unique(details)) => {
+                indexes.push(MaterializedIndex {
+                    unique: true,
+                    columns: details.columns.clone(),
+                    where_: details.where_.clone(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    indexes
 }
 
 /// Represents the type of a column in a schema

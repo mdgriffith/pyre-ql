@@ -108,6 +108,7 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
     // Separate fields into categories
     let mut tablename: Option<ast::Field> = None;
     let mut watch: Option<ast::Field> = None;
+    let mut index_directives: Vec<ast::Field> = Vec::new();
     let mut permissions: Vec<ast::Field> = Vec::new();
     let mut non_directive_fields: Vec<ast::Field> = Vec::new();
     let mut links: Vec<ast::Field> = Vec::new();
@@ -120,6 +121,10 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
             }
             ast::Field::FieldDirective(ast::FieldDirective::Watched(_)) => {
                 watch = Some(field);
+            }
+            ast::Field::FieldDirective(ast::FieldDirective::Index(_))
+            | ast::Field::FieldDirective(ast::FieldDirective::Unique(_)) => {
+                index_directives.push(field);
             }
             ast::Field::FieldDirective(ast::FieldDirective::Permissions(_)) => {
                 permissions.push(field);
@@ -144,7 +149,10 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
     fields.clear();
 
     // Check if we have directives before moving them
-    let has_directives = tablename.is_some() || watch.is_some() || !permissions.is_empty();
+    let has_directives = tablename.is_some()
+        || watch.is_some()
+        || !permissions.is_empty()
+        || !index_directives.is_empty();
     let has_content = !non_directive_fields.is_empty() || !links.is_empty();
 
     // 1. @tablename
@@ -152,15 +160,18 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
         fields.push(tn);
     }
 
-    // 2. @allowed (or @public)
+    // 2. @index / @unique
+    fields.extend(index_directives);
+
+    // 3. @allowed (or @public)
     fields.extend(permissions);
 
-    // 3. @watch
+    // 4. @watch
     if let Some(w) = watch {
         fields.push(w);
     }
 
-    // 4. Empty line (if we have directives and non-directive fields/links)
+    // 5. Empty line (if we have directives and non-directive fields/links)
     if has_directives && has_content {
         // Check if there's already a ColumnLines at the start of non_directive_fields
         let needs_separator = match non_directive_fields.first() {
@@ -172,10 +183,10 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
         }
     }
 
-    // 5. Non-directive fields (columns, comments, column_lines) - preserve order
+    // 6. Non-directive fields (columns, comments, column_lines) - preserve order
     fields.extend(non_directive_fields);
 
-    // 6. Empty line (if links exist and we have other fields)
+    // 7. Empty line (if links exist and we have other fields)
     if !links.is_empty() && !fields.is_empty() {
         // Check if the last field is already a ColumnLines
         let needs_separator = match fields.last() {
@@ -187,7 +198,7 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
         }
     }
 
-    // 7. Links
+    // 8. Links
     fields.extend(links);
 }
 

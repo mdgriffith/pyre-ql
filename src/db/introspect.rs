@@ -78,6 +78,58 @@ WITH RECURSIVE
     CROSS JOIN pragma_foreign_key_list(t.name) f
     GROUP BY t.name
   ),
+  -- Get index columns for each table/index
+  index_columns AS (
+    SELECT
+      t.name as table_name,
+      il.name as index_name,
+      il.'unique' as is_unique,
+      ix.seqno as seqno,
+      ix.name as column_name,
+      ix.desc as is_desc
+    FROM all_tables t
+    CROSS JOIN pragma_index_list(t.name) il
+    CROSS JOIN pragma_index_xinfo(il.name) ix
+    WHERE il.origin != 'pk'
+      AND ix.key = 1
+      AND ix.name IS NOT NULL
+  ),
+  -- Group columns for each index
+  index_defs AS (
+    SELECT
+      ic.table_name as table_name,
+      ic.index_name as index_name,
+      max(ic.is_unique) as is_unique,
+      jsonb_group_array(
+        jsonb_object(
+          'name', ic.column_name,
+          'desc', CASE WHEN ic.is_desc = 1 THEN jsonb('true') ELSE jsonb('false') END
+        )
+      ) as columns_json
+    FROM index_columns ic
+    GROUP BY ic.table_name, ic.index_name
+  ),
+  -- Get index metadata including optional partial WHERE clause
+  indexes AS (
+    SELECT
+      d.table_name as table_name,
+      jsonb_group_array(
+        jsonb_object(
+          'name', d.index_name,
+          'unique', CASE WHEN d.is_unique = 1 THEN jsonb('true') ELSE jsonb('false') END,
+          'columns', jsonb(d.columns_json),
+          'where_clause',
+            CASE
+              WHEN sm.sql IS NOT NULL AND instr(lower(sm.sql), ' where ') > 0
+                THEN trim(substr(sm.sql, instr(lower(sm.sql), ' where ') + 7))
+              ELSE NULL
+            END
+        )
+      ) as indexes_json
+    FROM index_defs d
+    LEFT JOIN sqlite_master sm ON sm.type='index' AND sm.name = d.index_name
+    GROUP BY d.table_name
+  ),
   -- Get migration state
   migration_state AS (
     SELECT 
@@ -102,7 +154,8 @@ SELECT json_object(
     jsonb_object(
       'name', ti.table_name,
       'columns', jsonb(ti.columns_json),
-      'foreign_keys', COALESCE(jsonb(fk.fks_json), jsonb('[]'))
+      'foreign_keys', COALESCE(jsonb(fk.fks_json), jsonb('[]')),
+      'indexes', COALESCE(jsonb(ix.indexes_json), jsonb('[]'))
     )
   ),
   'migration_state', json((SELECT state_json FROM migration_state)),
@@ -113,7 +166,8 @@ SELECT json_object(
   'links', jsonb('[]')
 ) as result
 FROM table_info ti
-LEFT JOIN foreign_keys fk ON ti.table_name = fk.table_name;
+LEFT JOIN foreign_keys fk ON ti.table_name = fk.table_name
+LEFT JOIN indexes ix ON ti.table_name = ix.table_name;
 "#;
 
 // This is the same sql as INTROSPECT_SQL but does not query
@@ -165,6 +219,58 @@ WITH RECURSIVE
     FROM all_tables t
     CROSS JOIN pragma_foreign_key_list(t.name) f
     GROUP BY t.name
+  ),
+  -- Get index columns for each table/index
+  index_columns AS (
+    SELECT
+      t.name as table_name,
+      il.name as index_name,
+      il.'unique' as is_unique,
+      ix.seqno as seqno,
+      ix.name as column_name,
+      ix.desc as is_desc
+    FROM all_tables t
+    CROSS JOIN pragma_index_list(t.name) il
+    CROSS JOIN pragma_index_xinfo(il.name) ix
+    WHERE il.origin != 'pk'
+      AND ix.key = 1
+      AND ix.name IS NOT NULL
+  ),
+  -- Group columns for each index
+  index_defs AS (
+    SELECT
+      ic.table_name as table_name,
+      ic.index_name as index_name,
+      max(ic.is_unique) as is_unique,
+      json_group_array(
+        json_object(
+          'name', ic.column_name,
+          'desc', CASE WHEN ic.is_desc = 1 THEN json('true') ELSE json('false') END
+        )
+      ) as columns_json
+    FROM index_columns ic
+    GROUP BY ic.table_name, ic.index_name
+  ),
+  -- Get index metadata including optional partial WHERE clause
+  indexes AS (
+    SELECT
+      d.table_name as table_name,
+      json_group_array(
+        json_object(
+          'name', d.index_name,
+          'unique', CASE WHEN d.is_unique = 1 THEN json('true') ELSE json('false') END,
+          'columns', json(d.columns_json),
+          'where_clause',
+            CASE
+              WHEN sm.sql IS NOT NULL AND instr(lower(sm.sql), ' where ') > 0
+                THEN trim(substr(sm.sql, instr(lower(sm.sql), ' where ') + 7))
+              ELSE NULL
+            END
+        )
+      ) as indexes_json
+    FROM index_defs d
+    LEFT JOIN sqlite_master sm ON sm.type='index' AND sm.name = d.index_name
+    GROUP BY d.table_name
   )
 SELECT json_object(
   'tables',
@@ -172,7 +278,8 @@ SELECT json_object(
     json_object(
       'name', ti.table_name,
       'columns', json(ti.columns_json),
-      'foreign_keys', COALESCE(json(fk.fks_json), json('[]'))
+      'foreign_keys', COALESCE(json(fk.fks_json), json('[]')),
+      'indexes', COALESCE(json(ix.indexes_json), json('[]'))
     )
   ),
   'migration_state', json('{"NoMigrationTable": null}'),
@@ -180,7 +287,8 @@ SELECT json_object(
   'links', json('[]')
 ) as result
 FROM table_info ti
-LEFT JOIN foreign_keys fk ON ti.table_name = fk.table_name;
+LEFT JOIN foreign_keys fk ON ti.table_name = fk.table_name
+LEFT JOIN indexes ix ON ti.table_name = ix.table_name;
 "#;
 
 /*
@@ -251,6 +359,26 @@ pub struct Table {
     pub name: String,
     pub columns: Vec<ColumnInfo>,
     pub foreign_keys: Vec<ForeignKey>,
+    #[serde(default)]
+    pub indexes: Vec<IndexInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexedColumnInfo {
+    pub name: String,
+    #[serde(default, deserialize_with = "deserialize_boolish")]
+    pub desc: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexInfo {
+    pub name: String,
+    #[serde(default, deserialize_with = "deserialize_boolish")]
+    pub unique: bool,
+    #[serde(default)]
+    pub columns: Vec<IndexedColumnInfo>,
+    #[serde(default)]
+    pub where_clause: Option<String>,
 }
 
 // Intermediates
@@ -418,6 +546,32 @@ where
         0 => Ok(false),
         1 => Ok(true),
         _ => Err(serde::de::Error::custom("unexpected value")),
+    }
+}
+
+fn deserialize_boolish<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Boolish {
+        Bool(bool),
+        Int(i64),
+        Str(String),
+    }
+
+    match Boolish::deserialize(deserializer)? {
+        Boolish::Bool(value) => Ok(value),
+        Boolish::Int(value) => Ok(value != 0),
+        Boolish::Str(value) => {
+            let lowered = value.to_ascii_lowercase();
+            match lowered.as_str() {
+                "true" | "1" => Ok(true),
+                "false" | "0" => Ok(false),
+                _ => Err(serde::de::Error::custom("unexpected boolean-ish value")),
+            }
+        }
     }
 }
 

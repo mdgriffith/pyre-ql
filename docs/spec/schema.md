@@ -88,10 +88,14 @@ id Int @id
 email String @unique
 ```
 
+Column-level `@unique` is equivalent to a single-column unique index with ascending order.
+
 **`@index`** - Create an index
 ```pyre
 createdAt DateTime @index
 ```
+
+Column-level `@index` is equivalent to a single-column non-unique index with ascending order.
 
 **`@default(value)`** - Default value
 ```pyre
@@ -116,6 +120,50 @@ createdAt DateTime @default(now) @index
 ### Record-Level Directives
 
 These directives apply to the entire record:
+
+**`@unique(...)`** - Table-level unique index (1+ columns)
+```pyre
+record Membership {
+    id     Int @id
+    orgId  Int
+    userId Int
+
+    @unique(orgId asc, userId desc)
+    @public
+}
+```
+
+**`@index(...)`** - Table-level index (1+ columns)
+```pyre
+record Event {
+    id        Int @id
+    orgId     Int
+    createdAt DateTime
+    deletedAt DateTime?
+
+    @index(orgId asc, createdAt desc) where {
+        deletedAt = null
+    }
+    @public
+}
+```
+
+Index column syntax supports optional sort direction per column:
+- `fieldName` (defaults to `asc`)
+- `fieldName asc`
+- `fieldName desc`
+
+Partial indexes use an optional `where { ... }` clause.
+
+Validation rules for table-level `@index` / `@unique`:
+- Referenced fields must exist on the same record.
+- Duplicate field names inside a single directive are not allowed.
+- At least one field is required.
+
+For partial index predicates:
+- Session references are not allowed (for example `Session.userId`).
+- Query variables/functions are not allowed in predicate values.
+- Use literal values (for example `null`, strings, numbers, booleans).
 
 **`@tablename("name")`** - Override default table name
 ```pyre
@@ -340,3 +388,6 @@ record Post {
 
 8. **Comments**: Only single-line `//` comments are supported. Multi-line comments are not available.
 
+9. **Composite index order matters**: For `@index(a, b, c)`, SQLite can use leftmost prefixes (`a`, `a+b`, `a+b+c`) efficiently. Put the most selective leading conditions first.
+
+10. **Unique + nullable columns**: SQLite allows multiple `NULL` values in unique indexes. If strict uniqueness is required, make indexed columns non-nullable.

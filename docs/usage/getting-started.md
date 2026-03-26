@@ -63,6 +63,27 @@ This schema defines:
 - **Links** - Relationships between records
 - **Types** - Custom types like enums (Status)
 
+You can also define table-level indexes and unique constraints:
+
+```pyre
+record Membership {
+    id        Int @id
+    orgId     Int
+    userId    Int
+    createdAt DateTime
+    deletedAt DateTime?
+
+    @unique(orgId, userId desc)
+    @index(orgId asc, createdAt desc) where { deletedAt = null }
+    @public
+}
+```
+
+Notes:
+- Sort direction defaults to `asc` when omitted.
+- `@unique` and `@index` accept one or more columns.
+- Partial indexes use `where { ... }` and should use literal predicates.
+
 ## Step 2: Apply Migrations
 
 Create your database file and run migrations:

@@ -35,7 +35,11 @@ pub fn to_sql(diff: &Diff) -> Vec<SqlAndParams> {
 
         sql_statements.push(SqlAndParams::Sql(create_stmt));
 
-        // Add indexes for columns with @index directive
+        for index in &table.indexes {
+            sql_statements.push(SqlAndParams::Sql(render_index_sql(&table.name, index)));
+        }
+
+        // Legacy support for column-level @index directives.
         for column in &table.columns {
             if column.indexed {
                 sql_statements.push(SqlAndParams::Sql(format!(
@@ -57,7 +61,6 @@ pub fn to_sql(diff: &Diff) -> Vec<SqlAndParams> {
                         column_definition(column)
                     )));
 
-                    // Add index if the column has @index directive
                     if column.indexed {
                         sql_statements.push(SqlAndParams::Sql(format!(
                             "create index if not exists \"idx_{}_{}\" on \"{}\" (\"{}\")",
@@ -77,6 +80,18 @@ pub fn to_sql(diff: &Diff) -> Vec<SqlAndParams> {
                     sql_statements.push(SqlAndParams::Sql(format!(
                         "-- WARNING: Column modification for `{}`.`{}` requires table recreation",
                         record_diff.name, name
+                    )));
+                }
+                RecordChange::AddedIndex(index) => {
+                    sql_statements.push(SqlAndParams::Sql(render_index_sql(
+                        &record_diff.name,
+                        index,
+                    )));
+                }
+                RecordChange::RemovedIndex(index) => {
+                    sql_statements.push(SqlAndParams::Sql(format!(
+                        "drop index if exists \"{}\"",
+                        index.name
                     )));
                 }
             }
@@ -106,6 +121,38 @@ fn column_definition(column: &crate::db::introspect::ColumnInfo) -> String {
     }
 
     def
+}
+
+fn render_index_sql(table_name: &str, index: &crate::db::introspect::IndexInfo) -> String {
+    let columns = index
+        .columns
+        .iter()
+        .map(|c| {
+            if c.desc {
+                format!("\"{}\" desc", c.name)
+            } else {
+                format!("\"{}\" asc", c.name)
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(", ");
+
+    let mut sql = format!(
+        "create {}index if not exists \"{}\" on \"{}\" ({})",
+        if index.unique { "unique " } else { "" },
+        index.name,
+        table_name,
+        columns
+    );
+
+    if let Some(where_clause) = &index.where_clause {
+        if !where_clause.trim().is_empty() {
+            sql.push_str(" where ");
+            sql.push_str(where_clause);
+        }
+    }
+
+    sql
 }
 
 #[cfg(test)]

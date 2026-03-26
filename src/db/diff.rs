@@ -25,6 +25,8 @@ pub enum RecordChange {
     AddedField(crate::db::introspect::ColumnInfo),
     RemovedField(crate::db::introspect::ColumnInfo),
     ModifiedField { name: String, changes: ColumnDiff },
+    AddedIndex(crate::db::introspect::IndexInfo),
+    RemovedIndex(crate::db::introspect::IndexInfo),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -90,7 +92,7 @@ pub fn diff(
                     context,
                     &schema_table,
                     intro_table,
-                    fields_to_use,
+                    schema_fields,
                     introspection,
                 ) {
                     modified_records.push(record_diff);
@@ -297,10 +299,157 @@ fn create_table_from_fields(
         false,
     );
 
+    let table_name = crate::ast::get_tablename(name, fields);
+
+    let mut indexes: Vec<crate::db::introspect::IndexInfo> = crate::ast::collect_indexes(fields)
+        .iter()
+        .map(|idx| materialized_index_to_index_info(&table_name, idx))
+        .collect();
+
+    for field in fields {
+        if let crate::ast::Field::Column(column) = field {
+            for directive in &column.directives {
+                match directive {
+                    crate::ast::ColumnDirective::Index => {
+                        indexes.push(crate::db::introspect::IndexInfo {
+                            name: format!("idx_{}_{}", table_name, column.name),
+                            unique: false,
+                            columns: vec![crate::db::introspect::IndexedColumnInfo {
+                                name: column.name.clone(),
+                                desc: false,
+                            }],
+                            where_clause: None,
+                        })
+                    }
+                    crate::ast::ColumnDirective::Unique => {
+                        indexes.push(crate::db::introspect::IndexInfo {
+                            name: format!("uniq_{}_{}", table_name, column.name),
+                            unique: true,
+                            columns: vec![crate::db::introspect::IndexedColumnInfo {
+                                name: column.name.clone(),
+                                desc: false,
+                            }],
+                            where_clause: None,
+                        })
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     crate::db::introspect::Table {
-        name: crate::ast::get_tablename(name, fields),
+        name: table_name,
         columns,
         foreign_keys: vec![],
+        indexes,
+    }
+}
+
+fn materialized_index_to_index_info(
+    table_name: &str,
+    idx: &crate::ast::MaterializedIndex,
+) -> crate::db::introspect::IndexInfo {
+    let prefix = if idx.unique { "uniq" } else { "idx" };
+    let columns_for_name = idx
+        .columns
+        .iter()
+        .map(|c| match c.direction {
+            crate::ast::SortDirection::Asc => c.name.clone(),
+            crate::ast::SortDirection::Desc => format!("{}_desc", c.name),
+        })
+        .collect::<Vec<String>>()
+        .join("_");
+
+    let where_fragment = idx
+        .where_
+        .as_ref()
+        .map(where_arg_to_sql)
+        .map(|w| format!("_{}", w.replace(' ', "_").replace('"', "")))
+        .unwrap_or_else(|| "".to_string());
+
+    crate::db::introspect::IndexInfo {
+        name: format!(
+            "{}_{}_{}{}",
+            prefix, table_name, columns_for_name, where_fragment
+        ),
+        unique: idx.unique,
+        columns: idx
+            .columns
+            .iter()
+            .map(|c| crate::db::introspect::IndexedColumnInfo {
+                name: c.name.clone(),
+                desc: matches!(c.direction, crate::ast::SortDirection::Desc),
+            })
+            .collect(),
+        where_clause: idx.where_.as_ref().map(where_arg_to_sql),
+    }
+}
+
+fn query_value_to_sql(value: &crate::ast::QueryValue) -> String {
+    match value {
+        crate::ast::QueryValue::String((_, s)) => format!("'{}'", s.replace("'", "''")),
+        crate::ast::QueryValue::Int((_, i)) => i.to_string(),
+        crate::ast::QueryValue::Float((_, f)) => f.to_string(),
+        crate::ast::QueryValue::Bool((_, b)) => {
+            if *b {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }
+        }
+        crate::ast::QueryValue::Null(_) => "null".to_string(),
+        crate::ast::QueryValue::LiteralTypeValue((_, details)) => {
+            format!("'{}'", details.name.replace("'", "''"))
+        }
+        crate::ast::QueryValue::Fn(_) | crate::ast::QueryValue::Variable(_) => "null".to_string(),
+    }
+}
+
+fn where_arg_to_sql(where_arg: &crate::ast::WhereArg) -> String {
+    match where_arg {
+        crate::ast::WhereArg::Column(_is_session_var, field, op, value, _) => {
+            let quoted = format!("\"{}\"", field);
+            match (op, value) {
+                (crate::ast::Operator::Equal, crate::ast::QueryValue::Null(_)) => {
+                    format!("{} is null", quoted)
+                }
+                (crate::ast::Operator::NotEqual, crate::ast::QueryValue::Null(_)) => {
+                    format!("{} is not null", quoted)
+                }
+                _ => {
+                    let op_text = match op {
+                        crate::ast::Operator::Equal => "=",
+                        crate::ast::Operator::NotEqual => "!=",
+                        crate::ast::Operator::GreaterThan => ">",
+                        crate::ast::Operator::LessThan => "<",
+                        crate::ast::Operator::GreaterThanOrEqual => ">=",
+                        crate::ast::Operator::LessThanOrEqual => "<=",
+                        crate::ast::Operator::In => "in",
+                        crate::ast::Operator::NotIn => "not in",
+                        crate::ast::Operator::Like => "like",
+                        crate::ast::Operator::NotLike => "not like",
+                    };
+                    format!("{} {} {}", quoted, op_text, query_value_to_sql(value))
+                }
+            }
+        }
+        crate::ast::WhereArg::And(items) => format!(
+            "({})",
+            items
+                .iter()
+                .map(where_arg_to_sql)
+                .collect::<Vec<String>>()
+                .join(" and ")
+        ),
+        crate::ast::WhereArg::Or(items) => format!(
+            "({})",
+            items
+                .iter()
+                .map(where_arg_to_sql)
+                .collect::<Vec<String>>()
+                .join(" or ")
+        ),
     }
 }
 
@@ -357,6 +506,37 @@ fn compare_record(
     for name in intro_columns.keys() {
         if !schema_columns.contains_key(name) {
             changes.push(RecordChange::RemovedField(intro_columns[name].clone()));
+        }
+    }
+
+    // Compare relationships - relationships don't create columns, so we need to compare them separately
+    let schema_indexes: std::collections::HashMap<_, _> = schema_table
+        .indexes
+        .iter()
+        .map(|idx| (index_signature(idx), idx))
+        .collect();
+
+    let intro_indexes_source: Vec<crate::db::introspect::IndexInfo> =
+        if !intro_table.indexes.is_empty() {
+            intro_table.indexes.clone()
+        } else {
+            indexes_from_schema_result(&schema_table.name, introspection)
+        };
+
+    let intro_indexes: std::collections::HashMap<_, _> = intro_indexes_source
+        .iter()
+        .map(|idx| (index_signature(idx), idx))
+        .collect();
+
+    for (signature, schema_index) in &schema_indexes {
+        if !intro_indexes.contains_key(signature) {
+            changes.push(RecordChange::AddedIndex((*schema_index).clone()));
+        }
+    }
+
+    for (signature, intro_index) in &intro_indexes {
+        if !schema_indexes.contains_key(signature) {
+            changes.push(RecordChange::RemovedIndex((*intro_index).clone()));
         }
     }
 
@@ -443,5 +623,52 @@ fn compare_record(
             name: schema_table.name.clone(),
             changes,
         })
+    }
+}
+
+fn index_signature(index: &crate::db::introspect::IndexInfo) -> String {
+    let columns = index
+        .columns
+        .iter()
+        .map(|c| {
+            if c.desc {
+                format!("{}:desc", c.name)
+            } else {
+                format!("{}:asc", c.name)
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(",");
+
+    format!(
+        "{}|{}|{}",
+        if index.unique { "unique" } else { "index" },
+        columns,
+        index.where_clause.clone().unwrap_or_default()
+    )
+}
+
+fn indexes_from_schema_result(
+    table_name: &str,
+    introspection: &crate::db::introspect::Introspection,
+) -> Vec<crate::db::introspect::IndexInfo> {
+    match &introspection.schema {
+        crate::db::introspect::SchemaResult::Success { schema, .. } => {
+            for file in &schema.files {
+                for def in &file.definitions {
+                    if let crate::ast::Definition::Record { name, fields, .. } = def {
+                        let candidate = crate::ast::get_tablename(name, fields);
+                        if candidate == table_name {
+                            return crate::ast::collect_indexes(fields)
+                                .iter()
+                                .map(|idx| materialized_index_to_index_info(table_name, idx))
+                                .collect();
+                        }
+                    }
+                }
+            }
+            vec![]
+        }
+        _ => vec![],
     }
 }

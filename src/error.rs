@@ -81,6 +81,17 @@ pub enum ErrorType {
     MissingPermissions {
         record: String,
     },
+    InvalidRecordIndexField {
+        record: String,
+        directive: String,
+        field: String,
+        known_fields: Vec<String>,
+    },
+    DuplicateRecordIndexField {
+        record: String,
+        directive: String,
+        field: String,
+    },
     // Schema Link errors
     LinkToUnknownTable {
         link_name: String,
@@ -320,7 +331,7 @@ I don't recognize this type. Is it one of these?
 pub fn format_error(file_contents: &str, error: &Error, enable_color: bool) -> String {
     let filepath = &error.filepath;
     let path_length = filepath.len();
-    let separator = "-".repeat(50 - path_length);
+    let separator = "-".repeat(50usize.saturating_sub(path_length));
 
     let highlight = prepare_highlight(file_contents, &error, enable_color);
     let description = to_error_description(&error, enable_color);
@@ -628,22 +639,23 @@ fn render_expecting(expecting: &Expecting, in_color: bool) -> String {
             yellow_if(in_color, "id    Int")
         ),
         Expecting::LinkDirective => {
-            let example = format!("{} (authorId, User.id)", 
-                yellow_if(in_color, "@link"));
-            let example_breakdown = format!("       {}  {}", 
+            let explicit_example = format!("{}(authorId, User.id)", yellow_if(in_color, "@link"));
+            let reverse_example = format!("{}(Post.authorId)", yellow_if(in_color, "@link"));
+            let example_breakdown = format!("       {}  {}",
                 cyan_if(in_color, "^^^^^^^^"), 
                 cyan_if(in_color, "^^^^^^^"));
-            let example_breakdown_connector = format!("        {}         {}", 
+            let example_breakdown_connector = format!("        {}         {}",
                 cyan_if(in_color, "|"), 
                 cyan_if(in_color, "|"));
-            let example_breakdown_labels = format!("    {}   {}", 
+            let example_breakdown_labels = format!("    {}   {}",
                 cyan_if(in_color, "Local key"), 
                 cyan_if(in_color, "Foreign table.key"));
 
             return format!(
-                "This {} looks off, I'm expecting something that looks like this:\n\n        {}\n        {}\n        {}\n        {}",
+                "This {} looks off. Expected one of:\n\n        {}\n        {}\n\n    Explicit form breakdown:\n        {}\n        {}\n        {}\n\n    Tip: if this looks correct, check for invisible whitespace characters around the comma/parentheses.",
                 yellow_if(in_color, "@link"),
-                example,
+                explicit_example,
+                reverse_example,
                 example_breakdown,
                 example_breakdown_connector,
                 example_breakdown_labels
@@ -1054,6 +1066,42 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             ));
 
             result
+        }
+        ErrorType::InvalidRecordIndexField {
+            record,
+            directive,
+            field,
+            known_fields,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "{} references unknown field {}.",
+                yellow_if(in_color, directive),
+                yellow_if(in_color, field)
+            ));
+
+            result.push_str(&format!(
+                "\n\n{} has: {}",
+                cyan_if(in_color, record),
+                known_fields
+                    .iter()
+                    .map(|f| yellow_if(in_color, f))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ));
+            result
+        }
+        ErrorType::DuplicateRecordIndexField {
+            record,
+            directive,
+            field,
+        } => {
+            format!(
+                "{} has duplicate field {} in {}.",
+                cyan_if(in_color, record),
+                yellow_if(in_color, field),
+                yellow_if(in_color, directive)
+            )
         }
 
         ErrorType::MultipleLimits { query } => {
@@ -1504,6 +1552,8 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::MultipleTableNames { .. } => "Multiple table names",
         ErrorType::MultiplePermissions { .. } => "Multiple Permissions",
         ErrorType::MissingPermissions { .. } => "Missing Permissions",
+        ErrorType::InvalidRecordIndexField { .. } => "Invalid Record Index Field",
+        ErrorType::DuplicateRecordIndexField { .. } => "Duplicate Record Index Field",
         ErrorType::LinkToUnknownTable { .. } => "Link to unknown table",
         ErrorType::LinkToUnknownField { .. } => "Link to unknown field",
         ErrorType::LinkToUnknownForeignField { .. } => "Link to Unknown Foreign Field",
