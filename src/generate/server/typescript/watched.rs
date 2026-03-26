@@ -29,6 +29,14 @@ pub fn generate(
         }
     }
 
+    watched_ops.sort_by(|a, b| {
+        let table_cmp = a.0.cmp(&b.0);
+        if table_cmp != std::cmp::Ordering::Equal {
+            return table_cmp;
+        }
+        operation_name(&a.1).cmp(&operation_name(&b.1))
+    });
+
     content
         .push_str("\n\n// All tables that are currently being watched\nexport enum WatchedKind {");
 

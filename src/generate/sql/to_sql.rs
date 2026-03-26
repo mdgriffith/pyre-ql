@@ -37,7 +37,10 @@ pub fn format_attach(info: &typecheck::QueryInfo) -> Vec<Prepared> {
         return attached;
     }
 
-    for name in info.attached_dbs.iter() {
+    let mut attached_db_names: Vec<&String> = info.attached_dbs.iter().collect();
+    attached_db_names.sort_unstable();
+
+    for name in attached_db_names {
         attached.push(Prepared {
             include: false,
             sql: format!("attach $db_{} as {}", name, name),

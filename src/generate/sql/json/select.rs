@@ -1288,7 +1288,9 @@ fn to_fieldnames(
         }
     }
 
-    selected_set.into_iter().collect()
+    let mut selected: Vec<String> = selected_set.into_iter().collect();
+    selected.sort_unstable();
+    selected
 }
 
 fn add_concret_fieldnames(

@@ -410,10 +410,41 @@ fn to_string_field_directive(
         ast::FieldDirective::Link(details) => {
             to_string_link_details_shorthand(namespace, indent, details)
         }
+        ast::FieldDirective::Index(details) => {
+            format!("{}@index{}\n", spaces, index_directive_to_string(details))
+        }
+        ast::FieldDirective::Unique(details) => {
+            format!("{}@unique{}\n", spaces, index_directive_to_string(details))
+        }
         ast::FieldDirective::Permissions(info) => {
             to_string_permissions_details(namespace, indent, info)
         }
     }
+}
+
+fn sort_direction_to_string(direction: &ast::SortDirection) -> &'static str {
+    match direction {
+        ast::SortDirection::Asc => "asc",
+        ast::SortDirection::Desc => "desc",
+    }
+}
+
+fn index_directive_to_string(details: &ast::IndexDirective) -> String {
+    let columns = details
+        .columns
+        .iter()
+        .map(|c| format!("{} {}", c.name, sort_direction_to_string(&c.direction)))
+        .collect::<Vec<String>>()
+        .join(", ");
+
+    let mut result = format!("({})", columns);
+
+    if let Some(where_) = &details.where_ {
+        result.push_str(" where ");
+        result.push_str(&format_where_for_braces(where_, 0));
+    }
+
+    result
 }
 
 fn to_string_permissions_details(

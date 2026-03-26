@@ -390,9 +390,8 @@ fn get_formatted_used_params(
     top_level_field_alias: &str,
     query_params: &HashMap<String, typecheck::ParamInfo>,
 ) -> String {
-    let mut formatted = String::new();
-    formatted.push_str("[ ");
-    let mut first_added = false;
+    let mut used_params: Vec<String> = Vec::new();
+
     for (_, param_info) in query_params {
         match param_info {
             typecheck::ParamInfo::NotDefinedButUsed { .. } => continue,
@@ -403,16 +402,23 @@ fn get_formatted_used_params(
                 ..
             } => {
                 if !*from_session || used_by_top_level_field_alias.contains(top_level_field_alias) {
-                    if first_added {
-                        formatted.push_str(", ")
-                    }
-                    formatted.push_str(&string::quote(raw_variable_name));
-
-                    first_added = true;
+                    used_params.push(raw_variable_name.clone());
                 }
             }
         }
     }
+
+    used_params.sort_unstable();
+
+    let mut formatted = String::new();
+    formatted.push_str("[ ");
+    for (index, param_name) in used_params.iter().enumerate() {
+        if index > 0 {
+            formatted.push_str(", ");
+        }
+        formatted.push_str(&string::quote(param_name));
+    }
+
     formatted.push_str(" ]");
     formatted
 }
@@ -425,8 +431,8 @@ fn bool_to_ts_bool(bool: bool) -> String {
 }
 
 fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
-    let mut result = "[ ".to_string();
-    let mut first = true;
+    let mut session_args: Vec<String> = Vec::new();
+
     for (_name, info) in params {
         match info {
             typecheck::ParamInfo::Defined {
@@ -439,18 +445,7 @@ fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
                     match session_name {
                         None => continue,
                         Some(session_name_string) => {
-                            if first {
-                                result.push_str(&format!(
-                                    "{}",
-                                    crate::ext::string::quote(session_name_string)
-                                ));
-                            } else {
-                                result.push_str(&format!(
-                                    ", {}",
-                                    crate::ext::string::quote(session_name_string)
-                                ));
-                            }
-                            first = false;
+                            session_args.push(session_name_string.clone());
                         }
                     }
                 }
@@ -458,6 +453,17 @@ fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
             _ => continue,
         }
     }
+
+    session_args.sort_unstable();
+
+    let mut result = "[ ".to_string();
+    for (index, session_name) in session_args.iter().enumerate() {
+        if index > 0 {
+            result.push_str(", ");
+        }
+        result.push_str(&crate::ext::string::quote(session_name));
+    }
+
     result.push_str("]");
     result
 }
@@ -655,8 +661,15 @@ fn to_schema_metadata(context: &typecheck::Context) -> String {
     result.push_str("export const schemaMetadata: SchemaMetadata = {\n");
     result.push_str("  tables: {\n");
 
+    let mut tables: Vec<&typecheck::Table> = context.tables.values().collect();
+    tables.sort_by(|a, b| {
+        let a_table_name = ast::get_tablename(&a.record.name, &a.record.fields);
+        let b_table_name = ast::get_tablename(&b.record.name, &b.record.fields);
+        a_table_name.cmp(&b_table_name)
+    });
+
     let mut is_first_table = true;
-    for (_record_name, table) in &context.tables {
+    for table in &tables {
         let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
 
         if !is_first_table {
@@ -797,7 +810,7 @@ fn to_schema_metadata(context: &typecheck::Context) -> String {
     result.push_str("  queryFieldToTable: {\n");
 
     let mut is_first_mapping = true;
-    for (_record_name, table) in &context.tables {
+    for table in &tables {
         let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
         let query_field_name = crate::ext::string::decapitalize(&table.record.name);
 
