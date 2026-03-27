@@ -1,8 +1,10 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 import Browser
 import Html exposing (Html, div, h1, li, p, text, ul)
 import Html.Attributes exposing (style)
+import Json.Decode as Decode
+import Json.Encode as Encode
 import Pyre
 import Query.ListUsersAndPosts
 
@@ -41,24 +43,37 @@ update msg model =
     case msg of
         PyreMsg pyreMsg ->
             let
-                ( newPyre, pyreCmd ) =
+                ( newPyre, pyreEffect ) =
                     Pyre.update pyreMsg model.pyre
             in
             ( { model | pyre = newPyre }
-            , Cmd.map PyreMsg pyreCmd
+            , effectToCmd pyreEffect
             )
 
         RegisterQuery ->
             -- Example: register a query with id "main-query"
             let
-                ( newPyre, pyreCmd ) =
+                ( newPyre, pyreEffect ) =
                     Pyre.update
                         (Pyre.ListUsersAndPosts_Registered "main-query" {})
                         model.pyre
             in
             ( { model | pyre = newPyre }
-            , Cmd.map PyreMsg pyreCmd
+            , effectToCmd pyreEffect
             )
+
+
+effectToCmd : Pyre.Effect -> Cmd Msg
+effectToCmd effect =
+    case effect of
+        Pyre.NoEffect ->
+            Cmd.none
+
+        Pyre.Send payload ->
+            pyre_sendQueryClientMessage payload
+
+        Pyre.LogError payload ->
+            pyre_logQueryDeltaError payload
 
 
 
@@ -113,7 +128,20 @@ viewPost post =
 
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    Sub.map PyreMsg Pyre.subscriptions
+    pyre_receiveQueryDelta (PyreMsg << Pyre.decodeIncomingDelta)
+
+
+
+-- PORTS
+
+
+port pyre_sendQueryClientMessage : Encode.Value -> Cmd msg
+
+
+port pyre_receiveQueryDelta : (Decode.Value -> msg) -> Sub msg
+
+
+port pyre_logQueryDeltaError : Encode.Value -> Cmd msg
 
 
 
@@ -128,4 +156,3 @@ main =
         , view = view
         , subscriptions = subscriptions
         }
-

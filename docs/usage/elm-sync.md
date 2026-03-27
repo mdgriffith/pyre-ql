@@ -72,6 +72,17 @@ Elm → TS:
 - `update-input`
 - `unregister`
 
+Generated `Pyre` now returns effects as data:
+
+```elm
+type Effect
+    = NoEffect
+    | Send Encode.Value
+    | LogError Encode.Value
+```
+
+The host app should map `Send`/`LogError` to its own outgoing ports.
+
 Example message:
 
 ```json
@@ -85,6 +96,8 @@ TS → Elm:
   - `querySource`
   - `revision`
   - `result`
+
+Wire incoming data through `Pyre.decodeIncomingDelta` from your app port subscription.
 
 ## Things that are easy to miss
 

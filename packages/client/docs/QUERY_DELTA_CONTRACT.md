@@ -240,14 +240,14 @@ If a nested list changes (e.g., comments), use list operations at the list path:
 
 ## Elm Generated QueryClient Sketch
 
-The generated Elm module owns query registration and delta application. It forwards registration and input changes to DbClient and logs patch failures via a JS port.
+The generated Elm module owns query registration and delta application. It returns effects as data, and the app maps those effects to its own ports.
 
 ### Module Shape
 
-- `port module Pyre exposing (Model, Msg, init, update, subscriptions)`
-- One outgoing port for register/input updates
-- One incoming port for QueryDelta payloads
-- One outgoing port for logging failures
+- `module Pyre exposing (Model, Msg(..), Effect(..), init, update, decodeIncomingDelta, getResult)`
+- `update` returns `(Model, Effect)` where `Effect` is data, not `Cmd`
+- The host app defines ports and maps `Effect` to those ports
+- Incoming delta payloads are decoded via `decodeIncomingDelta`
 
 Incoming delta payloads are decoded into query-specific delta types. Delta application code is generated per query, rather than using a generic runtime abstraction.
 
@@ -283,25 +283,33 @@ type Msg
     = ListUsersAndPosts_Registered String Query.ListUsersAndPosts.Input
     | ListUsersAndPosts_InputUpdated String Query.ListUsersAndPosts.Input
     | ListUsersAndPosts_DataReceived Query.ListUsersAndPosts.QueryDelta
+    | IncomingMsgDecodeFailed Decode.Error Decode.Value
+
+type Effect
+    = NoEffect
+    | Send Encode.Value
+    | LogError Encode.Value
 
 update msg model =
     case msg of
         ListUsersAndPosts_Registered queryId input ->
             ( model
-            , pyre_sendQueryClientMessage
-                (encodeRegister "ListUsersAndPosts" queryId input)
+            , Send (encodeRegister "ListUsersAndPosts" queryId input)
             )
 
         ListUsersAndPosts_InputUpdated queryId input ->
-            ( model, pyre_sendQueryClientMessage (encodeUpdateInput queryId input) )
+            ( model, Send (encodeUpdateInput queryId input) )
 
         ListUsersAndPosts_DataReceived _ ->
-            ( model, Cmd.none )
+            ( model, NoEffect )
+
+        IncomingMsgDecodeFailed decodeErr rawValue ->
+            ( model, LogError (encodeError (IncomingDeltaDecodeFailed decodeErr rawValue)) )
 ```
 
 The `QueryId` is caller-owned, so no registration ack is required for id assignment.
 
-### Ports (Sketch)
+### Host App Ports (Sketch)
 
 ```elm
 port pyre_sendQueryClientMessage : Encode.Value -> Cmd msg
@@ -311,13 +319,24 @@ port pyre_receiveQueryDelta : (Decode.Value -> msg) -> Sub msg
 port pyre_logQueryDeltaError : Encode.Value -> Cmd msg
 ```
 
-### Messages (Sketch)
+The generated module does not define these ports anymore. The app wires them up:
 
 ```elm
-type Msg
-    = ListUsersAndPosts_Registered String Query.ListUsersAndPosts.Input
-    | ListUsersAndPosts_InputUpdated String Query.ListUsersAndPosts.Input
-    | ListUsersAndPosts_DataReceived Query.ListUsersAndPosts.QueryDelta
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    pyre_receiveQueryDelta (PyreMsg << Pyre.decodeIncomingDelta)
+
+effectToCmd : Pyre.Effect -> Cmd Msg
+effectToCmd effect =
+    case effect of
+        Pyre.NoEffect ->
+            Cmd.none
+
+        Pyre.Send value ->
+            pyre_sendQueryClientMessage value
+
+        Pyre.LogError value ->
+            pyre_logQueryDeltaError value
 ```
 
 ### Responsibilities
@@ -325,18 +344,25 @@ type Msg
 - Accept QueryId from the caller on register and forward to DbClient.
 - Store `SpecificQueryModel` per QueryId.
 - Apply `QueryDelta` ops to the stored result.
-- On failure to apply an op, send a log message through the logging port and skip the op.
+- On failure to apply an op, return `LogError` with structured JSON.
+- On incoming decode failure, emit `IncomingMsgDecodeFailed` and return `LogError` with decoder details.
 
 ### Error Logging Payload
 
-Log messages are structured JSON with a human-readable `message` and enough context to debug the failed op.
+Log messages are structured JSON with a `tag` and debug context.
 
 ```json
 {
-  "message": "QueryDelta op failed: id not found",
+  "tag": "query_delta_apply_failed",
   "queryId": "q123",
-  "op": "set-row",
-  "path": ".post#(10)",
-  "details": "No row with id=10 in list 'post'"
+  "message": "QueryDelta op failed: id not found"
+}
+```
+
+```json
+{
+  "tag": "incoming_msg_decode_failed",
+  "message": "Problem with the given value: ...",
+  "value": { "querySource": "ListUsersAndPosts", "queryId": "q123" }
 }
 ```

@@ -231,9 +231,11 @@ fn id_decoder(kind: IdKind) -> &'static str {
 pub fn write_schema(database: &ast::Database) -> String {
     let mut result = String::new();
 
-    result.push_str("module Db exposing (..)\n\nimport Db.Id\nimport Time\n\n\n");
+    result
+        .push_str("module Db exposing (..)\n\nimport Db.Id\nimport Json.Encode\nimport Time\n\n\n");
 
     result.push_str("type alias DateTime =\n    Time.Posix\n\n\n");
+    result.push_str("type alias Json =\n    Json.Encode.Value\n\n\n");
 
     for schema in &database.schemas {
         for file in &schema.files {
@@ -306,7 +308,9 @@ fn to_string_variant(is_first: bool, indent_size: usize, variant: &ast::Variant)
             let mut is_first_field = true;
             for field in fields {
                 result.push_str(&to_string_field(is_first_field, 6, &field));
-                is_first_field = false
+                if ast::is_column(field) {
+                    is_first_field = false;
+                }
             }
             result.push_str("      }\n");
             result
@@ -425,6 +429,11 @@ bool =
 dateTime : Decode.Decoder Time.Posix
 dateTime =
     Decode.map Time.millisToPosix Decode.int
+
+
+json : Decode.Decoder Json
+json =
+    Decode.value
 
 "#,
     );
@@ -608,6 +617,10 @@ pub fn to_schema_encoders(database: &ast::Database) -> String {
     result.push_str("dateTime : Time.Posix -> Encode.Value\n");
     result.push_str("dateTime time =\n");
     result.push_str("    Encode.int (Time.posixToMillis time)\n\n");
+
+    result.push_str("json : Db.Json -> Encode.Value\n");
+    result.push_str("json value =\n");
+    result.push_str("    value\n\n");
 
     for schema in &database.schemas {
         for file in &schema.files {
@@ -1384,7 +1397,14 @@ fn to_apply_delta_function_with_lenses(context: &typecheck::Context, query: &ast
     // Generate lens definitions for each top-level field
     for field in &query.fields {
         if let ast::TopLevelQueryField::Field(query_field) = field {
-            result.push_str(&generate_field_lens(context, query_field, "ReturnData", ""));
+            let field_name = ast::get_aliased_name(query_field);
+            result.push_str(&generate_field_lens(
+                context,
+                query_field,
+                "ReturnData",
+                "",
+                &field_name,
+            ));
         }
     }
 
@@ -1397,6 +1417,7 @@ fn generate_field_lens(
     query_field: &ast::QueryField,
     parent_type: &str,
     alias_stack: &str,
+    lens_base: &str,
 ) -> String {
     let mut result = String::new();
     let field_name = ast::get_aliased_name(query_field);
@@ -1412,9 +1433,9 @@ fn generate_field_lens(
     // Top-level fields are always lists
     result.push_str(&format!(
         "{}Lens : Db.Delta.ListLens {} {}\n",
-        field_name, parent_type, type_name
+        lens_base, parent_type, type_name
     ));
-    result.push_str(&format!("{}Lens =\n", field_name));
+    result.push_str(&format!("{}Lens =\n", lens_base));
     result.push_str(&format!("    {{ get = .{}\n", field_name));
     result.push_str(&format!(
         "    , set = \\list data -> {{ data | {} = list }}\n",
@@ -1423,12 +1444,14 @@ fn generate_field_lens(
     result.push_str(&format!("    , decode = decode{}\n", type_name));
 
     // Generate nested field lookup function
-    let nested_fields = collect_nested_fields_with_type(context, query_field, &type_name);
+    let current_table = find_table_for_query_field(context, &query_field.name);
+    let nested_fields =
+        collect_nested_fields_with_type(context, current_table, query_field, &type_name);
 
     if nested_fields.is_empty() {
         result.push_str("    , nested = Db.Delta.noNested\n");
     } else {
-        result.push_str(&format!("    , nested = {}NestedFields\n", field_name));
+        result.push_str(&format!("    , nested = {}NestedFields\n", lens_base));
     }
     result.push_str("    }\n\n\n");
 
@@ -1436,9 +1459,9 @@ fn generate_field_lens(
     if !nested_fields.is_empty() {
         result.push_str(&format!(
             "{}NestedFields : String -> Maybe (Db.Delta.FieldHandler {})\n",
-            field_name, type_name
+            lens_base, type_name
         ));
-        result.push_str(&format!("{}NestedFields name =\n", field_name));
+        result.push_str(&format!("{}NestedFields name =\n", lens_base));
         result.push_str("    case name of\n");
 
         for (nested_name, _nested_type, is_optional) in &nested_fields {
@@ -1447,9 +1470,10 @@ fn generate_field_lens(
             } else {
                 "Db.Delta.listField"
             };
+            let nested_lens_base = format!("{}{}", lens_base, string::capitalize(nested_name));
             result.push_str(&format!(
                 "        \"{}\" ->\n            Just ({} {}Lens)\n\n",
-                nested_name, lens_constructor, nested_name
+                nested_name, lens_constructor, nested_lens_base
             ));
         }
         result.push_str("        _ ->\n            Nothing\n\n\n");
@@ -1457,12 +1481,17 @@ fn generate_field_lens(
         // Recursively generate lenses for nested fields
         for (nested_name, nested_type, is_optional) in &nested_fields {
             if let Some(nested_query_field) = find_nested_query_field(query_field, nested_name) {
+                let nested_lens_base = format!("{}{}", lens_base, string::capitalize(nested_name));
+                let nested_table =
+                    relationship_info_for_field(context, current_table, &nested_query_field.name).1;
                 result.push_str(&generate_nested_field_lens(
                     context,
                     nested_query_field,
                     &type_name,
                     nested_type,
                     *is_optional,
+                    &nested_lens_base,
+                    nested_table,
                 ));
             }
         }
@@ -1478,6 +1507,8 @@ fn generate_nested_field_lens(
     parent_type: &str,
     type_name: &str,
     is_optional: bool,
+    lens_base: &str,
+    current_table: Option<&typecheck::Table>,
 ) -> String {
     let mut result = String::new();
     let field_name = ast::get_aliased_name(query_field);
@@ -1486,9 +1517,9 @@ fn generate_nested_field_lens(
         // Maybe lens
         result.push_str(&format!(
             "{}Lens : Db.Delta.MaybeLens {} {}\n",
-            field_name, parent_type, type_name
+            lens_base, parent_type, type_name
         ));
-        result.push_str(&format!("{}Lens =\n", field_name));
+        result.push_str(&format!("{}Lens =\n", lens_base));
         result.push_str(&format!("    {{ get = .{}\n", field_name));
         result.push_str(&format!(
             "    , set = \\val item -> {{ item | {} = val }}\n",
@@ -1498,9 +1529,9 @@ fn generate_nested_field_lens(
         // List lens
         result.push_str(&format!(
             "{}Lens : Db.Delta.ListLens {} {}\n",
-            field_name, parent_type, type_name
+            lens_base, parent_type, type_name
         ));
-        result.push_str(&format!("{}Lens =\n", field_name));
+        result.push_str(&format!("{}Lens =\n", lens_base));
         result.push_str(&format!("    {{ get = .{}\n", field_name));
         result.push_str(&format!(
             "    , set = \\list item -> {{ item | {} = list }}\n",
@@ -1510,12 +1541,13 @@ fn generate_nested_field_lens(
     result.push_str(&format!("    , decode = decode{}\n", type_name));
 
     // Check for further nested fields
-    let nested_fields = collect_nested_fields_with_type(context, query_field, type_name);
+    let nested_fields =
+        collect_nested_fields_with_type(context, current_table, query_field, type_name);
 
     if nested_fields.is_empty() {
         result.push_str("    , nested = Db.Delta.noNested\n");
     } else {
-        result.push_str(&format!("    , nested = {}NestedFields\n", field_name));
+        result.push_str(&format!("    , nested = {}NestedFields\n", lens_base));
     }
     result.push_str("    }\n\n\n");
 
@@ -1523,9 +1555,9 @@ fn generate_nested_field_lens(
     if !nested_fields.is_empty() {
         result.push_str(&format!(
             "{}NestedFields : String -> Maybe (Db.Delta.FieldHandler {})\n",
-            field_name, type_name
+            lens_base, type_name
         ));
-        result.push_str(&format!("{}NestedFields name =\n", field_name));
+        result.push_str(&format!("{}NestedFields name =\n", lens_base));
         result.push_str("    case name of\n");
 
         for (nested_name, _nested_nested_type, nested_is_optional) in &nested_fields {
@@ -1534,9 +1566,10 @@ fn generate_nested_field_lens(
             } else {
                 "Db.Delta.listField"
             };
+            let nested_lens_base = format!("{}{}", lens_base, string::capitalize(nested_name));
             result.push_str(&format!(
                 "        \"{}\" ->\n            Just ({} {}Lens)\n\n",
-                nested_name, lens_constructor, nested_name
+                nested_name, lens_constructor, nested_lens_base
             ));
         }
         result.push_str("        _ ->\n            Nothing\n\n\n");
@@ -1544,12 +1577,17 @@ fn generate_nested_field_lens(
         // Recursively generate lenses for deeply nested fields
         for (nested_name, nested_nested_type, nested_is_optional) in &nested_fields {
             if let Some(nested_query_field) = find_nested_query_field(query_field, nested_name) {
+                let nested_lens_base = format!("{}{}", lens_base, string::capitalize(nested_name));
+                let nested_table =
+                    relationship_info_for_field(context, current_table, &nested_query_field.name).1;
                 result.push_str(&generate_nested_field_lens(
                     context,
                     nested_query_field,
                     type_name,
                     nested_nested_type,
                     *nested_is_optional,
+                    &nested_lens_base,
+                    nested_table,
                 ));
             }
         }
@@ -1561,14 +1599,11 @@ fn generate_nested_field_lens(
 /// Collect nested fields with their type information (name, type_name, is_optional)
 fn collect_nested_fields_with_type(
     context: &typecheck::Context,
+    table: Option<&typecheck::Table>,
     query_field: &ast::QueryField,
     parent_type_name: &str,
 ) -> Vec<(String, String, bool)> {
     let mut nested = Vec::new();
-
-    // Get the table for this query field to determine relationship types
-    // context.tables is a HashMap<String, Table>, so iter() yields (&String, &Table)
-    let table = find_table_for_query_field(context, &query_field.name);
 
     for arg_field in &query_field.fields {
         if let ast::ArgField::Field(nested_field) = arg_field {
@@ -1586,17 +1621,48 @@ fn collect_nested_fields_with_type(
                 };
 
                 // Determine if this relationship is optional (Maybe) or an array (List)
-                let is_optional = if let Some(table) = table {
-                    is_relationship_optional(context, table, &nested_field.name)
-                } else {
-                    false // Default to List if we can't determine
-                };
+                let is_optional = relationship_info_for_field(context, table, &nested_field.name).0;
 
                 nested.push((nested_name, nested_type, is_optional));
             }
         }
     }
     nested
+}
+
+fn relationship_info_for_field<'a>(
+    context: &'a typecheck::Context,
+    table: Option<&'a typecheck::Table>,
+    field_name: &str,
+) -> (bool, Option<&'a typecheck::Table>) {
+    let Some(table) = table else {
+        return (false, None);
+    };
+
+    for f in &table.record.fields {
+        if let ast::Field::FieldDirective(ast::FieldDirective::Link(link)) = f {
+            if link.link_name == field_name {
+                let primary_key_name = ast::get_primary_id_field_name(&table.record.fields);
+                let is_one_to_many = link.local_ids.iter().all(|id| {
+                    primary_key_name
+                        .as_ref()
+                        .map(|pk| id == pk)
+                        .unwrap_or(false)
+                });
+
+                let linked_table = typecheck::get_linked_table(context, link);
+                let linked_to_unique = if let Some(linked_table) = linked_table {
+                    ast::linked_to_unique_field_with_record(link, &linked_table.record)
+                } else {
+                    ast::linked_to_unique_field(link)
+                };
+
+                return (!is_one_to_many && linked_to_unique, linked_table);
+            }
+        }
+    }
+
+    (false, None)
 }
 
 fn find_table_for_query_field<'a>(
@@ -1619,44 +1685,6 @@ fn find_table_for_query_field<'a>(
     }
 
     None
-}
-
-/// Determine if a relationship field should be Maybe (optional) or List
-fn is_relationship_optional(
-    context: &typecheck::Context,
-    table: &typecheck::Table,
-    field_name: &str,
-) -> bool {
-    // Find the link directive for this field
-    for f in &table.record.fields {
-        if let ast::Field::FieldDirective(ast::FieldDirective::Link(link)) = f {
-            if link.link_name == field_name {
-                // Determine relationship type
-                let primary_key_name = ast::get_primary_id_field_name(&table.record.fields);
-                let is_one_to_many = link.local_ids.iter().all(|id| {
-                    primary_key_name
-                        .as_ref()
-                        .map(|pk| id == pk)
-                        .unwrap_or(false)
-                });
-
-                if is_one_to_many {
-                    return false; // One-to-many is List, not optional
-                }
-
-                // Check if link points to unique fields
-                let linked_to_unique =
-                    if let Some(linked_table) = typecheck::get_linked_table(context, link) {
-                        ast::linked_to_unique_field_with_record(link, &linked_table.record)
-                    } else {
-                        ast::linked_to_unique_field(link)
-                    };
-
-                return linked_to_unique; // Many-to-one or one-to-one pointing to unique is optional
-            }
-        }
-    }
-    false // Default to List
 }
 
 /// Find a nested query field by name
@@ -1687,7 +1715,7 @@ fn generate_pyre_module(
 
     // Module declaration
     result.push_str(
-        "port module Pyre exposing (Model, Msg(..), init, update, subscriptions, getResult)\n\n\n",
+        "module Pyre exposing (Model, Msg(..), Effect(..), init, update, decodeIncomingDelta, getResult)\n\n\n",
     );
 
     // Imports
@@ -1751,11 +1779,18 @@ fn generate_pyre_module(
     }
     result.push_str("\n\n");
 
-    // Ports
-    result.push_str("-- Ports\n\n\n");
-    result.push_str("port pyre_sendQueryClientMessage : Encode.Value -> Cmd msg\n\n\n");
-    result.push_str("port pyre_receiveQueryDelta : (Decode.Value -> msg) -> Sub msg\n\n\n");
-    result.push_str("port pyre_logQueryDeltaError : Encode.Value -> Cmd msg\n\n\n");
+    result.push_str("    | IncomingMsgDecodeFailed Decode.Error Decode.Value\n\n\n");
+
+    // Effect type
+    result.push_str("type Effect\n");
+    result.push_str("    = NoEffect\n");
+    result.push_str("    | Send Encode.Value\n");
+    result.push_str("    | LogError Encode.Value\n\n\n");
+
+    // Error type
+    result.push_str("type Error\n");
+    result.push_str("    = QueryDeltaApplyFailed String String\n");
+    result.push_str("    | IncomingDeltaDecodeFailed Decode.Error Decode.Value\n\n\n");
 
     // Init
     result.push_str("-- Init\n\n\n");
@@ -1776,7 +1811,7 @@ fn generate_pyre_module(
 
     // Update
     result.push_str("-- Update\n\n\n");
-    result.push_str("update : Msg -> Model -> ( Model, Cmd Msg )\n");
+    result.push_str("update : Msg -> Model -> ( Model, Effect )\n");
     result.push_str("update msg model =\n");
     result.push_str("    case msg of\n");
 
@@ -1809,7 +1844,7 @@ fn generate_pyre_module(
             field_name, field_name
         ));
         result.push_str(&format!(
-            "            , pyre_sendQueryClientMessage (encodeRegister \"{}\" queryId (Query.{}.encode input))\n",
+            "            , Send (encodeRegister \"{}\" queryId (Query.{}.encode input))\n",
             name, name
         ));
         result.push_str("            )\n\n");
@@ -1826,12 +1861,12 @@ fn generate_pyre_module(
             field_name, field_name
         ));
         result.push_str(&format!(
-            "                    , pyre_sendQueryClientMessage (encodeUpdateInput queryId (Query.{}.encode input))\n",
+            "                    , Send (encodeUpdateInput queryId (Query.{}.encode input))\n",
             name
         ));
         result.push_str("                    )\n\n");
         result.push_str("                Nothing ->\n");
-        result.push_str("                    ( model, Cmd.none )\n\n");
+        result.push_str("                    ( model, NoEffect )\n\n");
 
         // DataReceived
         result.push_str(&format!("        {}_DataReceived queryId delta ->\n", name));
@@ -1863,16 +1898,14 @@ fn generate_pyre_module(
             "                            ( {{ model | {} = Dict.insert queryId {{ queryModel | result = newResult, revision = newRevision }} model.{} }}\n",
             field_name, field_name
         ));
-        result.push_str("                            , Cmd.none\n");
+        result.push_str("                            , NoEffect\n");
         result.push_str("                            )\n\n");
         result.push_str("                        Err errMsg ->\n");
         result.push_str("                            ( model\n");
-        result.push_str(
-            "                            , pyre_logQueryDeltaError (encodeError queryId errMsg)\n",
-        );
+        result.push_str("                            , LogError (encodeError (QueryDeltaApplyFailed queryId errMsg))\n");
         result.push_str("                            )\n\n");
         result.push_str("                Nothing ->\n");
-        result.push_str("                    ( model, Cmd.none )\n\n");
+        result.push_str("                    ( model, NoEffect )\n\n");
 
         // Unregistered
         result.push_str(&format!("        {}_Unregistered queryId ->\n", name));
@@ -1880,33 +1913,26 @@ fn generate_pyre_module(
             "            ( {{ model | {} = Dict.remove queryId model.{} }}\n",
             field_name, field_name
         ));
-        result.push_str("            , pyre_sendQueryClientMessage (encodeUnregister queryId)\n");
+        result.push_str("            , Send (encodeUnregister queryId)\n");
         result.push_str("            )\n\n");
     }
 
-    result.push_str("\n");
+    result.push_str("        IncomingMsgDecodeFailed decodeErr json ->\n");
+    result.push_str("            ( model\n");
+    result.push_str(
+        "            , LogError (encodeError (IncomingDeltaDecodeFailed decodeErr json))\n",
+    );
+    result.push_str("            )\n\n");
 
-    // Subscriptions
-    result.push_str("-- Subscriptions\n\n\n");
-    result.push_str("subscriptions : Sub Msg\n");
-    result.push_str("subscriptions =\n");
-    result.push_str("    pyre_receiveQueryDelta decodeIncomingDelta\n\n\n");
+    result.push_str("\n");
 
     result.push_str("decodeIncomingDelta : Decode.Value -> Msg\n");
     result.push_str("decodeIncomingDelta json =\n");
     result.push_str("    case Decode.decodeValue incomingDeltaDecoder json of\n");
     result.push_str("        Ok msg ->\n");
     result.push_str("            msg\n\n");
-    result.push_str("        Err _ ->\n");
-    // Default to first query's unregistered message as fallback
-    if let Some(first_name) = query_names.first() {
-        result.push_str(&format!(
-            "            {}_Unregistered \"\"\n\n\n",
-            first_name
-        ));
-    } else {
-        result.push_str("            -- No queries available\n\n\n");
-    }
+    result.push_str("        Err decodeErr ->\n");
+    result.push_str("            IncomingMsgDecodeFailed decodeErr json\n\n\n");
 
     result.push_str("incomingDeltaDecoder : Decode.Decoder Msg\n");
     result.push_str("incomingDeltaDecoder =\n");
@@ -1964,12 +1990,24 @@ fn generate_pyre_module(
     result.push_str("        , ( \"queryId\", Encode.string queryId )\n");
     result.push_str("        ]\n\n\n");
 
-    result.push_str("encodeError : String -> String -> Encode.Value\n");
-    result.push_str("encodeError queryId message =\n");
-    result.push_str("    Encode.object\n");
-    result.push_str("        [ ( \"queryId\", Encode.string queryId )\n");
-    result.push_str("        , ( \"message\", Encode.string message )\n");
-    result.push_str("        ]\n");
+    result.push_str("encodeError : Error -> Encode.Value\n");
+    result.push_str("encodeError error =\n");
+    result.push_str("    case error of\n");
+    result.push_str("        QueryDeltaApplyFailed queryId message ->\n");
+    result.push_str("            Encode.object\n");
+    result.push_str("                [ ( \"tag\", Encode.string \"query_delta_apply_failed\" )\n");
+    result.push_str("                , ( \"queryId\", Encode.string queryId )\n");
+    result.push_str("                , ( \"message\", Encode.string message )\n");
+    result.push_str("                ]\n\n");
+    result.push_str("        IncomingDeltaDecodeFailed decodeErr json ->\n");
+    result.push_str("            Encode.object\n");
+    result
+        .push_str("                [ ( \"tag\", Encode.string \"incoming_msg_decode_failed\" )\n");
+    result.push_str(
+        "                , ( \"message\", Encode.string (Decode.errorToString decodeErr) )\n",
+    );
+    result.push_str("                , ( \"value\", json )\n");
+    result.push_str("                ]\n");
 
     result
 }
