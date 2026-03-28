@@ -1,4 +1,4 @@
-import loadElm from '../dist/engine.mjs';
+import { loadElm } from '../dist/engine.mjs';
 import { IndexedDBStorage, IndexedDbService } from './service/indexeddb';
 import { QueryClientService } from './service/query-client';
 import { QueryManagerService } from './service/query-manager';
@@ -15,6 +15,7 @@ import type {
 
 export type { LiveSyncTransport, ServerConfig, ServerEndpoints, SyncProgress } from './types';
 export type { MutationResult } from './service/query-manager';
+
 
 export interface QueryModule<Input = unknown> {
   operation: 'query' | 'insert' | 'update' | 'delete' | 'mutation';
@@ -65,20 +66,31 @@ export class PyreClient {
 
     const elmScope = Object.create(globalThis) as typeof globalThis & { Elm?: unknown };
     elmScope.Elm = undefined;
-    const Elm = loadElm(elmScope);
+    let Elm: any;
+    try {
+      Elm = loadElm(elmScope);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`[PyreClient ctor] loadElm failed: ${message}`);
+    }
 
-    this.elmApp = Elm.Main.init({
-      flags: {
-        schema: config.schema,
-        server: {
-          baseUrl: config.server.baseUrl,
-          catchupPath: this.endpoints.catchup,
+    try {
+      this.elmApp = Elm.Main.init({
+        flags: {
+          schema: config.schema,
+          server: {
+            baseUrl: config.server.baseUrl,
+            catchupPath: this.endpoints.catchup,
+          },
+          liveSync: {
+            transport: liveSyncTransport,
+          },
         },
-        liveSync: {
-          transport: liveSyncTransport,
-        },
-      },
-    });
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`[PyreClient ctor] Elm.Main.init failed: ${message}`);
+    }
 
     this.storage = new IndexedDBStorage(dbName);
     this.indexedDbService = new IndexedDbService(this.storage);

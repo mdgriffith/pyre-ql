@@ -438,6 +438,86 @@ shouldReExecuteQueryTests =
                 in
                 -- Should re-execute because row 999 is new (might need to be included)
                 Expect.equal Data.QueryManager.ReExecuteFull result
+        , test "returns ReExecuteFull when nested one-to-many child table changes" <|
+            \_ ->
+                let
+                    schema =
+                        { tables =
+                            Dict.fromList
+                                [ ( "games"
+                                  , { name = "games"
+                                    , links =
+                                        Dict.fromList
+                                            [ ( "gameMembers"
+                                              , { type_ = Data.Schema.OneToMany
+                                                , from = "id"
+                                                , to =
+                                                    { table = "game_members"
+                                                    , column = "gameId"
+                                                    }
+                                                }
+                                              )
+                                            ]
+                                    , indices = []
+                                    }
+                                  )
+                                , ( "game_members"
+                                  , { name = "game_members"
+                                    , links = Dict.empty
+                                    , indices = []
+                                    }
+                                  )
+                                ]
+                        , queryFieldToTable = Dict.fromList [ ( "game", "games" ) ]
+                        }
+
+                    nestedSelection =
+                        { selections = Dict.fromList [ ( "id", Db.Query.SelectField ) ]
+                        , where_ = Nothing
+                        , sort = Nothing
+                        , limit = Nothing
+                        }
+
+                    subscription =
+                        { queryId = "q-games"
+                        , query =
+                            Dict.fromList
+                                [ ( "game"
+                                  , { selections =
+                                        Dict.fromList
+                                            [ ( "id", Db.Query.SelectField )
+                                            , ( "name", Db.Query.SelectField )
+                                            , ( "gameMembers", Db.Query.SelectNested nestedSelection )
+                                            ]
+                                    , where_ = Nothing
+                                    , sort = Nothing
+                                    , limit = Nothing
+                                    }
+                                  )
+                                ]
+                        , input = Data.Value.NullValue |> Data.Value.encodeValue
+                        , callbackPort = "port1"
+                        , resultRowIds = Dict.fromList [ ( "game", Set.fromList [ 1 ] ) ]
+                        , revision = 1
+                        , lastResult = Nothing
+                        }
+
+                    delta =
+                        { tableGroups =
+                            [ { tableName = "game_members"
+                              , headers = [ "id", "gameId", "userId" ]
+                              , rows = [ [ Data.Value.IntValue 10, Data.Value.IntValue 1, Data.Value.IntValue 2 ] ]
+                              }
+                            ]
+                        }
+
+                    db =
+                        { tables = Dict.empty, indices = Dict.empty }
+
+                    result =
+                        Data.QueryManager.shouldReExecuteQuery schema db subscription delta
+                in
+                Expect.equal Data.QueryManager.ReExecuteFull result
         , test "returns ReExecuteFull when new rows added (potential inserts)" <|
             \_ ->
                 let

@@ -190,20 +190,59 @@ notifyTablesChanged schema db model delta =
 extractQueryTables : Data.Schema.SchemaMetadata -> Db.Query.Query -> List String
 extractQueryTables schema query =
     Dict.foldl
-        (\queryFieldName _ acc ->
+        (\queryFieldName fieldQuery acc ->
             case Dict.get queryFieldName schema.queryFieldToTable of
                 Just tableName ->
-                    if List.member tableName acc then
-                        acc
-
-                    else
-                        tableName :: acc
+                    addTablesUnique acc (extractTablesFromFieldQuery schema tableName fieldQuery)
 
                 Nothing ->
                     acc
         )
         []
         query
+
+
+extractTablesFromFieldQuery : Data.Schema.SchemaMetadata -> String -> Db.Query.FieldQuery -> List String
+extractTablesFromFieldQuery schema tableName fieldQuery =
+    Dict.foldl
+        (\fieldName selection acc ->
+            case selection of
+                Db.Query.SelectField ->
+                    acc
+
+                Db.Query.SelectNested nestedFieldQuery ->
+                    case relatedTableForSelection schema tableName fieldName of
+                        Just relatedTable ->
+                            extractTablesFromFieldQuery schema relatedTable nestedFieldQuery
+                                |> (::) relatedTable
+                                |> addTablesUnique acc
+
+                        Nothing ->
+                            acc
+        )
+        [ tableName ]
+        fieldQuery.selections
+
+
+relatedTableForSelection : Data.Schema.SchemaMetadata -> String -> String -> Maybe String
+relatedTableForSelection schema tableName fieldName =
+    Dict.get tableName schema.tables
+        |> Maybe.andThen (\tableMeta -> Dict.get fieldName tableMeta.links)
+        |> Maybe.map (\linkInfo -> linkInfo.to.table)
+
+
+addTablesUnique : List String -> List String -> List String
+addTablesUnique acc newTables =
+    List.foldl
+        (\tableName current ->
+            if List.member tableName current then
+                current
+
+            else
+                tableName :: current
+        )
+        acc
+        newTables
 
 
 encodeQueryResult : Dict String (List (Dict String Value)) -> Encode.Value

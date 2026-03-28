@@ -230,9 +230,12 @@ applyCatchupDelta response db =
                 |> List.filterMap (\( tableName, tableResult ) ->
                     catchupTableToGroup tableName tableResult
                    )
+
+        dbWithKnownTables =
+            ensureTablesExist (Dict.keys response.tables) db
     in
     if List.isEmpty tableGroups then
-        ( Nothing, db, [] )
+        ( Nothing, dbWithKnownTables, [] )
 
     else
         let
@@ -240,9 +243,28 @@ applyCatchupDelta response db =
                 { tableGroups = tableGroups }
 
             ( updatedDb, dbCmd ) =
-                Db.update (Db.DeltaReceived delta) db
+                Db.update (Db.DeltaReceived delta) dbWithKnownTables
         in
         ( Just delta, updatedDb, [ dbCmd ] )
+
+
+ensureTablesExist : List String -> Db.Db -> Db.Db
+ensureTablesExist tableNames db =
+    let
+        updatedTables =
+            List.foldl
+                (\tableName acc ->
+                    case Dict.get tableName acc of
+                        Just _ ->
+                            acc
+
+                        Nothing ->
+                            Dict.insert tableName Dict.empty acc
+                )
+                db.tables
+                tableNames
+    in
+    { db | tables = updatedTables }
 
 
 catchupTableToGroup : String -> CatchupTableResult -> Maybe Data.Delta.TableGroup

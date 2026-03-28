@@ -702,10 +702,29 @@ projectRow schema tableName row selections data indices =
                             Dict.insert fieldName nestedValue acc
 
                         Nothing ->
-                            Dict.insert fieldName Data.Value.NullValue acc
+                            if isOneToManySelection schema tableName fieldName then
+                                Dict.insert fieldName (Data.Value.ArrayValue []) acc
+
+                            else
+                                Dict.insert fieldName Data.Value.NullValue acc
         )
         Dict.empty
         selections
+
+
+isOneToManySelection : SchemaMetadata -> String -> String -> Bool
+isOneToManySelection schema tableName fieldName =
+    case Dict.get tableName schema.tables of
+        Just tableMeta ->
+            case Dict.get fieldName tableMeta.links of
+                Just linkInfo ->
+                    linkInfo.type_ == Data.Schema.OneToMany
+
+                Nothing ->
+                    False
+
+        Nothing ->
+            False
 
 
 resolveRelationship : SchemaMetadata -> String -> String -> Dict String Value -> Dict String TableData -> Dict ( String, String ) Db.Index.Index -> Maybe (List (Dict String Value))
@@ -719,9 +738,11 @@ resolveRelationship schema tableName fieldName row data indices =
                             case Dict.get "id" row of
                                 Just idValue ->
                                     lookupRowsByForeignKeyIndexed indices data linkInfo.to.table linkInfo.to.column idValue
+                                        |> Maybe.withDefault []
+                                        |> Just
 
                                 _ ->
-                                    Nothing
+                                    Just []
 
                         Data.Schema.ManyToOne ->
                             case Dict.get linkInfo.from row of
@@ -1050,4 +1071,3 @@ applyLimit limit rows =
 
         Nothing ->
             rows
-
