@@ -1,13 +1,25 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+echo "[build] Rust core"
 cargo build
-(cd wasm ; wasm-pack build --target web)
 
-mkdir -p packages/server/wasm
-cp wasm/pkg/pyre_wasm.js packages/server/wasm/pyre_wasm.js
-cp wasm/pkg/pyre_wasm_bg.wasm packages/server/wasm/pyre_wasm_bg.wasm
-cp wasm/pkg/pyre_wasm.d.ts packages/server/wasm/pyre_wasm.d.ts
-cp wasm/pkg/pyre_wasm_bg.wasm.d.ts packages/server/wasm/pyre_wasm_bg.wasm.d.ts
+echo "[build] WASM package"
+(cd "$ROOT_DIR/wasm" && wasm-pack build --target web)
 
+echo "[build] Copy WASM artifacts into server package"
+mkdir -p "$ROOT_DIR/packages/server/wasm"
+cp "$ROOT_DIR/wasm/pkg/pyre_wasm.js" "$ROOT_DIR/packages/server/wasm/pyre_wasm.js"
+cp "$ROOT_DIR/wasm/pkg/pyre_wasm_bg.wasm" "$ROOT_DIR/packages/server/wasm/pyre_wasm_bg.wasm"
+cp "$ROOT_DIR/wasm/pkg/pyre_wasm.d.ts" "$ROOT_DIR/packages/server/wasm/pyre_wasm.d.ts"
+cp "$ROOT_DIR/wasm/pkg/pyre_wasm_bg.wasm.d.ts" "$ROOT_DIR/packages/server/wasm/pyre_wasm_bg.wasm.d.ts"
+
+if command -v npm >/dev/null 2>&1; then
+  echo "[build] Workspace package builds (if present)"
+  npm run build --workspaces --if-present --prefix "$ROOT_DIR"
+else
+  echo "[build] npm not found; skipping workspace package builds"
+fi
