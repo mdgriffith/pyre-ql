@@ -687,19 +687,33 @@ projectRow schema tableName row selections data indices =
                             acc
 
                 Db.Query.SelectNested nestedFieldQuery ->
-                    case resolveRelationship schema tableName fieldName row data indices of
-                        Just relatedRows ->
+                    case getLinkType schema tableName fieldName of
+                        Just Data.Schema.OneToMany ->
                             let
-                                relatedTableName =
-                                    getRelatedTableName schema tableName fieldName
-
-                                projected =
-                                    List.map (\r -> projectRow schema relatedTableName r nestedFieldQuery.selections data indices) relatedRows
+                                relatedRows =
+                                    resolveRelationship schema tableName fieldName row data indices
+                                        |> Maybe.withDefault []
 
                                 nestedValue =
-                                    Data.Value.ArrayValue (List.map Data.Value.ObjectValue projected)
+                                    projectNestedRows schema tableName fieldName nestedFieldQuery relatedRows data indices
                             in
                             Dict.insert fieldName nestedValue acc
+
+                        Just _ ->
+                            case resolveRelationship schema tableName fieldName row data indices of
+                                Just relatedRows ->
+                                    case projectNestedRows schema tableName fieldName nestedFieldQuery relatedRows data indices of
+                                        Data.Value.ArrayValue (first :: _) ->
+                                            Dict.insert fieldName first acc
+
+                                        Data.Value.ArrayValue [] ->
+                                            Dict.insert fieldName Data.Value.NullValue acc
+
+                                        value ->
+                                            Dict.insert fieldName value acc
+
+                                Nothing ->
+                                    Dict.insert fieldName Data.Value.NullValue acc
 
                         Nothing ->
                             if isOneToManySelection schema tableName fieldName then
@@ -712,19 +726,28 @@ projectRow schema tableName row selections data indices =
         selections
 
 
+projectNestedRows : SchemaMetadata -> String -> String -> Db.Query.FieldQuery -> List (Dict String Value) -> Dict String TableData -> Dict ( String, String ) Db.Index.Index -> Value
+projectNestedRows schema tableName fieldName nestedFieldQuery relatedRows data indices =
+    let
+        relatedTableName =
+            getRelatedTableName schema tableName fieldName
+
+        projected =
+            List.map (\r -> projectRow schema relatedTableName r nestedFieldQuery.selections data indices) relatedRows
+    in
+    Data.Value.ArrayValue (List.map Data.Value.ObjectValue projected)
+
+
+getLinkType : SchemaMetadata -> String -> String -> Maybe Data.Schema.LinkType
+getLinkType schema tableName fieldName =
+    Dict.get tableName schema.tables
+        |> Maybe.andThen (.links >> Dict.get fieldName)
+        |> Maybe.map .type_
+
+
 isOneToManySelection : SchemaMetadata -> String -> String -> Bool
 isOneToManySelection schema tableName fieldName =
-    case Dict.get tableName schema.tables of
-        Just tableMeta ->
-            case Dict.get fieldName tableMeta.links of
-                Just linkInfo ->
-                    linkInfo.type_ == Data.Schema.OneToMany
-
-                Nothing ->
-                    False
-
-        Nothing ->
-            False
+    getLinkType schema tableName fieldName == Just Data.Schema.OneToMany
 
 
 resolveRelationship : SchemaMetadata -> String -> String -> Dict String Value -> Dict String TableData -> Dict ( String, String ) Db.Index.Index -> Maybe (List (Dict String Value))

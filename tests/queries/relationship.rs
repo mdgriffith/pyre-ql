@@ -1,6 +1,7 @@
 use crate::helpers::schema;
 use crate::helpers::test_database::TestDatabase;
 use crate::helpers::TestError;
+use serde_json::json;
 
 #[tokio::test]
 async fn test_query_with_one_to_many() -> Result<(), TestError> {
@@ -91,6 +92,67 @@ async fn test_query_with_many_to_one() -> Result<(), TestError> {
         assert!(author.get("id").is_some(), "Author should have id");
         assert!(author.get("name").is_some(), "Author should have name");
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_nested_json_column_is_returned_as_json_value() -> Result<(), TestError> {
+    let schema = r#"
+record Game {
+    id Int @id
+    entities @link(id, GameEntity.gameId)
+    @public
+}
+
+record GameEntity {
+    id Int @id
+    gameId Int
+    attrs Json
+    game @link(gameId, Game.id)
+    @public
+}
+"#;
+
+    let db = TestDatabase::new(schema).await?;
+    db.execute_raw("insert into games (id) values (1)").await?;
+    db.execute_raw(
+        r#"insert into gameEntities (id, gameId, attrs)
+           values (1, 1, json('{"name":{"kind":"text","value":"Alyra"}}'))"#,
+    )
+    .await?;
+
+    let query = r#"
+        query GetGame {
+            game {
+                id
+                entities {
+                    id
+                    attrs
+                }
+            }
+        }
+    "#;
+
+    let rows = db.execute_query(query).await?;
+    let results = db.parse_query_results(rows).await?;
+
+    let games = results.get("game").expect("Results should contain 'game'");
+    let entities = games[0]
+        .get("entities")
+        .and_then(|value| value.as_array())
+        .expect("Game should include entities array");
+    let attrs = entities[0].get("attrs").expect("Entity should include attrs");
+
+    assert_eq!(
+        attrs,
+        &json!({
+            "name": {
+                "kind": "text",
+                "value": "Alyra"
+            }
+        })
+    );
 
     Ok(())
 }

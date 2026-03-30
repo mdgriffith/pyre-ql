@@ -1003,6 +1003,38 @@ record Comment {
 }
 
 #[test]
+fn test_format_preserves_explicit_inverse_link_name() {
+    let schema_source = r#"
+record RulebookRules {
+    id Int @id
+    versions @link(RulebookVersionRules.rulebookRulesId)
+}
+
+record RulebookVersionRules {
+    id Int @id
+    rulebookRulesId RulebookRules.id
+    rulebookRules @link(rulebookRulesId, RulebookRules.id)
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).unwrap();
+    format::schema(&mut schema);
+    let formatted = generate::to_string::schema_to_string(&schema.namespace, &schema);
+
+    assert!(
+        formatted.contains("versions @link(RulebookVersionRules.rulebookRulesId)"),
+        "Expected explicit inverse link name to be preserved. Got:\n{}",
+        formatted
+    );
+    assert!(
+        !formatted.contains("rulebookVersionRules @link(RulebookVersionRules.rulebookRulesId)"),
+        "Expected generated link name not to replace explicit one. Got:\n{}",
+        formatted
+    );
+}
+
+#[test]
 fn test_schema_round_trip_tagged_types() {
     let schema_source = r#"
 type SimpleTagged

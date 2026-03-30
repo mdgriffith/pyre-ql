@@ -158,18 +158,22 @@ function App() {
     // Store in ref for cleanup
     pyreClientsRef.current.set(clientId, pyreClient)
 
-    // Set up sync progress callback
-    pyreClient.onSyncProgress((progress) => {
-      if (progress.complete) {
+    // Set up sync state callback
+    pyreClient.onSyncState((state) => {
+      if (state.status === 'live') {
         addEvent({
           type: 'query_response',
-          data: { message: 'Sync complete', tablesSynced: progress.tablesSynced },
+          data: {
+            message: 'Sync live',
+            tablesSynced: Object.values(state.tables).filter((status) => status === 'live').length,
+          },
           clientId,
         })
       } else {
+        const table = Object.entries(state.tables).find(([, status]) => status === 'catching_up')?.[0]
         addEvent({
           type: 'query_response',
-          data: { message: `Syncing table: ${progress.table}`, tablesSynced: progress.tablesSynced },
+          data: { message: `Syncing table: ${table ?? '(pending)'}` },
           clientId,
         })
       }

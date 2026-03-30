@@ -28,6 +28,18 @@ export interface SyncPageResult {
     has_more: boolean;
 }
 
+function parseJsonColumnValue(value: unknown): unknown {
+    if (typeof value === "string") {
+        return JSON.parse(value);
+    }
+
+    if (value instanceof Uint8Array) {
+        return JSON.parse(new TextDecoder().decode(value));
+    }
+
+    return value;
+}
+
 /**
  * Session data for sync operations.
  */
@@ -93,6 +105,7 @@ export async function catchup(
     let resultIndex = 0;
     for (const tableSql of sqlResult.tables) {
         const updatedAtIndex = tableSql.headers.indexOf("updatedAt");
+        const jsonColumns = new Set<string>(tableSql.json_columns ?? []);
         const tableRows: any[] = [];
         let maxUpdatedAt: number | null = null;
 
@@ -104,7 +117,10 @@ export async function catchup(
             for (const row of rows) {
                 const rowObject: Record<string, any> = {};
                 for (const column of columns) {
-                    rowObject[column] = row[column];
+                    const value = row[column];
+                    rowObject[column] = jsonColumns.has(column)
+                        ? parseJsonColumnValue(value)
+                        : value;
                 }
                 tableRows.push(rowObject);
 

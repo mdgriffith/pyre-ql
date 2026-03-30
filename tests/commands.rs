@@ -683,6 +683,49 @@ fn test_format_command() {
 }
 
 #[test]
+fn test_format_schema_file_adds_reverse_links_from_other_schema_files() {
+    let ctx = TestContext::new();
+
+    std::fs::create_dir_all(ctx.workspace_path.join("pyre/schema/App")).unwrap();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema/App/schema.pyre"),
+        r#"record Rulebook {
+    id Int @id
+    name String
+}
+        "#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema/App/schema_rulebook_version.pyre"),
+        r#"record RulebookVersion {
+    id Int @id
+    rulebookId Rulebook.id
+
+    rulebook @link(rulebookId, Rulebook.id)
+}
+        "#,
+    )
+    .unwrap();
+
+    ctx.run_command("format")
+        .arg("pyre/schema/App/schema.pyre")
+        .assert()
+        .success();
+
+    let formatted = std::fs::read_to_string(ctx.workspace_path.join("pyre/schema/App/schema.pyre"))
+        .unwrap();
+
+    assert!(
+        formatted.contains("rulebookVersions @link(RulebookVersion.rulebookId)"),
+        "Formatted content: {}",
+        formatted
+    );
+}
+
+#[test]
 fn test_migration_creates_migrations_directory_and_file() {
     let ctx = TestContext::new();
     write_basic_schema(&ctx);

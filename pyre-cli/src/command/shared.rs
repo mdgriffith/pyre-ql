@@ -212,6 +212,10 @@ pub fn get_stdin() -> io::Result<Option<String>> {
     } else {
         let mut input = String::new();
         io::stdin().read_to_string(&mut input)?;
-        Ok(Some(input))
+        if input.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(input))
+        }
     }
 }

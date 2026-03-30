@@ -64,6 +64,23 @@ await client.init();
 
 Use `client.run(queryModule, input, callback)` to subscribe and keep the returned subscription for `update(...)` / `unsubscribe()`.
 
+Use `client.onSyncState(...)` for high-level sync lifecycle updates:
+
+```ts
+const unsubscribeSync = client.onSyncState((syncState) => {
+  // "not_started" | "catching_up" | "live"
+  if (syncState.status === "live") {
+    // Initial catchup is complete, live sync is active,
+    // and currently registered queries have been fulfilled
+  }
+
+  // Per-table status: "waiting" | "catching_up" | "live"
+  console.log(syncState.tables)
+})
+```
+
+`SyncState.error` is optional and reported separately from lifecycle transitions.
+
 ## Elm port contract (recommended)
 
 Elm → TS:

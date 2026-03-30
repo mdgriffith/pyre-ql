@@ -69,6 +69,7 @@ type alias UpdateResult =
     , cmd : Cmd Msg
     , dbCmds : List (Cmd Db.Msg)
     , delta : Maybe Data.Delta.Delta
+    , touchedTables : List String
     , error : Maybe String
     }
 
@@ -108,6 +109,7 @@ update msg model db =
             , cmd = cmd
             , dbCmds = []
             , delta = Nothing
+            , touchedTables = []
             , error = Nothing
             }
 
@@ -185,6 +187,7 @@ handleCatchupResponse result model db =
             , cmd = cmd
             , dbCmds = dbCmds
             , delta = maybeDelta
+            , touchedTables = Dict.keys response.tables
             , error = Nothing
             }
 
@@ -198,6 +201,7 @@ handleCatchupResponse result model db =
             , cmd = Cmd.none
             , dbCmds = []
             , delta = Nothing
+            , touchedTables = []
             , error = Just message
             }
 

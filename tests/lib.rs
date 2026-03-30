@@ -7,5 +7,6 @@ mod migrations;
 mod parsing;
 mod queries;
 mod seed;
+mod sync;
 mod typecheck;
 mod typecheck_insert_session;

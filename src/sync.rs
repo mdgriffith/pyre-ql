@@ -61,6 +61,8 @@ pub struct TableSyncSql {
     pub sql: Vec<String>,
     /// Column names in the order they appear in the SQL SELECT
     pub headers: Vec<String>,
+    /// Column names that should be decoded as JSON values in the runtime
+    pub json_columns: Vec<String>,
 }
 
 /// Result containing SQL for all tables that need syncing
@@ -606,12 +608,16 @@ pub fn get_sync_sql(
         // Build column list and headers
         let mut columns = Vec::new();
         let mut headers = Vec::new();
+        let mut json_columns = Vec::new();
         for field in &table.record.fields {
             if let ast::Field::Column(col) = field {
                 let quoted_table_name = string::quote(&actual_table_name);
                 let quoted_col_name = string::quote(&col.name);
                 columns.push(format!("{}.{}", quoted_table_name, quoted_col_name));
                 headers.push(col.name.clone());
+                if matches!(col.type_, ast::ColumnType::Json) {
+                    json_columns.push(col.name.clone());
+                }
             }
         }
 
@@ -638,6 +644,7 @@ pub fn get_sync_sql(
             permission_hash: current_permission_hash.clone(),
             sql: vec![sql], // Single SQL statement
             headers,
+            json_columns,
         });
     }
 

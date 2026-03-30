@@ -51,6 +51,17 @@ const client = new PyreClient({
 });
 
 await client.init();
+
+const unsubscribeSync = client.onSyncState((syncState) => {
+  console.log(syncState.status); // "not_started" | "catching_up" | "live"
+  // "live" means initial catchup is complete and current queries have been fulfilled
+  console.log(syncState.tables); // Record<tableName, "waiting" | "catching_up" | "live">
+});
+
+// Optional legacy callback (derived from sync state)
+client.onSyncProgress((progress) => {
+  console.log(progress.complete);
+});
 ```
 
 ### Registering Queries
@@ -92,6 +103,7 @@ client.run(CreatePost, { title: 'Hello' }, (result) => {
 - `disconnectSSE`: Disconnect from SSE
 - `queryResult`: Send query results (callbackPort, result)
 - `mutationResult`: Send mutation results (id, result)
+- `syncStateOut`: High-level sync state (`status`, `tables`)
 
 ### Incoming (TypeScript -> Elm)
 

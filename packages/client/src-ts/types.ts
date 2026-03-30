@@ -31,6 +31,16 @@ export interface SyncProgress {
   error?: string;
 }
 
+export type SyncStatus = 'not_started' | 'catching_up' | 'live';
+
+export type TableSyncStatus = 'waiting' | 'catching_up' | 'live';
+
+export interface SyncState {
+  status: SyncStatus;
+  tables: Record<string, TableSyncStatus>;
+  error?: string;
+}
+
 export type LiveSyncTransport = 'sse' | 'websocket';
 
 export interface ElmPorts {
@@ -51,6 +61,9 @@ export interface ElmPorts {
   };
   errorOut?: {
     subscribe: (callback: (message: string) => void) => void;
+  };
+  syncStateOut?: {
+    subscribe: (callback: (message: unknown) => void) => void;
   };
   receiveIndexedDbMessage?: {
     send: (message: unknown) => void;

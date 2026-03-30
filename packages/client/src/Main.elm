@@ -1,4 +1,4 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 import Data.Catchup as Catchup
 import Data.Error
@@ -6,6 +6,7 @@ import Data.IndexedDb as IndexedDb exposing (Incoming(..))
 import Data.LiveSync as LiveSync exposing (Incoming(..))
 import Data.QueryManager as QueryManager exposing (Incoming(..), Msg(..))
 import Data.Schema
+import Data.SyncState as SyncState
 import Data.Value
 import Db exposing (Msg(..))
 import Db.Query
@@ -37,17 +38,12 @@ type alias Model =
     , db : Db.Db
     , queryManager : QueryManager.Model
     , catchup : Catchup.Model
-    , syncStatus : SyncStatus
+    , syncStatus : SyncState.SyncStatus
+    , tableSyncStatuses : Dict String SyncState.TableSyncStatus
+    , syncError : Maybe String
     , liveSyncStarted : Bool
     , liveSyncTransport : LiveSync.Transport
     }
-
-
-type SyncStatus
-    = NotStarted
-    | Syncing LiveSync.SyncProgress
-    | Synced
-    | SyncError String
 
 
 
@@ -75,12 +71,19 @@ init flags =
       , db = Db.init
       , queryManager = QueryManager.init
       , catchup = Catchup.init flags.server
-      , syncStatus = NotStarted
+      , syncStatus = SyncState.NotStarted
+      , tableSyncStatuses = SyncState.initialTableStatuses flags.schema.tables
+      , syncError = Nothing
       , liveSyncStarted = False
       , liveSyncTransport = flags.liveSync.transport
       }
     , Cmd.batch
-        [ IndexedDb.requestInitialData ]
+        [ IndexedDb.requestInitialData
+        , emitSyncState
+            { status = SyncState.NotStarted
+            , tables = SyncState.initialTableStatuses flags.schema.tables
+            }
+        ]
     )
 
 
@@ -206,18 +209,33 @@ handleLiveSyncIncoming incoming model =
             ( model, Cmd.none )
 
         LiveSync.LiveSyncError error ->
-            ( { model | syncStatus = SyncError error }
-            , Cmd.none
+            ( { model | syncError = Just error }
+            , Cmd.batch
+                [ emitSyncState (toSyncState model)
+                , Data.Error.sendError error
+                ]
             )
 
-        LiveSync.SyncProgressReceived progress ->
-            ( { model | syncStatus = Syncing progress }
-            , Cmd.none
+        LiveSync.SyncProgressReceived _ ->
+            let
+                updatedModel =
+                    { model | syncStatus = SyncState.CatchingUp }
+            in
+            ( updatedModel
+            , emitSyncState (toSyncState updatedModel)
             )
 
         LiveSync.SyncCompleteReceived ->
-            ( { model | syncStatus = Synced }
-            , Cmd.none
+            let
+                updatedModel =
+                    { model
+                        | syncStatus = SyncState.Live
+                        , tableSyncStatuses = SyncState.markAllTablesLive model.tableSyncStatuses
+                        , syncError = Nothing
+                    }
+            in
+            ( updatedModel
+            , emitSyncState (toSyncState updatedModel)
             )
 
 
@@ -404,11 +422,37 @@ buildMutationUrl baseUrl id =
 applyCatchupUpdate : Catchup.UpdateResult -> Model -> ( Model, Cmd Msg )
 applyCatchupUpdate result model =
     let
+        nextSyncStatus =
+            syncStatusFromCatchup result.model
+
+        nextTableSyncStatuses =
+            case nextSyncStatus of
+                SyncState.NotStarted ->
+                    model.tableSyncStatuses
+
+                SyncState.CatchingUp ->
+                    SyncState.markTablesCatchingUp result.touchedTables model.tableSyncStatuses
+
+                SyncState.Live ->
+                    SyncState.markAllTablesLive model.tableSyncStatuses
+
         updatedModel =
             { model
                 | catchup = result.model
                 , db = result.db
-                , syncStatus = syncStatusFromCatchup result.model
+                , syncStatus = nextSyncStatus
+                , tableSyncStatuses = nextTableSyncStatuses
+                , syncError =
+                    case result.error of
+                        Just message ->
+                            Just message
+
+                        Nothing ->
+                            if nextSyncStatus == SyncState.Live then
+                                Nothing
+
+                            else
+                                model.syncError
             }
 
         ( liveSyncModel, liveSyncCmd ) =
@@ -439,6 +483,7 @@ applyCatchupUpdate result model =
             , errorCmd
             , Cmd.batch triggerCmds
             , liveSyncCmd
+            , emitSyncState (toSyncState liveSyncModel)
             ]
                 ++ dbCmds
     in
@@ -447,20 +492,35 @@ applyCatchupUpdate result model =
     )
 
 
-syncStatusFromCatchup : Catchup.Model -> SyncStatus
+syncStatusFromCatchup : Catchup.Model -> SyncState.SyncStatus
 syncStatusFromCatchup catchupModel =
     case Catchup.status catchupModel of
         Catchup.NotStarted ->
-            NotStarted
+            SyncState.NotStarted
 
-        Catchup.Syncing progress ->
-            Syncing progress
+        Catchup.Syncing _ ->
+            SyncState.CatchingUp
 
         Catchup.Synced ->
-            Synced
+            SyncState.Live
 
-        Catchup.Error message ->
-            SyncError message
+        Catchup.Error _ ->
+            SyncState.CatchingUp
+
+
+toSyncState : Model -> SyncState.SyncState
+toSyncState model =
+    { status = model.syncStatus
+    , tables = model.tableSyncStatuses
+    }
+
+
+emitSyncState : SyncState.SyncState -> Cmd Msg
+emitSyncState syncState =
+    syncStateOut (SyncState.encodeSyncState syncState)
+
+
+port syncStateOut : Encode.Value -> Cmd msg
 
 
 startLiveSyncIfReady : Model -> ( Model, Cmd Msg )

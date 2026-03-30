@@ -58,6 +58,8 @@ export class QueryClientService {
   private queryStates: Map<string, QueryState> = new Map();
   private hasPorts = false;
   private logger: (payload: ErrorPayload) => void;
+  private onQueryResult: ((queryId: string) => void) | null = null;
+  private onQueryUnregister: ((queryId: string) => void) | null = null;
 
   constructor(logger?: (payload: ErrorPayload) => void) {
     this.logger = logger ?? ((payload) => {
@@ -85,6 +87,27 @@ export class QueryClientService {
 
   isAvailable(): boolean {
     return this.hasPorts;
+  }
+
+  setOnQueryResult(callback: (queryId: string) => void): void {
+    this.onQueryResult = callback;
+  }
+
+  setOnQueryUnregister(callback: (queryId: string) => void): void {
+    this.onQueryUnregister = callback;
+  }
+
+  getRegisteredQueryIds(): string[] {
+    return Array.from(this.queryStates.keys());
+  }
+
+  refreshQuery(queryId: string): void {
+    const state = this.queryStates.get(queryId);
+    if (!state) {
+      return;
+    }
+
+    this.updateQueryInput(queryId, state.input);
   }
 
   registerQuery(registration: QueryRegistration, callback: QueryResultCallback): void {
@@ -126,6 +149,7 @@ export class QueryClientService {
   unregisterQuery(queryId: string): void {
     console.log('[QueryClient] unregisterQuery:', queryId);
     this.queryStates.delete(queryId);
+    this.onQueryUnregister?.(queryId);
 
     const unregisterMessage = {
       type: 'unregister',
@@ -175,6 +199,7 @@ export class QueryClientService {
       state.result = envelope.result;
       state.revision = envelope.revision;
       state.callback(state.result);
+      this.onQueryResult?.(envelope.queryId);
       console.log('[QueryClient] handleMessage: callback completed');
       return;
     }
@@ -183,6 +208,7 @@ export class QueryClientService {
     state.result = nextResult;
     state.revision = envelope.revision;
     state.callback(state.result);
+    this.onQueryResult?.(envelope.queryId);
   }
 
   private applyDelta(queryId: string, result: unknown, delta: { ops: QueryDeltaOp[] }): unknown {

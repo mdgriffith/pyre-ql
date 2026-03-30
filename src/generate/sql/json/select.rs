@@ -517,7 +517,6 @@ fn select_single_json(
 
     // Compose main json payload
     let mut json_object = String::new();
-    let new_fieldnames = &to_fieldnames(context, table, &query_table_field.fields);
     let mut first_field = true;
     let mut explicit_columns = HashSet::new();
     for field in &query_table_field.fields {
@@ -536,42 +535,74 @@ fn select_single_json(
         }
     }
 
-    for field in new_fieldnames {
-        if !first_field {
-            json_object.push_str(",\n");
-        }
+    let mut rendered_columns: HashSet<String> = HashSet::new();
 
-        // Check if this is a boolean field by looking up the column type
-        let is_bool = query_table_field.fields.iter().any(|qf| {
-            if let ast::ArgField::Field(query_field) = qf {
-                if query_field.name == *field {
-                    if let Some(table_field) = table
-                        .record
-                        .fields
-                        .iter()
-                        .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
-                    {
+    for field in &query_table_field.fields {
+        match field {
+            ast::ArgField::Field(query_field) => {
+                if query_field.name == "*" {
+                    for table_field in &table.record.fields {
                         if let ast::Field::Column(column) = table_field {
-                            return column.type_.is_bool();
+                            if explicit_columns.contains(&column.name) {
+                                continue;
+                            }
+
+                            if rendered_columns.insert(column.name.clone()) {
+                                if !first_field {
+                                    json_object.push_str(",\n");
+                                }
+
+                                json_object
+                                    .push_str(&format!("{}    '{}', ", indent_str, column.name));
+                                select_type(
+                                    indent + 4,
+                                    context,
+                                    column,
+                                    table_alias,
+                                    &column.name,
+                                    &mut json_object,
+                                );
+
+                                first_field = false;
+                            }
                         }
+                    }
+
+                    continue;
+                }
+
+                if let Some(ast::Field::Column(column)) = table
+                    .record
+                    .fields
+                    .iter()
+                    .find(|&f| ast::has_field_or_linkname(&f, &query_field.name))
+                {
+                    let aliased_field_name = ast::get_aliased_name(query_field);
+
+                    if rendered_columns.insert(aliased_field_name.clone()) {
+                        if !first_field {
+                            json_object.push_str(",\n");
+                        }
+
+                        json_object
+                            .push_str(&format!("{}    '{}', ", indent_str, aliased_field_name));
+                        select_type(
+                            indent + 4,
+                            context,
+                            column,
+                            table_alias,
+                            &query_field.name,
+                            &mut json_object,
+                        );
+
+                        first_field = false;
                     }
                 }
             }
-            false
-        });
-
-        if is_bool {
-            json_object.push_str(&format!(
-                "{}    '{}', jsonb(case when {}.{} = 1 then 'true' else 'false' end)",
-                indent_str, field, table_alias, field
-            ));
-        } else {
-            json_object.push_str(&format!(
-                "{}    '{}', {}.{}",
-                indent_str, field, table_alias, field
-            ));
+            ast::ArgField::Arg(_)
+            | ast::ArgField::Lines { .. }
+            | ast::ArgField::QueryComment { .. } => continue,
         }
-        first_field = false;
     }
 
     // initial selection

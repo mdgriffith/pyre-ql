@@ -41,7 +41,7 @@ The Pyre Elm client maintains an in-memory database synchronized with a remote s
 - Encode/decode messages to/from SSE
 - Types for SSE-specific data:
   - `SSEConfig` - Configuration for connecting to SSE endpoint
-  - `SyncProgress` - Progress updates during synchronization
+  - `SyncProgress` - Low-level live-sync progress events
 
 **Outgoing Messages** (Elm → SSE):
 - `ConnectSSE` - Establish SSE connection
@@ -55,6 +55,14 @@ The Pyre Elm client maintains an in-memory database synchronized with a remote s
 - `SyncCompleteReceived` - Synchronization complete
 
 **Note**: Deltas originate from the server via SSE. Delta types are shared via `Data.Delta`.
+
+### `Data.SyncState`
+**Purpose**: High-level sync lifecycle state shared with the TypeScript host.
+
+**Responsibilities**:
+- Represent global sync state (`not_started`, `catching_up`, `live`)
+- Represent per-table catchup state (`waiting`, `catching_up`, `live`)
+- Encode sync state for the `syncStateOut` port
 
 ### `Db`
 **Purpose**: In-memory database representation and domain logic

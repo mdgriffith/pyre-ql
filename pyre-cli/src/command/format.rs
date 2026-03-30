@@ -33,14 +33,17 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
             match get_stdin()? {
                 Some(stdin) => {
                     if pyre::filesystem::is_schema_file(file_path) {
-                        let mut schema = parse_single_schema_from_source(
-                            file_path,
-                            &stdin,
-                            options.enable_color,
-                        )?;
-                        format::schema(&mut schema);
-                        // Always write to stdout if stdin is provided
-                        write_schema(&options, &true, &schema)?;
+                        if !format_schema_file_with_context(options, file_path, Some(&stdin), true)?
+                        {
+                            let mut schema = parse_single_schema_from_source(
+                                file_path,
+                                &stdin,
+                                options.enable_color,
+                            )?;
+                            format::schema(&mut schema);
+                            // Always write to stdout if stdin is provided
+                            write_schema(&options, &true, &schema)?;
+                        }
                     } else {
                         let paths = filesystem::collect_filepaths(&options.in_dir)?;
                         let schema = parse_database_schemas(&paths, options.enable_color)?;
@@ -50,9 +53,11 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                 }
                 None => {
                     if pyre::filesystem::is_schema_file(file_path) {
-                        let mut schema = parse_single_schema(file_path, options.enable_color)?;
-                        format::schema(&mut schema);
-                        write_schema(&options, &to_stdout, &schema)?;
+                        if !format_schema_file_with_context(options, file_path, None, to_stdout)? {
+                            let mut schema = parse_single_schema(file_path, options.enable_color)?;
+                            format::schema(&mut schema);
+                            write_schema(&options, &to_stdout, &schema)?;
+                        }
                     } else {
                         let paths = filesystem::collect_filepaths(&options.in_dir)?;
                         let database = parse_database_schemas(&paths, options.enable_color)?;
@@ -63,6 +68,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
             }
         }
         _ => {
+            let mut pending_schema_files: Vec<String> = vec![];
             for file_path in files {
                 if !file_path.ends_with(".pyre") && !to_stdout {
                     println!("{} doesn't end in .pyre, skipping", file_path);
@@ -70,9 +76,7 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                 }
 
                 if pyre::filesystem::is_schema_file(&file_path) {
-                    let mut schema = parse_single_schema(&file_path, options.enable_color)?;
-                    format::schema(&mut schema);
-                    write_schema(&options, &to_stdout, &schema)?;
+                    pending_schema_files.push(file_path.clone());
                 } else {
                     let paths = filesystem::collect_filepaths(&options.in_dir)?;
                     let database = parse_database_schemas(&paths, options.enable_color)?;
@@ -80,6 +84,11 @@ pub fn format(options: &Options, files: &Vec<String>, to_stdout: bool) -> io::Re
                     format_query(&options, &database, &to_stdout, &file_path)?;
                 }
             }
+
+            if !pending_schema_files.is_empty() {
+                format_schema_files_with_context(options, &pending_schema_files, to_stdout)?;
+            }
+
             if !to_stdout {
                 println!("{} files were formatted", files.len());
             }
@@ -100,6 +109,96 @@ fn format_all(options: &Options, paths: pyre::filesystem::Found) -> io::Result<(
     }
 
     Ok(())
+}
+
+fn format_schema_files_with_context(
+    options: &Options,
+    file_paths: &[String],
+    to_stdout: bool,
+) -> io::Result<()> {
+    let paths = filesystem::collect_filepaths(&options.in_dir)?;
+    let mut database = parse_database_schemas(&paths, options.enable_color)?;
+    format::database(&mut database);
+
+    for file_path in file_paths {
+        write_selected_schema_file(&database, file_path, to_stdout)?;
+    }
+
+    Ok(())
+}
+
+fn format_schema_file_with_context(
+    options: &Options,
+    file_path: &str,
+    override_source: Option<&str>,
+    to_stdout: bool,
+) -> io::Result<bool> {
+    let mut paths = filesystem::collect_filepaths(&options.in_dir)?;
+
+    if !replace_schema_source(&mut paths, file_path, override_source) {
+        return Ok(false);
+    }
+
+    let mut database = parse_database_schemas(&paths, options.enable_color)?;
+    format::database(&mut database);
+    write_selected_schema_file(&database, file_path, to_stdout)?;
+
+    Ok(true)
+}
+
+fn replace_schema_source(
+    paths: &mut pyre::filesystem::Found,
+    file_path: &str,
+    override_source: Option<&str>,
+) -> bool {
+    let mut matched = false;
+    let target_path = Path::new(file_path);
+
+    for schema_files in paths.schema_files.values_mut() {
+        for schema_file in schema_files.iter_mut() {
+            let schema_path = Path::new(&schema_file.path);
+            if schema_file.path == file_path || schema_path.ends_with(target_path) {
+                matched = true;
+                if let Some(source) = override_source {
+                    schema_file.content = source.to_string();
+                }
+            }
+        }
+    }
+
+    matched
+}
+
+fn write_selected_schema_file(
+    database: &ast::Database,
+    file_path: &str,
+    to_stdout: bool,
+) -> io::Result<()> {
+    let target_path = Path::new(file_path);
+
+    for schema in &database.schemas {
+        for schema_file in &schema.files {
+            let schema_path = Path::new(&schema_file.path);
+            if schema_file.path == file_path || schema_path.ends_with(target_path) {
+                let formatted =
+                    generate::to_string::schemafile_to_string(&schema.namespace, schema_file);
+
+                if to_stdout {
+                    println!("{}", formatted);
+                } else {
+                    let mut output = fs::File::create(schema_path)?;
+                    output.write_all(formatted.as_bytes())?;
+                }
+
+                return Ok(());
+            }
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("Schema file not found: {}", file_path),
+    ))
 }
 
 fn format_query_to_std_out(

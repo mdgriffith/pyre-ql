@@ -1,4 +1,4 @@
-import { loadElm } from '../dist/engine.mjs';
+import loadElm from '../dist/engine.mjs';
 import { IndexedDBStorage, IndexedDbService } from './service/indexeddb';
 import { QueryClientService } from './service/query-client';
 import { QueryManagerService } from './service/query-manager';
@@ -10,10 +10,21 @@ import type {
   SchemaMetadata,
   ServerConfig,
   ServerEndpoints,
+  SyncState,
+  SyncStatus,
   SyncProgress,
+  TableSyncStatus,
 } from './types';
 
-export type { LiveSyncTransport, ServerConfig, ServerEndpoints, SyncProgress } from './types';
+export type {
+  LiveSyncTransport,
+  ServerConfig,
+  ServerEndpoints,
+  SyncProgress,
+  SyncState,
+  SyncStatus,
+  TableSyncStatus,
+} from './types';
 export type { MutationResult } from './service/query-manager';
 
 
@@ -44,9 +55,13 @@ export class PyreClient {
   private sseManager: SSEManager;
   private webSocketManager: WebSocketManager;
   private sessionId: string | null = null;
+  private syncStateCallbacks: Set<(state: SyncState) => void> = new Set();
   private syncProgressCallbacks: Set<(progress: SyncProgress) => void> = new Set();
   private sessionCallbacks: Set<(sessionId: string) => void> = new Set();
+  private lastSyncState: SyncState;
   private lastSyncProgress: SyncProgress | null = null;
+  private pendingLiveState: SyncState | null = null;
+  private pendingLiveQueries: Set<string> = new Set();
   private queryManager: QueryManagerService;
   private queryClient: QueryClientService;
   private server: ServerConfig;
@@ -63,6 +78,8 @@ export class PyreClient {
       query: '/db',
       ...config.server.endpoints,
     };
+    this.lastSyncState = createInitialSyncState(config.schema);
+    this.lastSyncProgress = toSyncProgress(this.lastSyncState);
 
     const elmScope = Object.create(globalThis) as typeof globalThis & { Elm?: unknown };
     elmScope.Elm = undefined;
@@ -110,6 +127,8 @@ export class PyreClient {
         console.error('[PyreClient] QueryClient error', payload);
       }
     });
+    this.queryClient.setOnQueryResult(this.handleQueryResult);
+    this.queryClient.setOnQueryUnregister(this.handleQueryUnregister);
 
     this.indexedDbService.attachPorts(this.elmApp);
     this.sseManager.setOnMessage(this.handleLiveSyncMessage);
@@ -122,12 +141,25 @@ export class PyreClient {
     if (this.elmApp.ports.errorOut) {
       this.elmApp.ports.errorOut.subscribe((message) => {
         console.log('[PyreClient] port errorOut <-', message);
+        const nextState = { ...this.lastSyncState, error: message };
+        this.updateSyncState(nextState);
         const error = new Error(message);
         if (config.onError) {
           config.onError(error);
         } else {
           console.error('[PyreClient]', message);
         }
+      });
+    }
+
+    if (this.elmApp.ports.syncStateOut) {
+      this.elmApp.ports.syncStateOut.subscribe((message) => {
+        const parsed = parseSyncStateMessage(message);
+        if (!parsed) {
+          return;
+        }
+
+        this.handleRawSyncState(parsed);
       });
     }
   }
@@ -143,6 +175,14 @@ export class PyreClient {
     }
     return () => {
       this.syncProgressCallbacks.delete(callback);
+    };
+  }
+
+  onSyncState(callback: (state: SyncState) => void): () => void {
+    this.syncStateCallbacks.add(callback);
+    callback(this.lastSyncState);
+    return () => {
+      this.syncStateCallbacks.delete(callback);
     };
   }
 
@@ -177,6 +217,16 @@ export class PyreClient {
     this.sseManager.disconnect();
     this.webSocketManager.disconnect();
     this.sessionId = null;
+    this.pendingLiveState = null;
+    this.pendingLiveQueries.clear();
+    const resetState = {
+      ...this.lastSyncState,
+      status: 'not_started' as const,
+      tables: Object.fromEntries(
+        Object.keys(this.lastSyncState.tables).map((table) => [table, 'waiting' as const])
+      ),
+    };
+    this.updateSyncState(resetState);
   }
 
   private handleLiveSyncMessage = (message: LiveSyncMessage): void => {
@@ -187,22 +237,89 @@ export class PyreClient {
       });
     }
 
-    if (message.type === 'syncProgress' && message.data) {
-      const progress = message.data as SyncProgress;
-      this.lastSyncProgress = progress;
-      this.syncProgressCallbacks.forEach((callback) => {
-        callback(progress);
-      });
+    if (message.type === 'syncProgress') {
+      const nextState = {
+        ...this.lastSyncState,
+        status: 'catching_up' as const,
+      };
+      this.handleRawSyncState(nextState);
     }
 
-    if (message.type === 'syncComplete' && this.lastSyncProgress) {
-      const progress = { ...this.lastSyncProgress, complete: true };
-      this.lastSyncProgress = progress;
-      this.syncProgressCallbacks.forEach((callback) => {
-        callback(progress);
+    if (message.type === 'syncComplete') {
+      const liveTables: Record<string, TableSyncStatus> = {};
+      Object.keys(this.lastSyncState.tables).forEach((tableName) => {
+        liveTables[tableName] = 'live';
       });
+      const nextState = {
+        ...this.lastSyncState,
+        status: 'live' as const,
+        tables: liveTables,
+      };
+      this.handleRawSyncState(nextState);
     }
   };
+
+  private handleRawSyncState(state: SyncState): void {
+    if (state.status !== 'live') {
+      this.pendingLiveState = null;
+      this.pendingLiveQueries.clear();
+      this.updateSyncState(state);
+      return;
+    }
+
+    const registeredQueryIds = this.queryClient.getRegisteredQueryIds();
+    if (registeredQueryIds.length === 0) {
+      this.pendingLiveState = null;
+      this.pendingLiveQueries.clear();
+      this.updateSyncState(state);
+      return;
+    }
+
+    this.pendingLiveState = state;
+    this.pendingLiveQueries = new Set(registeredQueryIds);
+    registeredQueryIds.forEach((queryId) => {
+      this.queryClient.refreshQuery(queryId);
+    });
+  }
+
+  private handleQueryResult = (queryId: string): void => {
+    if (!this.pendingLiveState) {
+      return;
+    }
+
+    this.pendingLiveQueries.delete(queryId);
+    if (this.pendingLiveQueries.size === 0) {
+      const nextState = this.pendingLiveState;
+      this.pendingLiveState = null;
+      this.updateSyncState(nextState);
+    }
+  };
+
+  private handleQueryUnregister = (queryId: string): void => {
+    if (!this.pendingLiveState) {
+      return;
+    }
+
+    this.pendingLiveQueries.delete(queryId);
+    if (this.pendingLiveQueries.size === 0) {
+      const nextState = this.pendingLiveState;
+      this.pendingLiveState = null;
+      this.updateSyncState(nextState);
+    }
+  };
+
+  private updateSyncState(state: SyncState): void {
+    this.lastSyncState = state;
+    this.syncStateCallbacks.forEach((callback) => {
+      callback(state);
+    });
+
+    const progress = toSyncProgress(state);
+    this.lastSyncProgress = progress;
+    this.syncProgressCallbacks.forEach((callback) => {
+      callback(progress);
+    });
+  }
 
   async deleteDatabase(): Promise<void> {
     await this.storage.deleteDatabase();
@@ -264,4 +381,66 @@ export class PyreClient {
       this.server.headers
     );
   }
+}
+
+function createInitialSyncState(schema: SchemaMetadata): SyncState {
+  const tables: Record<string, TableSyncStatus> = {};
+  Object.keys(schema.tables).forEach((tableName) => {
+    tables[tableName] = 'waiting';
+  });
+
+  return {
+    status: 'not_started',
+    tables,
+  };
+}
+
+function parseSyncStateMessage(message: unknown): SyncState | null {
+  if (!message || typeof message !== 'object') {
+    return null;
+  }
+
+  const candidate = message as {
+    status?: unknown;
+    tables?: unknown;
+  };
+
+  if (
+    candidate.status !== 'not_started'
+    && candidate.status !== 'catching_up'
+    && candidate.status !== 'live'
+  ) {
+    return null;
+  }
+
+  if (!candidate.tables || typeof candidate.tables !== 'object') {
+    return null;
+  }
+
+  const tableStatuses: Record<string, TableSyncStatus> = {};
+  Object.entries(candidate.tables as Record<string, unknown>).forEach(([tableName, tableStatus]) => {
+    if (tableStatus === 'waiting' || tableStatus === 'catching_up' || tableStatus === 'live') {
+      tableStatuses[tableName] = tableStatus;
+    }
+  });
+
+  return {
+    status: candidate.status,
+    tables: tableStatuses,
+  };
+}
+
+function toSyncProgress(state: SyncState): SyncProgress {
+  const tableStatuses = Object.values(state.tables);
+  const totalTables = tableStatuses.length;
+  const tablesSynced = tableStatuses.filter((status) => status === 'live').length;
+  const activeTable = Object.entries(state.tables).find(([, status]) => status === 'catching_up')?.[0];
+
+  return {
+    table: activeTable,
+    tablesSynced,
+    totalTables,
+    complete: state.status === 'live',
+    error: state.error,
+  };
 }

@@ -1,6 +1,7 @@
 declare module '../dist/engine.mjs' {
   const loadElm: (globalObject: unknown) => any;
 
+  export { loadElm };
   export default loadElm;
 }
 

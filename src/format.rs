@@ -259,7 +259,7 @@ fn format_definition(
                 for field in fields.iter() {
                     match field {
                         ast::Field::FieldDirective(ast::FieldDirective::Link(existing_link)) => {
-                            if existing_link.link_name == link.link_name {
+                            if ast::link_equivalent(existing_link, link) {
                                 found = true;
                             }
                         }
@@ -277,7 +277,7 @@ fn format_definition(
                     ast::Field::FieldDirective(ast::FieldDirective::Link(existing_link)) => {
                         let mut found = false;
                         for (_is_calculated, link) in links_on_this_table {
-                            if link.link_name == existing_link.link_name {
+                            if ast::link_equivalent(existing_link, link) {
                                 found = true;
                             }
                         }

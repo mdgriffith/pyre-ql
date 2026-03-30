@@ -57,3 +57,14 @@ flowchart TD
   - after IndexedDB bootstraps, and
   - after each catchup page, and
   - after each SSE delta.
+
+## Public sync state
+
+- `PyreClient.onSyncState(...)` reports the high-level lifecycle as:
+  - `not_started` before catchup begins
+  - `catching_up` while initial catchup is running
+  - `live` once initial catchup completes, live sync is active, and all queries registered at that moment have been fulfilled against the fully caught-up local DB
+- Per-table state is reported as:
+  - `waiting` before a table is seen during catchup
+  - `catching_up` after a table has appeared in catchup work but before global catchup completes
+  - `live` after the client finishes initial catchup
