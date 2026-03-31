@@ -150,6 +150,7 @@ pub fn to_string_with_affected_rows(
             )
         }
         ast::QueryOperation::Update => crate::generate::sql::cte::update::update_to_string(
+            context,
             query_info,
             table,
             table_field,

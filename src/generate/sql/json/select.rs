@@ -496,15 +496,7 @@ fn select_single_json(
     sql: &mut String,
 ) {
     let indent_str = " ".repeat(indent);
-
-    // Check if link points to unique fields by examining the foreign table's schema
-    let linked_to_unique = if let Some(linked_table) = typecheck::get_linked_table(context, link) {
-        ast::linked_to_unique_field_with_record(link, &linked_table.record)
-    } else {
-        // Fallback to simple check if table not found
-        ast::linked_to_unique_field(link)
-    };
-    let aggregate_to_array = !linked_to_unique;
+    let aggregate_to_array = !link_returns_singular_result(context, &table.record, link);
 
     // This is the link.foreign_id, which is the id on this table
     let mut full_foreign_id = String::new();
@@ -702,6 +694,7 @@ fn select_formatted_as_json(
     sql: &mut String,
 ) {
     let indent_str = " ".repeat(indent);
+    let aggregate_to_array = !link_returns_singular_result(context, &table.record, link);
 
     let aliased_name = ast::get_aliased_name(query_table_field);
     let base_table_name = format!("temp_selected_{}", &aliased_name);
@@ -713,9 +706,14 @@ fn select_formatted_as_json(
     }
 
     // initial selection
+    let array_agg_start = if aggregate_to_array {
+        "jsonb_group_array("
+    } else {
+        ""
+    };
     sql.push_str(&format!(
-        "\n{}select\n  {}{}.{},\n{}  jsonb_group_array(jsonb_object(\n",
-        indent_str, indent_str, base_table_name, full_foreign_id, indent_str
+        "\n{}select\n  {}{}.{},\n{}  {}jsonb_object(\n",
+        indent_str, indent_str, base_table_name, full_foreign_id, indent_str, array_agg_start
     ));
 
     // Compose main json payload
@@ -791,14 +789,7 @@ fn select_formatted_as_json(
                             if !first_field {
                                 sql.push_str(",\n");
                             }
-                            let linked_to_unique = if let Some(linked_table) =
-                                typecheck::get_linked_table(context, link)
-                            {
-                                ast::linked_to_unique_field_with_record(link, &linked_table.record)
-                            } else {
-                                ast::linked_to_unique_field(link)
-                            };
-                            if linked_to_unique {
+                            if link_returns_singular_result(context, &table.record, link) {
                                 // singular result, no need to coalesce
 
                                 sql.push_str(&format!(
@@ -831,7 +822,11 @@ fn select_formatted_as_json(
         }
     }
 
-    sql.push_str(&format!("\n{}  )) as {}\n", indent_str, aliased_name));
+    let close_expr = if aggregate_to_array { "))" } else { ")" };
+    sql.push_str(&format!(
+        "\n{}  {} as {}\n",
+        indent_str, close_expr, aliased_name
+    ));
 
     // FROM
     sql.push_str(&format!("{}from {}\n", indent_str, base_table_name));
@@ -876,15 +871,17 @@ fn select_formatted_as_json(
         }
     }
 
-    sql.push_str(&format!(
-        "{}group by {}.{}\n",
-        indent_str, base_table_name, full_foreign_id
-    ));
-    // Add ORDER BY after GROUP BY to ensure deterministic ordering
-    sql.push_str(&format!(
-        "{}order by {}.{}\n",
-        indent_str, base_table_name, full_foreign_id
-    ));
+    if aggregate_to_array {
+        sql.push_str(&format!(
+            "{}group by {}.{}\n",
+            indent_str, base_table_name, full_foreign_id
+        ));
+        // Add ORDER BY after GROUP BY to ensure deterministic ordering
+        sql.push_str(&format!(
+            "{}order by {}.{}\n",
+            indent_str, base_table_name, full_foreign_id
+        ));
+    }
 }
 
 fn select_type(
@@ -897,16 +894,62 @@ fn select_type(
     //
     sql: &mut String,
 ) {
+    select_type_with_json_mode(
+        indent,
+        context,
+        column,
+        base_table_name,
+        query_field_name,
+        true,
+        sql,
+    );
+}
+
+fn select_type_final(
+    indent: usize,
+    context: &typecheck::Context,
+    column: &ast::Column,
+    base_table_name: &str,
+    query_field_name: &str,
+
+    //
+    sql: &mut String,
+) {
+    select_type_with_json_mode(
+        indent,
+        context,
+        column,
+        base_table_name,
+        query_field_name,
+        false,
+        sql,
+    );
+}
+
+fn select_type_with_json_mode(
+    indent: usize,
+    context: &typecheck::Context,
+    column: &ast::Column,
+    base_table_name: &str,
+    query_field_name: &str,
+    use_jsonb: bool,
+    sql: &mut String,
+) {
     if matches!(column.type_, ast::ColumnType::Json) {
-        sql.push_str(&format!("jsonb({}.{})", base_table_name, query_field_name));
+        let json_fn = if use_jsonb { "jsonb" } else { "json" };
+        sql.push_str(&format!(
+            "{}({}.{})",
+            json_fn, base_table_name, query_field_name
+        ));
         return;
     }
 
     // Handle boolean types: SQLite stores booleans as 0/1, convert to JSON boolean
     if column.type_.is_bool() {
+        let json_fn = if use_jsonb { "jsonb" } else { "json" };
         sql.push_str(&format!(
-            "jsonb(case when {}.{} = 1 then 'true' else 'false' end)",
-            base_table_name, query_field_name
+            "{}(case when {}.{} = 1 then 'true' else 'false' end)",
+            json_fn, base_table_name, query_field_name
         ));
         return;
     }
@@ -929,84 +972,66 @@ fn select_type(
                 sql.push_str(&format!("{}.{}", base_table_name, query_field_name))
             }
             typecheck::Type::OneOf { variants, .. } => {
-                let is_enum = variants.iter().all(|v| v.fields.is_none());
-                if is_enum {
-                    // We just serve the tag
-                    sql.push_str(&format!("{}.{}", base_table_name, query_field_name))
+                let object_fn = if use_jsonb {
+                    "jsonb_object"
                 } else {
-                    /* We're going to be generated code like this
-                    SELECT
-                    json_object(
-                        '$', CASE
-                            WHEN status = 'Active' THEN 'active'
-                            WHEN status = 'Inactive' THEN json_object(
-                                'tag', 'inactive',
-                                'inactivatedAt', inactivated_at
-                            )
-                        END
-                    ) AS status_json
-                    FROM your_table
-                    */
+                    "json_object"
+                };
+                let indent_str = " ".repeat(indent);
+                let when_indent = " ".repeat(indent + 2);
+                let obj_indent = " ".repeat(indent + 4);
+                let obj_field_indent = " ".repeat(indent + 6);
+                sql.push_str(&format!("\n{}case\n", indent_str));
+                for var in variants {
+                    sql.push_str(&format!(
+                        "{}when {}.{} = '{}' then",
+                        when_indent, base_table_name, query_field_name, var.name
+                    ));
 
-                    let indent_str = " ".repeat(indent);
-                    let when_indent = " ".repeat(indent + 2);
-                    let obj_indent = " ".repeat(indent + 4);
-                    let obj_field_indent = " ".repeat(indent + 6);
-                    sql.push_str(&format!("\n{}case\n", indent_str));
-                    for var in variants {
-                        sql.push_str(&format!(
-                            "{}when {}.{} = '{}' then",
-                            when_indent, base_table_name, query_field_name, var.name
-                        ));
+                    match &var.fields {
+                        None => sql.push_str(&format!(" {}('type', '{}')\n", object_fn, var.name)),
+                        Some(fields) => {
+                            sql.push_str(&format!("\n{}{}(", obj_indent, object_fn));
 
-                        match &var.fields {
-                            None => sql.push_str(&format!(" jsonb_object('$', '{}')\n", var.name)),
-                            Some(fields) => {
-                                sql.push_str(&format!("\n{}jsonb_object(", obj_indent));
+                            sql.push_str(&format!("\n{}'type', '{}',", obj_field_indent, var.name));
 
-                                sql.push_str(&format!(
-                                    "\n{}'$', '{}',",
-                                    obj_field_indent, var.name
-                                ));
-
-                                let mut first_field = true;
-                                for field in fields {
-                                    match field {
-                                        ast::Field::Column(inner_column) => {
-                                            if !first_field {
-                                                sql.push_str(
-                                                    format!(",\n{}", obj_field_indent).as_str(),
-                                                );
-                                            } else {
-                                                sql.push_str(
-                                                    format!("\n{}", obj_field_indent).as_str(),
-                                                );
-                                            }
-                                            sql.push_str(&format!("'{}', ", inner_column.name,));
-
-                                            select_type(
-                                                indent + 4,
-                                                context,
-                                                inner_column,
-                                                base_table_name,
-                                                &format!(
-                                                    "{}__{}",
-                                                    query_field_name, &inner_column.name
-                                                ),
-                                                sql,
+                            let mut first_field = true;
+                            for field in fields {
+                                match field {
+                                    ast::Field::Column(inner_column) => {
+                                        if !first_field {
+                                            sql.push_str(
+                                                format!(",\n{}", obj_field_indent).as_str(),
                                             );
-                                            // sql.push_str(", ");
-                                            first_field = false;
+                                        } else {
+                                            sql.push_str(
+                                                format!("\n{}", obj_field_indent).as_str(),
+                                            );
                                         }
-                                        _ => continue,
+                                        sql.push_str(&format!("'{}', ", inner_column.name,));
+
+                                        select_type_with_json_mode(
+                                            indent + 4,
+                                            context,
+                                            inner_column,
+                                            base_table_name,
+                                            &format!(
+                                                "{}__{}",
+                                                query_field_name, &inner_column.name
+                                            ),
+                                            use_jsonb,
+                                            sql,
+                                        );
+                                        first_field = false;
                                     }
+                                    _ => continue,
                                 }
-                                sql.push_str(&format!("\n{})\n", obj_indent));
                             }
+                            sql.push_str(&format!("\n{})\n", obj_indent));
                         }
                     }
-                    sql.push_str(&format!("{}end", indent_str));
                 }
+                sql.push_str(&format!("{}end", indent_str));
             }
             typecheck::Type::Record(_) => {
                 sql.push_str(&format!("{}.{}", base_table_name, query_field_name))
@@ -1045,6 +1070,8 @@ fn render_json_column(
 }
 
 fn render_final_json_column(
+    context: &typecheck::Context,
+    indent: usize,
     indent_str: &str,
     base_table_name: &str,
     field_name: &str,
@@ -1058,16 +1085,14 @@ fn render_final_json_column(
     }
 
     sql.push_str(&format!("{}      '{}', ", indent_str, field_name));
-    if matches!(column.type_, ast::ColumnType::Json) {
-        sql.push_str(&format!("json({}.{})", base_table_name, column_name));
-    } else if column.type_.is_bool() {
-        sql.push_str(&format!(
-            "json(case when {}.{} = 1 then 'true' else 'false' end)",
-            base_table_name, column_name
-        ));
-    } else {
-        sql.push_str(&format!("{}.{}", base_table_name, column_name));
-    }
+    select_type_final(
+        indent + 6,
+        context,
+        column,
+        base_table_name,
+        column_name,
+        sql,
+    );
 
     *first_field = false;
 }
@@ -1134,6 +1159,8 @@ fn final_select_formatted_as_json(
                             }
                             if rendered_columns.insert(column.name.clone()) {
                                 render_final_json_column(
+                                    context,
+                                    indent,
                                     &indent_str,
                                     &base_table_name,
                                     &column.name,
@@ -1160,6 +1187,8 @@ fn final_select_formatted_as_json(
                         ast::Field::Column(column) => {
                             if rendered_columns.insert(aliased_field_name.clone()) {
                                 render_final_json_column(
+                                    context,
+                                    indent,
                                     &indent_str,
                                     &base_table_name,
                                     &aliased_field_name,
@@ -1175,14 +1204,7 @@ fn final_select_formatted_as_json(
                                 sql.push_str(",\n");
                             }
 
-                            let linked_to_unique = if let Some(linked_table) =
-                                typecheck::get_linked_table(context, link)
-                            {
-                                ast::linked_to_unique_field_with_record(link, &linked_table.record)
-                            } else {
-                                ast::linked_to_unique_field(link)
-                            };
-                            if linked_to_unique {
+                            if link_returns_singular_result(context, &table.record, link) {
                                 // singular result, no need to coalesce
                                 sql.push_str(&format!(
                                     "{}      '{}', temp__{}.{}",
@@ -1271,6 +1293,28 @@ fn final_select_formatted_as_json(
     }
 
     // sql.push_str(&format!("{}group by {}\n", indent_str, full_foreign_id));
+}
+
+fn link_returns_singular_result(
+    context: &typecheck::Context,
+    local_record: &ast::RecordDetails,
+    link: &ast::LinkDetails,
+) -> bool {
+    let primary_key_name = ast::get_primary_id_field_name(&local_record.fields);
+    let is_one_to_many = link.local_ids.iter().all(|id| {
+        primary_key_name
+            .as_ref()
+            .map(|pk| id == pk)
+            .unwrap_or(false)
+    });
+
+    let linked_to_unique = if let Some(linked_table) = typecheck::get_linked_table(context, link) {
+        ast::linked_to_unique_field_with_record(link, &linked_table.record)
+    } else {
+        ast::linked_to_unique_field(link)
+    };
+
+    !is_one_to_many && linked_to_unique
 }
 
 fn to_temp_table_alias(query_field: &ast::QueryField, table: &typecheck::Table) -> String {

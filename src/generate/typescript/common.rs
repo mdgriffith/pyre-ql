@@ -147,9 +147,32 @@ pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
             .join(", ");
 
         result.push_str(&format!(
-            "export const {} = z.enum([{}]);\n\n",
+            "const {0}Enum = z.enum([{1}]);\n\n",
             name, variants_as_literals
         ));
+        result.push_str(&format!(
+            "export const {0} = z.preprocess((value) => {{\n",
+            name
+        ));
+        result.push_str("  if (typeof value === 'string') {\n");
+        result.push_str("    return value;\n");
+        result.push_str("  }\n\n");
+        result.push_str(
+            "  if (value != null && typeof value === 'object' && !Array.isArray(value)) {\n",
+        );
+        result.push_str("    const record = value as Record<string, unknown>;\n");
+        result.push_str("    if (typeof record.type === 'string') {\n");
+        result.push_str("      return record.type;\n");
+        result.push_str("    }\n");
+        result.push_str("    if (typeof record.type_ === 'string') {\n");
+        result.push_str("      return record.type_;\n");
+        result.push_str("    }\n");
+        result.push_str("    if (typeof record.$ === 'string') {\n");
+        result.push_str("      return record.$;\n");
+        result.push_str("    }\n");
+        result.push_str("  }\n\n");
+        result.push_str("  return value;\n");
+        result.push_str(&format!("}}, {0}Enum);\n\n", name));
         result.push_str(&format!(
             "export type {} = z.infer<typeof {}>;\n\n",
             name, name
@@ -230,22 +253,26 @@ pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
         variant_field_names_literal
     ));
     result.push_str("    for (const fieldName of variantFields) {\n");
-    result.push_str("      if (!(fieldName in normalized)) {\n");
     result.push_str(
-        "        const prefixedKey = Object.keys(normalized).find((key) => key.endsWith(`__${fieldName}`));\n",
+        "      const prefixedKey = Object.keys(normalized).find((key) => key.endsWith(`__${fieldName}`));\n",
     );
-    result.push_str("        if (prefixedKey) {\n");
-    result.push_str("          normalized[fieldName] = normalized[prefixedKey];\n");
-    result.push_str("        }\n");
+    result.push_str("      if (prefixedKey) {\n");
+    result.push_str("        normalized[fieldName] = normalized[prefixedKey];\n");
     result.push_str("      }\n");
     result.push_str("    }\n\n");
+    result.push_str("    if (!('type_' in normalized)) {\n");
+    result.push_str("      if ('type' in normalized && typeof normalized.type === 'string') {\n");
     result.push_str(
-        "    if (!('type_' in normalized) && '$' in normalized && typeof normalized.$ === 'string') {\n",
+        "        const { type: type_, ...rest } = normalized as Record<string, unknown> & { type: string };\n",
     );
+    result.push_str("        return { type_, ...rest };\n");
+    result.push_str("      }\n");
+    result.push_str("      if ('$' in normalized && typeof normalized.$ === 'string') {\n");
     result.push_str(
-        "      const { $: type_, ...rest } = normalized as Record<string, unknown> & { $: string };\n",
+        "        const { $: type_, ...rest } = normalized as Record<string, unknown> & { $: string };\n",
     );
-    result.push_str("      return { type_, ...rest };\n");
+    result.push_str("        return { type_, ...rest };\n");
+    result.push_str("      }\n");
     result.push_str("    }\n\n");
     result.push_str("    return normalized;\n");
     result.push_str("  }\n\n");

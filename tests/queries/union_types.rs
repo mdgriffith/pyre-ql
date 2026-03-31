@@ -50,7 +50,11 @@ async fn test_union_type_in_schema() -> Result<(), TestError> {
     // Verify the status values
     let statuses: Vec<&str> = users
         .iter()
-        .filter_map(|u| u.get("status").and_then(|s| s.as_str()))
+        .filter_map(|u| {
+            u.get("status")
+                .and_then(|s| s.get("type"))
+                .and_then(|s| s.as_str())
+        })
         .collect();
     assert!(
         statuses.contains(&"Active"),
@@ -134,16 +138,20 @@ async fn test_union_column_reuse() -> Result<(), TestError> {
     assert_eq!(records.len(), 2, "Should have 2 test records");
 
     // Check that both Success and Warning variants were stored
-    let result_values: Vec<&str> = records
-        .iter()
-        .filter_map(|r| r.get("result").and_then(|s| s.as_str()))
-        .collect();
+    let result_values: Vec<&serde_json::Value> =
+        records.iter().filter_map(|r| r.get("result")).collect();
     assert!(
-        result_values.contains(&"Success"),
+        result_values.iter().any(|result| {
+            result.get("type").and_then(|s| s.as_str()) == Some("Success")
+                && result.get("message").and_then(|m| m.as_str()) == Some("Success!")
+        }),
         "Should contain 'Success' variant"
     );
     assert!(
-        result_values.contains(&"Warning"),
+        result_values.iter().any(|result| {
+            result.get("type").and_then(|s| s.as_str()) == Some("Warning")
+                && result.get("message").and_then(|m| m.as_str()) == Some("Warning!")
+        }),
         "Should contain 'Warning' variant"
     );
 

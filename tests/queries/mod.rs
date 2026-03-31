@@ -1,5 +1,6 @@
 mod affected_rows;
 mod basic;
+mod contract_shape;
 mod limit;
 mod multiple_inserts;
 mod mutation_responses;

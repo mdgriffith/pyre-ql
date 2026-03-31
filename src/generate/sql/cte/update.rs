@@ -4,6 +4,7 @@ use crate::generate::sql::to_sql;
 use crate::typecheck;
 
 pub fn update_to_string(
+    context: &typecheck::Context,
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     query_field: &ast::QueryField,
@@ -23,7 +24,7 @@ pub fn update_to_string(
     let mut values: Vec<String> = Vec::new();
 
     let all_query_fields = ast::collect_query_fields(&query_field.fields);
-    let new_values = &to_field_set_values(table, &all_query_fields);
+    let new_values = &to_field_set_values(context, table, &all_query_fields);
     values.append(&mut new_values.clone());
 
     // Check if updatedAt field exists in table and is not explicitly set
@@ -205,7 +206,11 @@ fn generate_affected_rows_query(table: &typecheck::Table, where_clause: &str) ->
 
 // SET values
 
-fn to_field_set_values(table: &typecheck::Table, fields: &Vec<&ast::QueryField>) -> Vec<String> {
+fn to_field_set_values(
+    context: &typecheck::Context,
+    table: &typecheck::Table,
+    fields: &Vec<&ast::QueryField>,
+) -> Vec<String> {
     let mut result = vec![];
 
     for field in fields {
@@ -220,6 +225,71 @@ fn to_field_set_values(table: &typecheck::Table, fields: &Vec<&ast::QueryField>)
             None => (),
             Some(val) => match table_field {
                 ast::Field::Column(column) => {
+                    if let ast::QueryValue::LiteralTypeValue((_, details)) = val {
+                        if let ast::SerializationType::FromType(typename) =
+                            column.type_.to_serialization_type()
+                        {
+                            result.push(format!(
+                                "{} = '{}'",
+                                column.name,
+                                details.name.replace("'", "''")
+                            ));
+
+                            if let Some((_, type_)) = context.types.get(&typename) {
+                                if let typecheck::Type::OneOf { variants } = type_ {
+                                    let field_map: std::collections::HashMap<
+                                        &String,
+                                        &ast::QueryValue,
+                                    > = details
+                                        .fields
+                                        .as_ref()
+                                        .map(|fields| {
+                                            fields
+                                                .iter()
+                                                .map(|(name, value)| (name, value))
+                                                .collect()
+                                        })
+                                        .unwrap_or_default();
+
+                                    for variant in variants {
+                                        if let Some(variant_fields) = &variant.fields {
+                                            for variant_field in variant_fields {
+                                                if let ast::Field::Column(variant_col) =
+                                                    variant_field
+                                                {
+                                                    let column_name = format!(
+                                                        "{}__{}",
+                                                        column.name, variant_col.name
+                                                    );
+                                                    let value_sql = if variant.name == details.name
+                                                    {
+                                                        field_map
+                                                            .get(&variant_col.name)
+                                                            .map(|value| {
+                                                                to_sql::render_column_value(
+                                                                    variant_col,
+                                                                    value,
+                                                                )
+                                                            })
+                                                            .unwrap_or_else(|| "null".to_string())
+                                                    } else {
+                                                        "null".to_string()
+                                                    };
+                                                    result.push(format!(
+                                                        "{} = {}",
+                                                        column_name, value_sql
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            continue;
+                        }
+                    }
+
                     let mut str = String::new();
 
                     str.push_str(&column.name);

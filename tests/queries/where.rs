@@ -73,7 +73,9 @@ async fn test_where_clause_with_status() -> Result<(), TestError> {
     // Verify all returned users have Active status
     for user in users {
         assert_eq!(
-            user.get("status").and_then(|s| s.as_str()),
+            user.get("status")
+                .and_then(|s| s.get("type"))
+                .and_then(|s| s.as_str()),
             Some("Active"),
             "All users should have Active status"
         );
