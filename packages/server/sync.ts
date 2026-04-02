@@ -156,7 +156,7 @@ export async function catchup(
             {
                 table_name: tableSql.table_name,
                 headers: tableSql.headers,
-                rows: finalRows.map((row) => tableSql.headers.map((header) => row[header] ?? null)),
+                rows: finalRows.map((row) => tableSql.headers.map((header: string) => row[header] ?? null)),
             },
         ])[0];
 
