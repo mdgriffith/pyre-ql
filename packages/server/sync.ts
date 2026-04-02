@@ -40,6 +40,20 @@ function parseJsonColumnValue(value: unknown): unknown {
     return value;
 }
 
+function reshapeSyncTableGroups(tableGroups: Array<{ table_name: string; headers: string[]; rows: unknown[][] }>) {
+    const reshaped = wasm.reshape_sync_table_groups(tableGroups);
+
+    if (typeof reshaped === "string" && reshaped.startsWith("Error:")) {
+        throw new Error(reshaped);
+    }
+
+    return (typeof reshaped === "string" ? JSON.parse(reshaped) : reshaped) as Array<{
+        table_name: string;
+        headers: string[];
+        rows: unknown[][];
+    }>;
+}
+
 /**
  * Session data for sync operations.
  */
@@ -138,6 +152,24 @@ export async function catchup(
         const hasMoreForTable = tableRows.length > pageSize;
         const finalRows = hasMoreForTable ? tableRows.slice(0, pageSize) : tableRows;
 
+        const reshapedGroup = reshapeSyncTableGroups([
+            {
+                table_name: tableSql.table_name,
+                headers: tableSql.headers,
+                rows: finalRows.map((row) => tableSql.headers.map((header) => row[header] ?? null)),
+            },
+        ])[0];
+
+        const reshapedRows = (reshapedGroup?.rows || []).map((row) => {
+            const rowObject: Record<string, unknown> = {};
+
+            for (let index = 0; index < reshapedGroup.headers.length; index += 1) {
+                rowObject[reshapedGroup.headers[index]] = row[index] ?? null;
+            }
+
+            return rowObject;
+        });
+
         if (hasMoreForTable && updatedAtIndex >= 0 && finalRows.length > 0) {
             const lastRow = finalRows[finalRows.length - 1];
             const lastUpdatedAt = lastRow.updatedAt;
@@ -150,7 +182,7 @@ export async function catchup(
         }
 
         result.tables[tableSql.table_name] = {
-            rows: finalRows,
+            rows: reshapedRows,
             permission_hash: tableSql.permission_hash,
             last_seen_updated_at: maxUpdatedAt,
         };

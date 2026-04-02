@@ -8,6 +8,7 @@ mod query;
 mod seed;
 mod sync;
 mod sync_deltas;
+mod sync_shape;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -128,6 +129,18 @@ pub fn calculate_sync_deltas(affected_rows: JsValue, connected_sessions: JsValue
             // e is already a String, no need for .to_string()
             serde_wasm_bindgen::to_value(&("Error: ".to_string() + &e)).unwrap()
         }
+    }
+}
+
+#[wasm_bindgen]
+pub fn reshape_sync_table_groups(table_groups: JsValue) -> JsValue {
+    let result = sync_shape::reshape_sync_table_groups_wasm(table_groups);
+    match result {
+        Ok(table_groups) => {
+            let json_str = serde_json::to_string(&table_groups).unwrap();
+            js_sys::JSON::parse(&json_str).unwrap()
+        }
+        Err(e) => serde_wasm_bindgen::to_value(&("Error: ".to_string() + &e)).unwrap(),
     }
 }
 

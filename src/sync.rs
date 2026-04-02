@@ -65,6 +65,54 @@ pub struct TableSyncSql {
     pub json_columns: Vec<String>,
 }
 
+fn push_storage_column(column_names: &mut Vec<String>, column_name: String) {
+    if !column_names.contains(&column_name) {
+        column_names.push(column_name);
+    }
+}
+
+fn collect_sync_storage_columns(
+    context: &typecheck::Context,
+    column_type: &ast::ColumnType,
+    base_name: &str,
+    headers: &mut Vec<String>,
+    json_columns: &mut Vec<String>,
+) {
+    push_storage_column(headers, base_name.to_string());
+
+    if matches!(column_type, ast::ColumnType::Json) {
+        push_storage_column(json_columns, base_name.to_string());
+    }
+
+    let Some(type_name) = column_type.get_custom_type_name() else {
+        return;
+    };
+
+    let Some((_definfo, type_)) = context.types.get(type_name) else {
+        return;
+    };
+
+    let typecheck::Type::OneOf { variants } = type_ else {
+        return;
+    };
+
+    for variant in variants {
+        if let Some(fields) = &variant.fields {
+            for field in fields {
+                if let ast::Field::Column(column) = field {
+                    collect_sync_storage_columns(
+                        context,
+                        &column.type_,
+                        &format!("{}__{}", base_name, column.name),
+                        headers,
+                        json_columns,
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Result containing SQL for all tables that need syncing
 pub struct SyncSqlResult {
     pub tables: Vec<TableSyncSql>,
@@ -611,14 +659,20 @@ pub fn get_sync_sql(
         let mut json_columns = Vec::new();
         for field in &table.record.fields {
             if let ast::Field::Column(col) = field {
-                let quoted_table_name = string::quote(&actual_table_name);
-                let quoted_col_name = string::quote(&col.name);
-                columns.push(format!("{}.{}", quoted_table_name, quoted_col_name));
-                headers.push(col.name.clone());
-                if matches!(col.type_, ast::ColumnType::Json) {
-                    json_columns.push(col.name.clone());
-                }
+                collect_sync_storage_columns(
+                    context,
+                    &col.type_,
+                    &col.name,
+                    &mut headers,
+                    &mut json_columns,
+                );
             }
+        }
+
+        let quoted_table_name = string::quote(&actual_table_name);
+        for header in &headers {
+            let quoted_col_name = string::quote(header);
+            columns.push(format!("{}.{}", quoted_table_name, quoted_col_name));
         }
 
         if columns.is_empty() {
@@ -629,7 +683,6 @@ pub fn get_sync_sql(
         }
 
         // Build SQL query directly
-        let quoted_table_name = string::quote(&actual_table_name);
         let sql = format!(
             "SELECT {} FROM {}{} ORDER BY {}.updatedAt ASC LIMIT {}",
             columns.join(", "),

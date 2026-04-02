@@ -20,9 +20,18 @@ const syncWithWasm: SyncDeltasFn = async (affectedRowGroups, connectedSessions, 
   const result = typeof deltasResult === "string" ? JSON.parse(deltasResult) : deltasResult;
 
   for (const group of result.groups) {
+    const reshapedTableGroupsResult = wasm.reshape_sync_table_groups(group.table_groups);
+
+    if (typeof reshapedTableGroupsResult === "string" && reshapedTableGroupsResult.startsWith("Error:")) {
+      console.error("[SyncDeltas] Failed to reshape sync deltas:", reshapedTableGroupsResult);
+      continue;
+    }
+
     const deltaMessage = {
       type: "delta",
-      data: group.table_groups,
+      data: typeof reshapedTableGroupsResult === "string"
+        ? JSON.parse(reshapedTableGroupsResult)
+        : reshapedTableGroupsResult,
     };
 
     for (const sessionId of group.session_ids) {

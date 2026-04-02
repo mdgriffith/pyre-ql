@@ -54,7 +54,7 @@ pub struct SyncDeltasResultWasm {
     pub groups: Vec<SessionDeltaGroupWasm>,
 }
 
-fn convert_table_group_wasm_to_rust(
+pub fn convert_table_group_wasm_to_rust(
     group: &AffectedRowTableGroupWasm,
 ) -> sync_deltas::AffectedRowTableGroup {
     sync_deltas::AffectedRowTableGroup {
@@ -64,7 +64,7 @@ fn convert_table_group_wasm_to_rust(
     }
 }
 
-fn convert_table_group_rust_to_wasm(
+pub fn convert_table_group_rust_to_wasm(
     group: sync_deltas::AffectedRowTableGroup,
 ) -> AffectedRowTableGroupWasm {
     AffectedRowTableGroupWasm {
