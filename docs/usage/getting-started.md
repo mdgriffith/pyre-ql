@@ -73,7 +73,7 @@ record Membership {
     createdAt DateTime
     deletedAt DateTime?
 
-    @unique(orgId, userId desc)
+    @unique(orgId, userId)
     @index(orgId asc, createdAt desc) where { deletedAt = null }
     @public
 }

@@ -128,7 +128,7 @@ record Membership {
     orgId  Int
     userId Int
 
-    @unique(orgId asc, userId desc)
+    @unique(orgId, userId)
     @public
 }
 ```
@@ -148,7 +148,7 @@ record Event {
 }
 ```
 
-Index column syntax supports optional sort direction per column:
+`@index(...)` column syntax supports optional sort direction per column:
 - `fieldName` (defaults to `asc`)
 - `fieldName asc`
 - `fieldName desc`

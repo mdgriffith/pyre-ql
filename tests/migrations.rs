@@ -189,7 +189,7 @@ async fn test_introspection_captures_index_metadata() -> Result<(), TestError> {
     createdAt DateTime
     deletedAt DateTime?
 
-    @unique(orgId, userId desc)
+    @unique(orgId, userId)
     @index(orgId asc, createdAt desc) where { deletedAt = null }
     @public
 }"#;
@@ -211,7 +211,7 @@ async fn test_introspection_captures_index_metadata() -> Result<(), TestError> {
     assert_eq!(unique_index.columns[0].name, "orgId");
     assert_eq!(unique_index.columns[0].desc, false);
     assert_eq!(unique_index.columns[1].name, "userId");
-    assert_eq!(unique_index.columns[1].desc, true);
+    assert_eq!(unique_index.columns[1].desc, false);
 
     let partial_index = memberships
         .indexes
@@ -330,7 +330,7 @@ async fn test_migration_adds_composite_unique_and_partial_ordered_index() -> Res
     createdAt DateTime
     deletedAt DateTime?
 
-    @unique(orgId, userId desc)
+    @unique(orgId, userId)
     @index(orgId, createdAt desc) where { deletedAt = null }
     @public
 }"#;
@@ -351,7 +351,8 @@ async fn test_migration_adds_composite_unique_and_partial_ordered_index() -> Res
             .any(|s| s.contains("create unique index")
                 && s.contains("\"memberships\"")
                 && s.contains("\"orgId\"")
-                && s.contains("\"userId\" desc")),
+                && s.contains("\"userId\"")
+                && !s.contains("\"userId\" desc")),
         "Expected migration SQL to include composite unique index. SQL:\n{}",
         rendered_sql.join("\n")
     );
