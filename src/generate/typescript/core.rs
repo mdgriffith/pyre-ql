@@ -506,6 +506,7 @@ fn to_query_field_spec(
     let mut is_first = true;
     let table = table.or_else(|| context.tables.get(&query_field.name));
 
+    let mut where_clause: Option<String> = None;
     let mut sort_clauses: Vec<String> = Vec::new();
     let mut limit: Option<i32> = None;
 
@@ -534,7 +535,9 @@ fn to_query_field_spec(
     for arg_field in &query_field.fields {
         match arg_field {
             ast::ArgField::Arg(located_arg) => match &located_arg.arg {
-                ast::Arg::Where(_where_arg) => {}
+                ast::Arg::Where(where_arg) => {
+                    where_clause = Some(to_where_clause_ts(where_arg));
+                }
                 ast::Arg::OrderBy(direction, field_name) => {
                     let dir_str = match direction {
                         ast::Direction::Asc => "asc",
@@ -592,6 +595,11 @@ fn to_query_field_spec(
             }
             _ => {}
         }
+    }
+
+    if let Some(where_clause) = where_clause {
+        result.push_str(&format!("  \"@where\": {}", where_clause));
+        is_first = false;
     }
 
     for (field_name, is_relationship, has_nested_fields) in field_selections {
@@ -652,6 +660,91 @@ fn to_query_field_spec(
     }
 
     result
+}
+
+fn to_where_clause_ts(where_arg: &ast::WhereArg) -> String {
+    match where_arg {
+        ast::WhereArg::Column(is_session_field, field_name, operator, value, _) => {
+            let key = if *is_session_field {
+                format!("Session.{}", field_name)
+            } else {
+                field_name.clone()
+            };
+
+            match operator {
+                ast::Operator::Equal => format!(
+                    "{{ {}: {} }}",
+                    string::quote(&key),
+                    to_query_value_ts(value)
+                ),
+                _ => format!(
+                    "{{ {}: {{ {}: {} }} }}",
+                    string::quote(&key),
+                    string::quote(to_filter_operator_key(operator)),
+                    to_query_value_ts(value)
+                ),
+            }
+        }
+        ast::WhereArg::And(items) => format!(
+            "{{ \"$and\": [ {} ] }}",
+            items
+                .iter()
+                .map(to_where_clause_ts)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ast::WhereArg::Or(items) => format!(
+            "{{ \"$or\": [ {} ] }}",
+            items
+                .iter()
+                .map(to_where_clause_ts)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn to_query_value_ts(value: &ast::QueryValue) -> String {
+    match value {
+        ast::QueryValue::Variable((_, details)) => match &details.session_field {
+            Some(field) => format!("{{ \"$session\": {} }}", string::quote(field)),
+            None => format!("{{ \"$var\": {} }}", string::quote(&details.name)),
+        },
+        ast::QueryValue::String((_, value)) => string::quote(value),
+        ast::QueryValue::Int((_, value)) => value.to_string(),
+        ast::QueryValue::Float((_, value)) => value.to_string(),
+        ast::QueryValue::Bool((_, value)) => value.to_string(),
+        ast::QueryValue::Null(_) => "null".to_string(),
+        ast::QueryValue::LiteralTypeValue((_, details)) => {
+            let mut fields = vec![format!("\"type\": {}", string::quote(&details.name))];
+            if let Some(assignments) = &details.fields {
+                for (name, value) in assignments {
+                    fields.push(format!(
+                        "{}: {}",
+                        string::quote(name),
+                        to_query_value_ts(value)
+                    ));
+                }
+            }
+            format!("{{ {} }}", fields.join(", "))
+        }
+        ast::QueryValue::Fn(func) => format!("{{ \"$fn\": {} }}", string::quote(&func.name)),
+    }
+}
+
+fn to_filter_operator_key(operator: &ast::Operator) -> &'static str {
+    match operator {
+        ast::Operator::Equal => "$eq",
+        ast::Operator::NotEqual => "$ne",
+        ast::Operator::GreaterThan => "$gt",
+        ast::Operator::LessThan => "$lt",
+        ast::Operator::GreaterThanOrEqual => "$gte",
+        ast::Operator::LessThanOrEqual => "$lte",
+        ast::Operator::In => "$in",
+        ast::Operator::NotIn => "$nin",
+        ast::Operator::Like => "$like",
+        ast::Operator::NotLike => "$nlike",
+    }
 }
 
 fn to_schema_metadata(context: &typecheck::Context) -> String {

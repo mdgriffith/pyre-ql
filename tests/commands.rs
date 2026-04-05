@@ -699,7 +699,8 @@ fn test_format_schema_file_adds_reverse_links_from_other_schema_files() {
     .unwrap();
 
     std::fs::write(
-        ctx.workspace_path.join("pyre/schema/App/schema_rulebook_version.pyre"),
+        ctx.workspace_path
+            .join("pyre/schema/App/schema_rulebook_version.pyre"),
         r#"record RulebookVersion {
     id Int @id
     rulebookId Rulebook.id
@@ -715,8 +716,8 @@ fn test_format_schema_file_adds_reverse_links_from_other_schema_files() {
         .assert()
         .success();
 
-    let formatted = std::fs::read_to_string(ctx.workspace_path.join("pyre/schema/App/schema.pyre"))
-        .unwrap();
+    let formatted =
+        std::fs::read_to_string(ctx.workspace_path.join("pyre/schema/App/schema.pyre")).unwrap();
 
     assert!(
         formatted.contains("rulebookVersions @link(RulebookVersion.rulebookId)"),

@@ -103,7 +103,7 @@ QueryClient owns registration and input changes. It forwards the data needed for
 {
   "type": "register",
   "queryId": "q123",
-  "querySource": "GetPost",
+  "queryName": "GetPost",
   "queryInput": { "id": 10 }
 }
 ```
@@ -199,7 +199,7 @@ Removes a row at a list path by index.
 ## QueryClient Responsibilities
 
 - Maintain a registry of query results keyed by `queryId`.
-- Store `querySource` and `queryInput` for each query.
+- Store `queryName` and `queryInput` for each query result envelope.
 - Forward query registration and input changes to DbClient.
 - Apply `QueryDelta` ops in order, producing a new result that preserves structural sharing.
 - Treat any input change as requiring a full result (DbClient will send one).
@@ -363,6 +363,6 @@ Log messages are structured JSON with a `tag` and debug context.
 {
   "tag": "incoming_msg_decode_failed",
   "message": "Problem with the given value: ...",
-  "value": { "querySource": "ListUsersAndPosts", "queryId": "q123" }
+  "value": { "queryName": "ListUsersAndPosts", "queryId": "q123" }
 }
 ```

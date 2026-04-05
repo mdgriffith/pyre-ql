@@ -176,6 +176,8 @@ This creates generated code in `pyre/generated/`:
   - `typescript/run.ts`
 - **Elm client**
   - `client/elm/`
+  - `client/elm/Pyre.elm`
+  - `client/elm/Query/*.elm`
 
 ## Step 5: Use in Your Application
 
@@ -209,6 +211,38 @@ import { meta as MyQuery } from "./pyre/generated/typescript/core/queries/metada
 // Use the generated query metadata with your client runtime
 console.log(MyQuery.id);
 ```
+
+### Client Example (Elm + `@pyre/client`)
+
+For sync-enabled Elm apps, Pyre generates two Elm surfaces:
+
+- `client/elm/Pyre.elm` for query registration, updates, and delta application
+- `client/elm/Query/*.elm` for per-query input, return data, and `queryShape`
+
+The intended setup is:
+
+1. Your Elm app owns a `Pyre.Model`
+2. Your Elm app sends `Pyre.Effect` values out through a port
+3. `PyreClient` receives those messages and executes sync/query work
+4. Results and deltas are sent back into Elm and decoded by `Pyre.decodeIncomingDelta`
+
+Generated query shapes include:
+
+- selected fields
+- `@sort`
+- `@limit`
+- `@where`
+
+For `@where`, generated query shapes preserve placeholders for:
+
+- query variables as `{"$var": "fieldName"}`
+- session values as `{"$session": "fieldName"}`
+
+`PyreClient` resolves those placeholders before executing the client-side query shape.
+
+If your session values change, call `client.setSession(...)` so active queries are refreshed with the new session context.
+
+See [Sync Setup](./sync.md) for a full example.
 
 ## Additional Commands
 

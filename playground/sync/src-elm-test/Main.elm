@@ -55,7 +55,7 @@ update msg model =
             let
                 ( newPyre, pyreEffect ) =
                     Pyre.update
-                        (Pyre.ListUsersAndPosts_Registered "main-query" {})
+                        (Pyre.QueryUpdate (Pyre.ListUsersAndPosts "main-query" {}))
                         model.pyre
             in
             ( { model | pyre = newPyre }

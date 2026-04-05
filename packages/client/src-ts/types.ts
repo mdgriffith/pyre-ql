@@ -1,10 +1,13 @@
 import type { SchemaMetadata } from '@pyre/core';
 
 export type {
+  FilterPlaceholder,
   FilterValue,
   QueryField,
+  QueryVariableReference,
   QueryShape,
   SchemaMetadata,
+  SessionVariableReference,
   SortClause,
   SortDirection,
   WhereClause,

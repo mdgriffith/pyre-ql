@@ -52,7 +52,9 @@ record GameMap {
         .expect("Game should include gameMaps array");
 
     assert_eq!(
-        maps[0].get("tileFormat").expect("Map should include tileFormat"),
+        maps[0]
+            .get("tileFormat")
+            .expect("Map should include tileFormat"),
         &json!({ "type": "Png" })
     );
 
@@ -104,8 +106,10 @@ record RulebookVersionDocument {
     let db = TestDatabase::new(schema).await?;
     db.execute_raw("insert into rulebookVersions (id, versionTag) values (7, 'v1')")
         .await?;
-    db.execute_raw("insert into rulebookDocuments (id, contentHash, content) values (9, 'abc', 'body')")
-        .await?;
+    db.execute_raw(
+        "insert into rulebookDocuments (id, contentHash, content) values (9, 'abc', 'body')",
+    )
+    .await?;
     db.execute_raw(
         "insert into rulebookVersionDocuments (id, rulebookVersionId, rulebookDocumentId, path, orderIndex) values (11, 7, 9, 'intro', 0)",
     )
@@ -367,7 +371,9 @@ record RulebookVersionRules {
 
     assert_eq!(maps[0].get("mapId"), Some(&json!("map-1")));
     assert_eq!(
-        maps[0].get("tileFormat").expect("Map should include tileFormat"),
+        maps[0]
+            .get("tileFormat")
+            .expect("Map should include tileFormat"),
         &json!({ "type": "Png" })
     );
 

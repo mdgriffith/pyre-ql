@@ -132,6 +132,12 @@ query GetRulebookVersionBundle($rulebookName: String, $versionTag: String) {
 
     let content = &generated.contents;
 
+    assert!(
+        content.contains("module Query.GetRulebookVersionBundle exposing (encode, queryShape, applyDelta, decodeQueryDelta, QueryDelta(..)"),
+        "generated query module should expose queryShape. Generated:\n{}",
+        content
+    );
+
     assert!(content.contains("rulebookVersionsDocumentsLens :"));
     assert!(content.contains("rulebookVersionsRulesLens :"));
     assert!(content.contains("rulebookVersionsDocumentsRulebookDocumentLens :"));
@@ -142,6 +148,22 @@ query GetRulebookVersionBundle($rulebookName: String, $versionTag: String) {
     assert!(content
         .contains("Just (Db.Delta.maybeField rulebookVersionsDocumentsRulebookDocumentLens)"));
     assert!(content.contains("Just (Db.Delta.maybeField rulebookVersionsRulesRulebookRulesLens)"));
+    assert!(
+        content.contains(
+            "queryShape : Encode.Value\nqueryShape =\n    Encode.object\n        [ (\"rulebook\", Encode.object\n            [ (\"id\", Encode.bool True)"
+        ) || content.contains(
+            "queryShape : Encode.Value\nqueryShape =\n    Encode.object\n        [ (\"rulebook\", Encode.object\n            [ (\"@where\", Encode.object\n                [ (\"name\", Encode.object\n                    [ (\"$var\", Encode.string \"rulebookName\")"
+        ),
+        "generated queryShape should be exposed and indentation should remain nested. Generated:\n{}",
+        content
+    );
+    assert!(
+        content
+            .contains("(\"versions\", Encode.object\n                [ (\"@where\", Encode.object")
+            && content.contains("(\"$var\", Encode.string \"versionTag\")"),
+        "generated queryShape should include placeholder-aware @where clauses. Generated:\n{}",
+        content
+    );
 
     let mut lens_names = HashSet::new();
     let mut nested_names = HashSet::new();

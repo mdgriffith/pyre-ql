@@ -324,20 +324,24 @@ handleQueryClientIncoming incoming model =
             , [ QueryManager.queryClientFull queryId nextRevision resultJson ]
             )
 
-        QueryManager.QCUpdateInput queryId newInput ->
+        QueryManager.QCUpdateInput queryId maybeQuery newInput ->
             -- Update the input and re-execute
             case Dict.get queryId model.queryManager.subscriptions of
                 Just subscription ->
                     let
+                        nextQuery =
+                            Maybe.withDefault subscription.query maybeQuery
+
                         updatedSubscription =
                             { subscription
-                                | input = newInput
+                                | query = nextQuery
+                                , input = newInput
                                 , resultRowIds = Dict.empty
                                 , lastResult = Nothing
                             }
 
                         executionResult =
-                            Db.executeQueryWithTracking model.schema model.db subscription.query
+                            Db.executeQueryWithTracking model.schema model.db nextQuery
 
                         resultJson =
                             encodeQueryResult executionResult.results

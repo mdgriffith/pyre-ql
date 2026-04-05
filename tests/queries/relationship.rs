@@ -142,7 +142,9 @@ record GameEntity {
         .get("entities")
         .and_then(|value| value.as_array())
         .expect("Game should include entities array");
-    let attrs = entities[0].get("attrs").expect("Entity should include attrs");
+    let attrs = entities[0]
+        .get("attrs")
+        .expect("Entity should include attrs");
 
     assert_eq!(
         attrs,

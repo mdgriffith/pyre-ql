@@ -47,7 +47,7 @@ type Incoming
 -}
 type QueryClientIncoming
     = QCRegister String Db.Query.Query Encode.Value -- queryId, querySource (as query shape), queryInput
-    | QCUpdateInput String Encode.Value -- queryId, queryInput
+    | QCUpdateInput String (Maybe Db.Query.Query) Encode.Value -- queryId, maybe querySource, queryInput
     | QCUnregister String -- queryId
 
 
@@ -1139,7 +1139,7 @@ decodeIncoming =
 The TypeScript QueryClient sends messages with these formats:
 
   - { "type": "register", "queryId": "...", "querySource": {...}, "queryInput": {...} }
-  - { "type": "update-input", "queryId": "...", "queryInput": {...} }
+  - { "type": "update-input", "queryId": "...", "querySource": {...}?, "queryInput": {...} }
   - { "type": "unregister", "queryId": "..." }
 
 -}
@@ -1156,8 +1156,9 @@ decodeQueryClientIncoming =
                             (Decode.field "queryInput" Decode.value)
 
                     "update-input" ->
-                        Decode.map2 QCUpdateInput
+                        Decode.map3 QCUpdateInput
                             (Decode.field "queryId" Decode.string)
+                            (Decode.maybe (Decode.field "querySource" Db.Query.decodeQuery))
                             (Decode.field "queryInput" Decode.value)
 
                     "unregister" ->

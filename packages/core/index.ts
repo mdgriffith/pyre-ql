@@ -24,11 +24,22 @@ export interface SchemaMetadata {
   queryFieldToTable: Record<string, string>;
 }
 
+export interface QueryVariableReference {
+  $var: string;
+}
+
+export interface SessionVariableReference {
+  $session: string;
+}
+
+export type FilterPlaceholder = QueryVariableReference | SessionVariableReference;
+
 export type FilterValue =
   | string
   | number
   | boolean
   | null
+  | FilterPlaceholder
   | {
       $eq?: FilterValue;
       $ne?: FilterValue;

@@ -14,7 +14,7 @@ There are three layers:
 2. **TypeScript bridge**
    - Hosts `PyreClient` from `@pyre/client`.
    - Manages session/login.
-   - Maps Elm port messages to `client.run(...)` subscriptions.
+   - Forwards generated `Pyre.elm` effects to `PyreClient`.
    - Forwards runtime results back to Elm ports.
 
 3. **Server sync runtime**
@@ -56,13 +56,22 @@ const client = new PyreClient({
     },
   },
   indexedDbName: "my-app-pyre",
+  session: {
+    userId: 1,
+  },
   onError: (error) => console.error(error),
 });
 
 await client.init();
 ```
 
-Use `client.run(queryModule, input, callback)` to subscribe and keep the returned subscription for `update(...)` / `unsubscribe()`.
+If session-backed filters change, refresh the runtime session so active queries are re-evaluated:
+
+```ts
+client.setSession({ userId: 2 })
+```
+
+Use `client.run(queryModule, input, callback)` for TypeScript-native consumers. For generated Elm clients, the preferred integration is forwarding generated `Pyre.Send` effects rather than mapping query names manually in application code.
 
 Use `client.onSyncState(...)` for high-level sync lifecycle updates:
 
@@ -103,14 +112,37 @@ The host app should map `Send`/`LogError` to its own outgoing ports.
 Example message:
 
 ```json
-{ "type": "register", "queryId": "users-1", "querySource": "ListUsers", "queryInput": {} }
+{
+  "type": "register",
+  "queryName": "ListUsers",
+  "queryId": "users-1",
+  "querySource": {
+    "user": {
+      "@where": { "ownerId": { "$session": "userId" } },
+      "id": true,
+      "name": true
+    }
+  },
+  "queryInput": {}
+}
 ```
+
+Notes:
+
+- `queryName` is for routing responses back into generated `Pyre.elm`
+- `querySource` is the actual generated query shape
+- generated query shapes preserve `@where`, `@sort`, and `@limit`
+- `@where` placeholders are encoded as:
+  - `{"$var":"fieldName"}` for query input
+  - `{"$session":"fieldName"}` for session values
+
+`PyreClient` resolves those placeholders before sending the query to the internal Elm runtime.
 
 TS → Elm:
 
 - Forward full result snapshots (or deltas if your Elm layer supports them), including:
   - `queryId`
-  - `querySource`
+  - `queryName`
   - `revision`
   - `result`
 
@@ -131,7 +163,7 @@ Wire incoming data through `Pyre.decodeIncomingDelta` from your app port subscri
    - Log query id/source and decode error details. Silent drops make sync debugging very hard.
 
 5. **One source of truth for query identity**
-   - Use generated metadata/modules to avoid ad-hoc string/id drift.
+   - Use generated `Pyre.elm` and `Query.*` modules. The host app should not look up TS metadata by query name manually.
 
 ## Troubleshooting checklist
 

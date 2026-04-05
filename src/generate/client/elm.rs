@@ -936,6 +936,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     // Add delta functions and types for queries (not mutations)
     if query.operation == ast::QueryOperation::Query {
+        exposing_items.push("queryShape".to_string());
         exposing_items.push("applyDelta".to_string());
         exposing_items.push("decodeQueryDelta".to_string());
         exposing_items.push("QueryDelta(..)".to_string());
@@ -1120,7 +1121,8 @@ fn to_query_shape_json(context: &typecheck::Context, query: &ast::Query) -> Stri
                     to_query_field_spec_json(
                         context,
                         query_field,
-                        context.tables.get(&query_field.name)
+                        context.tables.get(&query_field.name),
+                        3,
                     )
                 ));
             }
@@ -1136,14 +1138,17 @@ fn to_query_field_spec_json(
     context: &typecheck::Context,
     query_field: &ast::QueryField,
     table: Option<&typecheck::Table>,
+    indent_level: usize,
 ) -> String {
-    let mut result = "Encode.object\n            [ ".to_string();
+    let indent = "    ".repeat(indent_level);
+    let mut result = format!("Encode.object\n{}[ ", indent);
     let mut is_first = true;
 
     // Get table info for relationship detection
     let table = table.or_else(|| context.tables.get(&query_field.name));
 
     // Extract special directives (@where, @sort, @limit)
+    let mut where_clause: Option<String> = None;
     let mut sort_clauses: Vec<String> = Vec::new();
     let mut limit: Option<i32> = None;
 
@@ -1172,30 +1177,27 @@ fn to_query_field_spec_json(
 
     for arg_field in &query_field.fields {
         match arg_field {
-            ast::ArgField::Arg(located_arg) => {
-                match &located_arg.arg {
-                    ast::Arg::Where(_where_arg) => {
-                        // TODO: Convert WhereArg to QueryShape where clause format
-                        // For now, skip - this is complex and may need runtime evaluation
-                    }
-                    ast::Arg::OrderBy(direction, field_name) => {
-                        let dir_str = match direction {
-                            ast::Direction::Asc => "asc",
-                            ast::Direction::Desc => "desc",
-                        };
-                        sort_clauses.push(format!(
+            ast::ArgField::Arg(located_arg) => match &located_arg.arg {
+                ast::Arg::Where(where_arg) => {
+                    where_clause = Some(to_where_clause_elm(where_arg, indent_level + 1));
+                }
+                ast::Arg::OrderBy(direction, field_name) => {
+                    let dir_str = match direction {
+                        ast::Direction::Asc => "asc",
+                        ast::Direction::Desc => "desc",
+                    };
+                    sort_clauses.push(format!(
                             "Encode.object [ (\"field\", Encode.string {}) , (\"direction\", Encode.string {}) ]",
                             string::quote(field_name),
                             string::quote(dir_str)
                         ));
-                    }
-                    ast::Arg::Limit(query_value) => {
-                        if let ast::QueryValue::Int((_, val)) = query_value {
-                            limit = Some(*val);
-                        }
+                }
+                ast::Arg::Limit(query_value) => {
+                    if let ast::QueryValue::Int((_, val)) = query_value {
+                        limit = Some(*val);
                     }
                 }
-            }
+            },
             ast::ArgField::Field(nested_field) => {
                 if nested_field.name == "*" {
                     if let Some(table_info) = table {
@@ -1238,10 +1240,15 @@ fn to_query_field_spec_json(
         }
     }
 
+    if let Some(where_clause) = where_clause {
+        result.push_str(&format!("({}, {})", string::quote("@where"), where_clause));
+        is_first = false;
+    }
+
     // Generate field selections
     for (field_name, is_relationship, has_nested_fields) in field_selections {
         if !is_first {
-            result.push_str("\n            , ");
+            result.push_str(&format!("\n{}, ", indent));
         }
         is_first = false;
 
@@ -1268,7 +1275,7 @@ fn to_query_field_spec_json(
                 result.push_str(&format!(
                     "({}, {})",
                     string::quote(&field_name),
-                    to_query_field_spec_json(context, nested_field, nested_table)
+                    to_query_field_spec_json(context, nested_field, nested_table, indent_level + 1)
                 ));
             }
         } else {
@@ -1283,7 +1290,7 @@ fn to_query_field_spec_json(
     // Add special directives if present
     if !sort_clauses.is_empty() || limit.is_some() {
         if !is_first {
-            result.push_str("\n            , ");
+            result.push_str(&format!("\n{}, ", indent));
         }
 
         if !sort_clauses.is_empty() {
@@ -1304,14 +1311,141 @@ fn to_query_field_spec_json(
 
         if let Some(limit_val) = limit {
             if !sort_clauses.is_empty() {
-                result.push_str("\n            , ");
+                result.push_str(&format!("\n{}, ", indent));
             }
             result.push_str(&format!("(\"@limit\", Encode.int {})", limit_val));
         }
     }
 
-    result.push_str("\n            ]");
+    result.push_str(&format!("\n{}]", indent));
     result
+}
+
+fn to_where_clause_elm(where_arg: &ast::WhereArg, indent_level: usize) -> String {
+    let indent = "    ".repeat(indent_level);
+
+    match where_arg {
+        ast::WhereArg::Column(is_session_field, field_name, operator, value, _) => {
+            let key = if *is_session_field {
+                format!("Session.{}", field_name)
+            } else {
+                field_name.clone()
+            };
+
+            match operator {
+                ast::Operator::Equal => format!(
+                    "Encode.object\n{}[ ({}, {})\n{}]",
+                    indent,
+                    string::quote(&key),
+                    to_query_value_elm(value, indent_level + 1),
+                    indent
+                ),
+                _ => format!(
+                    "Encode.object\n{}[ ({}, Encode.object\n{}    [ ({}, {})\n{}    ]\n{})\n{}]",
+                    indent,
+                    string::quote(&key),
+                    indent,
+                    string::quote(to_filter_operator_key(operator)),
+                    to_query_value_elm(value, indent_level + 2),
+                    indent,
+                    indent,
+                    indent
+                ),
+            }
+        }
+        ast::WhereArg::And(items) => format!(
+            "Encode.object\n{}[ (\"$and\", Encode.list identity\n{}    [ {}\n{}    ])\n{}]",
+            indent,
+            indent,
+            items
+                .iter()
+                .map(|item| to_where_clause_elm(item, indent_level + 2))
+                .collect::<Vec<_>>()
+                .join(&format!("\n{}    , ", indent)),
+            indent,
+            indent
+        ),
+        ast::WhereArg::Or(items) => format!(
+            "Encode.object\n{}[ (\"$or\", Encode.list identity\n{}    [ {}\n{}    ])\n{}]",
+            indent,
+            indent,
+            items
+                .iter()
+                .map(|item| to_where_clause_elm(item, indent_level + 2))
+                .collect::<Vec<_>>()
+                .join(&format!("\n{}    , ", indent)),
+            indent,
+            indent
+        ),
+    }
+}
+
+fn to_query_value_elm(value: &ast::QueryValue, indent_level: usize) -> String {
+    let indent = "    ".repeat(indent_level);
+
+    match value {
+        ast::QueryValue::Variable((_, details)) => match &details.session_field {
+            Some(field) => format!(
+                "Encode.object\n{}[ (\"$session\", Encode.string {})\n{}]",
+                indent,
+                string::quote(field),
+                indent
+            ),
+            None => format!(
+                "Encode.object\n{}[ (\"$var\", Encode.string {})\n{}]",
+                indent,
+                string::quote(&details.name),
+                indent
+            ),
+        },
+        ast::QueryValue::String((_, value)) => format!("Encode.string {}", string::quote(value)),
+        ast::QueryValue::Int((_, value)) => format!("Encode.int {}", value),
+        ast::QueryValue::Float((_, value)) => format!("Encode.float {}", value),
+        ast::QueryValue::Bool((_, value)) => format!("Encode.bool {}", value),
+        ast::QueryValue::Null(_) => "Encode.null".to_string(),
+        ast::QueryValue::LiteralTypeValue((_, details)) => {
+            let mut fields = vec![format!(
+                "(\"type\", Encode.string {})",
+                string::quote(&details.name)
+            )];
+            if let Some(assignments) = &details.fields {
+                for (name, value) in assignments {
+                    fields.push(format!(
+                        "({}, {})",
+                        string::quote(name),
+                        to_query_value_elm(value, indent_level + 1)
+                    ));
+                }
+            }
+            format!(
+                "Encode.object\n{}[ {}\n{}]",
+                indent,
+                fields.join(&format!("\n{}{}, ", indent, "")),
+                indent
+            )
+        }
+        ast::QueryValue::Fn(func) => format!(
+            "Encode.object\n{}[ (\"$fn\", Encode.string {})\n{}]",
+            indent,
+            string::quote(&func.name),
+            indent
+        ),
+    }
+}
+
+fn to_filter_operator_key(operator: &ast::Operator) -> &'static str {
+    match operator {
+        ast::Operator::Equal => "$eq",
+        ast::Operator::NotEqual => "$ne",
+        ast::Operator::GreaterThan => "$gt",
+        ast::Operator::LessThan => "$lt",
+        ast::Operator::GreaterThanOrEqual => "$gte",
+        ast::Operator::LessThanOrEqual => "$lte",
+        ast::Operator::In => "$in",
+        ast::Operator::NotIn => "$nin",
+        ast::Operator::Like => "$like",
+        ast::Operator::NotLike => "$nlike",
+    }
 }
 
 // QUERY DELTA TYPES AND APPLICATION CODE
@@ -1715,7 +1849,7 @@ fn generate_pyre_module(
 
     // Module declaration
     result.push_str(
-        "module Pyre exposing (Model, Msg(..), Effect(..), init, update, decodeIncomingDelta, getResult)\n\n\n",
+        "module Pyre exposing (Model, QueryModel, Query(..), Msg(..), Effect(..), init, update, decodeIncomingDelta, getResult)\n\n\n",
     );
 
     // Imports
@@ -1758,19 +1892,20 @@ fn generate_pyre_module(
     result.push_str("    , revision : Int\n");
     result.push_str("    }\n\n\n");
 
+    // Query type
+    result.push_str("-- Query\n\n\n");
+    result.push_str("type Query\n");
+    for (i, name) in query_names.iter().enumerate() {
+        let prefix = if i == 0 { "    = " } else { "    | " };
+        result.push_str(&format!("{}{} String Query.{}.Input\n", prefix, name, name));
+    }
+    result.push_str("\n\n");
+
     // Msg type
     result.push_str("-- Msg\n\n\n");
     result.push_str("type Msg\n");
-    for (i, name) in query_names.iter().enumerate() {
-        let prefix = if i == 0 { "    = " } else { "    | " };
-        result.push_str(&format!(
-            "{}{}_Registered String Query.{}.Input\n",
-            prefix, name, name
-        ));
-        result.push_str(&format!(
-            "    | {}_InputUpdated String Query.{}.Input\n",
-            name, name
-        ));
+    result.push_str("    = QueryUpdate Query\n");
+    for name in query_names {
         result.push_str(&format!(
             "    | {}_DataReceived String Query.{}.QueryDelta\n",
             name, name
@@ -1814,59 +1949,11 @@ fn generate_pyre_module(
     result.push_str("update : Msg -> Model -> ( Model, Effect )\n");
     result.push_str("update msg model =\n");
     result.push_str("    case msg of\n");
+    result.push_str("        QueryUpdate query ->\n");
+    result.push_str("            updateQuery query model\n\n");
 
     for name in query_names {
         let field_name = string::decapitalize(name);
-
-        // Look up the query to get field count for empty ReturnData
-        let empty_return_data = query_list
-            .queries
-            .iter()
-            .find_map(|q| match q {
-                ast::QueryDef::Query(query) if query.name == *name => {
-                    Some(generate_empty_return_data(query))
-                }
-                _ => None,
-            })
-            .unwrap_or_else(|| "ReturnData".to_string());
-
-        // Registered
-        result.push_str(&format!("        {}_Registered queryId input ->\n", name));
-        result.push_str("            let\n");
-        result.push_str(&format!("                queryModel =\n"));
-        result.push_str(&format!(
-            "                    {{ input = input, result = Query.{}.{}, revision = 0 }}\n",
-            name, empty_return_data
-        ));
-        result.push_str("            in\n");
-        result.push_str(&format!(
-            "            ( {{ model | {} = Dict.insert queryId queryModel model.{} }}\n",
-            field_name, field_name
-        ));
-        result.push_str(&format!(
-            "            , Send (encodeRegister \"{}\" queryId (Query.{}.encode input))\n",
-            name, name
-        ));
-        result.push_str("            )\n\n");
-
-        // InputUpdated
-        result.push_str(&format!("        {}_InputUpdated queryId input ->\n", name));
-        result.push_str(&format!(
-            "            case Dict.get queryId model.{} of\n",
-            field_name
-        ));
-        result.push_str("                Just queryModel ->\n");
-        result.push_str(&format!(
-            "                    ( {{ model | {} = Dict.insert queryId {{ queryModel | input = input }} model.{} }}\n",
-            field_name, field_name
-        ));
-        result.push_str(&format!(
-            "                    , Send (encodeUpdateInput queryId (Query.{}.encode input))\n",
-            name
-        ));
-        result.push_str("                    )\n\n");
-        result.push_str("                Nothing ->\n");
-        result.push_str("                    ( model, NoEffect )\n\n");
 
         // DataReceived
         result.push_str(&format!("        {}_DataReceived queryId delta ->\n", name));
@@ -1937,7 +2024,7 @@ fn generate_pyre_module(
     result.push_str("incomingDeltaDecoder : Decode.Decoder Msg\n");
     result.push_str("incomingDeltaDecoder =\n");
     result.push_str("    Decode.map2 Tuple.pair\n");
-    result.push_str("        (Decode.field \"querySource\" Decode.string)\n");
+    result.push_str("        (Decode.field \"queryName\" Decode.string)\n");
     result.push_str("        (Decode.field \"queryId\" Decode.string)\n");
     result.push_str("        |> Decode.andThen\n");
     result.push_str("            (\\( source, queryId ) ->\n");
@@ -1957,6 +2044,57 @@ fn generate_pyre_module(
 
     // getResult helper
     result.push_str("-- Helpers\n\n\n");
+    result.push_str("updateQuery : Query -> Model -> ( Model, Effect )\n");
+    result.push_str("updateQuery query model =\n");
+    result.push_str("    case query of\n");
+
+    for name in query_names {
+        let field_name = string::decapitalize(name);
+        let empty_return_data = query_list
+            .queries
+            .iter()
+            .find_map(|q| match q {
+                ast::QueryDef::Query(query) if query.name == *name => {
+                    Some(generate_empty_return_data(query))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| "ReturnData".to_string());
+
+        result.push_str(&format!("        {} queryId input ->\n", name));
+        result.push_str(&format!(
+            "            case Dict.get queryId model.{} of\n",
+            field_name
+        ));
+        result.push_str("                Just queryModel ->\n");
+        result.push_str(&format!(
+            "                    ( {{ model | {} = Dict.insert queryId {{ queryModel | input = input }} model.{} }}\n",
+            field_name, field_name
+        ));
+        result.push_str(&format!(
+            "                    , Send (encodeUpdateInput queryId Query.{}.queryShape (Query.{}.encode input))\n",
+            name, name
+        ));
+        result.push_str("                    )\n\n");
+        result.push_str("                Nothing ->\n");
+        result.push_str("                    let\n");
+        result.push_str("                        queryModel =\n");
+        result.push_str(&format!(
+            "                            {{ input = input, result = Query.{}.{}, revision = 0 }}\n",
+            name, empty_return_data
+        ));
+        result.push_str("                    in\n");
+        result.push_str(&format!(
+            "                    ( {{ model | {} = Dict.insert queryId queryModel model.{} }}\n",
+            field_name, field_name
+        ));
+        result.push_str(&format!(
+            "                    , Send (encodeRegister \"{}\" Query.{}.queryShape queryId (Query.{}.encode input))\n",
+            name, name, name
+        ));
+        result.push_str("                    )\n\n");
+    }
+
     result
         .push_str("getResult : String -> Dict String (QueryModel input result) -> Maybe result\n");
     result.push_str("getResult queryId queries =\n");
@@ -1966,20 +2104,24 @@ fn generate_pyre_module(
     // Encoders
     result.push_str("-- Encoders\n\n\n");
 
-    result.push_str("encodeRegister : String -> String -> Encode.Value -> Encode.Value\n");
-    result.push_str("encodeRegister querySource queryId input =\n");
+    result.push_str(
+        "encodeRegister : String -> Encode.Value -> String -> Encode.Value -> Encode.Value\n",
+    );
+    result.push_str("encodeRegister queryName queryShape queryId input =\n");
     result.push_str("    Encode.object\n");
     result.push_str("        [ ( \"type\", Encode.string \"register\" )\n");
-    result.push_str("        , ( \"querySource\", Encode.string querySource )\n");
+    result.push_str("        , ( \"queryName\", Encode.string queryName )\n");
+    result.push_str("        , ( \"querySource\", queryShape )\n");
     result.push_str("        , ( \"queryId\", Encode.string queryId )\n");
     result.push_str("        , ( \"queryInput\", input )\n");
     result.push_str("        ]\n\n\n");
 
-    result.push_str("encodeUpdateInput : String -> Encode.Value -> Encode.Value\n");
-    result.push_str("encodeUpdateInput queryId input =\n");
+    result.push_str("encodeUpdateInput : String -> Encode.Value -> Encode.Value -> Encode.Value\n");
+    result.push_str("encodeUpdateInput queryId queryShape input =\n");
     result.push_str("    Encode.object\n");
     result.push_str("        [ ( \"type\", Encode.string \"update-input\" )\n");
     result.push_str("        , ( \"queryId\", Encode.string queryId )\n");
+    result.push_str("        , ( \"querySource\", queryShape )\n");
     result.push_str("        , ( \"queryInput\", input )\n");
     result.push_str("        ]\n\n\n");
 

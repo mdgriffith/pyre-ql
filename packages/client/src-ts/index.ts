@@ -46,6 +46,7 @@ export interface PyreClientConfig {
   server: ServerConfig;
   indexedDbName?: string;
   onError?: (error: Error) => void;
+  session?: Record<string, unknown>;
 }
 
 export class PyreClient {
@@ -64,6 +65,7 @@ export class PyreClient {
   private pendingLiveQueries: Set<string> = new Set();
   private queryManager: QueryManagerService;
   private queryClient: QueryClientService;
+  private session: Record<string, unknown>;
   private server: ServerConfig;
   private endpoints: ServerEndpoints;
   private queryCounter = 0;
@@ -80,6 +82,7 @@ export class PyreClient {
     };
     this.lastSyncState = createInitialSyncState(config.schema);
     this.lastSyncProgress = toSyncProgress(this.lastSyncState);
+    this.session = config.session ?? {};
 
     const elmScope = Object.create(globalThis) as typeof globalThis & { Elm?: unknown };
     elmScope.Elm = undefined;
@@ -120,7 +123,7 @@ export class PyreClient {
       eventsPath: this.endpoints.events,
     });
     this.queryManager = new QueryManagerService();
-    this.queryClient = new QueryClientService((payload) => {
+    this.queryClient = new QueryClientService(() => this.session, (payload) => {
       if (config.onError) {
         config.onError(new Error(payload.message));
       } else {
@@ -198,6 +201,11 @@ export class PyreClient {
 
   getSessionId(): string | null {
     return this.sessionId;
+  }
+
+  setSession(session: Record<string, unknown> | null): void {
+    this.session = session ?? {};
+    this.queryClient.refreshAllQueries();
   }
 
   run<Input = unknown>(

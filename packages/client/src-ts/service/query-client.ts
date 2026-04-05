@@ -6,6 +6,8 @@ export interface QueryRegistration {
   input: unknown;
 }
 
+type SessionState = Record<string, unknown>;
+
 type QueryResultCallback = (result: unknown) => void;
 
 export type QueryDeltaEnvelope =
@@ -30,6 +32,7 @@ export type QueryDeltaOp =
   | { op: 'remove-row-by-index'; path: string; index: number };
 
 type QueryState = {
+  querySourceTemplate: unknown;
   input: unknown;
   result: unknown;
   revision: number;
@@ -60,8 +63,10 @@ export class QueryClientService {
   private logger: (payload: ErrorPayload) => void;
   private onQueryResult: ((queryId: string) => void) | null = null;
   private onQueryUnregister: ((queryId: string) => void) | null = null;
+  private getSession: () => SessionState;
 
-  constructor(logger?: (payload: ErrorPayload) => void) {
+  constructor(getSession?: () => SessionState, logger?: (payload: ErrorPayload) => void) {
+    this.getSession = getSession ?? (() => ({}));
     this.logger = logger ?? ((payload) => {
       console.error('[PyreClient] QueryClient error', payload);
     });
@@ -110,10 +115,23 @@ export class QueryClientService {
     this.updateQueryInput(queryId, state.input);
   }
 
+  refreshAllQueries(): void {
+    this.queryStates.forEach((state, queryId) => {
+      this.updateQueryInput(queryId, state.input);
+    });
+  }
+
   registerQuery(registration: QueryRegistration, callback: QueryResultCallback): void {
     console.log('[QueryClient] registerQuery:', registration.queryId);
 
+    const resolvedQuerySource = resolveQuerySource(
+      registration.querySource,
+      registration.input,
+      this.getSession()
+    );
+
     this.queryStates.set(registration.queryId, {
+      querySourceTemplate: registration.querySource,
       input: registration.input,
       result: null,
       revision: -1,
@@ -123,7 +141,7 @@ export class QueryClientService {
     const registerMessage = {
       type: 'register',
       queryId: registration.queryId,
-      querySource: registration.querySource,
+      querySource: resolvedQuerySource,
       queryInput: registration.input,
     };
 
@@ -133,13 +151,17 @@ export class QueryClientService {
 
   updateQueryInput(queryId: string, input: unknown): void {
     const state = this.queryStates.get(queryId);
+    let querySource: unknown = null;
+
     if (state) {
       state.input = input;
+      querySource = resolveQuerySource(state.querySourceTemplate, input, this.getSession());
     }
 
     const updateMessage = {
       type: 'update-input',
       queryId,
+      querySource,
       queryInput: input,
     };
 
@@ -390,6 +412,49 @@ export class QueryClientService {
   private logError(payload: ErrorPayload): void {
     this.logger(payload);
   }
+}
+
+function resolveQuerySource(template: unknown, input: unknown, session: SessionState): unknown {
+  if (Array.isArray(template)) {
+    return template.map((value) => resolveQuerySource(value, input, session));
+  }
+
+  if (!template || typeof template !== 'object') {
+    return template;
+  }
+
+  if (isVariableReference(template)) {
+    return lookupVariable(input, template.$var);
+  }
+
+  if (isSessionReference(template)) {
+    return lookupVariable(session, template.$session);
+  }
+
+  const result: Record<string, unknown> = {};
+  Object.entries(template as Record<string, unknown>).forEach(([key, value]) => {
+    result[key] = resolveQuerySource(value, input, session);
+  });
+  return result;
+}
+
+function isVariableReference(value: object): value is { $var: string } {
+  const entries = Object.entries(value);
+  return entries.length == 1 && entries[0]?.[0] === '$var' && typeof entries[0][1] === 'string';
+}
+
+function isSessionReference(value: object): value is { $session: string } {
+  const entries = Object.entries(value);
+  return entries.length == 1 && entries[0]?.[0] === '$session' && typeof entries[0][1] === 'string';
+}
+
+function lookupVariable(source: unknown, key: string): unknown {
+  if (!source || typeof source !== 'object') {
+    return null;
+  }
+
+  const value = (source as Record<string, unknown>)[key];
+  return value === undefined ? null : value;
 }
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
