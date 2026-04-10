@@ -55,7 +55,7 @@ type Msg
     | LiveSyncReceived LiveSync.Incoming
     | QueryManagerReceived QueryManager.Incoming
     | QueryClientReceived QueryManager.QueryClientIncoming
-    | MutationRequest String String Encode.Value (Result Http.Error Encode.Value)
+    | MutationRequest String String String Encode.Value (Result Http.Error Encode.Value)
     | DbMsg Db.Msg
     | Error String
     | CatchupMsg Catchup.Msg
@@ -136,16 +136,16 @@ update msg model =
             , Cmd.batch queryCmds
             )
 
-        MutationRequest id baseUrl input result ->
+        MutationRequest requestId mutationId _ _ result ->
             case result of
                 Ok response ->
                     ( model
-                    , QueryManager.mutationResult id (Ok response)
+                    , QueryManager.mutationResult requestId mutationId (Ok response)
                     )
 
                 Err error ->
                     ( model
-                    , QueryManager.mutationResult id (Err (httpErrorToString error))
+                    , QueryManager.mutationResult requestId mutationId (Err (httpErrorToString error))
                     )
 
         Error errorMessage ->
@@ -242,11 +242,11 @@ handleLiveSyncIncoming incoming model =
 handleQueryManagerIncoming : QueryManager.Incoming -> Model -> ( Model, List (Cmd Msg) )
 handleQueryManagerIncoming incoming model =
     case incoming of
-        QueryManager.SendMutation id baseUrl headers input ->
+        QueryManager.SendMutation requestId mutationId baseUrl headers input ->
             -- Mutations are handled via HTTP request
             let
                 url =
-                    buildMutationUrl baseUrl id
+                    buildMutationUrl baseUrl mutationId
             in
             ( model
             , [ Http.request
@@ -256,7 +256,7 @@ handleQueryManagerIncoming incoming model =
                     , body = Http.jsonBody input
                     , expect =
                         Http.expectStringResponse
-                            (MutationRequest id baseUrl input)
+                            (MutationRequest requestId mutationId baseUrl input)
                             (\response ->
                                 case response of
                                     Http.BadUrl_ badUrl ->

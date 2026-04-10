@@ -7,6 +7,7 @@ use crate::typecheck;
 use std::path::Path;
 
 const ELM_DELTA_MODULE: &str = include_str!("./static/elm/src/Db/Delta.elm");
+const ELM_UPDATES_MODULE: &str = include_str!("./static/elm/src/Db/Updates.elm");
 
 pub fn generate(
     base_path: &Path,
@@ -32,6 +33,10 @@ pub fn generate(
     files.push(generate_text_file(
         base_path.join("Db/Delta.elm"),
         ELM_DELTA_MODULE,
+    ));
+    files.push(generate_text_file(
+        base_path.join("Db/Updates.elm"),
+        ELM_UPDATES_MODULE,
     ));
 }
 
@@ -819,12 +824,30 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     result.push_str("import Db.Delta\n");
     result.push_str("import Db.Encode\n");
     result.push_str("import Db.Id\n");
+    if query.operation == ast::QueryOperation::Update {
+        result.push_str("import Db.Updates\n");
+    }
     result.push_str("import Json.Decode as Decode\n");
     result.push_str("import Json.Encode as Encode\n");
     result.push_str("import Time\n");
     result.push_str("\n\n");
 
-    result.push_str(&to_param_type_alias(&elm_lookup, &query.args));
+    if query.operation != ast::QueryOperation::Query {
+        result.push_str(&format!(
+            "id : String\nid =\n    \"{}\"\n\n\n",
+            query.interface_hash
+        ));
+        result.push_str(&format!(
+            "name : String\nname =\n    \"{}\"\n\n\n",
+            query.name
+        ));
+    }
+
+    result.push_str(&to_param_type_alias(
+        &elm_lookup,
+        &query.operation,
+        &query.args,
+    ));
 
     let type_names_clone = type_names.clone();
     let elm_lookup_for_types = elm_lookup.clone();
@@ -911,11 +934,30 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
         to_field_separator: Box::new(|_| "        ".to_string()),
     };
 
-    result.push_str(&to_param_type_encoder(&elm_lookup, &query.args));
+    result.push_str(&to_param_type_encoder(
+        &elm_lookup,
+        &query.operation,
+        &query.args,
+    ));
 
     // Top level query decoder
 
     typealias::return_data_aliases(context, query, &mut result, &decoder_formatter);
+
+    if query.operation != ast::QueryOperation::Query {
+        result.push_str(
+            "type alias MutationResult =\n    { requestId : String\n    , mutationId : String\n    , mutationName : Maybe String\n    , result : Result String ReturnData\n    }\n\n\n",
+        );
+        result.push_str(
+            "mutationRequest : String -> Input -> Encode.Value\nmutationRequest requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]\n\n\n",
+        );
+        result.push_str(
+            "decodeMutationResult : Decode.Decoder MutationResult\ndecodeMutationResult =\n    Decode.map4\n        (\\requestId mutationId mutationName mutationResult ->\n            { requestId = requestId\n            , mutationId = mutationId\n            , mutationName = mutationName\n            , result = mutationResult\n            }\n        )\n        (Decode.field \"requestId\" Decode.string)\n        (Decode.field \"mutationId\" Decode.string)\n        (Decode.oneOf\n            [ Decode.field \"mutationName\" (Decode.nullable Decode.string)\n            , Decode.succeed Nothing\n            ]\n        )\n        (Decode.field \"result\" (decodeBridgeMutationResult decodeReturnData))\n\n\n",
+        );
+        result.push_str(
+            "decodeBridgeMutationResult : Decode.Decoder value -> Decode.Decoder (Result String value)\ndecodeBridgeMutationResult valueDecoder =\n    Decode.field \"ok\" Decode.bool\n        |> Decode.andThen\n            (\\ok ->\n                if ok then\n                    Decode.map Ok (Decode.field \"value\" valueDecoder)\n\n                else\n                    Decode.map Err (Decode.field \"error\" Decode.string)\n            )\n\n\n",
+        );
+    }
 
     // Generate queryShape as JSON encoder (only for queries)
     if query.operation == ast::QueryOperation::Query {
@@ -933,6 +975,14 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     // Add encoder function
     exposing_items.push("encode".to_string());
+
+    if query.operation != ast::QueryOperation::Query {
+        exposing_items.push("id".to_string());
+        exposing_items.push("name".to_string());
+        exposing_items.push("mutationRequest".to_string());
+        exposing_items.push("decodeMutationResult".to_string());
+        exposing_items.push("MutationResult".to_string());
+    }
 
     // Add delta functions and types for queries (not mutations)
     if query.operation == ast::QueryOperation::Query {
@@ -975,13 +1025,22 @@ fn generate_empty_return_data(query: &ast::Query) -> String {
     }
 }
 
-fn to_param_type_alias(lookup: &ElmLookup, args: &Vec<ast::QueryParamDefinition>) -> String {
+fn to_param_type_alias(
+    lookup: &ElmLookup,
+    operation: &ast::QueryOperation,
+    args: &Vec<ast::QueryParamDefinition>,
+) -> String {
     let mut result = "type alias Input =\n".to_string();
     result.push_str("    {");
     let mut is_first = true;
     for arg in args {
         let type_string = &arg.type_.clone().unwrap_or("unknown".to_string());
-        let elm_type = to_elm_typename(lookup, type_string, false);
+        let base_type = to_elm_typename(lookup, type_string, false);
+        let elm_type = if *operation == ast::QueryOperation::Update && arg.nullable {
+            format!("Db.Updates.Update {}", base_type)
+        } else {
+            base_type
+        };
         if is_first {
             result.push_str(&format!(" {} : {}\n", arg.name, elm_type));
             is_first = false;
@@ -993,10 +1052,18 @@ fn to_param_type_alias(lookup: &ElmLookup, args: &Vec<ast::QueryParamDefinition>
     result
 }
 
-fn to_param_type_encoder(lookup: &ElmLookup, args: &Vec<ast::QueryParamDefinition>) -> String {
+fn to_param_type_encoder(
+    lookup: &ElmLookup,
+    operation: &ast::QueryOperation,
+    args: &Vec<ast::QueryParamDefinition>,
+) -> String {
     let mut result = "encode : Input -> Encode.Value\n".to_string();
     result.push_str("encode input =\n");
-    result.push_str("    Encode.object");
+    if *operation == ast::QueryOperation::Update {
+        result.push_str("    Db.Updates.object");
+    } else {
+        result.push_str("    Encode.object");
+    }
 
     if args.len() == 0 {
         result.push_str(" []\n\n\n");
@@ -1007,25 +1074,47 @@ fn to_param_type_encoder(lookup: &ElmLookup, args: &Vec<ast::QueryParamDefinitio
     let mut is_first = true;
     for arg in args {
         let type_string = &arg.type_.clone().unwrap_or("unknown".to_string());
-        if is_first {
-            result.push_str(&format!(
-                "        [ ( {}, {} input.{} )\n",
-                string::quote(&arg.name),
+        let encoded_value = if *operation == ast::QueryOperation::Update && arg.nullable {
+            to_update_arg_encoder_str(lookup, type_string, &arg.name)
+        } else if *operation == ast::QueryOperation::Update {
+            format!(
+                "Db.Updates.set ({} input.{})",
                 to_type_encoder_str(lookup, &type_string),
                 &arg.name
+            )
+        } else {
+            format!(
+                "{} input.{}",
+                to_type_encoder_str(lookup, &type_string),
+                &arg.name
+            )
+        };
+        if is_first {
+            result.push_str(&format!(
+                "        [ ( {}, {} )\n",
+                string::quote(&arg.name),
+                encoded_value
             ));
             is_first = false;
         } else {
             result.push_str(&format!(
-                "        , ( {}, {} input.{})\n",
+                "        , ( {}, {} )\n",
                 string::quote(&arg.name),
-                to_type_encoder_str(lookup, &type_string),
-                &arg.name
+                encoded_value
             ));
         }
     }
     result.push_str("        ]\n\n\n");
     result
+}
+
+fn to_update_arg_encoder_str(lookup: &ElmLookup, type_: &str, field_name: &str) -> String {
+    let encoder = to_type_encoder_str(lookup, type_);
+    format!(
+        "case input.{field_name} of\n            Db.Updates.Set value ->\n                Db.Updates.Set ({encoder} value)\n\n            Db.Updates.Unchanged ->\n                Db.Updates.Unchanged\n\n            Db.Updates.SetToNull ->\n                Db.Updates.SetToNull",
+        field_name = field_name,
+        encoder = encoder
+    )
 }
 
 fn to_elm_typename(lookup: &ElmLookup, type_: &str, is_link: bool) -> String {

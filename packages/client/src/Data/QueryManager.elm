@@ -40,7 +40,7 @@ type Msg
 
 
 type Incoming
-    = SendMutation String String (List ( String, String )) Encode.Value -- id, baseUrl, headers, input
+    = SendMutation String String String (List ( String, String )) Encode.Value -- requestId, mutationId, baseUrl, headers, input
 
 
 {-| Incoming messages from QueryClient (TypeScript side)
@@ -55,7 +55,7 @@ type Message
     = QueryResult String Encode.Value -- callbackPort, result
     | QueryFull String Int Encode.Value -- queryId, revision, result
     | QueryDelta String Int (List QueryDeltaOp) -- queryId, revision, delta ops
-    | MutationResult String (Result String Encode.Value) -- id, result
+    | MutationResult String String (Result String Encode.Value) -- requestId, mutationId, result
 
 
 type QueryDeltaOp
@@ -90,7 +90,7 @@ update msg model =
 handleIncoming : Incoming -> Model -> ( Model, Cmd Msg )
 handleIncoming incoming model =
     case incoming of
-        SendMutation _ _ _ _ ->
+        SendMutation _ _ _ _ _ ->
             -- Mutations are handled by Main, not QueryManager
             ( model, Cmd.none )
 
@@ -1087,10 +1087,11 @@ encodeMessage msg =
                   )
                 ]
 
-        MutationResult id result ->
+        MutationResult requestId mutationId result ->
             Encode.object
                 [ ( "type", Encode.string "mutationResult" )
-                , ( "id", Encode.string id )
+                , ( "requestId", Encode.string requestId )
+                , ( "mutationId", Encode.string mutationId )
                 , ( "result"
                   , case result of
                         Ok value ->
@@ -1119,8 +1120,9 @@ decodeIncoming =
             (\type_ ->
                 case type_ of
                     "sendMutation" ->
-                        Decode.map4 SendMutation
-                            (Decode.field "id" Decode.string)
+                        Decode.map5 SendMutation
+                            (Decode.field "requestId" Decode.string)
+                            (Decode.field "mutationId" Decode.string)
                             (Decode.field "baseUrl" Decode.string)
                             (Decode.oneOf
                                 [ Decode.field "headers" decodeHeaders
@@ -1285,9 +1287,9 @@ encodeQueryDeltaOp op =
                 ]
 
 
-mutationResult : String -> Result String Encode.Value -> Cmd msg
-mutationResult id result =
-    sendMessage (MutationResult id result)
+mutationResult : String -> String -> Result String Encode.Value -> Cmd msg
+mutationResult requestId mutationId result =
+    sendMessage (MutationResult requestId mutationId result)
 
 
 receiveIncoming : (Result Decode.Error Incoming -> msg) -> Sub msg

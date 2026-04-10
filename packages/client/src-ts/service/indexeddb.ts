@@ -216,9 +216,11 @@ export class IndexedDBStorage {
 export class IndexedDbService {
   private storage: IndexedDBStorage;
   private elmApp: ElmApp | null = null;
+  private debugLog: (...args: unknown[]) => void;
 
-  constructor(storage: IndexedDBStorage) {
+  constructor(storage: IndexedDBStorage, debugLog?: (...args: unknown[]) => void) {
     this.storage = storage;
+    this.debugLog = debugLog ?? (() => {});
   }
 
   attachPorts(elmApp: ElmApp): void {
@@ -226,7 +228,7 @@ export class IndexedDbService {
 
     if (elmApp.ports.indexedDbOut) {
       elmApp.ports.indexedDbOut.subscribe((message) => {
-        console.log('[PyreClient] port indexedDbOut <-', message);
+        this.debugLog('[PyreClient] port indexedDbOut <-', message);
         this.handleMessage(message as { type?: string; tableGroups?: TableGroup[] }).catch((error) => {
           console.error('[PyreClient] IndexedDB handler failed:', error);
         });
@@ -258,12 +260,12 @@ export class IndexedDbService {
         type: 'initialData',
         data: { tables },
       });
-      console.log('[PyreClient] port receiveIndexedDbMessage ->', { type: 'initialData', data: { tables } });
+      this.debugLog('[PyreClient] port receiveIndexedDbMessage ->', { type: 'initialData', data: { tables } });
     } catch (error) {
       console.error('[PyreClient] Failed to load initial data:', error);
       const fallbackMessage = { type: 'initialData', data: { tables: {} } };
       this.elmApp.ports.receiveIndexedDbMessage.send(fallbackMessage);
-      console.log('[PyreClient] port receiveIndexedDbMessage ->', fallbackMessage);
+      this.debugLog('[PyreClient] port receiveIndexedDbMessage ->', fallbackMessage);
     }
   }
 

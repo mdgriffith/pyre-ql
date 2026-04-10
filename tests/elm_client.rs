@@ -106,3 +106,61 @@ query GetGameWorld($slug: String) {
         content
     );
 }
+
+#[test]
+fn generated_elm_mutation_modules_include_bridge_metadata() {
+    let schema_source = r#"
+record Post {
+    @public
+
+    id    Id.Int @id
+    title String
+}
+"#;
+
+    let query_source = r#"
+insert CreatePost($title: String) {
+    post {
+        title = $title
+        id
+    }
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema parses");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let context = typecheck::check_schema(&database).expect("schema typechecks");
+
+    let query_list = parser::parse_query("query.pyre", query_source).expect("query parses");
+    typecheck::check_queries(&query_list, &context).expect("query typechecks");
+
+    let mut files: Vec<GeneratedFile<String>> = Vec::new();
+    elm::generate_queries(&context, &query_list, Path::new("client/elm"), &mut files);
+
+    let generated = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("Query/CreatePost.elm"))
+        .expect("generated CreatePost.elm file");
+
+    let content = &generated.contents;
+
+    assert!(
+        content.contains("module Query.CreatePost exposing (encode, id, name, mutationRequest, decodeMutationResult, MutationResult, Input, Post, ReturnData)"),
+        "Mutation modules should expose bridge metadata helpers. Generated:\n{}",
+        content
+    );
+    assert!(
+        content.contains("id : String\nid =\n    \"")
+            && content.contains("name : String\nname =\n    \"CreatePost\"")
+            && content.contains("mutationRequest : String -> Input -> Encode.Value\nmutationRequest requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]")
+            && content.contains("type alias MutationResult =\n    { requestId : String\n    , mutationId : String\n    , mutationName : Maybe String\n    , result : Result String ReturnData\n    }")
+            && content.contains("decodeMutationResult : Decode.Decoder MutationResult")
+            && content.contains("decodeBridgeMutationResult : Decode.Decoder value -> Decode.Decoder (Result String value)"),
+        "Mutation modules should emit request payloads and typed result decoders. Generated:\n{}",
+        content
+    );
+}

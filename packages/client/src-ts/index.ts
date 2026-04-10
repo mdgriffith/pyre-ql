@@ -1,7 +1,7 @@
 import loadElm from '../dist/engine.mjs';
 import { IndexedDBStorage, IndexedDbService } from './service/indexeddb';
 import { QueryClientService } from './service/query-client';
-import { QueryManagerService } from './service/query-manager';
+import { QueryManagerService, type MutationResult } from './service/query-manager';
 import { SSEManager, type LiveSyncMessage } from './service/sse';
 import { WebSocketManager } from './service/websocket';
 import type {
@@ -41,12 +41,96 @@ export interface QuerySubscription<Input = unknown> {
   update(input: Input): void;
 }
 
+export interface RegisteredQuery<Input = unknown> {
+  queryId: string;
+  querySource: unknown;
+  input: Input;
+  queryName?: string;
+}
+
+export interface RegisteredQueryResult {
+  queryId: string;
+  queryName?: string;
+  revision: number;
+  result: unknown;
+}
+
+export interface ElmBridgePort {
+  subscribe?: (callback: (message: unknown) => void) => void;
+  unsubscribe?: (callback: (message: unknown) => void) => void;
+  send?: (message: unknown) => void;
+}
+
+export interface ElmBridgeApp {
+  ports?: Record<string, ElmBridgePort | undefined>;
+}
+
+export interface ElmBridgeQueryMessage {
+  type: 'register' | 'update-input' | 'unregister';
+  queryId: string;
+  queryName?: string;
+  querySource?: unknown;
+  queryInput?: unknown;
+}
+
+export interface ElmBridgeMutationMessage {
+  type: 'mutate';
+  requestId: string;
+  mutationId: string;
+  mutationName?: string;
+  mutationInput?: unknown;
+}
+
+export interface ElmBridgeMutationResultMessage {
+  type: 'mutation-result';
+  requestId: string;
+  mutationId: string;
+  mutationName: string | null;
+  result: MutationResult;
+}
+
+export type ElmBridgeIncomingMessage = ElmBridgeQueryMessage | ElmBridgeMutationMessage;
+
+export interface ElmBridgeConfig {
+  app: ElmBridgeApp;
+  receivePort?: string;
+  queryResultPort?: string;
+  syncStatePort?: string;
+  mutationResultPort?: string;
+  onMutation?: (payload: {
+    client: PyreClient;
+    message: ElmBridgeMutationMessage;
+  }) => Promise<void> | void;
+  onError?: (error: Error, context: { phase: 'incoming-message' | 'mutation-handler' }) => void;
+}
+
+export interface PyreElmConfig extends ElmBridgeConfig {}
+
 export interface PyreClientConfig {
   schema: SchemaMetadata;
   server: ServerConfig;
   indexedDbName?: string;
+  debug?: boolean;
   onError?: (error: Error) => void;
   session?: Record<string, unknown>;
+  elm?: PyreElmConfig;
+}
+
+export interface PyreClientCreateConfig {
+  schema: SchemaMetadata;
+  server?: ServerConfig;
+  indexedDbName?: string;
+  debug?: boolean;
+  onError?: (error: Error) => void;
+  session?: Record<string, unknown>;
+  connect?: () => Promise<{
+    server: ServerConfig;
+    session?: Record<string, unknown>;
+  }> | {
+    server: ServerConfig;
+    session?: Record<string, unknown>;
+  };
+  elm?: PyreElmConfig;
 }
 
 export class PyreClient {
@@ -65,14 +149,18 @@ export class PyreClient {
   private pendingLiveQueries: Set<string> = new Set();
   private queryManager: QueryManagerService;
   private queryClient: QueryClientService;
+  private bridgeCleanup: (() => void) | null = null;
+  private debug: boolean;
   private session: Record<string, unknown>;
   private server: ServerConfig;
   private endpoints: ServerEndpoints;
   private queryCounter = 0;
+  private mutationCounter = 0;
 
   constructor(config: PyreClientConfig) {
     const dbName = config.indexedDbName ?? 'pyre-client';
     const liveSyncTransport = config.server.liveSyncTransport ?? 'sse';
+    this.debug = config.debug ?? false;
     this.server = config.server;
     this.endpoints = {
       catchup: '/sync',
@@ -113,23 +201,23 @@ export class PyreClient {
     }
 
     this.storage = new IndexedDBStorage(dbName);
-    this.indexedDbService = new IndexedDbService(this.storage);
+    this.indexedDbService = new IndexedDbService(this.storage, this.logDebug);
     this.sseManager = new SSEManager({
       baseUrl: config.server.baseUrl,
       eventsPath: this.endpoints.events,
-    });
+    }, this.logDebug);
     this.webSocketManager = new WebSocketManager({
       baseUrl: config.server.baseUrl,
       eventsPath: this.endpoints.events,
-    });
-    this.queryManager = new QueryManagerService();
+    }, this.logDebug);
+    this.queryManager = new QueryManagerService(this.logDebug);
     this.queryClient = new QueryClientService(() => this.session, (payload) => {
       if (config.onError) {
         config.onError(new Error(payload.message));
       } else {
         console.error('[PyreClient] QueryClient error', payload);
       }
-    });
+    }, this.logDebug);
     this.queryClient.setOnQueryResult(this.handleQueryResult);
     this.queryClient.setOnQueryUnregister(this.handleQueryUnregister);
 
@@ -143,7 +231,7 @@ export class PyreClient {
 
     if (this.elmApp.ports.errorOut) {
       this.elmApp.ports.errorOut.subscribe((message) => {
-        console.log('[PyreClient] port errorOut <-', message);
+        this.logDebug('[PyreClient] port errorOut <-', message);
         const nextState = { ...this.lastSyncState, error: message };
         this.updateSyncState(nextState);
         const error = new Error(message);
@@ -165,6 +253,22 @@ export class PyreClient {
         this.handleRawSyncState(parsed);
       });
     }
+  }
+
+  private logDebug = (...args: unknown[]): void => {
+    if (this.debug) {
+      console.log(...args);
+    }
+  };
+
+  static async create(config: PyreClientCreateConfig): Promise<PyreClient> {
+    const resolvedConfig = await resolveCreateConfig(config);
+    const client = new PyreClient(resolvedConfig);
+    await client.init();
+    if (resolvedConfig.elm) {
+      client.bridgeCleanup = client.attachElmBridge(resolvedConfig.elm);
+    }
+    return client;
   }
 
   async init(): Promise<void> {
@@ -222,6 +326,8 @@ export class PyreClient {
   }
 
   disconnect(): void {
+    this.bridgeCleanup?.();
+    this.bridgeCleanup = null;
     this.sseManager.disconnect();
     this.webSocketManager.disconnect();
     this.sessionId = null;
@@ -333,6 +439,147 @@ export class PyreClient {
     await this.storage.deleteDatabase();
   }
 
+  registerQuery<Input = unknown>(
+    registration: RegisteredQuery<Input>,
+    callback: (result: RegisteredQueryResult) => void
+  ): QuerySubscription<Input> {
+    const normalizedInput = (registration.input ?? {}) as Input;
+    this.queryClient.registerQuery(
+      {
+        queryId: registration.queryId,
+        querySource: registration.querySource,
+        input: normalizedInput,
+      },
+      (update) => {
+        callback({
+          queryId: update.queryId,
+          queryName: registration.queryName,
+          revision: update.revision,
+          result: update.result,
+        });
+      }
+    );
+
+    return {
+      unsubscribe: () => {
+        this.queryClient.unregisterQuery(registration.queryId);
+      },
+      update: (updatedInput: Input) => {
+        this.queryClient.updateQueryInput(registration.queryId, updatedInput);
+      },
+    };
+  }
+
+  attachElmBridge(config: ElmBridgeConfig): () => void {
+    this.bridgeCleanup?.();
+    const registrations = new Map<string, QuerySubscription<unknown>>();
+    const receivePort = getElmBridgePort(config.app, config.receivePort ?? 'pyreStoreOut');
+    const queryResultPort = getElmBridgePort(config.app, config.queryResultPort ?? 'pyre_receiveQueryDelta');
+    const syncStatePort = config.syncStatePort
+      ? getElmBridgePort(config.app, config.syncStatePort)
+      : getElmBridgePort(config.app, 'pyre_receiveSyncState')
+      ;
+    const mutationResultPort = config.mutationResultPort
+      ? getElmBridgePort(config.app, config.mutationResultPort)
+      : getElmBridgePort(config.app, 'pyre_receiveMutationResult')
+      ;
+
+    const onSyncStateUnsubscribe = syncStatePort?.send
+      ? this.onSyncState((syncState) => {
+        syncStatePort.send?.({
+          status: syncState.status,
+          tables: syncState.tables,
+          error: syncState.error ? { message: syncState.error } : null,
+        });
+      })
+      : () => {};
+
+    const unsubscribeAll = () => {
+      registrations.forEach((subscription) => {
+        subscription.unsubscribe();
+      });
+      registrations.clear();
+      onSyncStateUnsubscribe();
+      receivePort?.unsubscribe?.(handleIncoming);
+      if (this.bridgeCleanup === unsubscribeAll) {
+        this.bridgeCleanup = null;
+      }
+    };
+
+    const handleIncoming = (incoming: unknown) => {
+      void (async () => {
+        try {
+          const message = parseElmBridgeIncomingMessage(incoming);
+
+          if (message.type === 'mutate') {
+            if (config.onMutation) {
+              try {
+                await config.onMutation({ client: this, message });
+              } catch (error) {
+                reportElmBridgeError(config, error, 'mutation-handler');
+              }
+            } else {
+              this.runBridgeMutation(message, mutationResultPort);
+            }
+            return;
+          }
+
+          if (message.type === 'register') {
+            const queryName = asNonEmptyString(message.queryName, 'register message queryName');
+            const querySource = asQueryShape(message.querySource);
+
+            registrations.get(message.queryId)?.unsubscribe();
+
+            const subscription = this.registerQuery(
+              {
+                queryId: message.queryId,
+                queryName,
+                querySource,
+                input: message.queryInput,
+              },
+              ({ queryId, queryName: resultQueryName, revision, result }) => {
+                queryResultPort?.send?.({
+                  type: 'full',
+                  queryId,
+                  queryName: resultQueryName ?? queryName,
+                  revision,
+                  result,
+                });
+              }
+            );
+
+            registrations.set(message.queryId, subscription as QuerySubscription<unknown>);
+            return;
+          }
+
+          if (message.type === 'update-input') {
+            const registration = registrations.get(message.queryId);
+            if (!registration) {
+              throw new Error(`update-input for unknown query id: ${message.queryId}`);
+            }
+
+            registration.update(message.queryInput);
+            return;
+          }
+
+          const registration = registrations.get(message.queryId);
+          if (!registration) {
+            return;
+          }
+
+          registration.unsubscribe();
+          registrations.delete(message.queryId);
+        } catch (error) {
+          reportElmBridgeError(config, error, 'incoming-message');
+        }
+      })();
+    };
+
+    receivePort?.subscribe?.(handleIncoming);
+    this.bridgeCleanup = unsubscribeAll;
+    return unsubscribeAll;
+  }
+
   private runQuery<Input>(
     queryModule: QueryModule<Input>,
     input: Input,
@@ -350,23 +597,16 @@ export class PyreClient {
     const queryId = `query_${this.queryCounter}_${Date.now()}`;
     this.queryCounter += 1;
 
-    this.queryClient.registerQuery(
+    return this.registerQuery(
       {
         queryId,
         querySource: queryShape,
         input: normalizedInput,
       },
-      callback
+      (update) => {
+        callback(update.result);
+      }
     );
-
-    return {
-      unsubscribe: () => {
-        this.queryClient.unregisterQuery(queryId);
-      },
-      update: (updatedInput: Input) => {
-        this.queryClient.updateQueryInput(queryId, updatedInput);
-      },
-    };
   }
 
   private runMutation<Input>(
@@ -374,18 +614,44 @@ export class PyreClient {
     input: Input,
     callback: (result: unknown) => void
   ): void {
-    const id = queryModule.id;
-    if (!id) {
+    const mutationId = queryModule.id;
+    if (!mutationId) {
       throw new Error('Mutation module is missing id');
     }
 
+    const requestId = `mutation_${this.mutationCounter}_${Date.now()}`;
+    this.mutationCounter += 1;
     const payload = input ?? {};
     const baseUrl = `${this.server.baseUrl}${this.endpoints.query}`;
     this.queryManager.sendMutation(
-      id,
+      requestId,
+      mutationId,
       baseUrl,
       payload,
       callback,
+      this.server.headers
+    );
+  }
+
+  private runBridgeMutation(
+    message: ElmBridgeMutationMessage,
+    mutationResultPort?: ElmBridgePort
+  ): void {
+    const baseUrl = `${this.server.baseUrl}${this.endpoints.query}`;
+    this.queryManager.sendMutation(
+      message.requestId,
+      message.mutationId,
+      baseUrl,
+      message.mutationInput ?? {},
+      (result) => {
+        mutationResultPort?.send?.({
+          type: 'mutation-result',
+          requestId: message.requestId,
+          mutationId: message.mutationId,
+          mutationName: message.mutationName ?? null,
+          result,
+        } satisfies ElmBridgeMutationResultMessage);
+      },
       this.server.headers
     );
   }
@@ -436,6 +702,95 @@ function parseSyncStateMessage(message: unknown): SyncState | null {
     status: candidate.status,
     tables: tableStatuses,
   };
+}
+
+function getElmBridgePort(app: ElmBridgeApp, portName: string): ElmBridgePort | undefined {
+  return app.ports?.[portName];
+}
+
+async function resolveCreateConfig(config: PyreClientCreateConfig): Promise<PyreClientConfig> {
+  if ((config.server || config.session) && config.connect) {
+    throw new Error('Provide either server/session or connect, not both');
+  }
+
+  const connected = config.connect ? await config.connect() : null;
+  const server = connected?.server ?? config.server;
+
+  if (!server) {
+    throw new Error('PyreClient.create requires server or connect');
+  }
+
+  const session = connected?.session ?? config.session;
+
+  return {
+    schema: config.schema,
+    server,
+    indexedDbName: config.indexedDbName,
+    onError: config.onError,
+    session,
+    elm: config.elm,
+  };
+}
+
+function reportElmBridgeError(
+  config: ElmBridgeConfig,
+  error: unknown,
+  phase: 'incoming-message' | 'mutation-handler'
+): void {
+  const normalized = error instanceof Error ? error : new Error(String(error));
+  if (config.onError) {
+    config.onError(normalized, { phase });
+    return;
+  }
+
+  console.error('[PyreClient] Elm bridge error', phase, normalized);
+}
+
+function parseElmBridgeIncomingMessage(message: unknown): ElmBridgeIncomingMessage {
+  const raw = asObject(message, 'Pyre bridge message');
+  const type = raw.type;
+
+  if (type === 'mutate') {
+    return {
+      type: 'mutate',
+      requestId: asNonEmptyString(raw.requestId, 'mutate message requestId'),
+      mutationId: asNonEmptyString(raw.mutationId, 'mutate message mutationId'),
+      mutationName: typeof raw.mutationName === 'string' && raw.mutationName.trim() !== '' ? raw.mutationName : undefined,
+      mutationInput: raw.mutationInput,
+    };
+  }
+
+  if (type !== 'register' && type !== 'update-input' && type !== 'unregister') {
+    throw new Error(`Unsupported Pyre bridge message type: ${String(type)}`);
+  }
+
+  return {
+    type,
+    queryId: asNonEmptyString(raw.queryId, 'Pyre bridge message queryId'),
+    queryName: typeof raw.queryName === 'string' && raw.queryName.trim() !== '' ? raw.queryName : undefined,
+    querySource: raw.querySource,
+    queryInput: raw.queryInput,
+  };
+}
+
+function asObject(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function asNonEmptyString(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`${label} must be non-empty string`);
+  }
+
+  return value;
+}
+
+function asQueryShape(value: unknown): Record<string, unknown> {
+  return asObject(value, 'Pyre bridge querySource');
 }
 
 function toSyncProgress(state: SyncState): SyncProgress {

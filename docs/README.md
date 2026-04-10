@@ -8,4 +8,5 @@ Documentation for using, developing, and understanding Pyre.
 - [Usage](./usage/README.md) - Setup and day-to-day Pyre workflows
 - [Development](./dev/README.md) - Building and working on Pyre itself
 - [Specification](./spec/) - Language and SQL generation reference docs
+- [Generated CRUD Mutations Spec](./spec/generated-crud-mutations.md) - Built-in schema-derived create, update, and delete mutations
 - [Release Notes](./releases/) - Versioned release notes

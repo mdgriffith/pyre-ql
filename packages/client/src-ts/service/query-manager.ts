@@ -26,17 +26,22 @@ interface QueryState {
 
 export class QueryManagerService {
   private elmApp: ElmApp | null = null;
+  private debugLog: (...args: unknown[]) => void;
   private queryCallbacks: Map<string, QueryResultCallback> = new Map();
   private callbackPortToQueryId: Map<string, string> = new Map();
   private queryStates: Map<string, QueryState> = new Map();
-  private mutationCallbacks: Map<string, MutationResultCallback[]> = new Map();
+  private mutationCallbacks: Map<string, MutationResultCallback> = new Map();
+
+  constructor(debugLog?: (...args: unknown[]) => void) {
+    this.debugLog = debugLog ?? (() => {});
+  }
 
   attachPorts(elmApp: ElmApp): void {
     this.elmApp = elmApp;
 
     if (elmApp.ports.queryManagerOut) {
       elmApp.ports.queryManagerOut.subscribe((message) => {
-        console.log('[PyreClient] port queryManagerOut <-', message);
+        this.debugLog('[PyreClient] port queryManagerOut <-', message);
         this.handleMessage(message as { type?: string }).catch((error) => {
           console.error('[PyreClient] Query manager handler failed:', error);
         });
@@ -61,7 +66,7 @@ export class QueryManagerService {
       callbackPort: registration.callbackPort,
     };
     this.elmApp?.ports.receiveQueryManagerMessage?.send(registerMessage);
-    console.log('[PyreClient] port receiveQueryManagerMessage ->', registerMessage);
+    this.debugLog('[PyreClient] port receiveQueryManagerMessage ->', registerMessage);
   }
 
   updateQueryInput(queryId: string, input: unknown, query?: unknown): void {
@@ -72,7 +77,7 @@ export class QueryManagerService {
       input,
     };
     this.elmApp?.ports.receiveQueryManagerMessage?.send(updateMessage);
-    console.log('[PyreClient] port receiveQueryManagerMessage ->', updateMessage);
+    this.debugLog('[PyreClient] port receiveQueryManagerMessage ->', updateMessage);
   }
 
   unregisterQuery(queryId: string, callbackPort: string): void {
@@ -84,20 +89,19 @@ export class QueryManagerService {
       queryId,
     };
     this.elmApp?.ports.receiveQueryManagerMessage?.send(unregisterMessage);
-    console.log('[PyreClient] port receiveQueryManagerMessage ->', unregisterMessage);
+    this.debugLog('[PyreClient] port receiveQueryManagerMessage ->', unregisterMessage);
   }
 
   sendMutation(
-    id: string,
+    requestId: string,
+    mutationId: string,
     baseUrl: string,
     input: unknown,
     callback?: MutationResultCallback,
     headers?: Record<string, string>
   ): void {
     if (callback) {
-      const callbacks = this.mutationCallbacks.get(id) ?? [];
-      callbacks.push(callback);
-      this.mutationCallbacks.set(id, callbacks);
+      this.mutationCallbacks.set(requestId, callback);
     }
 
     const headerPairs = headers
@@ -106,13 +110,14 @@ export class QueryManagerService {
 
     const mutationMessage = {
       type: 'sendMutation',
-      id,
+      requestId,
+      mutationId,
       baseUrl,
       input,
       headers: headerPairs,
     };
     this.elmApp?.ports.receiveQueryManagerMessage?.send(mutationMessage);
-    console.log('[PyreClient] port receiveQueryManagerMessage ->', mutationMessage);
+    this.debugLog('[PyreClient] port receiveQueryManagerMessage ->', mutationMessage);
   }
 
   private async handleMessage(message: { type?: string }): Promise<void> {
@@ -185,23 +190,16 @@ export class QueryManagerService {
     }
 
     if (message.type === 'mutationResult') {
-      const typedMessage = message as { id?: string; result?: MutationResult };
-      if (!typedMessage.id) {
+      const typedMessage = message as { requestId?: string; result?: MutationResult };
+      if (!typedMessage.requestId) {
         return;
       }
-      const callbacks = this.mutationCallbacks.get(typedMessage.id);
-      if (!callbacks || callbacks.length === 0) {
+      const callback = this.mutationCallbacks.get(typedMessage.requestId);
+      if (!callback) {
         return;
       }
-      const callback = callbacks.shift();
-      if (callback) {
-        callback(typedMessage.result ?? { ok: false, error: 'Missing mutation result' });
-      }
-      if (callbacks.length === 0) {
-        this.mutationCallbacks.delete(typedMessage.id);
-      } else {
-        this.mutationCallbacks.set(typedMessage.id, callbacks);
-      }
+      callback(typedMessage.result ?? { ok: false, error: 'Missing mutation result' });
+      this.mutationCallbacks.delete(typedMessage.requestId);
     }
   }
 }

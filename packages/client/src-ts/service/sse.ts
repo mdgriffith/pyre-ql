@@ -19,10 +19,16 @@ export class SSEManager {
   private shouldReconnect = true;
   private onMessage: ((message: LiveSyncMessage) => void) | null = null;
   private elmApp: ElmApp | null = null;
+  private debugLog: (...args: unknown[]) => void;
 
-  constructor(config: SSEConfig, onMessage?: (message: LiveSyncMessage) => void) {
+  constructor(
+    config: SSEConfig,
+    onMessage?: (message: LiveSyncMessage) => void,
+    debugLog?: (...args: unknown[]) => void
+  ) {
     this.config = config;
     this.onMessage = onMessage ?? null;
+    this.debugLog = debugLog ?? (() => {});
   }
 
   setOnMessage(callback: (message: LiveSyncMessage) => void): void {
@@ -34,7 +40,7 @@ export class SSEManager {
 
     if (elmApp.ports.sseOut) {
       elmApp.ports.sseOut.subscribe((message) => {
-        console.log('[PyreClient] port sseOut <-', message);
+        this.debugLog('[PyreClient] port sseOut <-', message);
         const typedMessage = message as { type?: string };
         if (typedMessage.type === 'connectSSE') {
           this.connect();
@@ -53,7 +59,7 @@ export class SSEManager {
   private emitMessage(message: LiveSyncMessage): void {
     this.onMessage?.(message);
     this.elmApp?.ports.receiveSSEMessage?.send(message);
-    console.log('[PyreClient] port receiveSSEMessage ->', message);
+    this.debugLog('[PyreClient] port receiveSSEMessage ->', message);
   }
 
   private attemptConnect(): void {

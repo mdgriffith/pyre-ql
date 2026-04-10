@@ -6,9 +6,15 @@ export interface QueryRegistration {
   input: unknown;
 }
 
+export interface QueryUpdate {
+  queryId: string;
+  revision: number;
+  result: unknown;
+}
+
 type SessionState = Record<string, unknown>;
 
-type QueryResultCallback = (result: unknown) => void;
+type QueryResultCallback = (update: QueryUpdate) => void;
 
 export type QueryDeltaEnvelope =
   | {
@@ -61,15 +67,21 @@ export class QueryClientService {
   private queryStates: Map<string, QueryState> = new Map();
   private hasPorts = false;
   private logger: (payload: ErrorPayload) => void;
+  private debugLog: (...args: unknown[]) => void;
   private onQueryResult: ((queryId: string) => void) | null = null;
   private onQueryUnregister: ((queryId: string) => void) | null = null;
   private getSession: () => SessionState;
 
-  constructor(getSession?: () => SessionState, logger?: (payload: ErrorPayload) => void) {
+  constructor(
+    getSession?: () => SessionState,
+    logger?: (payload: ErrorPayload) => void,
+    debugLog?: (...args: unknown[]) => void
+  ) {
     this.getSession = getSession ?? (() => ({}));
     this.logger = logger ?? ((payload) => {
       console.error('[PyreClient] QueryClient error', payload);
     });
+    this.debugLog = debugLog ?? (() => {});
   }
 
   attachPorts(elmApp: ElmApp): void {
@@ -122,7 +134,7 @@ export class QueryClientService {
   }
 
   registerQuery(registration: QueryRegistration, callback: QueryResultCallback): void {
-    console.log('[QueryClient] registerQuery:', registration.queryId);
+    this.debugLog('[QueryClient] registerQuery:', registration.queryId);
 
     const resolvedQuerySource = resolveQuerySource(
       registration.querySource,
@@ -145,7 +157,7 @@ export class QueryClientService {
       queryInput: registration.input,
     };
 
-    console.log('[QueryClient] sending register message to Elm:', registerMessage);
+    this.debugLog('[QueryClient] sending register message to Elm:', registerMessage);
     this.elmApp?.ports.receiveQueryClientMessage?.send(registerMessage);
   }
 
@@ -169,7 +181,7 @@ export class QueryClientService {
   }
 
   unregisterQuery(queryId: string): void {
-    console.log('[QueryClient] unregisterQuery:', queryId);
+    this.debugLog('[QueryClient] unregisterQuery:', queryId);
     this.queryStates.delete(queryId);
     this.onQueryUnregister?.(queryId);
 
@@ -182,22 +194,22 @@ export class QueryClientService {
   }
 
   private async handleMessage(message: unknown): Promise<void> {
-    console.log('[QueryClient] handleMessage received:', message);
+    this.debugLog('[QueryClient] handleMessage received:', message);
 
     if (!message || typeof message !== 'object') {
-      console.log('[QueryClient] handleMessage: message is not an object');
+      this.debugLog('[QueryClient] handleMessage: message is not an object');
       return;
     }
 
     const envelope = message as QueryDeltaEnvelope;
     if (envelope.type !== 'full' && envelope.type !== 'delta') {
-      console.log('[QueryClient] handleMessage: unknown type', (message as any).type);
+      this.debugLog('[QueryClient] handleMessage: unknown type', (message as any).type);
       return;
     }
 
     const state = this.queryStates.get(envelope.queryId);
-    console.log('[QueryClient] handleMessage: queryId =', envelope.queryId, 'state =', state ? 'found' : 'NOT FOUND');
-    console.log('[QueryClient] handleMessage: registered queryIds =', Array.from(this.queryStates.keys()));
+    this.debugLog('[QueryClient] handleMessage: queryId =', envelope.queryId, 'state =', state ? 'found' : 'NOT FOUND');
+    this.debugLog('[QueryClient] handleMessage: registered queryIds =', Array.from(this.queryStates.keys()));
 
     if (!state) {
       this.logError({
@@ -217,19 +229,27 @@ export class QueryClientService {
     }
 
     if (envelope.type === 'full') {
-      console.log('[QueryClient] handleMessage: full result, calling callback with:', envelope.result);
+      this.debugLog('[QueryClient] handleMessage: full result, calling callback with:', envelope.result);
       state.result = envelope.result;
       state.revision = envelope.revision;
-      state.callback(state.result);
+      state.callback({
+        queryId: envelope.queryId,
+        revision: state.revision,
+        result: state.result,
+      });
       this.onQueryResult?.(envelope.queryId);
-      console.log('[QueryClient] handleMessage: callback completed');
+      this.debugLog('[QueryClient] handleMessage: callback completed');
       return;
     }
 
     const nextResult = this.applyDelta(envelope.queryId, state.result, envelope.delta);
     state.result = nextResult;
     state.revision = envelope.revision;
-    state.callback(state.result);
+    state.callback({
+      queryId: envelope.queryId,
+      revision: state.revision,
+      result: state.result,
+    });
     this.onQueryResult?.(envelope.queryId);
   }
 

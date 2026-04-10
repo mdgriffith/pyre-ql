@@ -4,6 +4,8 @@
 
 Pyre query files define database operations: `query` (select), `insert`, `update`, and `delete`. Query files use the `.pyre` extension and are typically named `query.pyre` or `queries.pyre`, or organized in a `queries/` directory.
 
+Pyre can also provide schema-derived built-in CRUD mutations for writable tables. See the [Generated CRUD Mutations Specification](./generated-crud-mutations.md).
+
 ## Syntax Rules
 
 - **Indentation**: Query definitions must start at column 1 (beginning of line).
@@ -332,29 +334,6 @@ Limits the number of results.
 @limit($limitValue)
 ```
 
-### @set
-
-Applies a schema-derived input object to a record for inserts and updates.
-
-```pyre
-insert TaskCreate($input: Task.CreateInput) {
-    task {
-        @set($input)
-    }
-}
-
-update TaskUpdate($id: Task.id, $input: Task.UpdateInput) {
-    task {
-        @where { id == $id }
-        @set($input)
-    }
-}
-```
-
-**Notes**
-- `CreateInput` requires all non-nullable fields without defaults.
-- `UpdateInput` fields are optional; omitted fields are unchanged and explicit `Null` clears the field.
-
 ### @if
 
 Conditionally includes a field or nested block based on a boolean parameter.
@@ -589,6 +568,61 @@ query GetPublishedPosts($limit: Int) {
     }
 }
 ```
+
+## Generated Elm Mutation Bridge Contract
+
+When Pyre generates Elm client modules for mutations (`insert`, `update`, `delete`), each `Query.*` mutation module must expose enough metadata for the runtime bridge to execute the mutation without handwritten host logic.
+
+Each generated mutation module must expose:
+
+- `id : String` using the mutation interface hash
+- `name : String` using the mutation name from the `.pyre` definition
+- `mutationRequest : String -> Input -> Encode.Value`
+- `decodeMutationResult : Decode.Decoder MutationResult`
+
+`mutationRequest requestId input` must encode this payload shape:
+
+```json
+{
+  "type": "mutate",
+  "requestId": "client-generated-request-id",
+  "mutationId": "stable-mutation-interface-hash",
+  "mutationName": "CreatePost",
+  "mutationInput": {
+    "title": "Hello"
+  }
+}
+```
+
+Rules:
+
+- `requestId` is caller-owned and is used only for client-side bookkeeping
+- `mutationId` is the stable server mutation identity and is the value `PyreClient` uses to construct the server request
+- `mutationName` is descriptive metadata for debugging and Elm-side routing; it is not the execution key
+- `mutationInput` is the normal generated Elm encoding for the mutation input record
+
+When `PyreClient` receives a `mutate` bridge message with that shape, it must be able to execute the mutation directly against the configured query endpoint without requiring an application-defined `onMutation` handler.
+
+The bridge result payload must preserve `requestId` so Elm can correlate request lifecycle state:
+
+```json
+{
+  "type": "mutation-result",
+  "requestId": "client-generated-request-id",
+  "mutationId": "stable-mutation-interface-hash",
+  "mutationName": "CreatePost",
+  "result": {
+    "ok": true,
+    "value": {
+      "post": [
+        { "id": 1, "title": "Hello" }
+      ]
+    }
+  }
+}
+```
+
+The mutation result is an acknowledgement channel, not the primary read path. Authoritative client reads continue to arrive through sync catchup/live deltas.
 
 ## Unexpected Behaviors
 

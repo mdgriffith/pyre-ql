@@ -13,9 +13,9 @@ There are three layers:
 
 2. **TypeScript bridge**
    - Hosts `PyreClient` from `@pyre/client`.
-   - Manages session/login.
-   - Forwards generated `Pyre.elm` effects to `PyreClient`.
-   - Forwards runtime results back to Elm ports.
+   - Usually provides a single `connect` bootstrap hook.
+   - Lets `PyreClient` attach the Elm bridge.
+   - Usually does not need a custom mutation handler.
 
 3. **Server sync runtime**
    - `@pyre/server/sync` routes (`/sync`, `/sync/events`, query route).
@@ -44,26 +44,40 @@ If schema/migrations run after startup, reload schema cache before expecting syn
 Create one `PyreClient` instance per browser app instance:
 
 ```ts
-const client = new PyreClient({
+const client = await PyreClient.create({
   schema: schemaMetadata,
-  server: {
-    baseUrl: "http://localhost:3000",
-    liveSyncTransport: "sse",
-    endpoints: {
-      catchup: `/sync?sessionId=${sessionId}`,
-      events: `/sync/events?sessionId=${sessionId}`,
-      query: `/db?sessionId=${sessionId}`,
-    },
-  },
   indexedDbName: "my-app-pyre",
-  session: {
-    userId: 1,
+  debug: true,
+  connect: async () => {
+    const response = await fetch("http://localhost:3000/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: 1 }),
+    })
+
+    const { sessionId, userId } = await response.json()
+    const queryParams = new URLSearchParams({ sessionId }).toString()
+
+    return {
+      server: {
+        baseUrl: "http://localhost:3000",
+        liveSyncTransport: "sse",
+        endpoints: {
+          catchup: `/sync?${queryParams}`,
+          events: `/sync/events?${queryParams}`,
+          query: `/db?${queryParams}`,
+        },
+      },
+      session: {
+        userId,
+      },
+    }
   },
   onError: (error) => console.error(error),
 });
-
-await client.init();
 ```
+
+Set `debug: true` if you want verbose runtime logging while debugging sync behavior. Leave it off in normal app usage.
 
 If session-backed filters change, refresh the runtime session so active queries are re-evaluated:
 
@@ -71,7 +85,7 @@ If session-backed filters change, refresh the runtime session so active queries 
 client.setSession({ userId: 2 })
 ```
 
-Use `client.run(queryModule, input, callback)` for TypeScript-native consumers. For generated Elm clients, the preferred integration is forwarding generated `Pyre.Send` effects rather than mapping query names manually in application code.
+Use `client.run(queryModule, input, callback)` for TypeScript-native consumers. For generated Elm clients, prefer `PyreClient.create({ connect, elm: { ... } })` so the runtime owns the port bridge.
 
 Use `client.onSyncState(...)` for high-level sync lifecycle updates:
 
@@ -90,6 +104,51 @@ const unsubscribeSync = client.onSyncState((syncState) => {
 
 `SyncState.error` is optional and reported separately from lifecycle transitions.
 
+Minimal Elm bridge setup:
+
+```ts
+const client = await PyreClient.create({
+  schema: schemaMetadata,
+  indexedDbName: "my-app-pyre",
+  connect: async () => {
+    const response = await fetch("http://localhost:3000/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: 1 }),
+    })
+
+    const { sessionId, userId } = await response.json()
+    const queryParams = new URLSearchParams({ sessionId }).toString()
+
+    return {
+      server: {
+        baseUrl: "http://localhost:3000",
+        liveSyncTransport: "sse",
+        endpoints: {
+          catchup: `/sync?${queryParams}`,
+          events: `/sync/events?${queryParams}`,
+          query: `/db?${queryParams}`,
+        },
+      },
+      session: { userId },
+    }
+  },
+  elm: {
+    app,
+    onError: (error) => console.error(error),
+  },
+})
+```
+
+Default Elm bridge ports:
+
+- outbound from Elm: `pyreStoreOut`
+- inbound query results: `pyre_receiveQueryDelta`
+- inbound sync state: `pyre_receiveSyncState`
+- inbound mutation results: `pyre_receiveMutationResult`
+
+Override port names only if your app uses different names.
+
 ## Elm port contract (recommended)
 
 Elm → TS:
@@ -97,6 +156,7 @@ Elm → TS:
 - `register`
 - `update-input`
 - `unregister`
+- `mutate`
 
 Generated `Pyre` now returns effects as data:
 
@@ -109,44 +169,60 @@ type Effect
 
 The host app should map `Send`/`LogError` to its own outgoing ports.
 
-Example message:
+Generated update mutation modules use `Db.Updates` for nullable update fields so Elm can distinguish:
 
-```json
-{
-  "type": "register",
-  "queryName": "ListUsers",
-  "queryId": "users-1",
-  "querySource": {
-    "user": {
-      "@where": { "ownerId": { "$session": "userId" } },
-      "id": true,
-      "name": true
-    }
-  },
-  "queryInput": {}
+- set a value
+- leave the field unchanged
+- set the field to `null`
+
+`Db.Updates` exposes:
+
+```elm
+type Update a
+    = Set a
+    | Unchanged
+    | SetToNull
+
+
+set : a -> Update a
+skip : Update a
+null : Update a
+object : List ( String, Update Encode.Value ) -> Encode.Value
+```
+
+Example update input for a generated `DocumentUpdate` mutation:
+
+```elm
+import Db.Updates
+
+
+{ id = documentId
+, description = Db.Updates.set "Updated description"
 }
 ```
 
+For generated update inputs:
+
+- `Db.Updates.set value` sends the field with that value
+- `Db.Updates.skip` omits the field from the encoded mutation input
+- `Db.Updates.null` sends the field as JSON `null`
+
+This is what allows single-column updates from Elm without conflating `null` and "unchanged".
+
 Notes:
 
-- `queryName` is for routing responses back into generated `Pyre.elm`
-- `querySource` is the actual generated query shape
-- generated query shapes preserve `@where`, `@sort`, and `@limit`
-- `@where` placeholders are encoded as:
-  - `{"$var":"fieldName"}` for query input
-  - `{"$session":"fieldName"}` for session values
-
-`PyreClient` resolves those placeholders before sending the query to the internal Elm runtime.
+- Use generated `Pyre.elm` and `Query.*` modules as the Elm API surface.
+- Let `PyreClient` handle the bridge protocol; app code should not construct register or mutate payloads by hand.
+- Generated query shapes preserve filters, sorting, and limits automatically.
 
 TS → Elm:
 
-- Forward full result snapshots (or deltas if your Elm layer supports them), including:
-  - `queryId`
-  - `queryName`
-  - `revision`
-  - `result`
+- Forward incoming query data to the generated `Pyre.decodeIncomingDelta` path.
+- Forward incoming mutation results to the generated mutation module decoders.
 
-Wire incoming data through `Pyre.decodeIncomingDelta` from your app port subscription.
+Generated mutation modules expose `mutationRequest requestId input` and `decodeMutationResult`, so Elm can initiate mutations and handle results without needing to know the bridge payload format.
+
+If you are bridging those generated messages into `@pyre/client`, prefer `await PyreClient.create({ ..., connect, elm: { ... } })`. That lets the client perform login or other bootstrap work, build the final server config, attach the built-in bridge automatically, execute standard mutations itself, and keep the host code close to app state.
 
 ## Things that are easy to miss
 
@@ -156,13 +232,10 @@ Wire incoming data through `Pyre.decodeIncomingDelta` from your app port subscri
 2. **Session consistency**
    - Keep one session per runtime instance. Recreating sessions repeatedly can produce confusing behavior.
 
-3. **Early callback race**
-   - A query callback can fire immediately after registration. Ensure your registration map entry exists before processing callback state.
-
-4. **Fail loudly on decode/contract mismatches**
+3. **Fail loudly on decode/contract mismatches**
    - Log query id/source and decode error details. Silent drops make sync debugging very hard.
 
-5. **One source of truth for query identity**
+4. **One source of truth for query identity**
    - Use generated `Pyre.elm` and `Query.*` modules. The host app should not look up TS metadata by query name manually.
 
 ## Troubleshooting checklist

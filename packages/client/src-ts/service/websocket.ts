@@ -15,10 +15,16 @@ export class WebSocketManager {
   private reconnectTimer: number | null = null;
   private onMessage: ((message: LiveSyncMessage) => void) | null = null;
   private elmApp: ElmApp | null = null;
+  private debugLog: (...args: unknown[]) => void;
 
-  constructor(config: WebSocketConfig, onMessage?: (message: LiveSyncMessage) => void) {
+  constructor(
+    config: WebSocketConfig,
+    onMessage?: (message: LiveSyncMessage) => void,
+    debugLog?: (...args: unknown[]) => void
+  ) {
     this.config = config;
     this.onMessage = onMessage ?? null;
+    this.debugLog = debugLog ?? (() => {});
   }
 
   setOnMessage(callback: (message: LiveSyncMessage) => void): void {
@@ -30,7 +36,7 @@ export class WebSocketManager {
 
     if (elmApp.ports.webSocketOut) {
       elmApp.ports.webSocketOut.subscribe((message) => {
-        console.log('[PyreClient] port webSocketOut <-', message);
+        this.debugLog('[PyreClient] port webSocketOut <-', message);
         const typedMessage = message as { type?: string };
         if (typedMessage.type === 'connectWebSocket') {
           this.connect();
@@ -49,7 +55,7 @@ export class WebSocketManager {
   private emitMessage(message: LiveSyncMessage): void {
     this.onMessage?.(message);
     this.elmApp?.ports.receiveWebSocketMessage?.send(message);
-    console.log('[PyreClient] port receiveWebSocketMessage ->', message);
+    this.debugLog('[PyreClient] port receiveWebSocketMessage ->', message);
   }
 
   private openSocket(): void {
