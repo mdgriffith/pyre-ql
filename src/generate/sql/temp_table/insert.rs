@@ -42,6 +42,7 @@ pub fn insert_to_string(
     statements.push(to_sql::ignore(initial_select(
         0,
         context,
+        query,
         table,
         query_table_field,
     )));
@@ -231,6 +232,7 @@ pub fn get_temp_table_name(query_field: &ast::QueryField) -> String {
 pub fn initial_select(
     indent: usize,
     context: &typecheck::Context,
+    query: &ast::Query,
     table: &typecheck::Table,
     query_table_field: &ast::QueryField,
 ) -> String {
@@ -253,7 +255,7 @@ pub fn initial_select(
         .fields
         .iter()
         .any(|f| ast::has_fieldname(f, "updatedAt"));
-    let updated_at_explicitly_set = all_query_fields.iter().any(|f| f.name == "updatedAt");
+    let updated_at_explicitly_set = has_explicit_insert_field(&all_query_fields, "updatedAt");
 
     if has_updated_at_field && !updated_at_explicitly_set {
         field_names.push("updatedAt".to_string());
@@ -266,7 +268,7 @@ pub fn initial_select(
         field_names.join(", ")
     );
 
-    let values = &to_field_insert_values(context, table, &all_query_fields);
+    let values = &to_field_insert_values(context, query, table, &all_query_fields);
 
     let mut final_values = values.clone();
     if has_updated_at_field && !updated_at_explicitly_set {
@@ -313,7 +315,7 @@ fn insert_linked(
         .fields
         .iter()
         .any(|f| ast::has_fieldname(f, "updatedAt"));
-    let updated_at_explicitly_set = all_query_fields.iter().any(|f| f.name == "updatedAt");
+    let updated_at_explicitly_set = has_explicit_insert_field(&all_query_fields, "updatedAt");
 
     if has_updated_at_field && !updated_at_explicitly_set {
         field_names.push("updatedAt".to_string());
@@ -552,6 +554,10 @@ fn to_fieldnames(
     let mut result = vec![];
 
     for field in query_fields {
+        if field.set.is_none() {
+            continue;
+        }
+
         let table_field = &table
             .record
             .fields
@@ -563,6 +569,12 @@ fn to_fieldnames(
     }
 
     result
+}
+
+fn has_explicit_insert_field(query_fields: &Vec<&ast::QueryField>, name: &str) -> bool {
+    query_fields
+        .iter()
+        .any(|field| field.name == name && field.set.is_some())
 }
 
 fn to_table_fieldname(
@@ -632,6 +644,7 @@ fn to_table_fieldname(
 // Insert
 fn to_field_insert_values(
     context: &typecheck::Context,
+    query: &ast::Query,
     table: &typecheck::Table,
     fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
@@ -719,7 +732,7 @@ fn to_field_insert_values(
                 // Regular value (not a union type or union type without fields)
                 match table_field {
                     Some(ast::Field::Column(col)) => {
-                        let str = to_sql::render_column_value(col, &val);
+                        let str = render_insert_column_value(query, col, &field.name, &val);
                         result.push(str);
                     }
                     _ => {
@@ -732,4 +745,193 @@ fn to_field_insert_values(
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{has_explicit_insert_field, initial_select};
+    use crate::{ast, typecheck};
+
+    #[test]
+    fn initial_select_ignores_return_only_updated_at() {
+        let context = typecheck::empty_context();
+        let query = ast::Query {
+            interface_hash: String::new(),
+            full_hash: String::new(),
+            operation: ast::QueryOperation::Insert,
+            name: "UserCreate".to_string(),
+            args: vec![],
+            fields: vec![],
+            start: None,
+            end: None,
+        };
+
+        let table = typecheck::Table {
+            schema: ast::DEFAULT_SCHEMANAME.to_string(),
+            record: ast::RecordDetails {
+                name: "User".to_string(),
+                fields: vec![
+                    ast::Field::Column(ast::Column {
+                        name: "id".to_string(),
+                        type_: ast::ColumnType::Int,
+                        nullable: false,
+                        directives: vec![ast::ColumnDirective::PrimaryKey],
+                        start: None,
+                        end: None,
+                        start_name: None,
+                        end_name: None,
+                        start_typename: None,
+                        end_typename: None,
+                        inline_comment: None,
+                    }),
+                    ast::Field::Column(ast::Column {
+                        name: "name".to_string(),
+                        type_: ast::ColumnType::String,
+                        nullable: false,
+                        directives: vec![],
+                        start: None,
+                        end: None,
+                        start_name: None,
+                        end_name: None,
+                        start_typename: None,
+                        end_typename: None,
+                        inline_comment: None,
+                    }),
+                    ast::Field::Column(ast::Column {
+                        name: "updatedAt".to_string(),
+                        type_: ast::ColumnType::DateTime,
+                        nullable: false,
+                        directives: vec![ast::ColumnDirective::Default {
+                            id: "now".to_string(),
+                            value: ast::DefaultValue::Now,
+                            start: None,
+                            end: None,
+                        }],
+                        start: None,
+                        end: None,
+                        start_name: None,
+                        end_name: None,
+                        start_typename: None,
+                        end_typename: None,
+                        inline_comment: None,
+                    }),
+                ],
+                start: None,
+                end: None,
+                start_name: None,
+                end_name: None,
+            },
+            sync_layer: 0,
+            filepath: String::new(),
+        };
+
+        let query_table_field = ast::QueryField {
+            name: "user".to_string(),
+            alias: None,
+            set: None,
+            directives: vec![],
+            fields: vec![
+                ast::ArgField::Field(ast::QueryField {
+                    name: "name".to_string(),
+                    alias: None,
+                    set: Some(ast::QueryValue::Variable((
+                        ast::empty_range(),
+                        ast::VariableDetails {
+                            name: "name".to_string(),
+                            session_field: None,
+                        },
+                    ))),
+                    directives: vec![],
+                    fields: vec![],
+                    start_fieldname: None,
+                    end_fieldname: None,
+                    start: None,
+                    end: None,
+                }),
+                ast::ArgField::Field(ast::QueryField {
+                    name: "updatedAt".to_string(),
+                    alias: None,
+                    set: None,
+                    directives: vec![],
+                    fields: vec![],
+                    start_fieldname: None,
+                    end_fieldname: None,
+                    start: None,
+                    end: None,
+                }),
+            ],
+            start_fieldname: None,
+            end_fieldname: None,
+            start: None,
+            end: None,
+        };
+
+        let sql = initial_select(0, &context, &query, &table, &query_table_field);
+        assert_eq!(
+            sql,
+            "insert into users (name, updatedAt)\nvalues ($name, unixepoch())"
+        );
+    }
+
+    #[test]
+    fn select_only_updated_at_is_not_treated_as_explicit_insert() {
+        let query_field = ast::QueryField {
+            name: "updatedAt".to_string(),
+            alias: None,
+            set: None,
+            directives: vec![],
+            fields: vec![],
+            start_fieldname: None,
+            end_fieldname: None,
+            start: None,
+            end: None,
+        };
+
+        assert!(!has_explicit_insert_field(&vec![&query_field], "updatedAt"));
+    }
+}
+
+fn render_insert_column_value(
+    query: &ast::Query,
+    column: &ast::Column,
+    field_name: &str,
+    value: &ast::QueryValue,
+) -> String {
+    let rendered = to_sql::render_column_value(column, value);
+
+    let is_omittable = query
+        .args
+        .iter()
+        .find(|arg| arg.name == field_name)
+        .map(|arg| arg.omittable)
+        .unwrap_or(false);
+
+    if !is_omittable {
+        return rendered;
+    }
+
+    format!(
+        "case when ${field_name}__is_set then {rendered} else {fallback} end",
+        field_name = field_name,
+        rendered = rendered,
+        fallback = render_column_insert_fallback(column)
+    )
+}
+
+fn render_column_insert_fallback(column: &ast::Column) -> String {
+    for directive in &column.directives {
+        if let ast::ColumnDirective::Default { value, .. } = directive {
+            return match value {
+                ast::DefaultValue::Now => match column.type_ {
+                    ast::ColumnType::DateTime => "unixepoch()".to_string(),
+                    _ => "CURRENT_TIMESTAMP".to_string(),
+                },
+                ast::DefaultValue::Value(default_value) => {
+                    to_sql::render_column_value(column, default_value)
+                }
+            };
+        }
+    }
+
+    "null".to_string()
 }

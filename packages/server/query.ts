@@ -13,6 +13,7 @@ export interface QueryMetadata {
     id: string;
     sql: SqlInfo[];
     session_args: string[];
+    optional_input_args: string[];
     InputValidator: Validator<any>;
     SessionValidator: Validator<any>;
 }
@@ -196,7 +197,8 @@ export async function run(
     const validArgs = buildArgs(
         validatedInput as Record<string, any>,
         validatedSession as Record<string, any>,
-        query.session_args
+        query.session_args,
+        query.optional_input_args,
     );
 
     // Prepare SQL statements

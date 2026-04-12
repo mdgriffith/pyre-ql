@@ -169,6 +169,18 @@ type Effect
 
 The host app should map `Send`/`LogError` to its own outgoing ports.
 
+For standard writes, prefer the generated mutation modules in `Query.*`.
+
+Pyre now generates default CRUD mutations for each table:
+
+- `{Table}Create`
+- `{Table}Update`
+- `{Table}Delete`
+
+That means Elm app code can usually initiate writes through generated modules like `Query.DocumentCreate`, `Query.DocumentUpdate`, and `Query.DocumentDelete` without authoring custom mutation queries first.
+
+Reach for a handwritten mutation query only when the write is not simple CRUD, such as nested inserts or other custom write behavior.
+
 Generated update mutation modules use `Db.Updates` for nullable update fields so Elm can distinguish:
 
 - set a value

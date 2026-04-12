@@ -6,6 +6,7 @@ pub mod ext;
 pub mod filesystem;
 pub mod format;
 pub mod generate;
+pub mod generated_queries;
 pub mod hash;
 pub mod parser;
 pub mod platform;

@@ -46,6 +46,11 @@ pub enum ErrorType {
     MissingType,
     DuplicateDefinition(String),
     DefinitionIsBuiltIn(String),
+    GeneratedCrudNameCollision {
+        name: String,
+        table: String,
+        operation: ast::QueryOperation,
+    },
     DuplicateField {
         record: String,
         field: String,
@@ -777,6 +782,29 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
             result.push_str(&format!(
                 "The {} type is a built-in type, try using another name.\n",
                 yellow_if(in_color, name)
+            ));
+
+            result
+        }
+        ErrorType::GeneratedCrudNameCollision {
+            name,
+            table,
+            operation,
+        } => {
+            let mut result = "".to_string();
+            result.push_str(&format!(
+                "{} is reserved for the generated {} mutation on {}. Pick a different name for your query or mutation.\n",
+                yellow_if(in_color, name),
+                cyan_if(
+                    in_color,
+                    match operation {
+                        ast::QueryOperation::Insert => "create",
+                        ast::QueryOperation::Update => "update",
+                        ast::QueryOperation::Delete => "delete",
+                        ast::QueryOperation::Query => "query",
+                    }
+                ),
+                cyan_if(in_color, table)
             ));
 
             result
@@ -1544,6 +1572,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::MissingType => "Missing Type",
         ErrorType::DuplicateDefinition(_) => "Duplicate Definition",
         ErrorType::DefinitionIsBuiltIn(_) => "Definition Is Built-in",
+        ErrorType::GeneratedCrudNameCollision { .. } => "Generated CRUD Name Collision",
         ErrorType::DuplicateField { .. } => "Duplicate Field",
         ErrorType::DuplicateVariant { .. } => "Duplicate Variant",
         ErrorType::UnknownType { .. } => "Unknown Type",

@@ -668,6 +668,24 @@ impl ColumnType {
                 table: String::new(),
             },
             _ => {
+                if let Some(table) = type_str
+                    .strip_prefix("Id.Int<")
+                    .and_then(|value| value.strip_suffix('>'))
+                {
+                    return ColumnType::IdInt {
+                        table: table.to_string(),
+                    };
+                }
+
+                if let Some(table) = type_str
+                    .strip_prefix("Id.Uuid<")
+                    .and_then(|value| value.strip_suffix('>'))
+                {
+                    return ColumnType::IdUuid {
+                        table: table.to_string(),
+                    };
+                }
+
                 // Check for foreign key reference (TableName.fieldName pattern)
                 if type_str.contains('.') && !type_str.starts_with("Id.") {
                     let parts: Vec<&str> = type_str.split('.').collect();
@@ -893,6 +911,7 @@ pub struct QueryParamDefinition {
     pub name: String,
     pub type_: Option<String>,
     pub nullable: bool,
+    pub omittable: bool,
     pub start_name: Option<Location>,
     pub end_name: Option<Location>,
 

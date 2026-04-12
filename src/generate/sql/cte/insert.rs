@@ -266,6 +266,10 @@ fn to_fieldnames(table: &typecheck::Table, query_fields: &Vec<&ast::QueryField>)
     let mut result = vec![];
 
     for field in query_fields {
+        if field.set.is_none() {
+            continue;
+        }
+
         let table_field = &table
             .record
             .fields

@@ -5,6 +5,7 @@ use crate::typecheck;
 
 pub fn update_to_string(
     context: &typecheck::Context,
+    query: &ast::Query,
     query_info: &typecheck::QueryInfo,
     table: &typecheck::Table,
     query_field: &ast::QueryField,
@@ -24,7 +25,7 @@ pub fn update_to_string(
     let mut values: Vec<String> = Vec::new();
 
     let all_query_fields = ast::collect_query_fields(&query_field.fields);
-    let new_values = &to_field_set_values(context, table, &all_query_fields);
+    let new_values = &to_field_set_values(context, query, table, &all_query_fields);
     values.append(&mut new_values.clone());
 
     // Check if updatedAt field exists in table and is not explicitly set
@@ -208,6 +209,7 @@ fn generate_affected_rows_query(table: &typecheck::Table, where_clause: &str) ->
 
 fn to_field_set_values(
     context: &typecheck::Context,
+    query: &ast::Query,
     table: &typecheck::Table,
     fields: &Vec<&ast::QueryField>,
 ) -> Vec<String> {
@@ -294,7 +296,12 @@ fn to_field_set_values(
 
                     str.push_str(&column.name);
                     str.push_str(" = ");
-                    str.push_str(&to_sql::render_column_value(column, &val));
+                    str.push_str(&render_update_column_value(
+                        query,
+                        column,
+                        &field.name,
+                        &val,
+                    ));
 
                     result.push(str);
                 }
@@ -304,4 +311,31 @@ fn to_field_set_values(
     }
 
     result
+}
+
+fn render_update_column_value(
+    query: &ast::Query,
+    column: &ast::Column,
+    field_name: &str,
+    value: &ast::QueryValue,
+) -> String {
+    let rendered = to_sql::render_column_value(column, value);
+
+    let is_omittable = query
+        .args
+        .iter()
+        .find(|arg| arg.name == field_name)
+        .map(|arg| arg.omittable)
+        .unwrap_or(false);
+
+    if is_omittable {
+        format!(
+            "case when ${field_name}__is_set then {rendered} else {column_name} end",
+            field_name = field_name,
+            rendered = rendered,
+            column_name = column.name
+        )
+    } else {
+        rendered
+    }
 }

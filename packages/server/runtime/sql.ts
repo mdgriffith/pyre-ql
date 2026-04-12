@@ -25,14 +25,22 @@ export function toSessionArgs(sessionArgs: string[], session: Record<string, unk
 export function buildArgs(
   input: Record<string, unknown> | undefined,
   session: Record<string, unknown>,
-  sessionArgs: string[]
+  sessionArgs: string[],
+  optionalInputArgs: string[] = []
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
+
+  for (const key of optionalInputArgs) {
+    args[`${key}__is_set`] = false;
+  }
 
   if (input) {
     for (const [key, value] of Object.entries(input)) {
       if (value !== undefined) {
         args[key] = value;
+        if (optionalInputArgs.includes(key)) {
+          args[`${key}__is_set`] = true;
+        }
       }
     }
   }

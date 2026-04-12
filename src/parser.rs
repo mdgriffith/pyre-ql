@@ -1213,6 +1213,7 @@ fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefin
             name: name.to_string(),
             type_: type_string,
             nullable,
+            omittable: false,
             start_name: Some(to_location(&start_name_pos)),
             end_name: Some(to_location(&end_name_pos)),
             start_type: Some(to_location(&start_type_pos)),

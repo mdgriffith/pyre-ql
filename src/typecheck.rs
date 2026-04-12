@@ -1633,8 +1633,8 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
             }
 
             Some(type_) => {
-                match context.types.get(type_) {
-                    None => errors.push(Error {
+                if !is_known_query_param_type(context, type_) {
+                    errors.push(Error {
                         filepath: context.current_filepath.clone(),
                         error_type: ErrorType::UnknownType {
                             found: type_.clone(),
@@ -1644,8 +1644,7 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
                             contexts: vec![],
                             primary: to_range(&param_def.start_type, &param_def.end_type),
                         }],
-                    }),
-                    Some(_) => {}
+                    })
                 }
 
                 param_names.insert(
@@ -1808,6 +1807,26 @@ pub fn check_query(context: &Context, errors: &mut Vec<Error>, query: &ast::Quer
         variables: param_names,
         primary_db,
         attached_dbs: secondary_dbs,
+    }
+}
+
+fn is_known_query_param_type(context: &Context, type_: &str) -> bool {
+    if context.types.contains_key(type_) {
+        return true;
+    }
+
+    match ast::ColumnType::from_str(type_) {
+        ast::ColumnType::String
+        | ast::ColumnType::Int
+        | ast::ColumnType::Float
+        | ast::ColumnType::Bool
+        | ast::ColumnType::DateTime
+        | ast::ColumnType::Date
+        | ast::ColumnType::Json
+        | ast::ColumnType::IdInt { .. }
+        | ast::ColumnType::IdUuid { .. }
+        | ast::ColumnType::ForeignKey { .. } => true,
+        ast::ColumnType::Custom(name) => context.types.contains_key(&name),
     }
 }
 
@@ -2629,7 +2648,7 @@ fn check_value(
                                 Some(type_name) => {
                                     // Check type compatibility:
                                     // 1. Base types must match
-                                    if type_name != table_type_string {
+                                    if !are_query_types_compatible(type_name, table_type_string) {
                                         errors.push(Error {
                                             filepath: context.current_filepath.clone(),
                                             error_type: ErrorType::TypeMismatch {
@@ -2753,6 +2772,47 @@ fn check_value(
                 }
             }
         }
+    }
+}
+
+fn are_query_types_compatible(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+
+    match (
+        ast::ColumnType::from_str(left),
+        ast::ColumnType::from_str(right),
+    ) {
+        (
+            ast::ColumnType::IdInt { table: left_table },
+            ast::ColumnType::ForeignKey {
+                table: right_table,
+                field,
+            },
+        ) if field == "id" => left_table == right_table,
+        (
+            ast::ColumnType::ForeignKey {
+                table: left_table,
+                field,
+            },
+            ast::ColumnType::IdInt { table: right_table },
+        ) if field == "id" => left_table == right_table,
+        (
+            ast::ColumnType::IdUuid { table: left_table },
+            ast::ColumnType::ForeignKey {
+                table: right_table,
+                field,
+            },
+        ) if field == "id" => left_table == right_table,
+        (
+            ast::ColumnType::ForeignKey {
+                table: left_table,
+                field,
+            },
+            ast::ColumnType::IdUuid { table: right_table },
+        ) if field == "id" => left_table == right_table,
+        _ => false,
     }
 }
 

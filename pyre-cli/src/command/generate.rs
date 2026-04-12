@@ -7,6 +7,7 @@ use pyre::ast;
 use pyre::error;
 use pyre::filesystem;
 use pyre::generate;
+use pyre::generated_queries;
 use pyre::parser;
 use pyre::typecheck;
 
@@ -67,10 +68,29 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
                 let mut query_source_str = String::new();
                 query_file.read_to_string(&mut query_source_str)?;
 
+                context.current_filepath = query_file_path.clone();
                 match parser::parse_query(&query_file_path, &query_source_str) {
                     Ok(query_list) => {
+                        let collision_errors =
+                            generated_queries::validate_generated_crud_name_collisions(
+                                &query_list,
+                                &context,
+                            );
+                        if !collision_errors.is_empty() {
+                            let mut errors = String::new();
+                            for err in collision_errors {
+                                let formatted_error = error::format_error(
+                                    &query_source_str,
+                                    &err,
+                                    options.enable_color,
+                                );
+                                errors.push_str(&formatted_error);
+                            }
+                            eprintln!("{}", errors);
+                            std::process::exit(1);
+                        }
+
                         // Typecheck
-                        context.current_filepath = query_file_path.clone();
                         let typecheck_result = typecheck::check_queries(&query_list, &context);
 
                         match typecheck_result {
@@ -106,6 +126,25 @@ fn execute(options: &Options, paths: filesystem::Found, out_dir: &Path) -> io::R
                     }
                 }
             }
+
+            generated_queries::append_generated_crud_queries(&mut all_queries, &context);
+            let all_query_info_combined = match typecheck::check_queries(&all_queries, &context) {
+                Ok(info) => info,
+                Err(error_list) => {
+                    let mut errors = String::new();
+                    for err in error_list {
+                        let source = schema_file_contents
+                            .get(&err.filepath)
+                            .map(|s| s.as_str())
+                            .unwrap_or("");
+                        let formatted_error =
+                            error::format_error(source, &err, options.enable_color);
+                        errors.push_str(&formatted_error);
+                    }
+                    eprintln!("{}", errors);
+                    std::process::exit(1);
+                }
+            };
 
             // Generate all queries at once (including runner file)
             if !all_queries.queries.is_empty() {

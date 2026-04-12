@@ -291,6 +291,16 @@ fn to_query_metadata_file(
         Some(info) => get_session_args(&info.variables),
         None => "[]".to_string(),
     };
+    let omittable_args = format!(
+        "[{}]",
+        query
+            .args
+            .iter()
+            .filter(|arg| arg.omittable)
+            .map(|arg| format!("\"{}\"", arg.name))
+            .collect::<Vec<String>>()
+            .join(", ")
+    );
 
     let mut meta_block = String::new();
     meta_block.push_str("export const meta = {\n");
@@ -305,6 +315,7 @@ fn to_query_metadata_file(
         }
     ));
     meta_block.push_str(&format!("  session_args: {},\n", session_args));
+    meta_block.push_str(&format!("  optional_input_args: {},\n", omittable_args));
     meta_block.push_str("  InputValidator,\n");
     meta_block.push_str("  SessionValidator: Decode.SessionValidator,\n");
     meta_block.push_str("  ReturnData,\n");
@@ -350,6 +361,7 @@ fn to_query_sql_file(
                 match context.tables.get(&query_field.name) {
                     Some(table) => {
                         let param_info = get_formatted_used_params(
+                            query,
                             &ast::get_aliased_name(query_field),
                             &query_info.variables,
                         );
@@ -387,6 +399,7 @@ fn literal_quote(s: &str) -> String {
 }
 
 fn get_formatted_used_params(
+    query: &ast::Query,
     top_level_field_alias: &str,
     query_params: &HashMap<String, typecheck::ParamInfo>,
 ) -> String {
@@ -408,7 +421,14 @@ fn get_formatted_used_params(
         }
     }
 
+    for arg in &query.args {
+        if arg.omittable {
+            used_params.push(format!("{}__is_set", arg.name));
+        }
+    }
+
     used_params.sort_unstable();
+    used_params.dedup();
 
     let mut formatted = String::new();
     formatted.push_str("[ ");
@@ -962,7 +982,13 @@ fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
         if type_name == "Json" {
             json_params.push(arg.name.clone());
         }
-        let type_string = to_zod_type(&type_name);
+        let mut type_string = to_zod_type(&type_name);
+        if arg.nullable {
+            type_string = format!("{}.nullable()", type_string);
+        }
+        if arg.omittable {
+            type_string = format!("{}.optional()", type_string);
+        }
         if is_first {
             result.push_str(&format!("\n  {}: {}", arg.name, type_string));
             is_first = false;

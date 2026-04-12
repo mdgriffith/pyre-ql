@@ -4,6 +4,7 @@ use std::io::{self, Read};
 use super::shared::{parse_database_schemas, FileError, Options};
 use pyre::error;
 use pyre::filesystem;
+use pyre::generated_queries;
 use pyre::parser;
 use pyre::typecheck;
 
@@ -78,15 +79,29 @@ fn run_check(paths: filesystem::Found, enable_color: bool) -> io::Result<Vec<Fil
             });
         }
         Ok(mut context) => {
+            let mut all_queries = pyre::ast::QueryList {
+                queries: Vec::new(),
+            };
             for query_file_path in paths.query_files {
                 let mut file_errors = Vec::new();
                 let mut query_file = std::fs::File::open(query_file_path.clone())?;
                 let mut query_source_str = String::new();
                 query_file.read_to_string(&mut query_source_str)?;
 
+                context.current_filepath = query_file_path.clone();
                 match parser::parse_query(&query_file_path, &query_source_str) {
                     Ok(query_list) => {
-                        context.current_filepath = query_file_path.clone();
+                        all_queries.queries.extend(query_list.queries.clone());
+
+                        let collision_errors =
+                            generated_queries::validate_generated_crud_name_collisions(
+                                &query_list,
+                                &context,
+                            );
+                        if !collision_errors.is_empty() {
+                            file_errors.extend(collision_errors);
+                        }
+
                         let typecheck_result = typecheck::check_queries(&query_list, &mut context);
 
                         match typecheck_result {
@@ -107,6 +122,16 @@ fn run_check(paths: filesystem::Found, enable_color: bool) -> io::Result<Vec<Fil
                     all_file_errors.push(FileError {
                         source: query_source_str,
                         errors: file_errors,
+                    });
+                }
+            }
+
+            if all_file_errors.is_empty() {
+                generated_queries::append_generated_crud_queries(&mut all_queries, &context);
+                if let Err(errors) = typecheck::check_queries(&all_queries, &context) {
+                    all_file_errors.push(FileError {
+                        source: String::new(),
+                        errors,
                     });
                 }
             }

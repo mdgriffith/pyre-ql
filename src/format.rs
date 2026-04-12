@@ -418,6 +418,7 @@ pub fn query_list(db_schema: &ast::Database, queries: &mut ast::QueryList) {
                                             name: name.clone(),
                                             type_: type_.clone(),
                                             nullable: *nullable,
+                                            omittable: false,
                                             start_name: None,
                                             end_name: None,
                                             start_type: None,
