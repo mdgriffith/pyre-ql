@@ -129,7 +129,10 @@ fn build_create_query(table: &typecheck::Table) -> ast::Query {
         .iter()
         .map(|column| ast::QueryParamDefinition {
             name: column.name.clone(),
-            type_: Some(column.type_.to_string()),
+            type_: Some(typecheck::query_param_type_for_column(
+                &table.record,
+                column,
+            )),
             nullable: column.nullable,
             omittable: column.nullable || ast::has_default_value(column),
             start_name: None,
@@ -168,7 +171,10 @@ fn build_update_query(table: &typecheck::Table) -> ast::Query {
 
     let mut args = vec![ast::QueryParamDefinition {
         name: primary_key.name.clone(),
-        type_: Some(primary_key.type_.to_string()),
+        type_: Some(typecheck::query_param_type_for_column(
+            &table.record,
+            primary_key,
+        )),
         nullable: false,
         omittable: false,
         start_name: None,
@@ -182,7 +188,10 @@ fn build_update_query(table: &typecheck::Table) -> ast::Query {
             .iter()
             .map(|column| ast::QueryParamDefinition {
                 name: column.name.clone(),
-                type_: Some(column.type_.to_string()),
+                type_: Some(typecheck::query_param_type_for_column(
+                    &table.record,
+                    column,
+                )),
                 nullable: column.nullable,
                 omittable: true,
                 start_name: None,
@@ -218,7 +227,10 @@ fn build_delete_query(table: &typecheck::Table) -> ast::Query {
     let primary_key = primary_key_column(table).expect("generated CRUD requires primary key");
     let args = vec![ast::QueryParamDefinition {
         name: primary_key.name.clone(),
-        type_: Some(primary_key.type_.to_string()),
+        type_: Some(typecheck::query_param_type_for_column(
+            &table.record,
+            primary_key,
+        )),
         nullable: false,
         omittable: false,
         start_name: None,

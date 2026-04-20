@@ -543,6 +543,10 @@ pub enum ColumnType {
     DateTime,
     Date,
     Json,
+    JsonTyped(Box<ColumnType>),
+    List(Box<ColumnType>),
+    Dict(Box<ColumnType>),
+    Nullable(Box<ColumnType>),
 
     // ID types with branding
     IdInt { table: String },
@@ -566,6 +570,10 @@ impl ColumnType {
             ColumnType::DateTime => "DateTime".to_string(),
             ColumnType::Date => "Date".to_string(),
             ColumnType::Json => "Json".to_string(),
+            ColumnType::JsonTyped(inner) => format!("Json<{}>", inner.to_string()),
+            ColumnType::List(inner) => format!("List<{}>", inner.to_string()),
+            ColumnType::Dict(inner) => format!("Dict<{}>", inner.to_string()),
+            ColumnType::Nullable(inner) => format!("{}?", inner.to_string()),
             ColumnType::IdInt { table } => {
                 if table.is_empty() {
                     "Id.Int".to_string()
@@ -597,6 +605,13 @@ impl ColumnType {
             }
             ColumnType::Date => SerializationType::Concrete(ConcreteSerializationType::Date),
             ColumnType::Json => SerializationType::Concrete(ConcreteSerializationType::JsonB),
+            ColumnType::JsonTyped(_) => {
+                SerializationType::Concrete(ConcreteSerializationType::JsonB)
+            }
+            ColumnType::List(_) | ColumnType::Dict(_) => {
+                SerializationType::Concrete(ConcreteSerializationType::JsonB)
+            }
+            ColumnType::Nullable(inner) => inner.to_serialization_type(),
             ColumnType::IdInt { .. } => {
                 SerializationType::Concrete(ConcreteSerializationType::IdInt)
             }
@@ -613,7 +628,14 @@ impl ColumnType {
 
     /// Check if this type contains a dot (for foreign key detection during parsing)
     pub fn contains_dot(&self) -> bool {
-        matches!(self, ColumnType::ForeignKey { .. })
+        match self {
+            ColumnType::ForeignKey { .. } => true,
+            ColumnType::JsonTyped(inner)
+            | ColumnType::List(inner)
+            | ColumnType::Dict(inner)
+            | ColumnType::Nullable(inner) => inner.contains_dot(),
+            _ => false,
+        }
     }
 
     /// Check if this is an ID type
@@ -632,6 +654,7 @@ impl ColumnType {
                 }
             }
             ColumnType::ForeignKey { table, .. } => Some(table),
+            ColumnType::Nullable(inner) => inner.table_name(),
             _ => None,
         }
     }
@@ -641,8 +664,74 @@ impl ColumnType {
     pub fn get_custom_type_name(&self) -> Option<&str> {
         match self {
             ColumnType::Custom(name) => Some(name),
+            ColumnType::Nullable(inner) => inner.get_custom_type_name(),
             _ => None,
         }
+    }
+
+    pub fn collect_custom_type_names(&self, names: &mut Vec<String>) {
+        match self {
+            ColumnType::Custom(name) => names.push(name.clone()),
+            ColumnType::JsonTyped(inner)
+            | ColumnType::List(inner)
+            | ColumnType::Dict(inner)
+            | ColumnType::Nullable(inner) => inner.collect_custom_type_names(names),
+            _ => {}
+        }
+    }
+
+    pub fn is_document_container(&self) -> bool {
+        matches!(self, ColumnType::List(_) | ColumnType::Dict(_))
+    }
+
+    pub fn contains_document_container(&self) -> bool {
+        match self {
+            ColumnType::List(_) | ColumnType::Dict(_) => true,
+            ColumnType::JsonTyped(inner) | ColumnType::Nullable(inner) => {
+                inner.contains_document_container()
+            }
+            _ => false,
+        }
+    }
+
+    pub fn is_typed_json(&self) -> bool {
+        matches!(self, ColumnType::JsonTyped(_))
+    }
+
+    pub fn is_json_like(&self) -> bool {
+        matches!(self, ColumnType::Json | ColumnType::JsonTyped(_))
+    }
+
+    fn split_generic(type_str: &str) -> Option<(&str, &str)> {
+        let mut start_index = None;
+        let mut depth = 0usize;
+
+        for (index, ch) in type_str.char_indices() {
+            match ch {
+                '<' => {
+                    if start_index.is_none() {
+                        start_index = Some(index);
+                    }
+                    depth += 1;
+                }
+                '>' => {
+                    if depth == 0 {
+                        return None;
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        let start = start_index?;
+                        if index != type_str.len() - 1 {
+                            return None;
+                        }
+                        return Some((&type_str[..start], &type_str[start + 1..index]));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
     }
 
     /// Check if this is a Bool type
@@ -653,6 +742,10 @@ impl ColumnType {
     /// Parse a type string into a ColumnType.
     /// Handles primitive types, ID types, foreign key references, and custom types.
     pub fn from_str(type_str: &str) -> Self {
+        if let Some(inner) = type_str.strip_suffix('?') {
+            return ColumnType::Nullable(Box::new(ColumnType::from_str(inner)));
+        }
+
         match type_str {
             "String" => ColumnType::String,
             "Int" => ColumnType::Int,
@@ -686,6 +779,16 @@ impl ColumnType {
                     };
                 }
 
+                if let Some((name, inner)) = ColumnType::split_generic(type_str) {
+                    let inner_type = ColumnType::from_str(inner);
+                    return match name {
+                        "Json" => ColumnType::JsonTyped(Box::new(inner_type)),
+                        "List" => ColumnType::List(Box::new(inner_type)),
+                        "Dict" => ColumnType::Dict(Box::new(inner_type)),
+                        _ => ColumnType::Custom(type_str.to_string()),
+                    };
+                }
+
                 // Check for foreign key reference (TableName.fieldName pattern)
                 if type_str.contains('.') && !type_str.starts_with("Id.") {
                     let parts: Vec<&str> = type_str.split('.').collect();
@@ -715,6 +818,10 @@ impl std::fmt::Display for ColumnType {
             ColumnType::DateTime => write!(f, "DateTime"),
             ColumnType::Date => write!(f, "Date"),
             ColumnType::Json => write!(f, "Json"),
+            ColumnType::JsonTyped(inner) => write!(f, "Json<{}>", inner),
+            ColumnType::List(inner) => write!(f, "List<{}>", inner),
+            ColumnType::Dict(inner) => write!(f, "Dict<{}>", inner),
+            ColumnType::Nullable(inner) => write!(f, "{}?", inner),
             ColumnType::IdInt { table } => {
                 if table.is_empty() {
                     write!(f, "Id.Int")

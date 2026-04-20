@@ -179,7 +179,7 @@ fn to_string_variant(indent_size: usize, variant: &ast::Variant) -> String {
             let indent = " ".repeat(indent_size + 4);
 
             let mut result = format!(
-                " {}{{\n{}\"type\": {};\n{}",
+                " {}{{\n{}\"type_\": {};\n{}",
                 prefix,
                 indent,
                 crate::ext::string::quote(&variant.name),
@@ -195,7 +195,7 @@ fn to_string_variant(indent_size: usize, variant: &ast::Variant) -> String {
             result
         }
         None => format!(
-            " {}{{ \"type\": {} }}",
+            " {}{{ \"type_\": {} }}",
             prefix,
             crate::ext::string::quote(&variant.name)
         ),
@@ -292,16 +292,7 @@ pub fn literal_quote(s: &str) -> String {
 }
 
 fn to_ts_typename(qualified: bool, type_: &str) -> String {
-    match type_ {
-        "String" => "string".to_string(),
-        "Int" => "number".to_string(),
-        "Float" => "number".to_string(),
-        "Bool" => "boolean".to_string(),
-        _ => {
-            let qualification = if qualified { "Db." } else { "" };
-            return format!("{}{}", qualification, type_).to_string();
-        }
-    }
+    common::column_type_to_ts_type(&ast::ColumnType::from_str(type_), qualified)
 }
 
 pub fn to_env(database: &ast::Database) -> Option<String> {

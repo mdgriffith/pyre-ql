@@ -1,6 +1,9 @@
 use pyre::ast;
+use pyre::filesystem::GeneratedFile;
 use pyre::generate::client::elm;
 use pyre::parser;
+use pyre::typecheck;
+use std::path::Path;
 
 #[test]
 fn db_elm_tagged_record_variant_ignores_comments_when_formatting_first_field() {
@@ -69,4 +72,112 @@ record GameAsset {
 
     assert!(encode_module.contains("json : Db.Json -> Encode.Value"));
     assert!(encode_module.contains("json value =\n    value"));
+}
+
+#[test]
+fn elm_generates_rich_types_for_typed_json_fields_and_inputs() {
+    let schema_source = r#"
+type Lifecycle
+   = Running
+   | Finished {
+        reason String
+     }
+
+record Event {
+    @public
+    id       Id.Int @id
+    payload  Json<Lifecycle>
+    tags     Json<List<String>>
+    counts   Json<Dict<Int>>
+}
+"#;
+
+    let query_source = r#"
+insert CreateEvent($payload: Json<Lifecycle>, $tags: Json<List<String>>, $counts: Json<Dict<Int>>) {
+    event {
+        payload = $payload
+        tags = $tags
+        counts = $counts
+        id
+    }
+}
+
+query GetEvents {
+    event {
+        id
+        payload
+        tags
+        counts
+    }
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema parses");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let context = typecheck::check_schema(&database).expect("schema typechecks");
+
+    let db_module = elm::write_schema(&database);
+    let decode_module = elm::to_schema_decoders(&database);
+    let encode_module = elm::to_schema_encoders(&database);
+
+    assert!(
+        db_module.contains("import Dict exposing (Dict)")
+            && db_module.contains("type Lifecycle")
+            && db_module.contains("Finished\n      { reason : String"),
+        "Expected Db.elm to expose the typed Json payload union. Generated:\n{}",
+        db_module
+    );
+
+    assert!(
+        decode_module.contains("Decode.oneOf [ Decode.field \"type_\" Decode.string, Decode.field \"type\" Decode.string ]"),
+        "Expected Db.Decode.elm to decode type_ unions. Generated:\n{}",
+        decode_module
+    );
+
+    assert!(
+        encode_module.contains("( \"type_\", Encode.string \"Finished\" )"),
+        "Expected Db.Encode.elm to encode typed Json containers and type_ unions. Generated:\n{}",
+        encode_module
+    );
+
+    let query_list = parser::parse_query("query.pyre", query_source).expect("query parses");
+    typecheck::check_queries(&query_list, &context).expect("query typechecks");
+
+    let mut files: Vec<GeneratedFile<String>> = Vec::new();
+    elm::generate_queries(&context, &query_list, Path::new("client/elm"), &mut files);
+
+    let query_module = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("Query/CreateEvent.elm"))
+        .expect("generated CreateEvent.elm file");
+
+    let content = &query_module.contents;
+
+    let get_events_module = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("Query/GetEvents.elm"))
+        .expect("generated GetEvents.elm file");
+
+    let get_events_content = &get_events_module.contents;
+
+    assert!(
+        content.contains("import Dict exposing (Dict)")
+            && content.contains("type alias Input =\n    { payload : Db.Lifecycle\n    , tags : List String\n    , counts : Dict String Int")
+            && content.contains("Db.Encode.lifecycle input.payload")
+            && content.contains("Encode.list Encode.string input.tags")
+            && content.contains("Dict.toList"),
+        "Expected CreateEvent.elm to use rich typed Json inputs and encoders. Generated:\n{}",
+        content
+    );
+
+    assert!(
+        get_events_content.contains("Decode.list (Decode.string)")
+            && get_events_content.contains("Decode.dict (Decode.int)"),
+        "Expected GetEvents.elm to decode typed Json containers. Generated:\n{}",
+        get_events_content
+    );
 }

@@ -154,24 +154,6 @@ fn collect_id_brands(database: &ast::Database) -> Vec<(String, IdKind)> {
     out
 }
 
-fn parse_branded_id_type(type_: &str) -> Option<(IdKind, String)> {
-    if let Some(brand) = type_
-        .strip_prefix("Id.Int<")
-        .and_then(|s| s.strip_suffix('>'))
-    {
-        return Some((IdKind::Int, brand.to_string()));
-    }
-
-    if let Some(brand) = type_
-        .strip_prefix("Id.Uuid<")
-        .and_then(|s| s.strip_suffix('>'))
-    {
-        return Some((IdKind::Uuid, brand.to_string()));
-    }
-
-    None
-}
-
 fn split_foreign_key_type(type_: &str) -> Option<(&str, &str)> {
     let mut parts = type_.split('.');
     let table = parts.next()?;
@@ -237,7 +219,7 @@ pub fn write_schema(database: &ast::Database) -> String {
     let mut result = String::new();
 
     result
-        .push_str("module Db exposing (..)\n\nimport Db.Id\nimport Json.Encode\nimport Time\n\n\n");
+        .push_str("module Db exposing (..)\n\nimport Db.Id\nimport Dict exposing (Dict)\nimport Json.Encode\nimport Time\n\n\n");
 
     result.push_str("type alias DateTime =\n    Time.Posix\n\n\n");
     result.push_str("type alias Json =\n    Json.Encode.Value\n\n\n");
@@ -354,19 +336,29 @@ fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> Stri
 /// Convert a column to its Elm type representation
 /// For ID types with brands, generates branded types like `UserId` or `Uuid User`
 fn column_to_elm_type(column: &ast::Column) -> String {
-    match &column.type_ {
-        ast::ColumnType::IdInt { table } => {
+    elm_type_from_column_type(&column.type_)
+}
+
+fn elm_type_from_column_type(type_: &ast::ColumnType) -> String {
+    match type_ {
+        ast::ColumnType::String => "String".to_string(),
+        ast::ColumnType::Int => "Int".to_string(),
+        ast::ColumnType::Float => "Float".to_string(),
+        ast::ColumnType::Bool => "Bool".to_string(),
+        ast::ColumnType::DateTime => "Time.Posix".to_string(),
+        ast::ColumnType::Date => "String".to_string(),
+        ast::ColumnType::Json => "Db.Json".to_string(),
+        ast::ColumnType::JsonTyped(inner) => elm_type_from_column_type(inner),
+        ast::ColumnType::List(inner) => format!("List {}", elm_type_from_column_type(inner)),
+        ast::ColumnType::Dict(inner) => {
+            format!("Dict String {}", elm_type_from_column_type(inner))
+        }
+        ast::ColumnType::Nullable(inner) => format!("Maybe {}", elm_type_from_column_type(inner)),
+        ast::ColumnType::IdInt { table } | ast::ColumnType::IdUuid { table } => {
             if !table.is_empty() {
                 format!("Db.Id.{}", table)
             } else {
                 "Int".to_string()
-            }
-        }
-        ast::ColumnType::IdUuid { table } => {
-            if !table.is_empty() {
-                format!("Db.Id.{}", table)
-            } else {
-                "String".to_string()
             }
         }
         ast::ColumnType::ForeignKey { table, field } => {
@@ -376,7 +368,7 @@ fn column_to_elm_type(column: &ast::Column) -> String {
                 "String".to_string()
             }
         }
-        _ => column.type_.to_string(),
+        ast::ColumnType::Custom(name) => format!("Db.{}", name),
     }
 }
 
@@ -388,6 +380,7 @@ pub fn to_schema_decoders(database: &ast::Database) -> String {
     result.push_str("module Db.Decode exposing (..)\n\n");
 
     result.push_str("import Db exposing (..)\n");
+    result.push_str("import Dict exposing (Dict)\n");
     result.push_str("import Json.Decode as Decode\n");
     result.push_str("import Db.Id\n");
     result.push_str("import Time\n\n\n");
@@ -483,7 +476,7 @@ fn to_decoder_definition(
                 name
             ));
             result.push_str(&format!("{} =\n", crate::ext::string::decapitalize(name)));
-            result.push_str("    Decode.field \"type\" Decode.string\n");
+            result.push_str("    Decode.oneOf [ Decode.field \"type_\" Decode.string, Decode.field \"type\" Decode.string ]\n");
             result.push_str("        |> Decode.andThen\n");
             result.push_str("            (\\variant_name ->\n");
             result.push_str("               case variant_name of\n");
@@ -618,6 +611,11 @@ pub fn to_schema_encoders(database: &ast::Database) -> String {
     result.push_str(
         "module Db.Encode exposing (..)\n\nimport Db\nimport Db.Id\nimport Json.Encode as Encode\nimport Time\n\n\n",
     );
+    result = result.replacen(
+        "import Db.Id\n",
+        "import Db.Id\nimport Dict exposing (Dict)\n",
+        1,
+    );
 
     result.push_str("dateTime : Time.Posix -> Encode.Value\n");
     result.push_str("dateTime time =\n");
@@ -674,7 +672,7 @@ fn to_encoder_variant(
     match &variant.fields {
         Some(fields) => {
             let mut result = format!(
-                "{}Db.{} inner_details__ ->\n{}Encode.object\n{}[ ( \"type\", Encode.string \"{}\" )\n",
+                "{}Db.{} inner_details__ ->\n{}Encode.object\n{}[ ( \"type_\", Encode.string \"{}\" )\n",
                 outer_indent, variant.name, indent, inner_indent, variant.name
             );
 
@@ -686,7 +684,7 @@ fn to_encoder_variant(
             result
         }
         None => format!(
-            "{}Db.{} ->\n{}Encode.object [ ( \"type\", Encode.string \"{}\" ) ]\n\n",
+            "{}Db.{} ->\n{}Encode.object [ ( \"type_\", Encode.string \"{}\" ) ]\n\n",
             outer_indent, variant.name, indent, variant.name
         ),
     }
@@ -717,7 +715,22 @@ fn to_type_encoder(database: &ast::Database, type_: &ast::ColumnType) -> String 
         ast::ColumnType::String => "Encode.string".to_string(),
         ast::ColumnType::Int => "Encode.int".to_string(),
         ast::ColumnType::Float => "Encode.float".to_string(),
+        ast::ColumnType::Bool => "Encode.bool".to_string(),
         ast::ColumnType::DateTime => "dateTime".to_string(),
+        ast::ColumnType::Date => "Encode.string".to_string(),
+        ast::ColumnType::Json => "json".to_string(),
+        ast::ColumnType::JsonTyped(inner) => to_type_encoder(database, inner),
+        ast::ColumnType::List(inner) => {
+            format!("Encode.list {}", to_type_encoder(database, inner))
+        }
+        ast::ColumnType::Dict(inner) => format!(
+            "(\\dict__ -> dict__ |> Dict.toList |> List.map (\\( key__, value__ ) -> ( key__, {} value__ )) |> Encode.object)",
+            to_type_encoder(database, inner)
+        ),
+        ast::ColumnType::Nullable(inner) => format!(
+            "(\\maybe__ -> Maybe.map ({} ) maybe__ |> Maybe.withDefault Encode.null)",
+            to_type_encoder(database, inner)
+        ),
         ast::ColumnType::IdInt { .. } => "Db.Id.encodeInt".to_string(),
         ast::ColumnType::IdUuid { .. } => "Db.Id.encodeUuid".to_string(),
         ast::ColumnType::ForeignKey { table, field } if field == "id" => {
@@ -732,39 +745,44 @@ fn to_type_encoder(database: &ast::Database, type_: &ast::ColumnType) -> String 
 }
 
 fn to_type_encoder_str(lookup: &ElmLookup, type_: &str) -> String {
+    to_elm_encoder(lookup, &ast::ColumnType::from_str(type_))
+}
+
+fn to_elm_encoder(lookup: &ElmLookup, type_: &ast::ColumnType) -> String {
     match type_ {
-        "String" => "Encode.string".to_string(),
-        "Int" => "Encode.int".to_string(),
-        "Float" => "Encode.float".to_string(),
-        "Bool" => "Encode.bool".to_string(),
-        "DateTime" => "Db.Encode.dateTime".to_string(),
-        _ => {
-            if let Some((kind, _)) = parse_branded_id_type(type_) {
-                return id_encoder(kind).to_string();
-            }
-
-            if let Some((brand, field)) = split_foreign_key_type(type_) {
-                if field == "id" {
-                    if let Some(kind) = get_id_kind_for_brand(lookup, brand) {
-                        return id_encoder(kind).to_string();
-                    }
-                }
-
-                if let Some(col_type) = resolve_foreign_key_column_type(lookup, type_) {
-                    return match col_type {
-                        ast::ColumnType::String => "Encode.string".to_string(),
-                        ast::ColumnType::Int => "Encode.int".to_string(),
-                        ast::ColumnType::Float => "Encode.float".to_string(),
-                        ast::ColumnType::DateTime => "Db.Encode.dateTime".to_string(),
-                        ast::ColumnType::IdInt { .. } => "Db.Id.encodeInt".to_string(),
-                        ast::ColumnType::IdUuid { .. } => "Db.Id.encodeUuid".to_string(),
-                        _ => format!("Db.Encode.{}", string::decapitalize(&col_type.to_string())),
-                    };
+        ast::ColumnType::String => "Encode.string".to_string(),
+        ast::ColumnType::Int => "Encode.int".to_string(),
+        ast::ColumnType::Float => "Encode.float".to_string(),
+        ast::ColumnType::Bool => "Encode.bool".to_string(),
+        ast::ColumnType::DateTime => "Db.Encode.dateTime".to_string(),
+        ast::ColumnType::Date => "Encode.string".to_string(),
+        ast::ColumnType::Json => "Db.Encode.json".to_string(),
+        ast::ColumnType::JsonTyped(inner) => to_elm_encoder(lookup, inner),
+        ast::ColumnType::List(inner) => format!("Encode.list {}", to_elm_encoder(lookup, inner)),
+        ast::ColumnType::Dict(inner) => format!(
+            "(\\dict__ -> dict__ |> Dict.toList |> List.map (\\( key__, value__ ) -> ( key__, {} value__ )) |> Encode.object)",
+            to_elm_encoder(lookup, inner)
+        ),
+        ast::ColumnType::Nullable(inner) => format!(
+            "(\\maybe__ -> Maybe.map ({} ) maybe__ |> Maybe.withDefault Encode.null)",
+            to_elm_encoder(lookup, inner)
+        ),
+        ast::ColumnType::IdInt { .. } => "Db.Id.encodeInt".to_string(),
+        ast::ColumnType::IdUuid { .. } => "Db.Id.encodeUuid".to_string(),
+        ast::ColumnType::ForeignKey { table, field } => {
+            if field == "id" {
+                if let Some(kind) = get_id_kind_for_brand(lookup, table) {
+                    return id_encoder(kind).to_string();
                 }
             }
 
-            format!("Db.Encode.{}", string::decapitalize(type_)).to_string()
+            if let Some(col_type) = resolve_foreign_key_column_type(lookup, &type_.to_string()) {
+                return to_elm_encoder(lookup, &col_type);
+            }
+
+            "Encode.string".to_string()
         }
+        ast::ColumnType::Custom(name) => format!("Db.Encode.{}", string::decapitalize(name)),
     }
 }
 
@@ -824,6 +842,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     result.push_str("import Db.Delta\n");
     result.push_str("import Db.Encode\n");
     result.push_str("import Db.Id\n");
+    result.push_str("import Dict exposing (Dict)\n");
     if query.operation == ast::QueryOperation::Update {
         result.push_str("import Db.Updates\n");
     }
@@ -1118,72 +1137,113 @@ fn to_update_arg_encoder_str(lookup: &ElmLookup, type_: &str, field_name: &str) 
 }
 
 fn to_elm_typename(lookup: &ElmLookup, type_: &str, is_link: bool) -> String {
+    if is_link {
+        type_.to_string()
+    } else {
+        to_elm_type_from_column_type(lookup, &ast::ColumnType::from_str(type_))
+    }
+}
+
+fn to_elm_type_from_column_type(lookup: &ElmLookup, type_: &ast::ColumnType) -> String {
     match type_ {
-        "String" => type_.to_string(),
-        "Int" => type_.to_string(),
-        "Float" => type_.to_string(),
-        "Bool" => type_.to_string(),
-        "DateTime" => "Time.Posix".to_string(),
-        _ => {
-            if is_link {
-                type_.to_string()
+        ast::ColumnType::String => "String".to_string(),
+        ast::ColumnType::Int => "Int".to_string(),
+        ast::ColumnType::Float => "Float".to_string(),
+        ast::ColumnType::Bool => "Bool".to_string(),
+        ast::ColumnType::DateTime => "Time.Posix".to_string(),
+        ast::ColumnType::Date => "String".to_string(),
+        ast::ColumnType::Json => "Db.Json".to_string(),
+        ast::ColumnType::JsonTyped(inner) => to_elm_type_from_column_type(lookup, inner),
+        ast::ColumnType::List(inner) => {
+            format!("List {}", to_elm_type_from_column_type(lookup, inner))
+        }
+        ast::ColumnType::Dict(inner) => {
+            format!(
+                "Dict String {}",
+                to_elm_type_from_column_type(lookup, inner)
+            )
+        }
+        ast::ColumnType::Nullable(inner) => {
+            format!("Maybe {}", to_elm_type_from_column_type(lookup, inner))
+        }
+        ast::ColumnType::IdInt { table } | ast::ColumnType::IdUuid { table } => {
+            if !table.is_empty() {
+                format!("Db.Id.{}", table)
             } else {
-                if let Some((_, brand)) = parse_branded_id_type(type_) {
-                    return format!("Db.Id.{}", brand);
-                }
-
-                if let Some((table, field)) = split_foreign_key_type(type_) {
-                    if field == "id" {
-                        if let Some(table_def) = find_table(lookup, table) {
-                            return format!("Db.Id.{}", table_def.name);
-                        }
-                        return format!("Db.Id.{}", table);
-                    }
-
-                    if let Some(col_type) = resolve_foreign_key_column_type(lookup, type_) {
-                        return to_elm_typename(lookup, &col_type.to_string(), false);
-                    }
-                }
-
-                format!("Db.{}", type_).to_string()
+                "Int".to_string()
             }
         }
+        ast::ColumnType::ForeignKey { table, field } => {
+            if field == "id" {
+                if let Some(table_def) = find_table(lookup, table) {
+                    return format!("Db.Id.{}", table_def.name);
+                }
+                return format!("Db.Id.{}", table);
+            }
+
+            if let Some(col_type) = resolve_foreign_key_column_type(lookup, &type_.to_string()) {
+                return to_elm_type_from_column_type(lookup, &col_type);
+            }
+
+            "String".to_string()
+        }
+        ast::ColumnType::Custom(name) => format!("Db.{}", name),
     }
 }
 
 fn to_elm_decoder(lookup: &ElmLookup, type_: &str, is_link: bool) -> String {
+    if is_link {
+        format!("decode{}", type_)
+    } else {
+        to_elm_decoder_from_column_type(lookup, &ast::ColumnType::from_str(type_))
+    }
+}
+
+fn to_elm_decoder_from_column_type(lookup: &ElmLookup, type_: &ast::ColumnType) -> String {
     match type_ {
-        "String" => "Decode.string".to_string(),
-        "Int" => "Decode.int".to_string(),
-        "Float" => "Decode.float".to_string(),
-        "DateTime" => "Db.Decode.dateTime".to_string(),
-        "Bool" | "Boolean" => "Db.Decode.bool".to_string(),
-        _ => {
-            if is_link {
-                return format!("decode{}", type_);
-            }
-
-            if let Some((kind, _)) = parse_branded_id_type(type_) {
-                return id_decoder(kind).to_string();
-            }
-
-            if let Some((brand, field)) = split_foreign_key_type(type_) {
-                if field == "id" {
-                    if let Some(kind) = get_id_kind_for_brand(lookup, brand) {
-                        return id_decoder(kind).to_string();
-                    }
+        ast::ColumnType::String => "Decode.string".to_string(),
+        ast::ColumnType::Int => "Decode.int".to_string(),
+        ast::ColumnType::Float => "Decode.float".to_string(),
+        ast::ColumnType::DateTime => "Db.Decode.dateTime".to_string(),
+        ast::ColumnType::Date => "Decode.string".to_string(),
+        ast::ColumnType::Bool => "Db.Decode.bool".to_string(),
+        ast::ColumnType::Json => "Db.Decode.json".to_string(),
+        ast::ColumnType::JsonTyped(inner) => to_elm_decoder_from_column_type(lookup, inner),
+        ast::ColumnType::List(inner) => {
+            format!(
+                "Decode.list ({})",
+                to_elm_decoder_from_column_type(lookup, inner)
+            )
+        }
+        ast::ColumnType::Dict(inner) => {
+            format!(
+                "Decode.dict ({})",
+                to_elm_decoder_from_column_type(lookup, inner)
+            )
+        }
+        ast::ColumnType::Nullable(inner) => {
+            format!(
+                "Decode.nullable ({})",
+                to_elm_decoder_from_column_type(lookup, inner)
+            )
+        }
+        ast::ColumnType::IdInt { .. } => "Db.Id.decodeInt".to_string(),
+        ast::ColumnType::IdUuid { .. } => "Db.Id.decodeUuid".to_string(),
+        ast::ColumnType::ForeignKey { table, field } => {
+            if field == "id" {
+                if let Some(kind) = get_id_kind_for_brand(lookup, table) {
+                    return id_decoder(kind).to_string();
                 }
-
-                if let Some(col_type) = resolve_foreign_key_column_type(lookup, type_) {
-                    return match col_type {
-                        ast::ColumnType::IdInt { .. } => "Db.Id.decodeInt".to_string(),
-                        ast::ColumnType::IdUuid { .. } => "Db.Id.decodeUuid".to_string(),
-                        _ => to_elm_decoder(lookup, &col_type.to_string(), false),
-                    };
-                }
             }
 
-            format!("Db.Decode.{}", crate::ext::string::decapitalize(type_))
+            if let Some(col_type) = resolve_foreign_key_column_type(lookup, &type_.to_string()) {
+                return to_elm_decoder_from_column_type(lookup, &col_type);
+            }
+
+            "Decode.string".to_string()
+        }
+        ast::ColumnType::Custom(name) => {
+            format!("Db.Decode.{}", crate::ext::string::decapitalize(name))
         }
     }
 }

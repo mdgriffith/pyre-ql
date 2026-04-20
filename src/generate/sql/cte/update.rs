@@ -126,7 +126,7 @@ fn generate_typed_response_query(
                                     "json(case when t.{} = 1 then 'true' else 'false' end)",
                                     string::quote(&query_field.name)
                                 ));
-                            } else if matches!(column.type_, ast::ColumnType::Json) {
+                            } else if column.type_.is_json_like() {
                                 sql.push_str(&format!(
                                     "json(t.{})",
                                     string::quote(&query_field.name)

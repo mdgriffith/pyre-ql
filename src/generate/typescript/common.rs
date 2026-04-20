@@ -17,16 +17,10 @@ pub fn sort_types_by_dependency(database: &ast::Database) -> Vec<(String, Vec<as
                         if let Some(fields) = &variant.fields {
                             for field in fields {
                                 if let ast::Field::Column(col) = field {
-                                    let type_str = col.type_.to_string();
-                                    // Skip primitives and known types
-                                    match type_str.as_str() {
-                                        "String" | "Int" | "Float" | "Bool" | "DateTime"
-                                        | "Json" => {}
-                                        _ if type_str.starts_with("Id.Int<")
-                                            || type_str.starts_with("Id.Uuid<") => {}
-                                        other => {
-                                            deps.insert(other.to_string());
-                                        }
+                                    let mut type_names = Vec::new();
+                                    col.type_.collect_custom_type_names(&mut type_names);
+                                    for type_name in type_names {
+                                        deps.insert(type_name);
                                     }
                                 }
                             }
@@ -90,6 +84,65 @@ pub fn sort_types_by_dependency(database: &ast::Database) -> Vec<(String, Vec<as
     sorted.extend(remaining);
 
     sorted
+}
+
+pub fn column_type_to_ts_type(type_: &ast::ColumnType, qualify_custom: bool) -> String {
+    match type_ {
+        ast::ColumnType::String => "string".to_string(),
+        ast::ColumnType::Int | ast::ColumnType::Float => "number".to_string(),
+        ast::ColumnType::Bool => "boolean".to_string(),
+        ast::ColumnType::DateTime => "Date".to_string(),
+        ast::ColumnType::Date => "string".to_string(),
+        ast::ColumnType::Json => "unknown".to_string(),
+        ast::ColumnType::JsonTyped(inner) => column_type_to_ts_type(inner, qualify_custom),
+        ast::ColumnType::List(inner) => {
+            format!("Array<{}>", column_type_to_ts_type(inner, qualify_custom))
+        }
+        ast::ColumnType::Dict(inner) => {
+            format!(
+                "Record<string, {}>",
+                column_type_to_ts_type(inner, qualify_custom)
+            )
+        }
+        ast::ColumnType::Nullable(inner) => {
+            format!("{} | null", column_type_to_ts_type(inner, qualify_custom))
+        }
+        ast::ColumnType::IdInt { .. } => "number".to_string(),
+        ast::ColumnType::IdUuid { .. } => "string".to_string(),
+        ast::ColumnType::ForeignKey { .. } => "number".to_string(),
+        ast::ColumnType::Custom(name) => {
+            if qualify_custom {
+                format!("Db.{}", name)
+            } else {
+                name.clone()
+            }
+        }
+    }
+}
+
+pub fn column_type_to_zod_validator(type_: &ast::ColumnType) -> String {
+    match type_ {
+        ast::ColumnType::String => "z.string()".to_string(),
+        ast::ColumnType::Int | ast::ColumnType::Float => "z.number()".to_string(),
+        ast::ColumnType::Bool => "CoercedBool".to_string(),
+        ast::ColumnType::DateTime => "CoercedDate".to_string(),
+        ast::ColumnType::Date => "z.string()".to_string(),
+        ast::ColumnType::Json => "Json".to_string(),
+        ast::ColumnType::JsonTyped(inner) => column_type_to_zod_validator(inner),
+        ast::ColumnType::List(inner) => {
+            format!("z.array({})", column_type_to_zod_validator(inner))
+        }
+        ast::ColumnType::Dict(inner) => {
+            format!("z.record({})", column_type_to_zod_validator(inner))
+        }
+        ast::ColumnType::Nullable(inner) => {
+            format!("{}.nullable()", column_type_to_zod_validator(inner))
+        }
+        ast::ColumnType::IdInt { .. } => "z.number()".to_string(),
+        ast::ColumnType::IdUuid { .. } => "z.string()".to_string(),
+        ast::ColumnType::ForeignKey { .. } => "z.number()".to_string(),
+        ast::ColumnType::Custom(name) => name.clone(),
+    }
 }
 
 /// Generate the shared JSON type definition and schema
@@ -209,21 +262,7 @@ pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
         if let Some(fields) = &variant.fields {
             for field in fields {
                 if let ast::Field::Column(col) = field {
-                    let type_str = col.type_.to_string();
-                    let validator = match type_str.as_str() {
-                        "String" => "z.string()",
-                        "Int" | "Float" => "z.number()",
-                        "Bool" => "CoercedBool",
-                        "DateTime" => "CoercedDate",
-                        "Json" => "Json",
-                        _ if type_str.starts_with("Id.Int<")
-                            || type_str.starts_with("Id.Uuid<")
-                            || type_str.contains('.') =>
-                        {
-                            "z.number()"
-                        }
-                        other => other,
-                    };
+                    let validator = column_type_to_zod_validator(&col.type_);
                     let validator = if col.nullable {
                         format!("{}.nullish()", validator)
                     } else {
@@ -290,22 +329,7 @@ pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
 
 /// Convert a type string to its Zod validator representation
 pub fn type_to_zod_validator(type_str: &str, nullable: bool) -> String {
-    let validator = match type_str {
-        "String" => "z.string()".to_string(),
-        "Int" | "Float" => "z.number()".to_string(),
-        "Bool" => "CoercedBool".to_string(),
-        "DateTime" => "CoercedDate".to_string(),
-        "Json" => "Json".to_string(),
-        _ if type_str == "Id.Int"
-            || type_str == "Id.Uuid"
-            || type_str.starts_with("Id.Int<")
-            || type_str.starts_with("Id.Uuid<")
-            || type_str.contains('.') =>
-        {
-            "z.number()".to_string()
-        }
-        other => format!("z.any() /* {} */", other),
-    };
+    let validator = column_type_to_zod_validator(&ast::ColumnType::from_str(type_str));
 
     if nullable {
         format!("{}.optional()", validator)
@@ -315,23 +339,8 @@ pub fn type_to_zod_validator(type_str: &str, nullable: bool) -> String {
 }
 
 /// Convert a type string to its TypeScript type representation
-pub fn type_to_ts_type(type_str: &str) -> &str {
-    match type_str {
-        "String" => "string",
-        "Int" | "Float" => "number",
-        "Bool" => "boolean",
-        "DateTime" => "Date",
-        "Json" => "unknown",
-        _ if type_str == "Id.Int"
-            || type_str == "Id.Uuid"
-            || type_str.starts_with("Id.Int<")
-            || type_str.starts_with("Id.Uuid<")
-            || type_str.contains('.') =>
-        {
-            "number"
-        }
-        other => other,
-    }
+pub fn type_to_ts_type(type_str: &str) -> String {
+    column_type_to_ts_type(&ast::ColumnType::from_str(type_str), false)
 }
 
 #[cfg(test)]

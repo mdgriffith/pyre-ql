@@ -233,13 +233,30 @@ fn allowed_defaults_for_column_type(column: &ast::Column) -> Vec<String> {
         ast::ColumnType::Bool => vec!["true".to_string(), "false".to_string()],
         ast::ColumnType::DateTime => vec!["now".to_string(), "an integer literal".to_string()],
         ast::ColumnType::Date => vec!["a string literal".to_string()],
-        ast::ColumnType::Json => vec!["null".to_string(), "a string literal".to_string()],
+        ast::ColumnType::Json | ast::ColumnType::JsonTyped(_) => vec![],
+        ast::ColumnType::List(_) | ast::ColumnType::Dict(_) => vec![],
+        ast::ColumnType::Nullable(inner) => {
+            let nested = ast::Column {
+                name: column.name.clone(),
+                type_: (*inner.clone()),
+                nullable: true,
+                directives: vec![],
+                start: None,
+                end: None,
+                start_name: None,
+                end_name: None,
+                start_typename: None,
+                end_typename: None,
+                inline_comment: None,
+            };
+            allowed_defaults_for_column_type(&nested)
+        }
         ast::ColumnType::IdInt { .. } | ast::ColumnType::IdUuid { .. } => vec![],
         ast::ColumnType::ForeignKey { .. } => vec!["an integer or string literal".to_string()],
         ast::ColumnType::Custom(_) => vec!["a literal value matching the field type".to_string()],
     };
 
-    if column.nullable {
+    if column.nullable && !column.type_.is_json_like() {
         allowed.push("null".to_string());
     }
 
@@ -254,7 +271,6 @@ fn is_supported_default_for_column(column: &ast::Column, value: &ast::DefaultVal
                 column.type_,
                 ast::ColumnType::String
                     | ast::ColumnType::Date
-                    | ast::ColumnType::Json
                     | ast::ColumnType::IdUuid { .. }
                     | ast::ColumnType::ForeignKey { .. }
             ),
@@ -269,11 +285,159 @@ fn is_supported_default_for_column(column: &ast::Column, value: &ast::DefaultVal
                 matches!(column.type_, ast::ColumnType::Float)
             }
             ast::QueryValue::Bool(_) => matches!(column.type_, ast::ColumnType::Bool),
-            ast::QueryValue::Null(_) => column.nullable,
+            ast::QueryValue::Null(_) => column.nullable && !column.type_.is_json_like(),
             ast::QueryValue::Fn(_) => false,
             ast::QueryValue::Variable(_) => false,
             ast::QueryValue::LiteralTypeValue(_) => false,
         },
+    }
+}
+
+fn invalid_type_usage_error(
+    filepath: &str,
+    message: String,
+    contexts: Vec<Range>,
+    primary: Vec<Range>,
+) -> Error {
+    Error {
+        filepath: filepath.to_string(),
+        error_type: ErrorType::InvalidTypeUsage { message },
+        locations: vec![Location { contexts, primary }],
+    }
+}
+
+fn validate_type_fields(
+    context: &Context,
+    filepath: &str,
+    contexts: Vec<Range>,
+    primary: Vec<Range>,
+    fields: &Vec<ast::Field>,
+    inside_json: bool,
+    seen_types: &mut HashSet<String>,
+    errors: &mut Vec<Error>,
+) {
+    for field in fields {
+        match field {
+            ast::Field::Column(column) => validate_type_expr(
+                context,
+                filepath,
+                contexts.clone(),
+                primary.clone(),
+                &column.type_,
+                inside_json,
+                seen_types,
+                errors,
+            ),
+            ast::Field::FieldDirective(ast::FieldDirective::Link(_)) if inside_json => {
+                errors.push(invalid_type_usage_error(
+                    filepath,
+                    "Relationships are not allowed inside Json<...>.".to_string(),
+                    contexts.clone(),
+                    primary.clone(),
+                ));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn validate_type_expr(
+    context: &Context,
+    filepath: &str,
+    contexts: Vec<Range>,
+    primary: Vec<Range>,
+    type_: &ast::ColumnType,
+    inside_json: bool,
+    seen_types: &mut HashSet<String>,
+    errors: &mut Vec<Error>,
+) {
+    match type_ {
+        ast::ColumnType::String
+        | ast::ColumnType::Int
+        | ast::ColumnType::Float
+        | ast::ColumnType::Bool
+        | ast::ColumnType::DateTime
+        | ast::ColumnType::Date
+        | ast::ColumnType::Json
+        | ast::ColumnType::IdInt { .. }
+        | ast::ColumnType::IdUuid { .. }
+        | ast::ColumnType::ForeignKey { .. } => {}
+        ast::ColumnType::JsonTyped(inner) => validate_type_expr(
+            context, filepath, contexts, primary, inner, true, seen_types, errors,
+        ),
+        ast::ColumnType::List(inner) | ast::ColumnType::Dict(inner) => {
+            if !inside_json {
+                errors.push(invalid_type_usage_error(
+                    filepath,
+                    format!("{} may only appear inside Json<...>.", type_),
+                    contexts.clone(),
+                    primary.clone(),
+                ));
+            }
+
+            validate_type_expr(
+                context, filepath, contexts, primary, inner, true, seen_types, errors,
+            );
+        }
+        ast::ColumnType::Nullable(inner) => validate_type_expr(
+            context,
+            filepath,
+            contexts,
+            primary,
+            inner,
+            inside_json,
+            seen_types,
+            errors,
+        ),
+        ast::ColumnType::Custom(name) => {
+            let Some((_def_info, type_definition)) = context.types.get(name) else {
+                errors.push(Error {
+                    filepath: filepath.to_string(),
+                    error_type: ErrorType::UnknownType {
+                        found: type_.to_string(),
+                        known_types: known_types_for_error(context),
+                    },
+                    locations: vec![Location { contexts, primary }],
+                });
+                return;
+            };
+
+            if !seen_types.insert(name.clone()) {
+                return;
+            }
+
+            match type_definition {
+                Type::Record(record) => validate_type_fields(
+                    context,
+                    filepath,
+                    contexts,
+                    primary,
+                    &record.fields,
+                    inside_json,
+                    seen_types,
+                    errors,
+                ),
+                Type::OneOf { variants } => {
+                    for variant in variants {
+                        if let Some(fields) = &variant.fields {
+                            validate_type_fields(
+                                context,
+                                filepath,
+                                contexts.clone(),
+                                primary.clone(),
+                                fields,
+                                inside_json,
+                                seen_types,
+                                errors,
+                            );
+                        }
+                    }
+                }
+                Type::Integer | Type::Float | Type::String => {}
+            }
+
+            seen_types.remove(name);
+        }
     }
 }
 
@@ -566,7 +730,7 @@ fn to_single_range(start: &Option<ast::Location>, end: &Option<ast::Location>) -
     }
 }
 
-fn query_param_type_for_column(table: &ast::RecordDetails, column: &ast::Column) -> String {
+pub fn query_param_type_for_column(table: &ast::RecordDetails, column: &ast::Column) -> String {
     if column.type_.is_id_type() {
         let table_name = column.type_.table_name().unwrap_or(table.name.as_str());
         format!("{}.{}", table_name, column.name)
@@ -1281,23 +1445,16 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                     } => {
                         let mut field_names: HashMap<String, Option<Range>> = HashMap::new();
                         for column in ast::collect_columns(fields) {
-                            // Type exists check - only for custom types
-                            let type_str = column.type_.to_string();
-                            if let Some(custom_type_name) = column.type_.get_custom_type_name() {
-                                if !context.types.contains_key(custom_type_name) {
-                                    errors.push(Error {
-                                        filepath: file.path.clone(),
-                                        error_type: ErrorType::UnknownType {
-                                            found: type_str.clone(),
-                                            known_types: known_types_for_error(context),
-                                        },
-                                        locations: vec![Location {
-                                            contexts: to_range(start, end),
-                                            primary: to_range(&column.start, &column.end),
-                                        }],
-                                    });
-                                }
-                            }
+                            validate_type_expr(
+                                context,
+                                &file.path,
+                                to_range(start, end),
+                                to_range(&column.start_typename, &column.end_typename),
+                                &column.type_,
+                                false,
+                                &mut HashSet::new(),
+                                errors,
+                            );
 
                             for directive in &column.directives {
                                 if let ast::ColumnDirective::Default {
@@ -1405,43 +1562,28 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                                     let variant_range =
                                         to_single_range(&variant.start, &variant.end);
 
-                                    // Check if type exists - only for custom types
-                                    if let Some(custom_type_name) =
-                                        field.type_.get_custom_type_name()
-                                    {
-                                        if !context.types.contains_key(custom_type_name) {
-                                            let mut contexts: Vec<Range> = vec![];
+                                    let mut contexts: Vec<Range> = vec![];
 
-                                            match to_single_range(&start, &end) {
-                                                None => (),
-                                                Some(new_range) => {
-                                                    contexts.push(new_range);
-                                                }
-                                            }
-
-                                            match to_single_range(&variant.start, &variant.end) {
-                                                None => (),
-                                                Some(new_range) => {
-                                                    contexts.push(new_range);
-                                                }
-                                            }
-
-                                            errors.push(Error {
-                                                filepath: file.path.clone(),
-                                                error_type: ErrorType::UnknownType {
-                                                    found: field_type_str.clone(),
-                                                    known_types: known_types_for_error(context),
-                                                },
-                                                locations: vec![Location {
-                                                    contexts,
-                                                    primary: to_range(
-                                                        &field.start_typename,
-                                                        &field.end_typename,
-                                                    ),
-                                                }],
-                                            });
-                                        }
+                                    if let Some(new_range) = to_single_range(&start, &end) {
+                                        contexts.push(new_range);
                                     }
+
+                                    if let Some(new_range) =
+                                        to_single_range(&variant.start, &variant.end)
+                                    {
+                                        contexts.push(new_range);
+                                    }
+
+                                    validate_type_expr(
+                                        context,
+                                        &file.path,
+                                        contexts,
+                                        to_range(&field.start_typename, &field.end_typename),
+                                        &field.type_,
+                                        false,
+                                        &mut HashSet::new(),
+                                        errors,
+                                    );
 
                                     // Check for type collisions between variants
                                     match field_types.get(&field.name) {
@@ -1823,6 +1965,10 @@ fn is_known_query_param_type(context: &Context, type_: &str) -> bool {
         | ast::ColumnType::DateTime
         | ast::ColumnType::Date
         | ast::ColumnType::Json
+        | ast::ColumnType::JsonTyped(_)
+        | ast::ColumnType::List(_)
+        | ast::ColumnType::Dict(_)
+        | ast::ColumnType::Nullable(_)
         | ast::ColumnType::IdInt { .. }
         | ast::ColumnType::IdUuid { .. }
         | ast::ColumnType::ForeignKey { .. } => true,
@@ -2467,6 +2613,27 @@ fn check_value(
     table_type_string: &str,
     is_nullable: bool,
 ) {
+    if let ast::ColumnType::JsonTyped(inner) = ast::ColumnType::from_str(table_type_string) {
+        match value {
+            ast::QueryValue::Variable(_) | ast::QueryValue::Null(_) => {}
+            _ => {
+                check_value(
+                    context,
+                    query_context,
+                    value,
+                    start,
+                    end,
+                    errors,
+                    params,
+                    table_name,
+                    &inner.to_string(),
+                    false,
+                );
+                return;
+            }
+        }
+    }
+
     if table_type_string == "Json" {
         if let ast::QueryValue::Variable(_) = value {
             mark_as_used(query_context, value, params);

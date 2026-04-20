@@ -935,7 +935,7 @@ fn select_type_with_json_mode(
     use_jsonb: bool,
     sql: &mut String,
 ) {
-    if matches!(column.type_, ast::ColumnType::Json) {
+    if column.type_.is_json_like() {
         let json_fn = if use_jsonb { "jsonb" } else { "json" };
         sql.push_str(&format!(
             "{}({}.{})",

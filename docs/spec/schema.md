@@ -25,6 +25,8 @@ record RecordName {
 
 ### Field Types
 
+Field types are type expressions. Pyre supports primitive types, named types, generic document types, and nullable types.
+
 **Primitive Types:**
 - `Int` - Integer (stored as INTEGER in SQLite)
 - `Float` - Floating point number (stored as REAL)
@@ -32,21 +34,78 @@ record RecordName {
 - `Bool` - Boolean (stored as INTEGER, 0 or 1)
 - `DateTime` - Timestamp (stored as INTEGER, Unix epoch)
 - `Date` - Date (stored as TEXT)
-- `JSON` - JSON data (stored as BLOB)
+- `JSON` - Untyped raw JSON data (stored as BLOB)
 
-**Nullable Types:**
-Append `?` to make a field nullable:
-```pyre
-name String?
-email String?
-```
-
-**Custom Types:**
-Reference tagged union types defined elsewhere:
+**Named Types:**
+Reference `type` declarations defined elsewhere:
 ```pyre
 status Status
 action Action
 ```
+
+Named types currently refer to tagged union `type` declarations.
+
+**JSON Document Types:**
+Use `Json<T>` to store a validated value in a single JSON-backed column.
+```pyre
+status Json<Status>
+tags Json<List<String>>
+metadata Json<Dict<String>>
+```
+
+`Json<T>` stores a single structured value in one column and validates its shape before writes. Pyre does not re-validate `Json<T>` values on reads. `T` may be any JSON-encodable type.
+
+Pyre stores `Json<T>` values in SQLite as `BLOB`, using SQLite's JSONB representation for persisted document data.
+
+`JSON` remains available as an escape hatch for untyped raw JSON values. Unlike `Json<T>`, raw `JSON` does not guarantee a validated schema shape.
+
+**Container Types:**
+- `List<T>` - Ordered JSON array of values of type `T`
+- `Dict<T>` - JSON object with string keys and values of type `T`
+
+Container types are document-only. They may only appear inside `Json<...>`.
+
+Examples:
+```pyre
+tags Json<List<String>>
+optionalNotes Json<List<String?>>
+settings Json<Dict<String>>
+```
+
+These are invalid because `List<T>` and `Dict<T>` are not expandable:
+```pyre
+tags List<String>
+settings Dict<String>
+```
+
+If a named type contains `List<T>` or `Dict<T>` anywhere inside it, that type is also document-only and must be wrapped in `Json<...>` when used in a record field.
+
+**JSON-Encodable Types:**
+All value types are JSON-encodable except relationships.
+
+This means `Json<...>` may contain:
+- Primitive types
+- Nullable types
+- Named types
+- `List<T>` and `Dict<T>`
+- Branded IDs such as `User.id`
+
+This means `Json<...>` may not contain:
+- `@link` relationship fields
+- Any type that includes relationships transitively
+
+Branded IDs used inside `Json<...>` are treated as values only. They do not create foreign keys, links, or indexes.
+
+**Nullable Types:**
+Append `?` to any type expression to make it nullable:
+```pyre
+name String?
+email String?
+status Json<Status>?
+tags Json<List<String?>>
+```
+
+`?` applies to the immediately preceding type expression. Use parentheses if needed to make the intended grouping explicit.
 
 **ID Types:**
 Branded type-safe identifiers that prevent mixing IDs from different tables:
@@ -116,6 +175,8 @@ createdAt DateTime @default(now)
 ```pyre
 createdAt DateTime @default(now) @index
 ```
+
+`@default(...)` is not allowed on `Json<...>` fields or raw `JSON` fields.
 
 ### Record-Level Directives
 
@@ -291,6 +352,19 @@ type Action
 
 **Note**: Variants without fields are simple tags. Variants with fields use `{ }` syntax.
 
+Tagged union types may also be used inside `Json<...>`. In that case, the full tagged value is stored as validated JSON in a single column instead of expanding into columns.
+
+The canonical JSON representation of a tagged union uses a `type_` field as the discriminator.
+
+For example:
+```json
+{ "type_": "Pending", "reason": "manual review", "createdAt": 1712966400 }
+```
+
+Query and mutation inputs for `Json<...>` fields use the same logical payload shape as the corresponding named type outside `Json<...>`. The storage representation is an implementation detail.
+
+Generated TypeScript and Elm clients surface `Json<T>` fields as structured client types. For example, `Json<List<String>>` becomes `Array<string>` in TypeScript query inputs and `List String` in generated Elm query modules.
+
 ## Session
 
 Sessions define runtime context variables available in queries and permissions.
@@ -378,7 +452,7 @@ record Post {
 
 3. **Indentation strictness**: Top-level definitions cannot be indented. They must start at column 1.
 
-4. **Nullable syntax**: The `?` must come immediately after the type name, before any directives: `name String? @unique` not `name String @unique?`.
+4. **Nullable syntax**: The `?` must come immediately after the type expression, before any directives: `name String? @unique`, `settings Json<Preferences>?`, not `name String @unique?`.
 
 5. **Default values**: Only specific literal types are supported in `@default()`. Complex expressions are not allowed.
 
@@ -386,8 +460,10 @@ record Post {
 
 7. **Type variants**: Variants with fields require all fields to be provided when used in queries. There's no partial field support.
 
-8. **Comments**: Only single-line `//` comments are supported. Multi-line comments are not available.
+8. **Document-only container types**: `List<T>` and `Dict<T>` may only appear inside `Json<...>`. Any named type containing either container transitively is also document-only.
 
-9. **Composite index order matters**: For `@index(a, b, c)`, SQLite can use leftmost prefixes (`a`, `a+b`, `a+b+c`) efficiently. Put the most selective leading conditions first.
+9. **Comments**: Only single-line `//` comments are supported. Multi-line comments are not available.
 
-10. **Unique + nullable columns**: SQLite allows multiple `NULL` values in unique indexes. If strict uniqueness is required, make indexed columns non-nullable.
+10. **Composite index order matters**: For `@index(a, b, c)`, SQLite can use leftmost prefixes (`a`, `a+b`, `a+b+c`) efficiently. Put the most selective leading conditions first.
+
+11. **Unique + nullable columns**: SQLite allows multiple `NULL` values in unique indexes. If strict uniqueness is required, make indexed columns non-nullable.

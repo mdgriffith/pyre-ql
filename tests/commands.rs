@@ -277,6 +277,54 @@ query GetEvents {
     .unwrap();
 }
 
+fn write_typed_json_schema_and_query(ctx: &TestContext) {
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+type Lifecycle
+   = Running
+   | Finished {
+        reason String
+     }
+
+record Event {
+    @public
+    id      Id.Int @id
+    payload Json<Lifecycle>
+}
+        "#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/queries.pyre"),
+        r#"
+insert SeedEvent($payload: Json<Lifecycle>) {
+    event {
+        payload = $payload
+    }
+}
+
+insert SeedInlineEvent {
+    event {
+        payload = Finished {
+            reason = "inline"
+        }
+    }
+}
+
+query GetEvents {
+    event {
+        id
+        payload
+    }
+}
+        "#,
+    )
+    .unwrap();
+}
+
+
 fn write_game_lens_schema_and_query(ctx: &TestContext) {
     std::fs::write(
         ctx.workspace_path.join("pyre/schema.pyre"),
@@ -1241,5 +1289,63 @@ console.log("json-roundtrip-check-passed");
         verify_script,
         "json-roundtrip-check-passed",
         "bun json runtime verification",
+    );
+}
+
+#[tokio::test]
+async fn test_generated_typescript_runner_roundtrips_typed_json_values() {
+    if !bun_is_available() {
+        eprintln!("Skipping bun-based TypeScript runtime test: bun not available");
+        return;
+    }
+
+    let ctx = TestContext::new();
+    write_typed_json_schema_and_query(&ctx);
+
+    generate_runtime(&ctx);
+
+    let verify_script = r#"
+import { createClient } from "@libsql/client";
+import { SeedEvent, SeedInlineEvent, GetEvents } from "./pyre/generated/typescript/run.ts";
+
+const db = createClient({ url: "file:.yak/yak.db" });
+
+await SeedEvent(db, { payload: { type_: "Running" } });
+await SeedEvent(db, { payload: { type_: "Finished", reason: "done" } });
+await SeedInlineEvent(db, {});
+
+const result = await GetEvents(db, {});
+if (!result || !Array.isArray(result.event)) {
+  throw new Error(`Expected event rows, got: ${JSON.stringify(result)}`);
+}
+
+const rows = [...result.event].sort((a, b) => a.id - b.id);
+const expected = [
+  { type_: "Running" },
+  { type_: "Finished", reason: "done" },
+  { type_: "Finished", reason: "inline" },
+];
+
+if (rows.length !== expected.length) {
+  throw new Error(`Expected ${expected.length} rows, got: ${rows.length}`);
+}
+
+for (let i = 0; i < expected.length; i++) {
+  const actualJson = JSON.stringify(rows[i]?.payload);
+  const expectedJson = JSON.stringify(expected[i]);
+  if (actualJson !== expectedJson) {
+    throw new Error(`Payload mismatch at index ${i}. Expected ${expectedJson}, got ${actualJson}`);
+  }
+}
+
+console.log("typed-json-roundtrip-check-passed");
+"#;
+
+    run_bun_verification_script(
+        &ctx,
+        "verify-generated-typed-json-run.ts",
+        verify_script,
+        "typed-json-roundtrip-check-passed",
+        "bun typed json runtime verification",
     );
 }

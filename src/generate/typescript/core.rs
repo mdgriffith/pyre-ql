@@ -177,27 +177,23 @@ fn to_metadata_formatter() -> typealias::TypeFormatter {
                  is_optional,
                  is_array_relationship,
              }| {
-                let (base_type, is_primitive, needs_coercion) = match type_ {
-                    "String" => ("z.string()".to_string(), true, false),
-                    "Int" => ("z.number()".to_string(), true, false),
-                    "Float" => ("z.number()".to_string(), true, false),
-                    "Bool" => ("z.boolean()".to_string(), true, true),
-                    "DateTime" => ("z.date()".to_string(), true, true),
-                    // Handle Id.Int<TableName> and Id.Uuid<TableName> as primitives
-                    _ if type_ == "Id.Int"
-                        || type_ == "Id.Uuid"
-                        || type_.starts_with("Id.Int<")
-                        || type_.starts_with("Id.Uuid<")
-                        || type_.contains('.') =>
-                    {
-                        ("z.number()".to_string(), true, false)
-                    }
-                    _ => {
-                        if is_link {
-                            (type_.to_string(), false, false)
-                        } else {
-                            (format!("Decode.{}", type_.to_string()), false, false)
+                let parsed_type = ast::ColumnType::from_str(type_);
+                let (base_type, is_primitive, needs_coercion) = if is_link {
+                    (type_.to_string(), false, false)
+                } else {
+                    match &parsed_type {
+                        ast::ColumnType::String => ("z.string()".to_string(), true, false),
+                        ast::ColumnType::Int | ast::ColumnType::Float => {
+                            ("z.number()".to_string(), true, false)
                         }
+                        ast::ColumnType::Bool => ("z.boolean()".to_string(), true, true),
+                        ast::ColumnType::DateTime => ("z.date()".to_string(), true, true),
+                        ast::ColumnType::IdInt { .. }
+                        | ast::ColumnType::IdUuid { .. }
+                        | ast::ColumnType::ForeignKey { .. } => {
+                            ("z.number()".to_string(), true, false)
+                        }
+                        _ => (output_zod_type_for_column_type(&parsed_type), false, false),
                     }
                 };
 
@@ -954,22 +950,56 @@ fn get_linked_table<'a>(
 }
 
 fn to_zod_type(type_: &str) -> String {
+    input_zod_type_for_column_type(&ast::ColumnType::from_str(type_))
+}
+
+fn input_zod_type_for_column_type(type_: &ast::ColumnType) -> String {
     match type_ {
-        "String" => "z.string()".to_string(),
-        "Int" => "z.number()".to_string(),
-        "Float" => "z.number()".to_string(),
-        "Bool" => "z.boolean()".to_string(),
-        "DateTime" => "z.union([z.date(), z.string(), z.number()])".to_string(),
-        "Json" => "z.unknown()".to_string(),
-        _ if type_ == "Id.Int"
-            || type_ == "Id.Uuid"
-            || type_.starts_with("Id.Int<")
-            || type_.starts_with("Id.Uuid<")
-            || type_.contains('.') =>
-        {
-            "z.number()".to_string()
+        ast::ColumnType::String => "z.string()".to_string(),
+        ast::ColumnType::Int | ast::ColumnType::Float => "z.number()".to_string(),
+        ast::ColumnType::Bool => "z.boolean()".to_string(),
+        ast::ColumnType::DateTime => "z.union([z.date(), z.string(), z.number()])".to_string(),
+        ast::ColumnType::Date => "z.string()".to_string(),
+        ast::ColumnType::Json => "z.unknown()".to_string(),
+        ast::ColumnType::JsonTyped(inner) => output_zod_type_for_column_type(inner),
+        ast::ColumnType::List(inner) => {
+            format!("z.array({})", input_zod_type_for_column_type(inner))
         }
-        _ => format!("z.any() /* {} */", type_),
+        ast::ColumnType::Dict(inner) => {
+            format!("z.record({})", input_zod_type_for_column_type(inner))
+        }
+        ast::ColumnType::Nullable(inner) => {
+            format!("{}.nullable()", input_zod_type_for_column_type(inner))
+        }
+        ast::ColumnType::IdInt { .. }
+        | ast::ColumnType::IdUuid { .. }
+        | ast::ColumnType::ForeignKey { .. } => "z.number()".to_string(),
+        ast::ColumnType::Custom(name) => format!("Decode.{}", name),
+    }
+}
+
+fn output_zod_type_for_column_type(type_: &ast::ColumnType) -> String {
+    match type_ {
+        ast::ColumnType::String => "z.string()".to_string(),
+        ast::ColumnType::Int | ast::ColumnType::Float => "z.number()".to_string(),
+        ast::ColumnType::Bool => "CoercedBool".to_string(),
+        ast::ColumnType::DateTime => "CoercedDate".to_string(),
+        ast::ColumnType::Date => "z.string()".to_string(),
+        ast::ColumnType::Json => "Decode.Json".to_string(),
+        ast::ColumnType::JsonTyped(inner) => output_zod_type_for_column_type(inner),
+        ast::ColumnType::List(inner) => {
+            format!("z.array({})", output_zod_type_for_column_type(inner))
+        }
+        ast::ColumnType::Dict(inner) => {
+            format!("z.record({})", output_zod_type_for_column_type(inner))
+        }
+        ast::ColumnType::Nullable(inner) => {
+            format!("{}.nullable()", output_zod_type_for_column_type(inner))
+        }
+        ast::ColumnType::IdInt { .. }
+        | ast::ColumnType::IdUuid { .. }
+        | ast::ColumnType::ForeignKey { .. } => "z.number()".to_string(),
+        ast::ColumnType::Custom(name) => format!("Decode.{}", name),
     }
 }
 
@@ -979,7 +1009,7 @@ fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
     let mut json_params: Vec<String> = Vec::new();
     for arg in args {
         let type_name = arg.type_.clone().unwrap_or("unknown".to_string());
-        if type_name == "Json" {
+        if ast::ColumnType::from_str(&type_name).is_json_like() {
             json_params.push(arg.name.clone());
         }
         let mut type_string = to_zod_type(&type_name);

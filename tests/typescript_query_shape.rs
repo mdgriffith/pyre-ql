@@ -70,3 +70,71 @@ query GetRulebookByName($name: String) {
         content
     );
 }
+
+#[test]
+fn generated_typescript_query_input_validates_and_stringifies_typed_json_params() {
+    let schema_source = r#"
+type Lifecycle
+   = Running
+   | Finished {
+        reason String
+     }
+
+record Event {
+    @public
+    id Id.Int @id
+    payload Json<Lifecycle>
+}
+"#;
+
+    let query_source = r#"
+insert SeedEvent($payload: Json<Lifecycle>) {
+    event {
+        payload = $payload
+    }
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema parses");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let context = typecheck::check_schema(&database).expect("schema typechecks");
+
+    let query_list = parser::parse_query("query.pyre", query_source).expect("query parses");
+    let query_info = typecheck::check_queries(&query_list, &context).expect("query typechecks");
+
+    let mut files: Vec<GeneratedFile<String>> = Vec::new();
+    core::generate_queries(
+        &context,
+        &query_info,
+        &query_list,
+        Path::new("typescript/core"),
+        &mut files,
+    );
+
+    let generated = files
+        .iter()
+        .find(|f| {
+            f.path
+                .to_string_lossy()
+                .ends_with("queries/metadata/seedEvent.ts")
+        })
+        .expect("generated metadata file");
+
+    let content = &generated.contents;
+
+    assert!(
+        content.contains("payload: Decode.Lifecycle"),
+        "Expected typed Json param to use generated union validator. Generated:\n{}",
+        content
+    );
+
+    assert!(
+        content.contains("payload: JSON.stringify(input.payload)"),
+        "Expected typed Json param to be stringified before SQL. Generated:\n{}",
+        content
+    );
+}

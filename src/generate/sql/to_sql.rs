@@ -2,6 +2,7 @@ use crate::ast;
 use crate::ext::string;
 use crate::typecheck;
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 
 // Serializes in a format that libsql can use
 #[derive(Serialize)]
@@ -141,14 +142,57 @@ pub fn render_value(value: &ast::QueryValue) -> String {
 
 fn render_json_value(value: &ast::QueryValue) -> String {
     match value {
-        ast::QueryValue::Variable((_, var)) => format!("json(${})", var.name),
+        ast::QueryValue::Variable((_, var)) => format!("jsonb(${})", var.name),
         _ => render_value(value),
+    }
+}
+
+fn query_value_to_json_literal(value: &ast::QueryValue) -> Option<JsonValue> {
+    match value {
+        ast::QueryValue::String((_, s)) => Some(JsonValue::String(s.clone())),
+        ast::QueryValue::Int((_, i)) => Some(JsonValue::Number((*i).into())),
+        ast::QueryValue::Float((_, f)) => {
+            serde_json::Number::from_f64(*f as f64).map(JsonValue::Number)
+        }
+        ast::QueryValue::Bool((_, b)) => Some(JsonValue::Bool(*b)),
+        ast::QueryValue::Null(_) => Some(JsonValue::Null),
+        ast::QueryValue::LiteralTypeValue((_, details)) => {
+            let mut object = serde_json::Map::new();
+            object.insert("type_".to_string(), JsonValue::String(details.name.clone()));
+
+            if let Some(fields) = &details.fields {
+                for (name, value) in fields {
+                    object.insert(name.clone(), query_value_to_json_literal(value)?);
+                }
+            }
+
+            Some(JsonValue::Object(object))
+        }
+        ast::QueryValue::Variable(_) | ast::QueryValue::Fn(_) => None,
+    }
+}
+
+fn render_typed_json_value(value: &ast::QueryValue) -> String {
+    match value {
+        ast::QueryValue::Variable((_, var)) => format!("jsonb(${})", var.name),
+        _ => match query_value_to_json_literal(value) {
+            Some(json) => {
+                let rendered = serde_json::to_string(&json).expect("json literal should serialize");
+                let escaped = rendered.replace("'", "''");
+                format!("jsonb('{}')", escaped)
+            }
+            None => render_json_value(value),
+        },
     }
 }
 
 pub fn render_column_value(column: &ast::Column, value: &ast::QueryValue) -> String {
     if matches!(column.type_, ast::ColumnType::Json) {
         return render_json_value(value);
+    }
+
+    if matches!(column.type_, ast::ColumnType::JsonTyped(_)) {
+        return render_typed_json_value(value);
     }
 
     render_value(value)

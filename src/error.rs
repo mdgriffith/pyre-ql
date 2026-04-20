@@ -70,6 +70,9 @@ pub enum ErrorType {
         found: String,
         known_types: Vec<String>,
     },
+    InvalidTypeUsage {
+        message: String,
+    },
     NoPrimaryKey {
         record: String,
     },
@@ -567,7 +570,7 @@ fn get_line(
     line_index: u32,
     enable_color: bool,
 ) -> String {
-    let line_number = line_index.to_usize() - 1;
+    let line_number = line_index.to_usize().saturating_sub(1);
 
     let prefix = color::gray(
         enable_color,
@@ -1446,6 +1449,7 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
+        ErrorType::InvalidTypeUsage { message } => message.clone(),
 
         ErrorType::UnknownField {
             found,
@@ -1576,6 +1580,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::DuplicateField { .. } => "Duplicate Field",
         ErrorType::DuplicateVariant { .. } => "Duplicate Variant",
         ErrorType::UnknownType { .. } => "Unknown Type",
+        ErrorType::InvalidTypeUsage { .. } => "Invalid Type Usage",
         ErrorType::NoPrimaryKey { .. } => "No Primary Key",
         ErrorType::MultiplePrimaryKeys { .. } => "Multiple Primary Keys",
         ErrorType::MultipleTableNames { .. } => "Multiple table names",

@@ -25,6 +25,180 @@ fn check_schema_and_get_layers(schema_source: &str) -> std::collections::HashMap
 }
 
 #[test]
+fn test_list_type_must_be_wrapped_in_json() {
+    let schema_source = r#"
+record User {
+    @public
+    id Int @id
+    tags List<String>
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    assert!(
+        schema_result.is_err(),
+        "List<T> outside Json<T> should fail schema typechecking"
+    );
+}
+
+#[test]
+fn test_dict_type_must_be_wrapped_in_json() {
+    let schema_source = r#"
+record User {
+    @public
+    id Int @id
+    metadata Dict<String>
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    assert!(
+        schema_result.is_err(),
+        "Dict<T> outside Json<T> should fail schema typechecking"
+    );
+}
+
+#[test]
+fn test_json_typed_field_cannot_have_default() {
+    let schema_source = r#"
+type Preferences
+   = Theme {
+        theme String
+     }
+
+record User {
+    @public
+    id Int @id
+    preferences Json<Preferences> @default(null)
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    assert!(
+        schema_result.is_err(),
+        "Json<T> fields should reject @default(...)"
+    );
+}
+
+#[test]
+fn test_raw_json_field_cannot_have_default() {
+    let schema_source = r#"
+record User {
+    @public
+    id Int @id
+    payload JSON @default(null)
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    assert!(
+        schema_result.is_err(),
+        "Raw JSON fields should reject @default(...)"
+    );
+}
+
+#[test]
+fn test_json_typed_field_cannot_contain_relationships() {
+    let schema_source = r#"
+type Preferences
+   = Owned {
+        ownerId User.id
+        owner @link(ownerId, User.id)
+     }
+
+record User {
+    @public
+    id Int @id
+    preferences Json<Preferences>
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    assert!(
+        schema_result.is_err(),
+        "Json<T> payloads should reject relationship fields"
+    );
+}
+
+#[test]
+fn test_json_typed_field_accepts_union_literal_in_insert() {
+    let schema_source = r#"
+type Lifecycle
+   = Running
+   | Finished {
+        reason String
+     }
+
+record Event {
+    @public
+    id Int @id
+    payload Json<Lifecycle>
+}
+    "#;
+
+    let query_source = r#"
+insert SeedEvent {
+    event {
+        payload = Finished {
+            reason = "done"
+        }
+    }
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let context = typecheck::check_schema(&database).expect("Schema should typecheck");
+    let query_list = parser::parse_query("query.pyre", query_source).expect("Query should parse");
+
+    let query_result = typecheck::check_queries(&query_list, &context);
+    assert!(
+        query_result.is_ok(),
+        "Json<T> fields should accept inline tagged union values in writes"
+    );
+}
+
+#[test]
 fn test_variant_field_collision_highlight_positions() {
     let schema_source = r#"
 type DevEventType

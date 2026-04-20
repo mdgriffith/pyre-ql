@@ -43,6 +43,46 @@ type Status
 }
 
 #[test]
+fn test_valid_json_generic_field_type() {
+    let schema_source = r#"
+type Preferences
+   = Theme {
+        theme String
+        locale String
+     }
+
+record User {
+    id Int @id
+    preferences Json<Preferences>
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(
+        result.is_ok(),
+        "Json<T> field type should parse successfully"
+    );
+}
+
+#[test]
+fn test_valid_nested_generic_json_field_type_with_nullability() {
+    let schema_source = r#"
+record User {
+    id Int @id
+    tags Json<List<String?>>?
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    let result = parser::run("schema.pyre", schema_source, &mut schema);
+    assert!(
+        result.is_ok(),
+        "Nested generic Json type with nullability should parse successfully"
+    );
+}
+
+#[test]
 fn test_valid_session() {
     let schema_source = r#"
 session {

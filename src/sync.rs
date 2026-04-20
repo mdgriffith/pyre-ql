@@ -80,7 +80,7 @@ fn collect_sync_storage_columns(
 ) {
     push_storage_column(headers, base_name.to_string());
 
-    if matches!(column_type, ast::ColumnType::Json) {
+    if column_type.is_json_like() {
         push_storage_column(json_columns, base_name.to_string());
     }
 

@@ -272,7 +272,7 @@ SQLite provides both `json_*` and `jsonb_*` functions (since version 3.45.0, rel
 - JSONB functions are more efficient for intermediate processing
 - JSON functions are needed for final results to ensure compatibility
 - Mixing requires type conversion: `json(jsonb_value)` converts JSONB to JSON
-- JSON values are stored as TEXT in SQLite (not a separate JSON type), but JSONB functions use binary format internally
+- SQLite does not have a separate declared JSON or JSONB column type. Pyre stores typed document values as `BLOB` and uses SQLite's JSONB representation for persisted `Json<T>` data.
 
 ## Type System
 
@@ -289,6 +289,11 @@ SQLite uses dynamic typing (type affinity) rather than strict types. Pyre maps i
 | `DateTime` | INTEGER (Unix epoch) |
 | `Date` | TEXT |
 | `JSON` | BLOB |
+| `Json<T>` | BLOB |
+
+`List<T>` and `Dict<T>` are document-only container types. They are only valid inside `Json<...>` and are stored using the enclosing `Json<T>` column.
+
+Pyre validates `Json<T>` payload shapes before writes. It does not re-validate typed JSON payloads on reads.
 
 **Why This Matters:**
 - SQLite will accept values of different types in columns (with type affinity)

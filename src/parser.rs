@@ -254,6 +254,56 @@ fn parse_typename_with_dots(input: Text<'_>) -> ParseResult<'_, &str> {
     Ok((input, val.fragment()))
 }
 
+fn parse_type_expr(input: Text<'_>) -> ParseResult<'_, ast::ColumnType> {
+    parse_type_expr_with_top_nullable(input, true)
+}
+
+fn parse_type_expr_without_top_nullable(input: Text<'_>) -> ParseResult<'_, ast::ColumnType> {
+    parse_type_expr_with_top_nullable(input, false)
+}
+
+fn parse_type_expr_with_top_nullable(
+    input: Text<'_>,
+    allow_top_nullable: bool,
+) -> ParseResult<'_, ast::ColumnType> {
+    let (input, type_name) = parse_typename_with_dots(input)?;
+    let (input, generic_args) = opt(parse_type_arguments)(input)?;
+
+    let mut type_ = match (type_name, generic_args) {
+        ("Json", Some(mut args)) if args.len() == 1 => {
+            ast::ColumnType::JsonTyped(Box::new(args.remove(0)))
+        }
+        ("List", Some(mut args)) if args.len() == 1 => {
+            ast::ColumnType::List(Box::new(args.remove(0)))
+        }
+        ("Dict", Some(mut args)) if args.len() == 1 => {
+            ast::ColumnType::Dict(Box::new(args.remove(0)))
+        }
+        (_, Some(_)) => ast::ColumnType::Custom(type_name.to_string()),
+        (_, None) => ast::ColumnType::from_str(type_name),
+    };
+
+    if allow_top_nullable {
+        let (input, nullable) = parse_nullable(input)?;
+        if nullable {
+            type_ = ast::ColumnType::Nullable(Box::new(type_));
+        }
+        Ok((input, type_))
+    } else {
+        Ok((input, type_))
+    }
+}
+
+fn parse_type_arguments(input: Text<'_>) -> ParseResult<'_, Vec<ast::ColumnType>> {
+    let (input, _) = tag("<")(input)?;
+    let (input, _) = space0(input)?;
+    let (input, args) =
+        separated_list1(delimited(space0, char(','), space0), parse_type_expr)(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = tag(">")(input)?;
+    Ok((input, args))
+}
+
 fn parse_fieldname(input: Text<'_>) -> ParseResult<'_, &str> {
     let (input, val) = recognize(tuple((
         alt((
@@ -758,7 +808,7 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = cut(opt(tag(":")))(input)?;
     let (input, _) = space0(input)?;
     let (input, start_type_pos) = position(input)?;
-    let (input, type_) = cut(parse_typename_with_dots)(input)?;
+    let (input, type_) = cut(parse_type_expr_without_top_nullable)(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, is_nullable) = parse_nullable(input)?;
     let (input, _) = space0(input)?;
@@ -775,7 +825,7 @@ fn parse_column(input: Text) -> ParseResult<ast::Field> {
         input,
         ast::Field::Column(ast::Column {
             name: name.to_string(),
-            type_: ast::ColumnType::from_str(type_),
+            type_,
             nullable: is_nullable,
             directives,
             start: Some(to_location(&start_pos)),
@@ -901,11 +951,13 @@ fn parse_tagged(input: Text) -> ParseResult<ast::Definition> {
     let (input, _) = tag("type")(input)?;
     let (input, _) = multispace1(input)?;
     let (input, name) = cut(parse_typename)(input)?;
+    let (input, _end_name_pos) = position(input)?;
     // Allow whitespace (including newlines) before the = sign
     // Use multispace0 to allow the = to be on the next line
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("=")(input)?;
     let (input, _) = multispace0(input)?;
+
     let (input, variants) = separated_list0(parse_type_separator, parse_variant)(input)?;
     let (input, end_pos) = position(input)?;
     // Note: We don't require line_ending/eof here because parse_type_separator already consumes
@@ -1012,7 +1064,7 @@ fn parse_variant_field_inline(input: Text) -> ParseResult<ast::Field> {
     let (input, _) = cut(opt(tag(":")))(input)?;
     let (input, _) = space0(input)?;
     let (input, start_type_pos) = position(input)?;
-    let (input, type_) = cut(parse_typename_with_dots)(input)?;
+    let (input, type_) = cut(parse_type_expr_without_top_nullable)(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, is_nullable) = parse_nullable(input)?;
     let (input, _) = space0(input)?;
@@ -1025,7 +1077,7 @@ fn parse_variant_field_inline(input: Text) -> ParseResult<ast::Field> {
         input,
         ast::Field::Column(ast::Column {
             name: name.to_string(),
-            type_: ast::ColumnType::from_str(type_),
+            type_,
             nullable: is_nullable,
             directives,
             start: Some(to_location(&start_pos)),
@@ -1198,7 +1250,7 @@ fn parse_query_param_definition(input: Text) -> ParseResult<ast::QueryParamDefin
     let (input, _) = space0(input)?;
 
     let (input, start_type_pos) = position(input)?;
-    let (input, typename) = cut(opt(parse_typename_with_dots))(input)?;
+    let (input, typename) = cut(opt(parse_type_expr_without_top_nullable))(input)?;
     let (input, nullable_marker) = opt(char('?'))(input)?;
     let (input, end_type_pos) = position(input)?;
     let (input, _) = multispace0(input)?;
