@@ -75,6 +75,46 @@ record GameAsset {
 }
 
 #[test]
+fn db_elm_uses_unqualified_local_types_within_db_module() {
+    let schema_source = r#"
+type GridType
+   = Square
+
+type TileFormat
+   = Png
+
+type Grid = Grid {
+    gridType GridType
+}
+
+type Tiling = Tiling {
+    format TileFormat
+}
+
+type MembershipRole
+   = Player {
+        controlled Json
+     }
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema parses");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let generated = elm::write_schema(&database);
+
+    assert!(generated.contains("controlled : Json"));
+    assert!(generated.contains("gridType : GridType"));
+    assert!(generated.contains("format : TileFormat"));
+    assert!(!generated.contains("Db.Json"));
+    assert!(!generated.contains("Db.GridType"));
+    assert!(!generated.contains("Db.TileFormat"));
+}
+
+#[test]
 fn elm_generates_rich_types_for_typed_json_fields_and_inputs() {
     let schema_source = r#"
 type Lifecycle

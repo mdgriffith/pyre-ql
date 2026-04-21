@@ -336,10 +336,10 @@ fn to_string_column(is_first: bool, indent: usize, column: &ast::Column) -> Stri
 /// Convert a column to its Elm type representation
 /// For ID types with brands, generates branded types like `UserId` or `Uuid User`
 fn column_to_elm_type(column: &ast::Column) -> String {
-    elm_type_from_column_type(&column.type_)
+    elm_type_from_column_type(&column.type_, false)
 }
 
-fn elm_type_from_column_type(type_: &ast::ColumnType) -> String {
+fn elm_type_from_column_type(type_: &ast::ColumnType, qualify_db_types: bool) -> String {
     match type_ {
         ast::ColumnType::String => "String".to_string(),
         ast::ColumnType::Int => "Int".to_string(),
@@ -347,13 +347,32 @@ fn elm_type_from_column_type(type_: &ast::ColumnType) -> String {
         ast::ColumnType::Bool => "Bool".to_string(),
         ast::ColumnType::DateTime => "Time.Posix".to_string(),
         ast::ColumnType::Date => "String".to_string(),
-        ast::ColumnType::Json => "Db.Json".to_string(),
-        ast::ColumnType::JsonTyped(inner) => elm_type_from_column_type(inner),
-        ast::ColumnType::List(inner) => format!("List {}", elm_type_from_column_type(inner)),
-        ast::ColumnType::Dict(inner) => {
-            format!("Dict String {}", elm_type_from_column_type(inner))
+        ast::ColumnType::Json => {
+            if qualify_db_types {
+                "Db.Json".to_string()
+            } else {
+                "Json".to_string()
+            }
         }
-        ast::ColumnType::Nullable(inner) => format!("Maybe {}", elm_type_from_column_type(inner)),
+        ast::ColumnType::JsonTyped(inner) => elm_type_from_column_type(inner, qualify_db_types),
+        ast::ColumnType::List(inner) => {
+            format!(
+                "List {}",
+                elm_type_from_column_type(inner, qualify_db_types)
+            )
+        }
+        ast::ColumnType::Dict(inner) => {
+            format!(
+                "Dict String {}",
+                elm_type_from_column_type(inner, qualify_db_types)
+            )
+        }
+        ast::ColumnType::Nullable(inner) => {
+            format!(
+                "Maybe {}",
+                elm_type_from_column_type(inner, qualify_db_types)
+            )
+        }
         ast::ColumnType::IdInt { table } | ast::ColumnType::IdUuid { table } => {
             if !table.is_empty() {
                 format!("Db.Id.{}", table)
@@ -368,7 +387,13 @@ fn elm_type_from_column_type(type_: &ast::ColumnType) -> String {
                 "String".to_string()
             }
         }
-        ast::ColumnType::Custom(name) => format!("Db.{}", name),
+        ast::ColumnType::Custom(name) => {
+            if qualify_db_types {
+                format!("Db.{}", name)
+            } else {
+                name.clone()
+            }
+        }
     }
 }
 
