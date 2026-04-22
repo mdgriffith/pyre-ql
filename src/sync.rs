@@ -2,7 +2,7 @@ use crate::ast::{self, WhereArg};
 use crate::typecheck;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // Sync module requires json feature for JSON value handling
 #[cfg(feature = "json")]
@@ -670,9 +670,17 @@ pub fn get_sync_sql(
         }
 
         let quoted_table_name = string::quote(&actual_table_name);
+        let json_column_set = json_columns.iter().cloned().collect::<HashSet<_>>();
         for header in &headers {
             let quoted_col_name = string::quote(header);
-            columns.push(format!("{}.{}", quoted_table_name, quoted_col_name));
+            if json_column_set.contains(header) {
+                columns.push(format!(
+                    "json({}.{}) as {}",
+                    quoted_table_name, quoted_col_name, quoted_col_name
+                ));
+            } else {
+                columns.push(format!("{}.{}", quoted_table_name, quoted_col_name));
+            }
         }
 
         if columns.is_empty() {

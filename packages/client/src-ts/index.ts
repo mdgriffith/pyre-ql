@@ -205,11 +205,11 @@ export class PyreClient {
     this.sseManager = new SSEManager({
       baseUrl: config.server.baseUrl,
       eventsPath: this.endpoints.events,
-    }, this.logDebug);
+    }, undefined, this.logDebug);
     this.webSocketManager = new WebSocketManager({
       baseUrl: config.server.baseUrl,
       eventsPath: this.endpoints.events,
-    }, this.logDebug);
+    }, undefined, this.logDebug);
     this.queryManager = new QueryManagerService(this.logDebug);
     this.queryClient = new QueryClientService(() => this.session, (payload) => {
       if (config.onError) {

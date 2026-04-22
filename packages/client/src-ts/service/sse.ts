@@ -53,6 +53,7 @@ export class SSEManager {
 
   connect(): void {
     this.shouldReconnect = true;
+    this.debugLog('[PyreClient] SSE connect requested');
     this.attemptConnect();
   }
 
@@ -64,15 +65,18 @@ export class SSEManager {
 
   private attemptConnect(): void {
     if (!this.config) {
+      this.debugLog('[PyreClient] SSE connect skipped: missing config');
       return;
     }
 
     try {
       const sseUrl = `${this.config.baseUrl}${this.config.eventsPath}`;
+      this.debugLog('[PyreClient] SSE attempting connection', { sseUrl });
       const eventSource = new EventSource(sseUrl);
 
       eventSource.onopen = () => {
         this.eventSource = eventSource;
+        this.debugLog('[PyreClient] SSE connection opened', { sseUrl });
       };
 
       eventSource.addEventListener('connected', (event: MessageEvent) => {
@@ -80,6 +84,7 @@ export class SSEManager {
           const message = JSON.parse(event.data) as { sessionId?: string };
           if (message.sessionId) {
             this.sessionId = message.sessionId;
+            this.debugLog('[PyreClient] SSE connected', { sessionId: message.sessionId });
             const connectedMessage = {
               type: 'connected',
               sessionId: message.sessionId,
@@ -131,13 +136,19 @@ export class SSEManager {
 
       eventSource.onerror = () => {
         const state = eventSource.readyState;
+        this.debugLog('[PyreClient] SSE connection state changed', {
+          readyState: state,
+          sessionId: this.sessionId,
+          shouldReconnect: this.shouldReconnect,
+        });
 
         if (state === EventSource.CLOSED) {
           console.warn('[PyreClient] SSE connection closed');
           if (this.shouldReconnect) {
-            // EventSource will auto-reconnect
+            this.debugLog('[PyreClient] SSE waiting for EventSource auto-reconnect');
           }
         } else if (state === EventSource.CONNECTING && !this.sessionId) {
+          this.debugLog('[PyreClient] SSE failed before session established');
           const errorMessage = {
             type: 'error',
             error: 'SSE connection failed',
@@ -156,6 +167,7 @@ export class SSEManager {
 
   disconnect(): void {
     this.shouldReconnect = false;
+    this.debugLog('[PyreClient] SSE disconnect requested', { sessionId: this.sessionId });
 
     if (this.eventSource) {
       this.eventSource.close();

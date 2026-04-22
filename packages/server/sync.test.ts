@@ -67,7 +67,7 @@ test("catchup reshapes flattened custom types before returning sync rows", async
             tiling__tileRootKey: "tiles/root",
             tiling__tileWidth: 256,
             tiling__format: "Png",
-            updatedAt: 1700000000,
+            updatedAt: 1700000000n,
           },
         ],
       },
@@ -98,4 +98,49 @@ test("catchup reshapes flattened custom types before returning sync rows", async
     },
     has_more: false,
   });
+});
+
+test("catchup normalizes bigint row values before reshaping", async () => {
+  const db = {
+    execute: mock(async () => ({ rows: [{ table_name: "maps", needs_sync: 1 }] })),
+    batch: mock(async () => ([
+      {
+        columns: [
+          "id",
+          "name",
+          "tiling",
+          "tiling__tileRootKey",
+          "tiling__tileWidth",
+          "tiling__format",
+          "updatedAt",
+        ],
+        rows: [
+          {
+            id: 1n,
+            name: "World",
+            tiling: "Tiling",
+            tiling__tileRootKey: "tiles/root",
+            tiling__tileWidth: 256n,
+            tiling__format: "Png",
+            updatedAt: 1700000000,
+          },
+        ],
+      },
+    ])),
+  };
+
+  const result = await catchup(db as any, { tables: {} }, {}, 1000);
+
+  expect(result.tables.maps.rows[0]).toEqual({
+    id: 1,
+    name: "World",
+    tiling: {
+      type: "Tiling",
+      tileRootKey: "tiles/root",
+      tileWidth: 256,
+      format: { type: "Png" },
+    },
+    updatedAt: 1700000000,
+  });
+  expect(result.tables.maps.last_seen_updated_at).toBe(1700000000);
 });

@@ -48,6 +48,10 @@ record GameEntity {
 
     assert_eq!(result.tables.len(), 1, "expected one sync table");
     assert_eq!(result.tables[0].json_columns, vec!["attrs".to_string()]);
+    assert!(
+        result.tables[0].sql[0].contains("json(\"gameEntities\".\"attrs\") as \"attrs\""),
+        "expected sync SQL to decode JSONB columns via json()"
+    );
 }
 
 #[test]

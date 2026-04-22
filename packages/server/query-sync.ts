@@ -1,5 +1,6 @@
 import { Client } from "@libsql/client";
 import * as wasm from "./wasm/pyre_wasm.js";
+import { normalizeForWasmJson } from "./wasm-json";
 import {
   run,
   type QueryMap,
@@ -20,7 +21,7 @@ const syncWithWasm: SyncDeltasFn = async (affectedRowGroups, connectedSessions, 
   const result = typeof deltasResult === "string" ? JSON.parse(deltasResult) : deltasResult;
 
   for (const group of result.groups) {
-    const reshapedTableGroupsResult = wasm.reshape_sync_table_groups(group.table_groups);
+    const reshapedTableGroupsResult = wasm.reshape_sync_table_groups(normalizeForWasmJson(group.table_groups));
 
     if (typeof reshapedTableGroupsResult === "string" && reshapedTableGroupsResult.startsWith("Error:")) {
       console.error("[SyncDeltas] Failed to reshape sync deltas:", reshapedTableGroupsResult);

@@ -1,5 +1,6 @@
 import { Client } from "@libsql/client";
 import * as wasm from "./wasm/pyre_wasm.js";
+import { normalizeForWasmJson } from "./wasm-json";
 
 export type SessionValue = null | number | string | Uint8Array;
 
@@ -41,7 +42,7 @@ function parseJsonColumnValue(value: unknown): unknown {
 }
 
 function reshapeSyncTableGroups(tableGroups: Array<{ table_name: string; headers: string[]; rows: unknown[][] }>) {
-    const reshaped = wasm.reshape_sync_table_groups(tableGroups);
+    const reshaped = wasm.reshape_sync_table_groups(normalizeForWasmJson(tableGroups));
 
     if (typeof reshaped === "string" && reshaped.startsWith("Error:")) {
         throw new Error(reshaped);
@@ -52,6 +53,18 @@ function reshapeSyncTableGroups(tableGroups: Array<{ table_name: string; headers
         headers: string[];
         rows: unknown[][];
     }>;
+}
+
+function coerceUnixSeconds(value: unknown): number {
+    if (typeof value === "number") {
+        return value;
+    }
+
+    if (typeof value === "bigint") {
+        return Number(value);
+    }
+
+    return new Date(value as string | Date).getTime() / 1000;
 }
 
 /**
@@ -139,9 +152,7 @@ export async function catchup(
                 tableRows.push(rowObject);
 
                 if (updatedAtIndex >= 0 && rowObject.updatedAt !== null && rowObject.updatedAt !== undefined) {
-                    const updatedAt = typeof rowObject.updatedAt === "number"
-                        ? rowObject.updatedAt
-                        : new Date(rowObject.updatedAt).getTime() / 1000;
+                    const updatedAt = coerceUnixSeconds(rowObject.updatedAt);
                     if (maxUpdatedAt === null || updatedAt > maxUpdatedAt) {
                         maxUpdatedAt = updatedAt;
                     }
@@ -174,9 +185,7 @@ export async function catchup(
             const lastRow = finalRows[finalRows.length - 1];
             const lastUpdatedAt = lastRow.updatedAt;
             if (lastUpdatedAt !== null && lastUpdatedAt !== undefined) {
-                const updatedAt = typeof lastUpdatedAt === "number"
-                    ? lastUpdatedAt
-                    : new Date(lastUpdatedAt).getTime() / 1000;
+                const updatedAt = coerceUnixSeconds(lastUpdatedAt);
                 maxUpdatedAt = updatedAt;
             }
         }
