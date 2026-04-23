@@ -7,6 +7,7 @@ type Validator<T> = ZodType<T>;
 type RunnerMeta = {
   session_args: string[];
   optional_input_args: string[];
+  json_input_args: string[];
   InputValidator: Validator<any>;
   ReturnData: Validator<any>;
 };
@@ -43,6 +44,7 @@ export function toRunner<Input, Result>(meta: RunnerMeta, sql: SqlInfo[]) {
       session,
       meta.session_args,
       meta.optional_input_args,
+      meta.json_input_args,
     );
     const results = await db.batch(toSqlStatements(sql, args));
     const data = formatResultData(sql, results);

@@ -72,7 +72,7 @@ query GetRulebookByName($name: String) {
 }
 
 #[test]
-fn generated_typescript_query_input_validates_and_stringifies_typed_json_params() {
+fn generated_typescript_query_input_validates_typed_json_params_without_stringifying() {
     let schema_source = r#"
 type Lifecycle
    = Running
@@ -133,8 +133,20 @@ insert SeedEvent($payload: Json<Lifecycle>) {
     );
 
     assert!(
-        content.contains("payload: JSON.stringify(input.payload)"),
-        "Expected typed Json param to be stringified before SQL. Generated:\n{}",
+        content.contains("const InputValidator = RawInputValidator;"),
+        "Expected typed Json param to pass through unchanged. Generated:\n{}",
+        content
+    );
+
+    assert!(
+        content.contains("json_input_args: [\"payload\"]"),
+        "Expected typed Json param metadata to mark JSON inputs. Generated:\n{}",
+        content
+    );
+
+    assert!(
+        !content.contains("JSON.stringify(input.payload)"),
+        "Did not expect typed Json param to be stringified. Generated:\n{}",
         content
     );
 }

@@ -26,9 +26,11 @@ export function buildArgs(
   input: Record<string, unknown> | undefined,
   session: Record<string, unknown>,
   sessionArgs: string[],
-  optionalInputArgs: string[] = []
+  optionalInputArgs: string[] = [],
+  jsonInputArgs: string[] = []
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
+  const jsonInputArgSet = new Set(jsonInputArgs);
 
   for (const key of optionalInputArgs) {
     args[`${key}__is_set`] = false;
@@ -37,7 +39,7 @@ export function buildArgs(
   if (input) {
     for (const [key, value] of Object.entries(input)) {
       if (value !== undefined) {
-        args[key] = value;
+        args[key] = jsonInputArgSet.has(key) ? JSON.stringify(value) : value;
         if (optionalInputArgs.includes(key)) {
           args[`${key}__is_set`] = true;
         }

@@ -179,6 +179,7 @@ pub struct TableSyncSqlWasm {
     pub permission_hash: String,
     pub sql: Vec<String>,
     pub headers: Vec<String>,
+    pub json_columns: Vec<String>,
 }
 
 /// Generate sync status SQL - returns a single SQL query that checks which tables need syncing
@@ -266,6 +267,7 @@ pub fn get_sync_sql_wasm(
                 permission_hash: t.permission_hash,
                 sql: t.sql,
                 headers: t.headers,
+                json_columns: t.json_columns,
             })
             .collect(),
     })

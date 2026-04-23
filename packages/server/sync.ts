@@ -29,16 +29,34 @@ export interface SyncPageResult {
     has_more: boolean;
 }
 
+function tryParseNestedJsonContainer(value: unknown): unknown {
+    if (typeof value !== "string") {
+        return value;
+    }
+
+    const trimmed = value.trim();
+    if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) {
+        return value;
+    }
+
+    try {
+        return JSON.parse(trimmed);
+    } catch {
+        return value;
+    }
+}
+
 function parseJsonColumnValue(value: unknown): unknown {
-    if (typeof value === "string") {
-        return JSON.parse(value);
+    const rawValue = value instanceof Uint8Array
+        ? new TextDecoder().decode(value)
+        : value;
+
+    if (typeof rawValue !== "string") {
+        return rawValue;
     }
 
-    if (value instanceof Uint8Array) {
-        return JSON.parse(new TextDecoder().decode(value));
-    }
-
-    return value;
+    const parsed = JSON.parse(rawValue);
+    return tryParseNestedJsonContainer(parsed);
 }
 
 function reshapeSyncTableGroups(tableGroups: Array<{ table_name: string; headers: string[]; rows: unknown[][] }>) {

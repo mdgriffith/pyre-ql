@@ -14,6 +14,7 @@ export interface QueryMetadata {
     sql: SqlInfo[];
     session_args: string[];
     optional_input_args: string[];
+    json_input_args: string[];
     InputValidator: Validator<any>;
     SessionValidator: Validator<any>;
 }
@@ -199,6 +200,7 @@ export async function run(
         validatedSession as Record<string, any>,
         query.session_args,
         query.optional_input_args,
+        query.json_input_args,
     );
 
     // Prepare SQL statements

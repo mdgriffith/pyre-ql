@@ -297,6 +297,21 @@ fn to_query_metadata_file(
             .collect::<Vec<String>>()
             .join(", ")
     );
+    let json_input_args = format!(
+        "[{}]",
+        query
+            .args
+            .iter()
+            .filter(|arg| {
+                arg.type_
+                    .as_ref()
+                    .map(|type_name| ast::ColumnType::from_str(type_name).is_json_like())
+                    .unwrap_or(false)
+            })
+            .map(|arg| format!("\"{}\"", arg.name))
+            .collect::<Vec<String>>()
+            .join(", ")
+    );
 
     let mut meta_block = String::new();
     meta_block.push_str("export const meta = {\n");
@@ -312,6 +327,7 @@ fn to_query_metadata_file(
     ));
     meta_block.push_str(&format!("  session_args: {},\n", session_args));
     meta_block.push_str(&format!("  optional_input_args: {},\n", omittable_args));
+    meta_block.push_str(&format!("  json_input_args: {},\n", json_input_args));
     meta_block.push_str("  InputValidator,\n");
     meta_block.push_str("  SessionValidator: Decode.SessionValidator,\n");
     meta_block.push_str("  ReturnData,\n");
@@ -1006,12 +1022,8 @@ fn output_zod_type_for_column_type(type_: &ast::ColumnType) -> String {
 fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
     let mut result = "const RawInputValidator = z.object({".to_string();
     let mut is_first = true;
-    let mut json_params: Vec<String> = Vec::new();
     for arg in args {
         let type_name = arg.type_.clone().unwrap_or("unknown".to_string());
-        if ast::ColumnType::from_str(&type_name).is_json_like() {
-            json_params.push(arg.name.clone());
-        }
         let mut type_string = to_zod_type(&type_name);
         if arg.nullable {
             type_string = format!("{}.nullable()", type_string);
@@ -1027,17 +1039,7 @@ fn to_param_type_alias(args: &Vec<ast::QueryParamDefinition>) -> String {
         }
     }
     result.push_str("\n});\n");
-
-    if json_params.is_empty() {
-        result.push_str("const InputValidator = RawInputValidator;\n");
-    } else {
-        result.push_str("const InputValidator = RawInputValidator.transform((input) => ({\n");
-        result.push_str("  ...input,\n");
-        for name in json_params {
-            result.push_str(&format!("  {}: JSON.stringify(input.{}),\n", name, name));
-        }
-        result.push_str("}));\n");
-    }
+    result.push_str("const InputValidator = RawInputValidator;\n");
 
     result.push_str("export type Input = z.infer<typeof RawInputValidator>;");
     result
