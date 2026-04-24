@@ -6,6 +6,15 @@ export interface TableGroup {
   rows: unknown[][];
 }
 
+export interface SyncCursorEntry {
+  last_seen_updated_at: number | null;
+  permission_hash: string;
+}
+
+export interface SyncCursor {
+  tables: Record<string, SyncCursorEntry>;
+}
+
 const DB_VERSION = 1;
 
 export class IndexedDBStorage {
@@ -117,6 +126,40 @@ export class IndexedDBStorage {
 
       request.onerror = () => {
         reject(new Error(`Failed to read tables: ${request.error}`));
+      };
+    });
+  }
+
+  async getSyncCursor(): Promise<SyncCursor> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['syncCursor'], 'readonly');
+      const store = tx.objectStore('syncCursor');
+      const request = store.get('cursor');
+
+      request.onsuccess = () => {
+        resolve((request.result as SyncCursor | undefined) ?? { tables: {} });
+      };
+
+      request.onerror = () => {
+        reject(new Error(`Failed to read sync cursor: ${request.error}`));
+      };
+    });
+  }
+
+  async putSyncCursor(cursor: SyncCursor): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['syncCursor'], 'readwrite');
+      const store = tx.objectStore('syncCursor');
+      const request = store.put(cursor, 'cursor');
+
+      request.onsuccess = () => {
+        resolve();
+      };
+
+      request.onerror = () => {
+        reject(new Error(`Failed to write sync cursor: ${request.error}`));
       };
     });
   }
@@ -236,7 +279,7 @@ export class IndexedDbService {
     }
   }
 
-  private async handleMessage(message: { type?: string; tableGroups?: TableGroup[] }): Promise<void> {
+  private async handleMessage(message: { type?: string; tableGroups?: TableGroup[]; cursor?: SyncCursor }): Promise<void> {
     if (message.type === 'requestInitialData') {
       await this.sendInitialData();
       return;
@@ -244,6 +287,11 @@ export class IndexedDbService {
 
     if (message.type === 'writeDelta') {
       await this.writeDelta(message.tableGroups || []);
+      return;
+    }
+
+    if (message.type === 'writeSyncCursor' && message.cursor) {
+      await this.writeSyncCursor(message.cursor);
     }
   }
 
@@ -255,15 +303,16 @@ export class IndexedDbService {
     try {
       await this.storage.init();
       const tables = await this.storage.getAllTables();
+      const cursor = await this.storage.getSyncCursor();
 
       this.elmApp.ports.receiveIndexedDbMessage.send({
         type: 'initialData',
-        data: { tables },
+        data: { tables, cursor },
       });
-      this.debugLog('[PyreClient] port receiveIndexedDbMessage ->', { type: 'initialData', data: { tables } });
+      this.debugLog('[PyreClient] port receiveIndexedDbMessage ->', { type: 'initialData', data: { tables, cursor } });
     } catch (error) {
       console.error('[PyreClient] Failed to load initial data:', error);
-      const fallbackMessage = { type: 'initialData', data: { tables: {} } };
+      const fallbackMessage = { type: 'initialData', data: { tables: {}, cursor: { tables: {} } } };
       this.elmApp.ports.receiveIndexedDbMessage.send(fallbackMessage);
       this.debugLog('[PyreClient] port receiveIndexedDbMessage ->', fallbackMessage);
     }
@@ -291,6 +340,15 @@ export class IndexedDbService {
       }
     } catch (error) {
       console.error('[PyreClient] Failed to write delta:', error);
+    }
+  }
+
+  private async writeSyncCursor(cursor: SyncCursor): Promise<void> {
+    try {
+      await this.storage.init();
+      await this.storage.putSyncCursor(cursor);
+    } catch (error) {
+      console.error('[PyreClient] Failed to write sync cursor:', error);
     }
   }
 }

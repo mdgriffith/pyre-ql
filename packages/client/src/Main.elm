@@ -169,7 +169,7 @@ update msg model =
 handleIndexedDbIncoming : IndexedDb.Incoming -> Model -> ( Model, Cmd Msg )
 handleIndexedDbIncoming incoming model =
     case incoming of
-        IndexedDb.InitialDataReceived _ ->
+        IndexedDb.InitialDataReceived initialData ->
             let
                 ( updatedQueryManager, cmds ) =
                     reExecuteAllQueries model.schema model.db model.queryManager
@@ -178,7 +178,7 @@ handleIndexedDbIncoming incoming model =
                     { model | queryManager = updatedQueryManager }
 
                 ( catchupModel, catchupCmd ) =
-                    applyCatchupUpdate (Catchup.update Catchup.InitialDataLoaded model.catchup model.db) baseModel
+                    applyCatchupUpdate (Catchup.update (Catchup.InitialDataLoaded initialData.cursor) model.catchup model.db) baseModel
             in
             ( catchupModel
             , Cmd.batch [ Cmd.batch cmds, catchupCmd ]

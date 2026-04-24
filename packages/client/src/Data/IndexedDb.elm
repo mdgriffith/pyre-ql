@@ -1,9 +1,11 @@
 port module Data.IndexedDb exposing
     ( Incoming(..)
     , InitialData
+    , SyncCursor
     , receiveIncoming
     , requestInitialData
     , writeDelta
+    , writeSyncCursor
     )
 
 import Data.Delta exposing (TableGroup)
@@ -19,6 +21,17 @@ import Json.Encode as Encode
 
 type alias InitialData =
     { tables : Dict String (List (Dict String Value))
+    , cursor : SyncCursor
+    }
+
+
+type alias SyncCursor =
+    Dict String SyncCursorEntry
+
+
+type alias SyncCursorEntry =
+    { lastSeenUpdatedAt : Maybe Float
+    , permissionHash : String
     }
 
 
@@ -30,6 +43,7 @@ type alias InitialData =
 type Message
     = RequestInitialData
     | WriteDelta (List TableGroup)
+    | WriteSyncCursor SyncCursor
 
 
 type Incoming
@@ -64,6 +78,12 @@ encodeMessage msg =
                 , ( "tableGroups", Encode.list Data.Delta.encodeTableGroup tableGroups )
                 ]
 
+        WriteSyncCursor cursor ->
+            Encode.object
+                [ ( "type", Encode.string "writeSyncCursor" )
+                , ( "cursor", encodeSyncCursor cursor )
+                ]
+
 
 
 -- Decoders
@@ -86,10 +106,51 @@ decodeIncoming =
 
 decodeInitialData : Decode.Decoder InitialData
 decodeInitialData =
-    Decode.map InitialData
-        (Decode.field "tables"
-            (Decode.dict (Decode.list (Decode.dict Data.Value.decodeValue)))
-        )
+    Decode.map2 InitialData
+        (Decode.field "tables" (Decode.dict (Decode.list (Decode.dict Data.Value.decodeValue))))
+        (Decode.field "cursor" decodeSyncCursor)
+
+
+decodeSyncCursor : Decode.Decoder SyncCursor
+decodeSyncCursor =
+    Decode.field "tables" (Decode.dict decodeSyncCursorEntry)
+
+
+decodeSyncCursorEntry : Decode.Decoder SyncCursorEntry
+decodeSyncCursorEntry =
+    Decode.map2 SyncCursorEntry
+        (Decode.field "last_seen_updated_at" decodeMaybeTimestamp)
+        (Decode.field "permission_hash" Decode.string)
+
+
+decodeMaybeTimestamp : Decode.Decoder (Maybe Float)
+decodeMaybeTimestamp =
+    Decode.oneOf
+        [ Decode.null Nothing
+        , Decode.float |> Decode.map Just
+        , Decode.int |> Decode.map (toFloat >> Just)
+        ]
+
+
+encodeSyncCursor : SyncCursor -> Encode.Value
+encodeSyncCursor cursor =
+    Encode.object
+        [ ( "tables", Encode.dict identity encodeSyncCursorEntry cursor ) ]
+
+
+encodeSyncCursorEntry : SyncCursorEntry -> Encode.Value
+encodeSyncCursorEntry entry =
+    Encode.object
+        [ ( "last_seen_updated_at"
+          , case entry.lastSeenUpdatedAt of
+                Just value ->
+                    Encode.float value
+
+                Nothing ->
+                    Encode.null
+          )
+        , ( "permission_hash", Encode.string entry.permissionHash )
+        ]
 
 
 
@@ -111,7 +172,11 @@ writeDelta tableGroups =
     sendMessage (WriteDelta tableGroups)
 
 
+writeSyncCursor : SyncCursor -> Cmd msg
+writeSyncCursor cursor =
+    sendMessage (WriteSyncCursor cursor)
+
+
 receiveIncoming : (Result Decode.Error Incoming -> msg) -> Sub msg
 receiveIncoming toMsg =
     receiveIndexedDbMessage (\jsonValue -> toMsg (Decode.decodeValue decodeIncoming jsonValue))
-

@@ -1,6 +1,7 @@
 module Data.Catchup exposing (Model, Msg(..), ServerConfig, Status(..), UpdateResult, init, status, update)
 
 import Data.Delta
+import Data.IndexedDb
 import Data.LiveSync as LiveSync
 import Data.Value
 import Db
@@ -59,7 +60,7 @@ type alias Model =
 
 
 type Msg
-    = InitialDataLoaded
+    = InitialDataLoaded Data.IndexedDb.SyncCursor
     | CatchupResponseReceived (Result Http.Error CatchupResponse)
 
 
@@ -93,10 +94,10 @@ status model =
 update : Msg -> Model -> Db.Db -> UpdateResult
 update msg model db =
     case msg of
-        InitialDataLoaded ->
+        InitialDataLoaded initialCursor ->
             let
                 updatedCursor =
-                    computeSyncCursor db model.cursor
+                    computeSyncCursor db initialCursor
 
                 baseModel =
                     { model | cursor = updatedCursor, initialDataLoaded = True }
@@ -107,7 +108,7 @@ update msg model db =
             { model = nextModel
             , db = db
             , cmd = cmd
-            , dbCmds = []
+            , dbCmds = [ Data.IndexedDb.writeSyncCursor updatedCursor ]
             , delta = Nothing
             , touchedTables = []
             , error = Nothing
@@ -185,7 +186,7 @@ handleCatchupResponse result model db =
             { model = nextModel
             , db = updatedDb
             , cmd = cmd
-            , dbCmds = dbCmds
+            , dbCmds = Data.IndexedDb.writeSyncCursor updatedCursor :: dbCmds
             , delta = maybeDelta
             , touchedTables = Dict.keys response.tables
             , error = Nothing
@@ -231,9 +232,10 @@ applyCatchupDelta response db =
         tableGroups =
             response.tables
                 |> Dict.toList
-                |> List.filterMap (\( tableName, tableResult ) ->
-                    catchupTableToGroup tableName tableResult
-                   )
+                |> List.filterMap
+                    (\( tableName, tableResult ) ->
+                        catchupTableToGroup tableName tableResult
+                    )
 
         dbWithKnownTables =
             ensureTablesExist (Dict.keys response.tables) db
@@ -284,13 +286,15 @@ catchupTableToGroup tableName tableResult =
 
                 rows =
                     tableResult.rows
-                        |> List.map (\row ->
-                            headers
-                                |> List.map (\header ->
-                                    Dict.get header row
-                                        |> Maybe.withDefault Data.Value.NullValue
-                                   )
-                           )
+                        |> List.map
+                            (\row ->
+                                headers
+                                    |> List.map
+                                        (\header ->
+                                            Dict.get header row
+                                                |> Maybe.withDefault Data.Value.NullValue
+                                        )
+                            )
             in
             Just
                 { tableName = tableName
@@ -451,6 +455,7 @@ appendQueryParams url params =
             in
             if String.isEmpty combined then
                 base
+
             else
                 base ++ "?" ++ combined
 
