@@ -13,8 +13,19 @@ export interface IndexInfo {
   primary: boolean;
 }
 
+export interface ColumnInfo {
+  name: string;
+  type: string;
+  nullable: boolean;
+  primary: boolean;
+  unique: boolean;
+  indexed: boolean;
+  comment?: string;
+}
+
 export interface TableMetadata {
   name: string;
+  columns?: ColumnInfo[];
   links: Record<string, LinkInfo>;
   indices: IndexInfo[];
 }

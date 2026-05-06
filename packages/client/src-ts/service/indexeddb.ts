@@ -15,6 +15,13 @@ export interface SyncCursor {
   tables: Record<string, SyncCursorEntry>;
 }
 
+export interface PutRowsResult {
+  tableName: string;
+  received: number;
+  written: number;
+  skippedOlder: number;
+}
+
 const DB_VERSION = 1;
 
 export class IndexedDBStorage {
@@ -164,9 +171,9 @@ export class IndexedDBStorage {
     });
   }
 
-  async putRows(tableName: string, rows: Array<Record<string, unknown>>): Promise<void> {
+  async putRows(tableName: string, rows: Array<Record<string, unknown>>): Promise<PutRowsResult> {
     if (rows.length === 0) {
-      return;
+      return { tableName, received: 0, written: 0, skippedOlder: 0 };
     }
 
     const db = await this.getDB();
@@ -175,6 +182,8 @@ export class IndexedDBStorage {
       const store = tx.objectStore('tables');
 
       let error: Error | null = null;
+      let written = 0;
+      let skippedOlder = 0;
       const existingRows: (Record<string, unknown> | null)[] = new Array(rows.length);
       let readsCompleted = 0;
 
@@ -182,7 +191,7 @@ export class IndexedDBStorage {
         if (error) {
           reject(error);
         } else {
-          resolve();
+          resolve({ tableName, received: rows.length, written, skippedOlder });
         }
       };
 
@@ -223,14 +232,20 @@ export class IndexedDBStorage {
               : new Date(row.updatedAt as string).getTime() / 1000;
 
             if (existingTime > newTime) {
+              skippedOlder += 1;
               return;
             }
           } else if (existing && existing.updatedAt != null && row.updatedAt == null) {
+            skippedOlder += 1;
             return;
           }
 
           const rowWithTable = { ...row, tableName };
           const request = store.put(rowWithTable);
+
+          request.onsuccess = () => {
+            written += 1;
+          };
 
           request.onerror = () => {
             error = new Error(`Failed to write row: ${request.error}`);
@@ -305,11 +320,15 @@ export class IndexedDbService {
       const tables = await this.storage.getAllTables();
       const cursor = await this.storage.getSyncCursor();
 
+      const tableCounts = Object.fromEntries(
+        Object.entries(tables).map(([tableName, rows]) => [tableName, rows.length])
+      );
+
       this.elmApp.ports.receiveIndexedDbMessage.send({
         type: 'initialData',
         data: { tables, cursor },
       });
-      this.debugLog('[PyreClient] port receiveIndexedDbMessage ->', { type: 'initialData', data: { tables, cursor } });
+      this.debugLog('[PyreClient] IndexedDB initial data loaded', { tableCounts, cursorTables: Object.keys(cursor.tables).length });
     } catch (error) {
       console.error('[PyreClient] Failed to load initial data:', error);
       const fallbackMessage = { type: 'initialData', data: { tables: {}, cursor: { tables: {} } } };
@@ -336,7 +355,8 @@ export class IndexedDbService {
           return rowObj;
         });
 
-        await this.storage.putRows(tableName, rows);
+        const result = await this.storage.putRows(tableName, rows);
+        this.debugLog('[PyreClient] IndexedDB writeDelta table written', result);
       }
     } catch (error) {
       console.error('[PyreClient] Failed to write delta:', error);
@@ -347,6 +367,7 @@ export class IndexedDbService {
     try {
       await this.storage.init();
       await this.storage.putSyncCursor(cursor);
+      this.debugLog('[PyreClient] IndexedDB sync cursor written', { cursorTables: Object.keys(cursor.tables).length });
     } catch (error) {
       console.error('[PyreClient] Failed to write sync cursor:', error);
     }

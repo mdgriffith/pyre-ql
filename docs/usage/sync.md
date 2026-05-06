@@ -172,6 +172,26 @@ const client = new PyreClient({
 await client.init();
 ```
 
+### Optional devtools
+
+The browser devtools UI is exposed from a separate entry point so production bundles can avoid including it:
+
+```typescript
+if (import.meta.env.DEV) {
+  const { mountPyreDevtools } = await import('@pyre/client/devtools');
+  mountPyreDevtools(client);
+}
+```
+
+This mounts a small fixed Pyre icon. Clicking it opens a read-only inspector with table counts, cached IndexedDB rows, sync cursor/status, captured sync/query/mutation events, and runtime debug state.
+
+You can publish additional values into the Debug page without importing the UI module elsewhere:
+
+```typescript
+client.setDevtoolsDebugValue('currentRoute', router.currentRoute);
+client.setDevtoolsDebugValue('currentRoute', undefined); // remove it
+```
+
 If your session values change later, update them and refresh active queries:
 
 ```typescript

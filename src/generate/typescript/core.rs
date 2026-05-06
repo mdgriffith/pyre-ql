@@ -804,6 +804,67 @@ fn to_schema_metadata(context: &typecheck::Context) -> String {
 
         result.push_str(&format!("    {}: {{\n", string::quote(&table_name)));
         result.push_str(&format!("      name: {},\n", string::quote(&table_name)));
+        result.push_str("      columns: [\n");
+
+        let mut is_first_column = true;
+        for field in &table.record.fields {
+            if let ast::Field::Column(column) = field {
+                if !is_first_column {
+                    result.push_str(",\n");
+                }
+                is_first_column = false;
+
+                let is_primary = ast::is_primary_key(column);
+                let is_unique = column
+                    .directives
+                    .iter()
+                    .any(|d| matches!(d, ast::ColumnDirective::Unique));
+                let is_indexed = column
+                    .directives
+                    .iter()
+                    .any(|d| matches!(d, ast::ColumnDirective::Index));
+
+                result.push_str("        {\n");
+                result.push_str(&format!(
+                    "          name: {},\n",
+                    string::quote(&column.name)
+                ));
+                result.push_str(&format!(
+                    "          type: {},\n",
+                    string::quote(&column.type_.to_string())
+                ));
+                result.push_str(&format!(
+                    "          nullable: {},\n",
+                    if column.nullable { "true" } else { "false" }
+                ));
+                result.push_str(&format!(
+                    "          primary: {},\n",
+                    if is_primary { "true" } else { "false" }
+                ));
+                result.push_str(&format!(
+                    "          unique: {},\n",
+                    if is_unique || is_primary {
+                        "true"
+                    } else {
+                        "false"
+                    }
+                ));
+                result.push_str(&format!(
+                    "          indexed: {}",
+                    if is_indexed || is_unique || is_primary {
+                        "true"
+                    } else {
+                        "false"
+                    }
+                ));
+                if let Some(comment) = &column.inline_comment {
+                    result.push_str(&format!(",\n          comment: {}", string::quote(comment)));
+                }
+                result.push_str("\n        }");
+            }
+        }
+
+        result.push_str("\n      ],\n");
         result.push_str("      links: {\n");
 
         let links = ast::collect_links(&table.record.fields);

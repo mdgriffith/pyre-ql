@@ -11,6 +11,10 @@
     ".": {
       "types": "./src-ts/index.ts",
       "default": "./src-ts/index.ts"
+    },
+    "./devtools": {
+      "types": "./src-ts/devtools.ts",
+      "default": "./src-ts/devtools.ts"
     }
   },
   "scripts": {

@@ -55,6 +55,40 @@ export interface RegisteredQueryResult {
   result: unknown;
 }
 
+export interface PyreDevtoolsEvent {
+  id: number;
+  timestamp: number;
+  type: string;
+  payload?: unknown;
+}
+
+export interface PyreDevtoolsTableSnapshot {
+  name: string;
+  count: number;
+  rows: unknown[];
+  sync?: TableSyncStatus;
+  cursor?: {
+    last_seen_updated_at: number | null;
+    permission_hash: string;
+  };
+}
+
+export interface PyreDevtoolsSnapshot {
+  schema: SchemaMetadata;
+  indexedDbName: string;
+  server: {
+    baseUrl: string;
+    endpoints: ServerEndpoints;
+    liveSyncTransport: LiveSyncTransport;
+    hasHeaders: boolean;
+  };
+  sessionId: string | null;
+  syncState: SyncState;
+  syncProgress: SyncProgress | null;
+  debugValues: Record<string, unknown>;
+  tables: Record<string, PyreDevtoolsTableSnapshot>;
+}
+
 export interface ElmBridgePort {
   subscribe?: (callback: (message: unknown) => void) => void;
   unsubscribe?: (callback: (message: unknown) => void) => void;
@@ -156,12 +190,19 @@ export class PyreClient {
   private endpoints: ServerEndpoints;
   private queryCounter = 0;
   private mutationCounter = 0;
+  private schema: SchemaMetadata;
+  private indexedDbName: string;
+  private devtoolsDebugValues: Record<string, unknown> = {};
+  private devtoolsEventCounter = 0;
+  private devtoolsEventCallbacks: Set<(event: PyreDevtoolsEvent) => void> = new Set();
 
   constructor(config: PyreClientConfig) {
     const dbName = config.indexedDbName ?? 'pyre-client';
     const liveSyncTransport = config.server.liveSyncTransport ?? 'sse';
     this.debug = config.debug ?? false;
     this.server = config.server;
+    this.schema = config.schema;
+    this.indexedDbName = dbName;
     this.endpoints = {
       catchup: '/sync',
       events: '/sync/events',
@@ -256,6 +297,7 @@ export class PyreClient {
   }
 
   private logDebug = (...args: unknown[]): void => {
+    this.emitDevtoolsEvent('debug', { args });
     if (this.debug) {
       console.log(...args);
     }
@@ -303,12 +345,70 @@ export class PyreClient {
     };
   }
 
+  onDevtoolsEvent(callback: (event: PyreDevtoolsEvent) => void): () => void {
+    this.devtoolsEventCallbacks.add(callback);
+    return () => {
+      this.devtoolsEventCallbacks.delete(callback);
+    };
+  }
+
+  async getDevtoolsSnapshot(): Promise<PyreDevtoolsSnapshot> {
+    const [tables, cursor] = await Promise.all([
+      this.storage.getAllTables(),
+      this.storage.getSyncCursor(),
+    ]);
+
+    const tableNames = new Set([
+      ...Object.keys(this.schema.tables),
+      ...Object.keys(tables),
+      ...Object.keys(cursor.tables),
+    ]);
+    const snapshots: Record<string, PyreDevtoolsTableSnapshot> = {};
+
+    Array.from(tableNames).sort().forEach((tableName) => {
+      const rows = tables[tableName] ?? [];
+      snapshots[tableName] = {
+        name: tableName,
+        count: rows.length,
+        rows,
+        sync: this.lastSyncState.tables[tableName],
+        cursor: cursor.tables[tableName],
+      };
+    });
+
+    return {
+      schema: this.schema,
+      indexedDbName: this.indexedDbName,
+      server: {
+        baseUrl: this.server.baseUrl,
+        endpoints: this.endpoints,
+        liveSyncTransport: this.server.liveSyncTransport ?? 'sse',
+        hasHeaders: Boolean(this.server.headers && Object.keys(this.server.headers).length > 0),
+      },
+      sessionId: this.sessionId,
+      syncState: this.lastSyncState,
+      syncProgress: this.lastSyncProgress,
+      debugValues: { ...this.devtoolsDebugValues },
+      tables: snapshots,
+    };
+  }
+
+  setDevtoolsDebugValue(name: string, value: unknown): void {
+    if (value === undefined) {
+      delete this.devtoolsDebugValues[name];
+    } else {
+      this.devtoolsDebugValues[name] = value;
+    }
+    this.emitDevtoolsEvent('debug:value', { name, value });
+  }
+
   getSessionId(): string | null {
     return this.sessionId;
   }
 
   setSession(session: Record<string, unknown> | null): void {
     this.session = session ?? {};
+    this.emitDevtoolsEvent('session:update', { keys: Object.keys(this.session) });
     this.queryClient.refreshAllQueries();
   }
 
@@ -344,6 +444,8 @@ export class PyreClient {
   }
 
   private handleLiveSyncMessage = (message: LiveSyncMessage): void => {
+    this.emitDevtoolsEvent(`sync:${message.type}`, message);
+
     if (message.type === 'connected' && message.sessionId) {
       this.sessionId = message.sessionId;
       this.sessionCallbacks.forEach((callback) => {
@@ -424,6 +526,7 @@ export class PyreClient {
 
   private updateSyncState(state: SyncState): void {
     this.lastSyncState = state;
+    this.emitDevtoolsEvent('sync:state', state);
     this.syncStateCallbacks.forEach((callback) => {
       callback(state);
     });
@@ -437,6 +540,7 @@ export class PyreClient {
 
   async deleteDatabase(): Promise<void> {
     await this.storage.deleteDatabase();
+    this.emitDevtoolsEvent('indexeddb:delete', { indexedDbName: this.indexedDbName });
   }
 
   registerQuery<Input = unknown>(
@@ -444,6 +548,12 @@ export class PyreClient {
     callback: (result: RegisteredQueryResult) => void
   ): QuerySubscription<Input> {
     const normalizedInput = (registration.input ?? {}) as Input;
+    this.emitDevtoolsEvent('query:register', {
+      queryId: registration.queryId,
+      queryName: registration.queryName,
+      input: normalizedInput,
+      querySource: registration.querySource,
+    });
     this.queryClient.registerQuery(
       {
         queryId: registration.queryId,
@@ -451,6 +561,12 @@ export class PyreClient {
         input: normalizedInput,
       },
       (update) => {
+        this.emitDevtoolsEvent('query:result', {
+          queryId: update.queryId,
+          queryName: registration.queryName,
+          revision: update.revision,
+          result: update.result,
+        });
         callback({
           queryId: update.queryId,
           queryName: registration.queryName,
@@ -462,9 +578,11 @@ export class PyreClient {
 
     return {
       unsubscribe: () => {
+        this.emitDevtoolsEvent('query:unregister', { queryId: registration.queryId, queryName: registration.queryName });
         this.queryClient.unregisterQuery(registration.queryId);
       },
       update: (updatedInput: Input) => {
+        this.emitDevtoolsEvent('query:update-input', { queryId: registration.queryId, queryName: registration.queryName, input: updatedInput });
         this.queryClient.updateQueryInput(registration.queryId, updatedInput);
       },
     };
@@ -623,12 +741,16 @@ export class PyreClient {
     this.mutationCounter += 1;
     const payload = input ?? {};
     const baseUrl = `${this.server.baseUrl}${this.endpoints.query}`;
+    this.emitDevtoolsEvent('mutation:request', { requestId, mutationId, input: payload });
     this.queryManager.sendMutation(
       requestId,
       mutationId,
       baseUrl,
       payload,
-      callback,
+      (result) => {
+        this.emitDevtoolsEvent('mutation:result', { requestId, mutationId, result });
+        callback(result);
+      },
       this.server.headers
     );
   }
@@ -638,12 +760,24 @@ export class PyreClient {
     mutationResultPort?: ElmBridgePort
   ): void {
     const baseUrl = `${this.server.baseUrl}${this.endpoints.query}`;
+    this.emitDevtoolsEvent('mutation:request', {
+      requestId: message.requestId,
+      mutationId: message.mutationId,
+      mutationName: message.mutationName,
+      input: message.mutationInput ?? {},
+    });
     this.queryManager.sendMutation(
       message.requestId,
       message.mutationId,
       baseUrl,
       message.mutationInput ?? {},
       (result) => {
+        this.emitDevtoolsEvent('mutation:result', {
+          requestId: message.requestId,
+          mutationId: message.mutationId,
+          mutationName: message.mutationName,
+          result,
+        });
         mutationResultPort?.send?.({
           type: 'mutation-result',
           requestId: message.requestId,
@@ -654,6 +788,24 @@ export class PyreClient {
       },
       this.server.headers
     );
+  }
+
+  private emitDevtoolsEvent(type: string, payload?: unknown): void {
+    if (this.devtoolsEventCallbacks.size === 0) {
+      return;
+    }
+
+    const event = {
+      id: this.devtoolsEventCounter,
+      timestamp: Date.now(),
+      type,
+      payload,
+    } satisfies PyreDevtoolsEvent;
+    this.devtoolsEventCounter += 1;
+
+    this.devtoolsEventCallbacks.forEach((callback) => {
+      callback(event);
+    });
   }
 }
 
