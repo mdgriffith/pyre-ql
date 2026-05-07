@@ -14,6 +14,11 @@ struct ResultSet {
     rows: Vec<HashMap<String, JsonValue>>,
 }
 
+/// Execute a generated manifest query or mutation against a libSQL connection.
+///
+/// This performs the same runtime transformations as the TypeScript server:
+/// JSON input serialization, omittable `__is_set` flags, session SQL args,
+/// response formatting, and `_affectedRows` extraction for live sync deltas.
 pub async fn run(
     conn: &libsql::Connection,
     manifest: &Manifest,
@@ -169,42 +174,18 @@ fn statement_args(
     statement: &SqlInfo,
     args: &HashMap<String, JsonValue>,
 ) -> Result<(String, Vec<libsql::Value>), Error> {
-    let mut sql = statement.sql.clone();
+    let mut sql = String::with_capacity(statement.sql.len());
     let mut values = Vec::new();
     let mut seen = HashSet::new();
-
-    for param in params_in_sql_order(&statement.sql) {
-        if !statement.params.contains(&param) || seen.contains(&param) {
-            continue;
-        }
-        seen.insert(param.clone());
-        sql = sql.replace(&format!("${}", param), "?");
-        values.push(json_to_libsql(
-            args.get(&param).cloned().unwrap_or(JsonValue::Null),
-        )?);
-    }
-
-    for param in &statement.params {
-        if seen.contains(param) {
-            continue;
-        }
-        sql = sql.replace(&format!("${}", param), "?");
-        values.push(json_to_libsql(
-            args.get(param).cloned().unwrap_or(JsonValue::Null),
-        )?);
-    }
-
-    Ok((sql, values))
-}
-
-fn params_in_sql_order(sql: &str) -> Vec<String> {
-    let mut result = Vec::new();
-    let mut chars = sql.chars().peekable();
+    let params = statement.params.iter().cloned().collect::<HashSet<_>>();
+    let mut chars = statement.sql.chars().peekable();
 
     while let Some(ch) = chars.next() {
         if ch != '$' {
+            sql.push(ch);
             continue;
         }
+
         let mut param = String::new();
         while let Some(next) = chars.peek() {
             if next.is_alphanumeric() || *next == '_' {
@@ -213,12 +194,25 @@ fn params_in_sql_order(sql: &str) -> Vec<String> {
                 break;
             }
         }
-        if !param.is_empty() {
-            result.push(param);
+
+        if param.is_empty() {
+            sql.push(ch);
+            continue;
+        }
+
+        if params.contains(&param) {
+            sql.push('?');
+            if seen.insert(param.clone()) {
+                let value = args.get(&param).cloned().unwrap_or(JsonValue::Null);
+                values.push(json_to_libsql(value)?);
+            }
+        } else {
+            sql.push('$');
+            sql.push_str(&param);
         }
     }
 
-    result
+    Ok((sql, values))
 }
 
 async fn execute_statement(

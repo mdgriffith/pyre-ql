@@ -20,6 +20,7 @@ impl LoadedSchema {
     }
 }
 
+/// Load and typecheck the Pyre schema stored in a migrated database.
 pub async fn load_schema_from_database(conn: &libsql::Connection) -> Result<LoadedSchema, Error> {
     let is_initialized = is_initialized(conn).await?;
     let sql = if is_initialized {

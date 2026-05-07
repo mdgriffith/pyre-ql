@@ -309,3 +309,294 @@ query GetNote($id: Int) {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn run_query_reports_invalid_session() -> Result<(), Box<dyn std::error::Error>> {
+    let db = TestDatabase::new(
+        r#"
+session {
+    userId Int
+}
+
+record Note {
+    id Int @id
+    ownerId Int
+    body String
+    updatedAt Int
+    @allow(query) { ownerId == Session.userId }
+}
+"#,
+    )
+    .await?;
+    let conn = db.db.connect()?;
+    let manifest = manifest_for(
+        &db.context,
+        r#"
+query GetNotes {
+    note {
+        id
+        body
+    }
+}
+"#,
+        false,
+    )?;
+    let empty_schema = Default::default();
+    let session = PyreSession::new(json!({}), &empty_schema)?;
+
+    let err = query::run(
+        &conn,
+        &manifest,
+        &only_query(&manifest).id,
+        json!({}),
+        &session,
+    )
+    .await
+    .expect_err("missing session arg should fail");
+
+    assert_eq!(
+        err.to_string(),
+        "invalid session: missing session field 'userId'"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn run_query_handles_parameter_names_with_shared_prefixes(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = TestDatabase::new(
+        r#"
+record Note {
+    id Int @id
+    id2 Int
+    body String
+    updatedAt Int
+    @public
+}
+"#,
+    )
+    .await?;
+    let conn = db.db.connect()?;
+    conn.execute_batch("insert into notes (id, id2, body, updatedAt) values (1, 2, 'one', 10);")
+        .await?;
+    let manifest = manifest_for(
+        &db.context,
+        r#"
+query GetNote($id: Int, $id2: Int) {
+    note {
+        @where { id == $id && id2 == $id2 }
+        id
+        id2
+        body
+    }
+}
+"#,
+        false,
+    )?;
+    let session = PyreSession::new(json!({}), &manifest.session_schema)?;
+
+    let result = query::run(
+        &conn,
+        &manifest,
+        &only_query(&manifest).id,
+        json!({ "id": 1, "id2": 2 }),
+        &session,
+    )
+    .await?;
+
+    assert_eq!(result.response["note"][0]["body"], json!("one"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn run_delete_mutation_extracts_affected_rows() -> Result<(), Box<dyn std::error::Error>> {
+    let db = TestDatabase::new(
+        r#"
+record Note {
+    id Int @id
+    body String
+    updatedAt Int
+    @public
+}
+"#,
+    )
+    .await?;
+    let conn = db.db.connect()?;
+    conn.execute_batch("insert into notes (id, body, updatedAt) values (1, 'one', 10);")
+        .await?;
+    let manifest = manifest_for(
+        &db.context,
+        r#"
+delete DeleteNote($id: Int) {
+    note {
+        @where { id == $id }
+        id
+        body
+        updatedAt
+    }
+}
+"#,
+        false,
+    )?;
+    let session = PyreSession::new(json!({}), &manifest.session_schema)?;
+    let result = query::run(
+        &conn,
+        &manifest,
+        &only_query(&manifest).id,
+        json!({ "id": 1 }),
+        &session,
+    )
+    .await?;
+
+    assert_eq!(result.affected_rows.len(), 1);
+    assert_eq!(result.affected_rows[0].table_name, "notes");
+    assert_eq!(result.affected_rows[0].rows[0][0], json!(1));
+    let mut rows = conn.query("select count(*) from notes", ()).await?;
+    let row = rows.next().await?.expect("count row should exist");
+    assert_eq!(row.get::<i64>(0)?, 0);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn generated_crud_create_and_delete_run_through_manifest_runtime(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = TestDatabase::new(
+        r#"
+record Note {
+    id Int @id
+    body String
+    updatedAt DateTime @default(now)
+    @public
+}
+"#,
+    )
+    .await?;
+    let conn = db.db.connect()?;
+    let manifest = manifest_for(
+        &db.context,
+        r#"
+query GetNotes {
+    note {
+        id
+        body
+    }
+}
+"#,
+        true,
+    )?;
+    let session = PyreSession::new(json!({}), &manifest.session_schema)?;
+    let create = query_by_operation(&manifest, "insert");
+    let delete = query_by_operation(&manifest, "delete");
+
+    let created = query::run(
+        &conn,
+        &manifest,
+        &create.id,
+        json!({ "body": "generated" }),
+        &session,
+    )
+    .await?;
+    assert_eq!(created.response["note"][0]["body"], json!("generated"));
+    assert_eq!(created.affected_rows.len(), 1);
+
+    let deleted = query::run(
+        &conn,
+        &manifest,
+        &delete.id,
+        json!({ "id": created.response["note"][0]["id"] }),
+        &session,
+    )
+    .await?;
+    assert_eq!(deleted.affected_rows.len(), 1);
+    let remaining = query::run(
+        &conn,
+        &manifest,
+        &query_by_operation(&manifest, "query").id,
+        json!({}),
+        &session,
+    )
+    .await?;
+    assert_eq!(remaining.response["note"], json!([]));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn run_multi_top_level_query_formats_all_response_keys(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = TestDatabase::new(
+        r#"
+record User {
+    id Int @id
+    name String
+    updatedAt Int
+    @public
+}
+
+record Note {
+    id Int @id
+    body String
+    updatedAt Int
+    @public
+}
+"#,
+    )
+    .await?;
+    let conn = db.db.connect()?;
+    conn.execute_batch(
+        "insert into users (id, name, updatedAt) values (1, 'Ada', 10); insert into notes (id, body, updatedAt) values (1, 'one', 10);",
+    )
+    .await?;
+    let manifest = manifest_for(
+        &db.context,
+        r#"
+query Dashboard {
+    user {
+        id
+        name
+    }
+    note {
+        id
+        body
+    }
+}
+"#,
+        false,
+    )?;
+    let session = PyreSession::new(json!({}), &manifest.session_schema)?;
+    let result = query::run(
+        &conn,
+        &manifest,
+        &only_query(&manifest).id,
+        json!({}),
+        &session,
+    )
+    .await?;
+
+    assert_eq!(result.response["user"][0]["name"], json!("Ada"));
+    assert_eq!(result.response["note"][0]["body"], json!("one"));
+
+    Ok(())
+}
+
+#[test]
+fn manifest_load_reads_generated_manifest_file() -> Result<(), Box<dyn std::error::Error>> {
+    let manifest = Manifest {
+        version: 1,
+        session_schema: Default::default(),
+        queries: Default::default(),
+    };
+    let dir = tempfile::TempDir::new()?;
+    let path = dir.path().join("manifest.json");
+    std::fs::write(&path, serde_json::to_string(&manifest)?)?;
+
+    let loaded = Manifest::load(&path)?;
+
+    assert_eq!(loaded.version, 1);
+    assert!(loaded.queries.is_empty());
+
+    Ok(())
+}

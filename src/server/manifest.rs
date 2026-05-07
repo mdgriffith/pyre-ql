@@ -3,6 +3,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
+impl Manifest {
+    /// Load a generated `manifest.json` from disk.
+    ///
+    /// This is the manifest produced by `pyre generate` and consumed by the
+    /// native Rust query runtime.
+    #[cfg(feature = "filesystem")]
+    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, LoadError> {
+        let contents = std::fs::read_to_string(path).map_err(LoadError::Io)?;
+        serde_json::from_str(&contents).map_err(LoadError::Json)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Manifest {
     pub version: u32,
@@ -43,6 +55,12 @@ pub struct PyreSession {
 }
 
 impl PyreSession {
+    /// Validate an application session record and build Pyre runtime views.
+    ///
+    /// The input should have the same logical shape as the `session { ... }`
+    /// block in the Pyre schema. The resulting session exposes unprefixed
+    /// logical values for sync permission checks and `session_<name>` SQL args
+    /// for query execution.
     pub fn new(value: JsonValue, schema: &HashMap<String, FieldSchema>) -> Result<Self, Error> {
         let JsonValue::Object(object) = value else {
             return Err(Error::ExpectedObject);
@@ -204,3 +222,20 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+#[derive(Debug)]
+pub enum LoadError {
+    Io(std::io::Error),
+    Json(serde_json::Error),
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadError::Io(error) => write!(f, "failed to read manifest: {}", error),
+            LoadError::Json(error) => write!(f, "failed to parse manifest: {}", error),
+        }
+    }
+}
+
+impl std::error::Error for LoadError {}

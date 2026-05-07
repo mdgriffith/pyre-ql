@@ -59,6 +59,7 @@ pub struct SessionDeltaMessage {
     pub message: DeltaMessage,
 }
 
+/// Run a catchup sync request using a client cursor and logical session values.
 pub async fn catchup(
     conn: &libsql::Connection,
     context: &typecheck::Context,
@@ -164,6 +165,7 @@ pub async fn catchup(
     Ok(result)
 }
 
+/// Calculate permission-filtered live delta messages from mutation affected rows.
 pub fn calculate_deltas(
     context: &typecheck::Context,
     affected_row_groups: &[AffectedRowTableGroup],
