@@ -54,3 +54,7 @@ harness = false
 [[bench]]
 name = "query"
 harness = false
+
+[[bench]]
+name = "server_runtime"
+harness = false
