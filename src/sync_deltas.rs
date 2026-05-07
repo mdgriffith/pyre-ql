@@ -14,7 +14,7 @@ compile_error!("sync_deltas module requires the 'json' feature to be enabled");
 
 /// Grouped format from SQL: one entry per table with multiple rows
 /// This matches the format returned by SQL generation
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AffectedRowTableGroup {
     pub table_name: String,
     pub headers: Vec<String>,
@@ -466,6 +466,7 @@ pub fn calculate_sync_deltas(
     Ok(SyncDeltasResult { groups })
 }
 
+#[derive(Debug)]
 pub enum SyncDeltasError {
     TableNotFound(String),
     InvalidRowData(String),

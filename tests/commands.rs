@@ -324,7 +324,6 @@ query GetEvents {
     .unwrap();
 }
 
-
 fn write_game_lens_schema_and_query(ctx: &TestContext) {
     std::fs::write(
         ctx.workspace_path.join("pyre/schema.pyre"),
@@ -683,6 +682,66 @@ fn test_generate_command() {
         .unwrap()
         .next()
         .is_some());
+}
+
+#[test]
+fn test_generate_manifest_includes_query_runtime_metadata() {
+    let ctx = TestContext::new();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+session {
+    userId Int
+}
+
+record User {
+    id Int @id
+    ownerId Int
+    name String
+    settings Json?
+    updatedAt Int
+    @allow(*) { ownerId == Session.userId }
+}
+        "#,
+    )
+    .unwrap();
+    ctx.run_command("generate").assert().success();
+
+    let manifest_path = ctx.workspace_path.join("pyre/generated/manifest.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(manifest_path).unwrap()).unwrap();
+    let queries = manifest["queries"]
+        .as_object()
+        .expect("queries should be object");
+    let update_user = queries
+        .values()
+        .find(|query| query["operation"] == "update")
+        .expect("generated update query should be present");
+
+    assert_eq!(manifest["version"], serde_json::json!(1));
+    assert_eq!(manifest["session_schema"]["userId"]["type"], "Int");
+    assert_eq!(update_user["input_schema"]["settings"]["nullable"], true);
+    assert!(update_user["optional_input_args"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("settings")));
+    assert_eq!(
+        update_user["json_input_args"],
+        serde_json::json!(["settings"])
+    );
+    assert_eq!(update_user["session_args"], serde_json::json!(["userId"]));
+    assert!(update_user["sql"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|statement| {
+            statement["params"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|param| param == "settings__is_set")
+        }));
 }
 
 #[test]

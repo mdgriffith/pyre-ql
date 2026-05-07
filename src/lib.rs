@@ -11,6 +11,7 @@ pub mod hash;
 pub mod parser;
 pub mod platform;
 pub mod seed;
+pub mod server;
 pub mod sync;
 pub mod sync_deltas;
 pub mod sync_shape;

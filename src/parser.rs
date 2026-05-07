@@ -279,6 +279,14 @@ fn parse_type_expr_with_top_nullable(
         ("Dict", Some(mut args)) if args.len() == 1 => {
             ast::ColumnType::Dict(Box::new(args.remove(0)))
         }
+        ("Id.Int" | "Id.Uuid", Some(_)) => {
+            return Err(nom::Err::Error(VerboseError {
+                errors: vec![(
+                    input,
+                    VerboseErrorKind::Context("Id types do not accept type arguments"),
+                )],
+            }));
+        }
         (_, Some(_)) => ast::ColumnType::Custom(type_name.to_string()),
         (_, None) => ast::ColumnType::from_str(type_name),
     };

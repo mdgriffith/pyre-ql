@@ -13,7 +13,7 @@ use serde_json::Value as JsonValue;
 compile_error!("sync module requires the 'json' feature to be enabled");
 
 /// Generic session value type that doesn't depend on libsql
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SessionValue {
     Null,
     Integer(i64),
@@ -142,16 +142,44 @@ pub fn extract_session_fields_from_permission(where_arg: &WhereArg) -> Vec<Strin
 
 fn extract_session_fields_recursive(where_arg: &WhereArg, fields: &mut Vec<String>) {
     match where_arg {
-        WhereArg::Column(is_session_var, fieldname, _, _, _field_name_range) => {
+        WhereArg::Column(is_session_var, fieldname, _, value, _field_name_range) => {
             if *is_session_var {
                 fields.push(fieldname.clone());
             }
+            extract_session_fields_from_query_value(value, fields);
         }
         WhereArg::And(args) | WhereArg::Or(args) => {
             for arg in args {
                 extract_session_fields_recursive(arg, fields);
             }
         }
+    }
+}
+
+fn extract_session_fields_from_query_value(value: &ast::QueryValue, fields: &mut Vec<String>) {
+    match value {
+        ast::QueryValue::Variable((_, var)) => {
+            if let Some(session_field) = &var.session_field {
+                fields.push(session_field.clone());
+            }
+        }
+        ast::QueryValue::Fn(func) => {
+            for arg in &func.args {
+                extract_session_fields_from_query_value(arg, fields);
+            }
+        }
+        ast::QueryValue::LiteralTypeValue((_, details)) => {
+            if let Some(fields_) = &details.fields {
+                for (_name, value) in fields_ {
+                    extract_session_fields_from_query_value(value, fields);
+                }
+            }
+        }
+        ast::QueryValue::String(_)
+        | ast::QueryValue::Int(_)
+        | ast::QueryValue::Float(_)
+        | ast::QueryValue::Bool(_)
+        | ast::QueryValue::Null(_) => {}
     }
 }
 
@@ -389,8 +417,16 @@ fn render_permission_where(
                 format!("{}.{}", table_name, crate::ext::string::quote(fieldname))
             };
 
-            let operator_str = crate::generate::sql::to_sql::operator(op);
             let value_str = crate::generate::sql::to_sql::render_value(&final_value);
+            let operator_str = if matches!(final_value, ast::QueryValue::Null(_)) {
+                match op {
+                    ast::Operator::Equal => "is".to_string(),
+                    ast::Operator::NotEqual => "is not".to_string(),
+                    _ => crate::generate::sql::to_sql::operator(op),
+                }
+            } else {
+                crate::generate::sql::to_sql::operator(op)
+            };
             format!("{} {} {}", qualified_column_name, operator_str, value_str)
         }
         WhereArg::And(args) => {
@@ -767,6 +803,7 @@ pub fn get_sync_page_info(
     result
 }
 
+#[derive(Debug)]
 pub enum SyncError {
     DatabaseError(String),
     SqlGenerationError(String),

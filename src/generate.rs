@@ -6,6 +6,7 @@ use crate::generate;
 use crate::typecheck;
 
 pub mod client;
+pub mod manifest;
 pub mod server;
 pub mod sql;
 pub mod to_string;
@@ -28,6 +29,7 @@ pub fn generate_schema(
         files,
     );
     generate::typescript::targets::simple::generate_schema(database, typescript_dir, files);
+    generate::manifest::generate_schema(context, files);
 }
 
 // CLIENT
@@ -77,6 +79,7 @@ pub fn write_queries(
         typescript_dir,
         files,
     );
+    generate::manifest::generate_queries(context, query_list, all_query_info, files);
 }
 
 // CLIENT

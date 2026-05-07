@@ -1,0 +1,260 @@
+use crate::ast;
+use crate::filesystem;
+use crate::generate::sql;
+use crate::typecheck;
+use serde::Serialize;
+use std::collections::HashMap;
+use std::path::Path;
+
+#[derive(Serialize)]
+struct Manifest {
+    version: u32,
+    session_schema: HashMap<String, FieldSchema>,
+    queries: HashMap<String, QueryManifest>,
+}
+
+#[derive(Serialize)]
+struct QueryManifest {
+    id: String,
+    operation: String,
+    input_schema: HashMap<String, FieldSchema>,
+    session_args: Vec<String>,
+    optional_input_args: Vec<String>,
+    json_input_args: Vec<String>,
+    sql: Vec<SqlInfo>,
+}
+
+#[derive(Serialize)]
+struct FieldSchema {
+    #[serde(rename = "type")]
+    type_: String,
+    nullable: bool,
+    omittable: bool,
+}
+
+#[derive(Serialize)]
+struct SqlInfo {
+    include: bool,
+    params: Vec<String>,
+    sql: String,
+}
+
+pub fn generate_schema(
+    context: &typecheck::Context,
+    files: &mut Vec<filesystem::GeneratedFile<String>>,
+) {
+    write_manifest(context, Vec::new(), files);
+}
+
+pub fn generate_queries(
+    context: &typecheck::Context,
+    query_list: &ast::QueryList,
+    all_query_info: &HashMap<String, typecheck::QueryInfo>,
+    files: &mut Vec<filesystem::GeneratedFile<String>>,
+) {
+    let queries = query_list
+        .queries
+        .iter()
+        .filter_map(|query_def| match query_def {
+            ast::QueryDef::Query(query) => all_query_info
+                .get(&query.name)
+                .map(|query_info| query_manifest(context, query, query_info)),
+            _ => None,
+        })
+        .collect();
+
+    write_manifest(context, queries, files);
+}
+
+fn write_manifest(
+    context: &typecheck::Context,
+    queries: Vec<QueryManifest>,
+    files: &mut Vec<filesystem::GeneratedFile<String>>,
+) {
+    let manifest = Manifest {
+        version: 1,
+        session_schema: session_schema(context),
+        queries: queries
+            .into_iter()
+            .map(|query| (query.id.clone(), query))
+            .collect(),
+    };
+    let content = serde_json::to_string_pretty(&manifest).expect("manifest should serialize");
+
+    files.retain(|file| file.path != Path::new("manifest.json"));
+    files.push(filesystem::generate_text_file("manifest.json", content));
+}
+
+fn query_manifest(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    query_info: &typecheck::QueryInfo,
+) -> QueryManifest {
+    QueryManifest {
+        id: query.interface_hash.clone(),
+        operation: operation_to_string(&query.operation),
+        input_schema: input_schema(query),
+        session_args: session_args(&query_info.variables),
+        optional_input_args: query
+            .args
+            .iter()
+            .filter(|arg| arg.omittable)
+            .map(|arg| arg.name.clone())
+            .collect(),
+        json_input_args: query
+            .args
+            .iter()
+            .filter(|arg| {
+                arg.type_
+                    .as_ref()
+                    .map(|type_name| ast::ColumnType::from_str(type_name).is_json_like())
+                    .unwrap_or(false)
+            })
+            .map(|arg| arg.name.clone())
+            .collect(),
+        sql: query_sql(context, query, query_info),
+    }
+}
+
+fn input_schema(query: &ast::Query) -> HashMap<String, FieldSchema> {
+    query
+        .args
+        .iter()
+        .map(|arg| {
+            (
+                arg.name.clone(),
+                FieldSchema {
+                    type_: arg.type_.clone().unwrap_or_else(|| "Json".to_string()),
+                    nullable: arg.nullable,
+                    omittable: arg.omittable,
+                },
+            )
+        })
+        .collect()
+}
+
+fn session_schema(context: &typecheck::Context) -> HashMap<String, FieldSchema> {
+    context
+        .session
+        .as_ref()
+        .map(|session| {
+            session
+                .fields
+                .iter()
+                .filter_map(|field| match field {
+                    ast::Field::Column(column) => Some((
+                        column.name.clone(),
+                        FieldSchema {
+                            type_: column.type_.to_string(),
+                            nullable: column.nullable,
+                            omittable: false,
+                        },
+                    )),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn query_sql(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    query_info: &typecheck::QueryInfo,
+) -> Vec<SqlInfo> {
+    let mut result = Vec::new();
+
+    for field in &query.fields {
+        let ast::TopLevelQueryField::Field(query_field) = field else {
+            continue;
+        };
+        let Some(table) = context.tables.get(&query_field.name) else {
+            continue;
+        };
+        let params = used_params(
+            query,
+            &ast::get_aliased_name(query_field),
+            &query_info.variables,
+        );
+
+        for prepared in sql::to_string(context, query, query_info, table, query_field) {
+            result.push(SqlInfo {
+                include: prepared.include,
+                params: params.clone(),
+                sql: prepared.sql,
+            });
+        }
+    }
+
+    result
+}
+
+fn used_params(
+    query: &ast::Query,
+    top_level_field_alias: &str,
+    query_params: &HashMap<String, typecheck::ParamInfo>,
+) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for info in query_params.values() {
+        let typecheck::ParamInfo::Defined {
+            used_by_top_level_field_alias,
+            raw_variable_name,
+            from_session,
+            ..
+        } = info
+        else {
+            continue;
+        };
+
+        if !*from_session || used_by_top_level_field_alias.contains(top_level_field_alias) {
+            result.push(raw_variable_name.clone());
+        }
+    }
+
+    for arg in &query.args {
+        if arg.omittable {
+            result.push(format!("{}__is_set", arg.name));
+        }
+    }
+
+    result.sort_unstable();
+    result.dedup();
+    result
+}
+
+fn session_args(params: &HashMap<String, typecheck::ParamInfo>) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for info in params.values() {
+        let typecheck::ParamInfo::Defined {
+            from_session,
+            used,
+            session_name,
+            ..
+        } = info
+        else {
+            continue;
+        };
+
+        if *from_session && *used {
+            if let Some(session_name) = session_name {
+                result.push(session_name.clone());
+            }
+        }
+    }
+
+    result.sort_unstable();
+    result.dedup();
+    result
+}
+
+fn operation_to_string(operation: &ast::QueryOperation) -> String {
+    match operation {
+        ast::QueryOperation::Query => "query",
+        ast::QueryOperation::Insert => "insert",
+        ast::QueryOperation::Update => "update",
+        ast::QueryOperation::Delete => "delete",
+    }
+    .to_string()
+}

@@ -80,9 +80,7 @@ insert CreateEvent($payload: Json<Lifecycle>, $tags: Json<List<String>>, $counts
         content.contains("payload: Decode.Lifecycle")
             && content.contains("tags: z.array(z.string())")
             && content.contains("counts: z.record(z.number())")
-            && content.contains("payload: JSON.stringify(input.payload)")
-            && content.contains("tags: JSON.stringify(input.tags)")
-            && content.contains("counts: JSON.stringify(input.counts)"),
+            && content.contains("json_input_args: [\"payload\", \"tags\", \"counts\"]"),
         "Expected typed Json fields to use recursive TypeScript query validators. Generated metadata:\n{}",
         content
     );
