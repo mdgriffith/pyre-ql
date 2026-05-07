@@ -2,7 +2,10 @@
 
 This guide is for wiring a Rust app server to Pyre using the native Rust server helpers instead of `@pyre/server`.
 
-The app still runs `pyre generate`. Generated output includes `pyre/generated/manifest.json`, which powers dynamic query and mutation execution in Rust.
+The app still runs `pyre generate`. Generated output includes:
+
+- `pyre/generated/manifest.json`, which powers dynamic query and mutation execution in Rust
+- `pyre/generated/rust/server.rs`, which exposes generated query ID constants and typed JSON boundary shapes for server-owned workflows
 
 ## Main Modules
 
@@ -64,6 +67,8 @@ let session = PyreSession::new(
 
 ## Running Queries And Mutations
 
+For generic dynamic execution, pass the query ID and JSON input directly:
+
 ```rust
 use pyre::server::query;
 use serde_json::json;
@@ -80,6 +85,74 @@ let result = query::run(
 `result.response` contains the query or mutation response JSON.
 
 `result.affected_rows` contains mutation affected rows for live sync.
+
+## Generated Rust Server Metadata
+
+`pyre generate` also emits `pyre/generated/rust/server.rs`. Include it from the app server crate:
+
+```rust
+mod pyre_generated {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/pyre/generated/rust/server.rs"));
+}
+```
+
+The generated file expects these dependencies in the app server crate:
+
+```toml
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_path_to_error = "0.1"
+```
+
+Generated query IDs are stable Rust names:
+
+```rust
+use pyre_generated::query_ids;
+
+let result = query::run(
+    &conn,
+    &manifest,
+    query_ids::GET_GAME,
+    input,
+    &session,
+).await?;
+```
+
+If a query is renamed or deleted, references like `query_ids::GET_GAME` fail during `cargo check` instead of silently preserving a copied hash.
+
+## Typed Server-Owned Workflows
+
+For server-owned workflows, use the generated input and output aliases:
+
+```rust
+use pyre::server::query;
+use pyre_generated::{query_ids, GetGameInput, GetGameOutput};
+
+let result = query::run(
+    &conn,
+    &manifest,
+    query_ids::GET_GAME,
+    GetGameInput { id: game_id }.into_json(),
+    &session,
+).await?;
+
+let output = GetGameOutput::try_from(result.response)?;
+```
+
+Input structs encode to `serde_json::Value` with `into_json()`. Output structs decode from `serde_json::Value` using `serde_path_to_error`, so malformed response JSON fails with a field path and the underlying serde error.
+
+Omittable nullable inputs use `OptionalField<T>` so omitted and explicit `null` remain distinct:
+
+```rust
+use pyre_generated::OptionalField;
+
+UpdateAssetInput {
+    name: Some("logo".to_string()),
+    description: OptionalField::Null,
+}
+```
+
+The manifest runtime still validates dynamic input and remains the final fail-loud boundary before SQL execution.
 
 ## Catchup Endpoint
 
@@ -163,10 +236,12 @@ Do not reimplement these in the app server.
 2. Load `pyre/generated/manifest.json` at server startup.
 3. Load the Pyre schema context from the database.
 4. Build `PyreSession` from the authenticated app session.
-5. Use `query::run` for queries and mutations.
-6. Return `result.response` to query/mutation callers.
-7. After mutations, pass `result.affected_rows` to `SyncServer::calculate_deltas` and send live messages.
-8. Use `SyncServer::catchup` for `/sync` catchup requests.
+5. Include `pyre/generated/rust/server.rs` when the app has server-owned workflows.
+6. Use generated `query_ids` and typed inputs/outputs for server-owned workflows.
+7. Use direct `query::run` with dynamic JSON for generic client-driven queries and mutations.
+8. Return `result.response` to query/mutation callers.
+9. After mutations, pass `result.affected_rows` to `SyncServer::calculate_deltas` and send live messages.
+10. Use `SyncServer::catchup` for `/sync` catchup requests.
 
 ## Current Coverage
 
@@ -183,3 +258,4 @@ The Rust server helpers are covered by tests for:
 - manifest loading
 - multi top-level query response formatting
 - SQL parameter names with shared prefixes
+- generated Rust query IDs and typed input/output boundary shapes

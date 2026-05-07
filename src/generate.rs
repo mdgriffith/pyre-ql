@@ -79,6 +79,7 @@ pub fn write_queries(
         typescript_dir,
         files,
     );
+    generate::server::rust::generate_queries(context, query_list, Path::new("rust"), files);
     generate::manifest::generate_queries(context, query_list, all_query_info, files);
 }
 
