@@ -45,7 +45,6 @@ pub struct SyncPageResult {
 #[derive(Serialize, Deserialize)]
 pub struct TableSyncData {
     /// The rows of data
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rows: Vec<JsonValue>,
     /// The permission hash for this table (client should update cursor with this)
     pub permission_hash: String,

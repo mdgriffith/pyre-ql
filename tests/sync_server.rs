@@ -9,7 +9,7 @@ use pyre::server::schema::{
 use pyre::server::sync::{
     calculate_deltas, catchup, ConnectedSessions, DeltaMessage, SyncServer, SyncSession,
 };
-use pyre::sync::{SyncCursor, TableCursor};
+use pyre::sync::{SyncCursor, TableCursor, TableSyncData};
 use pyre::sync_deltas::AffectedRowTableGroup;
 use serde_json::json;
 use std::collections::HashMap;
@@ -117,6 +117,21 @@ insert into notes (id, body, updatedAt) values (3, 'three', 30);
     assert!(empty.tables.is_empty());
 
     Ok(())
+}
+
+#[test]
+fn table_sync_data_serializes_empty_rows() {
+    let data = TableSyncData {
+        rows: Vec::new(),
+        permission_hash: "permission-hash".to_string(),
+        last_seen_updated_at: None,
+    };
+
+    let serialized = serde_json::to_value(data).expect("table sync data should serialize");
+
+    assert_eq!(serialized["rows"], json!([]));
+    assert_eq!(serialized["permission_hash"], json!("permission-hash"));
+    assert_eq!(serialized["last_seen_updated_at"], serde_json::Value::Null);
 }
 
 #[tokio::test]
