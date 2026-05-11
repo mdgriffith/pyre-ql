@@ -1,0 +1,17 @@
+.git
+.github
+.vscode
+.cargo
+target
+wasm/target
+wasm/pkg
+node_modules
+packages/*/node_modules
+playground
+benches
+tests
+docs
+scripts
+*.db
+*.sqlite
+.DS_Store
