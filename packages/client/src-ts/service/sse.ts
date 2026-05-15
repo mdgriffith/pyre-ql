@@ -86,66 +86,18 @@ export class SSEManager {
         this.debugLog('[PyreClient] SSE connection opened', { sseUrl });
       };
 
-      eventSource.addEventListener('connected', (event: MessageEvent) => {
+      eventSource.onmessage = (event: MessageEvent) => {
         try {
-          const message = JSON.parse(event.data) as { connectionId?: string; databaseId?: string };
-          const connectionId = message.connectionId;
-          if (connectionId) {
-            this.connectionId = connectionId;
-            this.debugLog('[PyreClient] SSE connected', { connectionId });
-            const connectedMessage = {
-              type: 'connected',
-              databaseId: message.databaseId,
-              connectionId,
-            };
-            this.emitMessage(connectedMessage);
+          const message = JSON.parse(event.data) as LiveSyncMessage;
+          if (message.type === 'connected' && message.connectionId) {
+            this.connectionId = message.connectionId;
+            this.debugLog('[PyreClient] SSE connected', { connectionId: message.connectionId });
           }
+          this.emitMessage(message);
         } catch (error) {
-          console.error('Failed to parse SSE connected message:', error);
-          const errorMessage = {
-            type: 'error',
-            error: 'Failed to parse connection message',
-          };
-          this.emitMessage(errorMessage);
+          console.error('Failed to parse SSE message:', error);
         }
-      });
-
-      eventSource.addEventListener('delta', (event: MessageEvent) => {
-        try {
-          const message = JSON.parse(event.data) as { databaseId?: string; data?: unknown };
-          const deltaMessage = {
-            type: 'delta',
-            databaseId: message.databaseId,
-            data: message.data,
-          };
-          this.emitMessage(deltaMessage);
-        } catch (error) {
-          console.error('Failed to parse SSE delta message:', error);
-        }
-      });
-
-      eventSource.addEventListener('syncProgress', (event: MessageEvent) => {
-        try {
-          const message = JSON.parse(event.data) as { databaseId?: string; data?: unknown };
-          const progressMessage = {
-            type: 'syncProgress',
-            databaseId: message.databaseId,
-            data: message.data,
-          };
-          this.emitMessage(progressMessage);
-        } catch (error) {
-          console.error('Failed to parse SSE sync progress message:', error);
-        }
-      });
-
-      eventSource.addEventListener('syncComplete', (event: MessageEvent) => {
-        const message = parseOptionalSSEData(event.data);
-        const completeMessage = {
-          type: 'syncComplete',
-          databaseId: message.databaseId,
-        };
-        this.emitMessage(completeMessage);
-      });
+      };
 
       eventSource.onerror = () => {
         const state = eventSource.readyState;
@@ -188,18 +140,6 @@ export class SSEManager {
     }
 
     this.connectionId = null;
-  }
-}
-
-function parseOptionalSSEData(data: unknown): { databaseId?: string } {
-  if (typeof data !== 'string' || data.trim() === '') {
-    return {};
-  }
-
-  try {
-    return JSON.parse(data) as { databaseId?: string };
-  } catch {
-    return {};
   }
 }
 

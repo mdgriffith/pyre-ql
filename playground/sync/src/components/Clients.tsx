@@ -44,10 +44,12 @@ function ClientCard({
 
     // Query for all users and all posts
     // The query will run immediately (may return empty), then re-run when sync completes
-    const unsubscribe = client.pyreClient.run(
+    let subscription: { unsubscribe(): void } | void
+    void client.pyreClient.run(
+      'main',
       ListUsersAndPosts,
       {}, // No input parameters
-      (result) => {
+      (result: any) => {
         // Find the user for this client
         const userId = client.userId || client.requestedUserId || 0
         const user = result.user?.find((u: any) => u.id === userId) || null
@@ -59,12 +61,14 @@ function ClientCard({
 
         setData({ user, posts })
       }
-    )
+    ).then((nextSubscription) => {
+      subscription = nextSubscription
+    })
 
     // Return cleanup function that calls unsubscribe if it exists
     return () => {
-      if (unsubscribe && typeof unsubscribe === 'object' && 'unsubscribe' in unsubscribe) {
-        unsubscribe.unsubscribe()
+      if (subscription && typeof subscription === 'object' && 'unsubscribe' in subscription) {
+        subscription.unsubscribe()
       }
     }
   }, [client.pyreClient, client.connected, client.userId, client.requestedUserId])

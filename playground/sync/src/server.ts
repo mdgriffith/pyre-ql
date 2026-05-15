@@ -1,37 +1,30 @@
 import { Hono } from "hono";
-import { streamSSE } from "hono/streaming";
 import { createClient } from "@libsql/client";
 import { join } from "path";
-import type { ServerWebSocket, WebSocketHandler } from "bun";
 import * as Sync from "@pyre/server/sync";
+
+// This file is the playground's Pyre integration map. App/server plumbing like
+// session validation and SSE connection lifecycle lives under ./server so the
+// Pyre-specific calls stay easy to find here.
+import {
+    connectionsForDatabase,
+    sendPyreSyncMessage,
+} from "./server/connections";
+import { handleLiveSyncEvents } from "./server/live-sync";
+import {
+    createSession,
+    readLoginRequest,
+    readPyreRequestSession,
+    readSyncCursor,
+    withValidation,
+} from "./server/session";
 
 await Sync.init();
 
 const app = new Hono();
 
-// Types
-type LiveSyncTransport = "sse" | "websocket";
-
-interface WebSocketData {
-    databaseId: string;
-    sessionId: string;
-    session: Record<string, any>;
-}
-
-interface ConnectedClient {
-    databaseId: string;
-    sessionId: string;
-    session: Record<string, any>;
-    transport: LiveSyncTransport;
-    writeSSE?: (data: { event?: string; data: any; id?: string }) => Promise<void>;
-    ws?: ServerWebSocket<WebSocketData>;
-}
-
 const DB_PATH = join(process.cwd(), "test.db");
 const DB_URL = `file:${DB_PATH}`;
-const connectedClients = new Map<string, ConnectedClient>();
-const sessionsById = new Map<string, Record<string, any>>();
-let nextSessionId = 1;
 
 const db = createClient({ url: DB_URL });
 
@@ -62,32 +55,6 @@ app.use("*", async (c, next) => {
     await next();
 });
 
-// Session lookup helper
-const getSession = (sessionId: string | undefined | null) => {
-    if (!sessionId) {
-        return null;
-    }
-    return sessionsById.get(sessionId) || null;
-};
-
-const requireDatabaseId = (databaseId: string | undefined | null) => {
-    if (!databaseId) {
-        throw new Error("databaseId query parameter is required");
-    }
-
-    return databaseId;
-};
-
-const connectionKey = (databaseId: string, sessionId: string) => `${databaseId}:${sessionId}`;
-
-const connectionsForDatabase = (databaseId: string) => {
-    return new Map(
-        Array.from(connectedClients.values())
-            .filter((client) => client.databaseId === databaseId)
-            .map((client) => [client.sessionId, client] as const)
-    );
-};
-
 // Query metadata endpoint
 app.get("/queries", async (c) => {
     const { discoverQueries } = await import("./client/queryDiscovery");
@@ -98,246 +65,61 @@ app.get("/queries", async (c) => {
 
 // Login endpoint - creates a session for a userId
 app.get("/login", async (c) => {
-    const userId = c.req.query("userId");
-    if (!userId) {
-        c.status(400);
-        return c.json({ error: "userId query parameter is required" });
-    }
-
-    const parsedUserId = parseInt(userId, 10);
-    if (Number.isNaN(parsedUserId) || parsedUserId < 1) {
-        c.status(400);
-        return c.json({ error: "userId must be a positive integer" });
-    }
-
-    const sessionId = `session_${nextSessionId++}`;
-    const session = {
-        userId: parsedUserId,
-        role: "user",
-    };
-    sessionsById.set(sessionId, session);
-    return c.json({ sessionId });
-});
-
-// SSE endpoint for real-time delta updates
-app.get("/sync/events", async (c) => {
-    const sessionId = c.req.query("sessionId");
-    let databaseId: string;
-
-    try {
-        databaseId = requireDatabaseId(c.req.query("databaseId"));
-    } catch (error) {
-        c.status(400);
-        return c.json({ error: error instanceof Error ? error.message : String(error) });
-    }
-
-    if (!sessionId) {
-        c.status(400);
-        return c.json({ error: "sessionId query parameter is required" });
-    }
-
-    const session = getSession(sessionId);
-    if (!session) {
-        c.status(404);
-        return c.json({ error: "Session not found" });
-    }
-
-    const key = connectionKey(databaseId, sessionId);
-    const isReconnection = connectedClients.has(key);
-    if (isReconnection) {
-        console.log(`[RECONNECT] Client reconnected via SSE: ${sessionId}`);
-    } else {
-        console.log(`[NEW] Client connected via SSE: ${sessionId}`);
-    }
-
-    return streamSSE(c, async (stream) => {
-        const client: ConnectedClient = {
-            sessionId: sessionId!,
-            databaseId,
-            session,
-            transport: "sse",
-            writeSSE: async (data) => {
-                await stream.writeSSE(data);
-            },
-        };
-
-        // Update or set the client (in case of reconnection, update the writeSSE function)
-        connectedClients.set(key, client);
-
-        // Only send "connected" message on initial connection, not reconnection
-        if (!isReconnection) {
-            await stream.writeSSE({
-                event: "connected",
-                data: JSON.stringify({
-                    type: "connected",
-                    databaseId,
-                    sessionId,
-                    session,
-                }),
-            });
-        }
-
-        // Keep connection alive and handle disconnect
-        // The stream will be closed when the client disconnects
-        try {
-            // Send periodic keep-alive comments to prevent proxy/timeout issues
-            // Many proxies timeout idle connections after 30-60 seconds
-            // Sending a comment every 15 seconds keeps the connection alive more reliably
-            let keepAliveCount = 0;
-            while (true) {
-                await stream.sleep(15000); // Every 15 seconds (more frequent to prevent timeouts)
-                keepAliveCount++;
-                // Send SSE comment (starts with ':') - this is a keep-alive that doesn't trigger events
-                // Format: ": comment\n\n" (two newlines required for SSE)
-                try {
-                    await stream.writeSSE({ data: ": keep-alive\n\n" });
-                    if (keepAliveCount % 4 === 0) { // Log every minute
-                        console.log(`SSE keep-alive sent for ${sessionId} (count: ${keepAliveCount})`);
-                    }
-                } catch (writeError) {
-                    // If write fails, connection is likely closed
-                    console.error(`Failed to send keep-alive for ${sessionId}:`, writeError);
-                    throw writeError; // Break the loop
-                }
-            }
-        } catch (error) {
-            // Client disconnected or stream closed
-            console.log(`SSE stream ended for ${sessionId}:`, error instanceof Error ? error.message : String(error));
-            // Don't delete the session immediately - EventSource will reconnect
-            // Only remove if the client is explicitly disconnected
-            const currentClient = connectedClients.get(key);
-            if (currentClient === client) {
-                // Only remove if this is still the active client (not replaced by reconnection)
-                connectedClients.delete(key);
-                console.log(`Client session removed: ${sessionId}`);
-            }
-        }
+    return withValidation(c, () => {
+        const { userId } = readLoginRequest(c);
+        const { sessionId } = createSession(userId);
+        return c.json({ sessionId });
     });
 });
 
+app.get("/sync/events", handleLiveSyncEvents);
+
 // Sync endpoint - Much simpler with helpers!
 app.get("/sync", async (c) => {
-    let databaseId: string;
+    return withValidation(c, async () => {
+        const request = readPyreRequestSession(c);
+        const syncCursor = readSyncCursor(c);
 
-    try {
-        databaseId = requireDatabaseId(c.req.query("databaseId"));
-    } catch (error) {
-        c.status(400);
-        return c.json({ error: error instanceof Error ? error.message : String(error) });
-    }
-
-    // Get sessionId from query params
-    const sessionId = c.req.query("sessionId");
-    if (!sessionId) {
-        c.status(400);
-        return c.json({ error: "sessionId query parameter is required" });
-    }
-
-    // Look up client session from connected clients
-    const client = connectedClients.get(connectionKey(databaseId, sessionId));
-    const session = client?.session ?? getSession(sessionId);
-    if (!session) {
-        c.status(404);
-        return c.json({ error: "Session not found." });
-    }
-
-    // Get syncCursor from query params (optional, defaults to empty)
-    const syncCursorParam = c.req.query("syncCursor");
-    let syncCursor: any = { tables: {} };
-    if (syncCursorParam) {
-        try {
-            syncCursor = JSON.parse(syncCursorParam);
-        } catch (e) {
-            c.status(400);
-            return c.json({ error: "Invalid syncCursor format. Must be valid JSON." });
-        }
-    }
-
-    // Ask pyre to get any data that needs to be synced.
-    const result = await Sync.catchup(db, syncCursor, session, 1000, databaseId);
-    return c.json(result);
+        // Ask pyre to get any data that needs to be synced.
+        const result = await Sync.catchup(db, syncCursor as any, request.session, 1000, request.databaseId);
+        return c.json(result);
+    });
 
 });
 
 
 app.post("/db/:req", async (c) => {
-    const { req } = c.req.param();
-    const args = await c.req.json();
-    let databaseId: string;
+    return withValidation(c, async () => {
+        const { req } = c.req.param();
+        const args = await c.req.json();
 
-    try {
-        databaseId = requireDatabaseId(c.req.query("databaseId"));
-    } catch (error) {
-        c.status(400);
-        return c.json({ error: error instanceof Error ? error.message : String(error) });
-    }
-    const sessionId = c.req.query("sessionId");
-    if (!sessionId) {
-        c.status(400);
-        return c.json({ error: "sessionId query parameter is required" });
-    }
+        const request = readPyreRequestSession(c);
 
-    // Get executing session from connected client or use default
-    const client = connectedClients.get(connectionKey(databaseId, sessionId));
-    const executingSession = client?.session ?? getSession(sessionId);
-    if (!executingSession) {
-        c.status(404);
-        return c.json({ error: "Session not found." });
-    }
+        // Execute query with all connected clients for sync delta calculation
+        // Pyre.run can extract session.fields from ConnectedClient objects
+        const result = await Sync.run(
+            db,
+            queries,
+            req,
+            args,
+            request.session,
+            connectionsForDatabase(request.databaseId),
+            request.databaseId
+        );
 
-    // Execute query with all connected clients for sync delta calculation
-    // Pyre.run can extract session.fields from ConnectedClient objects
-    const result = await Sync.run(
-        db,
-        queries,
-        req,
-        args,
-        executingSession,
-        connectionsForDatabase(databaseId),
-        databaseId
-    );
-
-    if (result.kind === "error") {
-        c.status(500);
-        return c.json({ error: result.error?.message || "Query execution failed" });
-    }
-
-    // Broadcast sync deltas in background (fire-and-forget, we're not awaiting it)
-    result.sync(async (sessionId, message) => {
-        const client = connectedClients.get(sessionId);
-        if (!client) {
-            return;
+        if (result.kind === "error") {
+            c.status(500);
+            return c.json({ error: result.error?.message || "Query execution failed" });
         }
 
-        const payload = {
-            type: "delta",
-            databaseId,
-            data: (message as { data?: any }).data ?? message,
-        };
+        // Broadcast sync deltas in background (fire-and-forget, we're not awaiting it)
+        result.sync(async (sessionId, message) => {
+            await sendPyreSyncMessage(request.databaseId, sessionId, message);
+        })
 
-        try {
-            if (client.transport === "sse" && client.writeSSE) {
-                // Send SSE event with delta data
-                await client.writeSSE({
-                    event: "delta",
-                    data: JSON.stringify(payload),
-                });
-            } else if (client.transport === "websocket" && client.ws) {
-                // ServerWebSocket readyState: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
-                if (client.ws.readyState === 1) {
-                    client.ws.send(JSON.stringify(payload));
-                } else {
-                    connectedClients.delete(connectionKey(databaseId, sessionId));
-                }
-            }
-        } catch (error) {
-            console.error(`Failed to send delta to client ${sessionId}:`, error);
-            connectedClients.delete(connectionKey(databaseId, sessionId));
-        }
-    })
-
-    // Return response immediately
-    return c.json(result.response);
+        // Return response immediately
+        return c.json(result.response);
+    });
 
 });
 
@@ -348,98 +130,17 @@ export default async function startServer() {
 
     const port = 3000;
 
-    // Bun server with SSE support
-    // Production considerations:
-    // - idleTimeout: Bun's maximum is 255s (~4.25 minutes) - this is sufficient with keep-alive
-    // - Keep-alive messages every 15s prevent proxy timeouts (most proxies timeout at 60-120s)
-    // - Reverse proxies (nginx, cloudflare) may need additional timeout configuration
-    // - The keep-alive ensures connections stay alive even if idleTimeout triggers
-    const SSE_IDLE_TIMEOUT = 255; // Bun's maximum - ~4.25 minutes (sufficient with 15s keep-alive)
-    
     const server = Bun.serve({
         port,
-        fetch: (request, server) => {
-            const url = new URL(request.url);
-            if (url.pathname === "/sync/events" && request.headers.get("upgrade") === "websocket") {
-                const sessionId = url.searchParams.get("sessionId");
-                const databaseId = url.searchParams.get("databaseId");
-                if (!sessionId) {
-                    return new Response("sessionId query parameter is required", { status: 400 });
-                }
-                if (!databaseId) {
-                    return new Response("databaseId query parameter is required", { status: 400 });
-                }
-                const session = getSession(sessionId);
-                if (!session) {
-                    return new Response("Session not found", { status: 404 });
-                }
-
-                const upgraded = server.upgrade(request, {
-                    data: { databaseId, sessionId, session },
-                });
-
-                if (upgraded) {
-                    return;
-                }
-
-                return new Response("WebSocket upgrade failed", { status: 400 });
-            }
-
+        fetch: (request) => {
             return app.fetch(request);
         },
-        websocket: {
-            open(ws: ServerWebSocket<WebSocketData>) {
-                const { databaseId, sessionId, session } = ws.data;
-                const key = connectionKey(databaseId, sessionId);
-                const isReconnection = connectedClients.has(key);
-                if (isReconnection) {
-                    console.log(`[RECONNECT] Client reconnected via WebSocket: ${sessionId}`);
-                } else {
-                    console.log(`[NEW] Client connected via WebSocket: ${sessionId}`);
-                }
-
-                const client: ConnectedClient = {
-                    sessionId,
-                    databaseId,
-                    session,
-                    transport: "websocket",
-                    ws,
-                };
-                connectedClients.set(key, client);
-
-                if (!isReconnection) {
-                    ws.send(
-                        JSON.stringify({
-                            type: "connected",
-                            databaseId,
-                            sessionId,
-                            session,
-                        })
-                    );
-                }
-            },
-            message(ws: ServerWebSocket<WebSocketData>, message: string | Buffer) {
-                // Handle incoming WebSocket messages if needed
-                // Currently, this is a one-way sync (server -> client), so we don't need to handle messages
-                console.log(`Received message from ${ws.data.sessionId}:`, message);
-            },
-            close(ws: ServerWebSocket<WebSocketData>) {
-                const { databaseId, sessionId } = ws.data;
-                const key = connectionKey(databaseId, sessionId);
-                const currentClient = connectedClients.get(key);
-                if (currentClient?.ws === ws) {
-                    connectedClients.delete(key);
-                    console.log(`WebSocket client session removed: ${sessionId}`);
-                }
-            },
-        } as WebSocketHandler<WebSocketData>,
-        idleTimeout: SSE_IDLE_TIMEOUT, // Bun's maximum - keep-alive prevents actual disconnection
+        idleTimeout: 255,
     });
 
     console.log(`Server starting on http://localhost:${port}`);
     console.log(`SSE endpoint: http://localhost:${port}/sync/events`);
-    console.log(`WebSocket endpoint: ws://localhost:${port}/sync/events`);
-    console.log(`SSE idleTimeout: ${SSE_IDLE_TIMEOUT}s (~4.25 minutes, Bun's maximum)`);
+    console.log(`SSE idleTimeout: 255s (~4.25 minutes, Bun's maximum)`);
     console.log(`Keep-alive interval: 15s (prevents idle timeout and proxy timeouts)`);
 
     return server;

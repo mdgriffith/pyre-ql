@@ -15,8 +15,6 @@ export interface QueryMetadata {
  * Discover queries by parsing generated TypeScript files and query source files
  */
 export function discoverQueries(): QueryMetadata[] {
-    const queries: QueryMetadata[] = [];
-
     const metadataDir = join(
         process.cwd(),
         "pyre",
@@ -32,6 +30,11 @@ export function discoverQueries(): QueryMetadata[] {
         return [];
     }
 
+    return discoverQueriesFromMetadataDir(metadataDir);
+}
+
+export function discoverQueriesFromMetadataDir(metadataDir: string): QueryMetadata[] {
+    const queries: QueryMetadata[] = [];
     const metadataFiles = readdirSync(metadataDir).filter((f) => f.endsWith(".ts"));
 
     for (const file of metadataFiles) {
@@ -49,25 +52,7 @@ export function discoverQueries(): QueryMetadata[] {
         const name = file.replace(/\.ts$/, "");
         const isMutation = operation !== "query";
 
-        // Extract input fields from InputValidator
-        const inputValidatorMatch = content.match(/const InputValidator = Ark\.type\(\{([\s\S]*?)\}\);/);
-        const inputFields: Array<{ name: string; type: 'string' | 'number' | 'boolean' }> = [];
-
-        if (inputValidatorMatch) {
-            const inputFieldsBlock = inputValidatorMatch[1];
-            const fieldPattern = /(\w+)\s*:\s*"([^"]+)"/g;
-            let fieldMatch;
-            while ((fieldMatch = fieldPattern.exec(inputFieldsBlock)) !== null) {
-                const [, fieldName, fieldType] = fieldMatch;
-                let type: 'string' | 'number' | 'boolean' = 'string';
-                if (fieldType === "number") {
-                    type = 'number';
-                } else if (fieldType === "boolean") {
-                    type = 'boolean';
-                }
-                inputFields.push({ name: fieldName, type });
-            }
-        }
+        const inputFields = parseInputFields(content);
 
         queries.push({
             id: idMatch[1],
@@ -78,4 +63,30 @@ export function discoverQueries(): QueryMetadata[] {
     }
 
     return queries.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function parseInputFields(content: string): Array<{ name: string; type: 'string' | 'number' | 'boolean' }> {
+    const inputValidatorMatch = content.match(/const RawInputValidator = z\.object\(\{([\s\S]*?)\n\}\);/);
+    if (!inputValidatorMatch) {
+        return [];
+    }
+
+    const inputFields: Array<{ name: string; type: 'string' | 'number' | 'boolean' }> = [];
+    const fieldPattern = /(\w+)\s*:\s*([^,\n]+)/g;
+    let fieldMatch;
+    while ((fieldMatch = fieldPattern.exec(inputValidatorMatch[1])) !== null) {
+        const [, fieldName, validator] = fieldMatch;
+        inputFields.push({ name: fieldName, type: inputTypeFromZodValidator(validator) });
+    }
+    return inputFields;
+}
+
+function inputTypeFromZodValidator(validator: string): 'string' | 'number' | 'boolean' {
+    if (validator.includes('z.number()')) {
+        return 'number';
+    }
+    if (validator.includes('CoercedBool') || validator.includes('z.boolean()')) {
+        return 'boolean';
+    }
+    return 'string';
 }

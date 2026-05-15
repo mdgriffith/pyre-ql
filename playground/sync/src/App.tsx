@@ -1,11 +1,14 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import QueryForm from './components/QueryForm'
 import MessagePane from './components/MessagePane'
 import Clients from './components/Clients'
 import { discoverQueries, QueryMetadata } from './queryDiscovery'
 import { PyreClient } from '@pyre/client'
+import { mountPyreDevtools, type PyreDevtoolsHandle } from '@pyre/client/devtools'
 import { schemaMetadata } from '../pyre/generated/typescript/core/schema'
 import './App.css'
+
+const DATABASE_ID = 'main'
 
 interface Client {
   id: string
@@ -44,6 +47,7 @@ function App() {
   const initialClientConnectedRef = useRef(false)
   const nextUserIdRef = useRef<number>(2) // Next userId to assign (starts at 2 since 1 is taken)
   const pyreClientsRef = useRef<Map<string, PyreClient>>(new Map())
+  const devtoolsRef = useRef<PyreDevtoolsHandle | null>(null)
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -124,64 +128,60 @@ function App() {
     }
 
     const queryParams = new URLSearchParams({ sessionId: String(sessionId) }).toString()
-    const liveSyncTransport = 'websocket'
-    const liveSyncUrl = liveSyncTransport === 'websocket'
-      ? `ws://localhost:3000/sync/events?${queryParams}`
-      : `http://localhost:3000/sync/events?${queryParams}`
-    const indexedDbName = `pyre-sync-playground-${clientId}`
+    const liveSyncQueryParams = new URLSearchParams({ sessionId: String(sessionId), databaseId: DATABASE_ID }).toString()
+    const liveSyncUrl = `http://localhost:3000/sync/events?${liveSyncQueryParams}`
+    const baseIndexedDbName = `pyre-sync-playground-${clientId}`
 
     addEvent({
       type: 'query_sent',
       data: {
         message: 'Connecting to server...',
         url: liveSyncUrl,
-        method: liveSyncTransport === 'websocket' ? 'WS' : 'SSE',
+        method: 'SSE',
       },
       clientId,
     })
 
-    // Create PyreClient instance
-    const pyreClient = new PyreClient({
-      schema: schemaMetadata,
-      server: {
-        baseUrl: 'http://localhost:3000',
-        liveSyncTransport,
-        endpoints: {
-          catchup: `/sync?${queryParams}`,
-          events: `/sync/events?${queryParams}`,
-          query: `/db?${queryParams}`,
-        },
-      },
-      indexedDbName,
-    })
-
-    // Store in ref for cleanup
-    pyreClientsRef.current.set(clientId, pyreClient)
-
-    // Set up sync state callback
-    pyreClient.onSyncState((state) => {
-      if (state.status === 'live') {
-        addEvent({
-          type: 'query_response',
-          data: {
-            message: 'Sync live',
-            tablesSynced: Object.values(state.tables).filter((status) => status === 'live').length,
-          },
-          clientId,
-        })
-      } else {
-        const table = Object.entries(state.tables).find(([, status]) => status === 'catching_up')?.[0]
-        addEvent({
-          type: 'query_response',
-          data: { message: `Syncing table: ${table ?? '(pending)'}` },
-          clientId,
-        })
-      }
-    })
-
     try {
-      // Initialize client storage
-      await pyreClient.init()
+      const pyreClient = await PyreClient.create({
+        schema: schemaMetadata,
+        server: {
+          baseUrl: 'http://localhost:3000',
+          endpoints: {
+            catchup: `/sync?${queryParams}`,
+            events: `/sync/events?${queryParams}`,
+            query: `/db?${queryParams}`,
+          },
+        },
+        cacheNamespace: String(userId),
+        indexedDbName: baseIndexedDbName,
+      })
+
+      // Store in ref for cleanup
+      pyreClientsRef.current.set(clientId, pyreClient)
+
+      // Set up sync state callback
+      pyreClient.onSyncState((state) => {
+        if (state.status === 'live') {
+          addEvent({
+            type: 'query_response',
+            data: {
+              message: 'Sync live',
+              tablesSynced: Object.values(state.tables).filter((status) => status === 'live').length,
+            },
+            clientId,
+          })
+        } else {
+          const table = Object.entries(state.tables).find(([, status]) => status === 'catching_up')?.[0]
+          addEvent({
+            type: 'query_response',
+            data: { message: `Syncing table: ${table ?? '(pending)'}` },
+            clientId,
+          })
+        }
+      })
+
+      await pyreClient.setSyncedDatabases([DATABASE_ID])
 
       setClients((prev) =>
         prev.map((c) =>
@@ -192,7 +192,7 @@ function App() {
               connected: true,
               userId: userId,
               sessionId,
-              indexedDbName,
+              indexedDbName: pyreClient.getInternalIndexedDbName(DATABASE_ID),
             }
             : c
         )
@@ -215,7 +215,22 @@ function App() {
     }
   }, [addEvent])
 
-  // Connect SSE for initial client (only once, even in StrictMode)
+  useEffect(() => {
+    devtoolsRef.current?.destroy()
+    devtoolsRef.current = null
+
+    const selectedClient = clients.find((client) => client.id === selectedClientId)
+    if (selectedClient?.pyreClient && selectedClient.connected) {
+      devtoolsRef.current = mountPyreDevtools(selectedClient.pyreClient)
+    }
+
+    return () => {
+      devtoolsRef.current?.destroy()
+      devtoolsRef.current = null
+    }
+  }, [clients, selectedClientId])
+
+  // Connect the initial client once, even in StrictMode.
   useEffect(() => {
     if (!initialClientConnectedRef.current) {
       initialClientConnectedRef.current = true
@@ -249,16 +264,6 @@ function App() {
     })
   }, [connectClient])
 
-  const updateClientUserId = useCallback((clientId: string, userId: number | null) => {
-    setClients((prev) =>
-      prev.map((c) =>
-        c.id === clientId
-          ? { ...c, requestedUserId: userId }
-          : c
-      )
-    )
-  }, [])
-
   const submitQuery = useCallback(
     async (queryId: string, params: Record<string, any>) => {
       if (!selectedClientId) {
@@ -272,9 +277,11 @@ function App() {
 
       // Include sessionId in query params if client has one
       const sessionId = client.sessionId
-      const url = sessionId
-        ? `http://localhost:3000/db/${queryId}?sessionId=${sessionId}`
-        : `http://localhost:3000/db/${queryId}`
+      const queryParams = new URLSearchParams({ databaseId: DATABASE_ID })
+      if (sessionId) {
+        queryParams.set('sessionId', sessionId)
+      }
+      const url = `http://localhost:3000/db/${queryId}?${queryParams.toString()}`
       const method = 'POST'
 
       // Log query sent
@@ -322,6 +329,8 @@ function App() {
       for (const pyreClient of pyreClientsRef.current.values()) {
         pyreClient.disconnect()
       }
+      devtoolsRef.current?.destroy()
+      devtoolsRef.current = null
       pyreClientsRef.current.clear()
     }
   }, [])
@@ -332,7 +341,7 @@ function App() {
     }
 
     // Disconnect all clients first
-    for (const [clientId, pyreClient] of pyreClientsRef.current.entries()) {
+    for (const pyreClient of pyreClientsRef.current.values()) {
       if (pyreClient) {
         pyreClient.disconnect()
       }
@@ -342,18 +351,12 @@ function App() {
     await new Promise(resolve => setTimeout(resolve, 200))
 
     // Delete all client databases
-    const deletePromises: Promise<void>[] = []
     const dbNames: string[] = []
-    for (const [clientId, pyreClient] of pyreClientsRef.current.entries()) {
-      if (pyreClient) {
-        const client = clientsRef.current.find((item) => item.id === clientId)
-        if (client?.indexedDbName) {
-          dbNames.push(client.indexedDbName)
-          console.log(`[Reset] Will delete database for client ${clientId}: ${client.indexedDbName}`)
-        }
-        deletePromises.push(pyreClient.deleteDatabase().catch(err => {
-          console.error(`Error deleting database for client ${clientId}:`, err)
-        }))
+    for (const [clientId] of pyreClientsRef.current.entries()) {
+      const client = clientsRef.current.find((item) => item.id === clientId)
+      if (client?.indexedDbName) {
+        dbNames.push(client.indexedDbName)
+        console.log(`[Reset] Will delete database for client ${clientId}: ${client.indexedDbName}`)
       }
     }
 
@@ -366,10 +369,6 @@ function App() {
     }
 
     try {
-      await Promise.all(deletePromises)
-      console.log('[Reset] All client databases deleted via PyreClient')
-
-      // Also try to delete databases directly by name as a fallback
       console.log('[Reset] Attempting direct deletion of databases:', dbNames)
       for (const dbName of dbNames) {
         try {
