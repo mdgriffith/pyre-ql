@@ -1,9 +1,11 @@
-import type { PyreDevtoolsEvent, PyreDevtoolsSnapshot, PyreDevtoolsTableSnapshot } from './index';
-
-export interface PyreDevtoolsClient {
-  onDevtoolsEvent(callback: (event: PyreDevtoolsEvent) => void): () => void;
-  getDevtoolsSnapshot(): Promise<PyreDevtoolsSnapshot>;
-}
+import type { DevtoolsDatabaseSummary, DevtoolsTableSummary, PyreDevtoolsEvent, PyreDevtoolsInstanceSnapshot, PyreDevtoolsRegistrySnapshot } from './index';
+import {
+  getPyreDevtoolsInstanceSnapshot,
+  getPyreDevtoolsRegistrySnapshot,
+  inspectPyreDevtoolsTablePage,
+  subscribePyreDevtoolsInstanceEvents,
+  subscribePyreDevtoolsRegistry,
+} from './devtools-registry';
 
 export interface PyreDevtoolsOptions {
   target?: HTMLElement;
@@ -17,10 +19,10 @@ export interface PyreDevtoolsHandle {
 
 type Page = 'tables' | 'events' | 'debug';
 
-export function mountPyreDevtools(client: PyreDevtoolsClient, options: PyreDevtoolsOptions = {}): PyreDevtoolsHandle {
+export function mountPyreDevtools(options: PyreDevtoolsOptions = {}): PyreDevtoolsHandle {
   const target = options.target ?? document.body;
   const element = document.createElement('pyre-devtools') as PyreDevtoolsElement;
-  element.configure(client, options.maxEvents ?? 300);
+  element.configure(options.maxEvents ?? 300);
   target.appendChild(element);
 
   return {
@@ -34,53 +36,99 @@ export function mountPyreDevtools(client: PyreDevtoolsClient, options: PyreDevto
 }
 
 class PyreDevtoolsElement extends HTMLElement {
-  private client: PyreDevtoolsClient | null = null;
   private shadowRootRef: ShadowRoot;
   private unsubscribe: (() => void) | null = null;
-  private snapshot: PyreDevtoolsSnapshot | null = null;
+  private unsubscribeEvents: (() => void) | null = null;
+  private registrySnapshot: PyreDevtoolsRegistrySnapshot = { instances: [] };
+  private snapshot: PyreDevtoolsInstanceSnapshot | null = null;
   private events: PyreDevtoolsEvent[] = [];
   private maxEvents = 300;
   private open = false;
   private maximized = false;
   private page: Page = 'tables';
+  private selectedInstanceId: string | null = null;
+  private selectedDatabaseId: string | null = null;
   private selectedTable: string | null = null;
   private selectedEventId: number | null = null;
   private tableInfoOpen = false;
+  private tableRows: unknown[] = [];
+  private tablePageOffset = 0;
+  private tablePageLimit = 100;
+  private tableHasMore = false;
 
   constructor() {
     super();
     this.shadowRootRef = this.attachShadow({ mode: 'open' });
   }
 
-  configure(client: PyreDevtoolsClient, maxEvents: number): void {
-    this.client = client;
+  configure(maxEvents: number): void {
     this.maxEvents = maxEvents;
     this.unsubscribe?.();
-    this.unsubscribe = client.onDevtoolsEvent((event) => {
-      this.events = [event, ...this.events].slice(0, this.maxEvents);
-      if (event.type === 'debug:value') {
-        void this.refresh();
-        return;
-      }
-      this.render({ preserveScroll: true });
+    this.unsubscribe = subscribePyreDevtoolsRegistry(() => {
+      void this.refresh();
     });
     void this.refresh();
   }
 
   disconnectedCallback(): void {
     this.unsubscribe?.();
+    this.unsubscribeEvents?.();
     this.unsubscribe = null;
+    this.unsubscribeEvents = null;
   }
 
   async refresh(): Promise<void> {
-    if (!this.client) {
+    this.registrySnapshot = await getPyreDevtoolsRegistrySnapshot();
+    if (!this.selectedInstanceId || !this.registrySnapshot.instances.some((instance) => instance.instanceId === this.selectedInstanceId)) {
+      this.selectedInstanceId = this.registrySnapshot.instances[0]?.instanceId ?? null;
+    }
+    this.snapshot = this.selectedInstanceId ? await getPyreDevtoolsInstanceSnapshot(this.selectedInstanceId) : null;
+    this.events = this.snapshot?.events.slice(0, this.maxEvents) ?? [];
+    this.ensureEventSubscription();
+    if (!this.selectedDatabaseId || !this.snapshot?.databases.some((database) => database.databaseId === this.selectedDatabaseId)) {
+      this.selectedDatabaseId = this.snapshot?.databases[0]?.databaseId ?? null;
+      this.selectedTable = null;
+    }
+    const selectedDatabase = this.getSelectedDatabase();
+    if (!this.selectedTable || !selectedDatabase?.tableSummaries?.some((table) => table.name === this.selectedTable)) {
+      this.selectedTable = selectedDatabase?.tableSummaries?.[0]?.name ?? null;
+      this.tablePageOffset = 0;
+    }
+    await this.loadSelectedTablePage();
+    this.render();
+  }
+
+  private ensureEventSubscription(): void {
+    this.unsubscribeEvents?.();
+    this.unsubscribeEvents = null;
+    if (!this.selectedInstanceId) {
       return;
     }
-    this.snapshot = await this.client.getDevtoolsSnapshot();
-    if (!this.selectedTable) {
-      this.selectedTable = Object.keys(this.snapshot.tables)[0] ?? null;
+    this.unsubscribeEvents = subscribePyreDevtoolsInstanceEvents(this.selectedInstanceId, (event) => {
+      this.events = [event, ...this.events].slice(0, this.maxEvents);
+      if (event.type === 'debug:value' || event.type.startsWith('sync.') || event.type.startsWith('database.') || event.type.startsWith('mutation.')) {
+        void this.refresh();
+        return;
+      }
+      this.render({ preserveScroll: true });
+    });
+  }
+
+  private async loadSelectedTablePage(): Promise<void> {
+    if (!this.selectedInstanceId || !this.selectedDatabaseId || !this.selectedTable) {
+      this.tableRows = [];
+      this.tableHasMore = false;
+      return;
     }
-    this.render();
+    const page = await inspectPyreDevtoolsTablePage({
+      instanceId: this.selectedInstanceId,
+      databaseId: this.selectedDatabaseId,
+      tableName: this.selectedTable,
+      offset: this.tablePageOffset,
+      limit: this.tablePageLimit,
+    });
+    this.tableRows = page.rows;
+    this.tableHasMore = page.hasMore;
   }
 
   private render(options: { preserveScroll?: boolean } = {}): void {
@@ -104,10 +152,11 @@ class PyreDevtoolsElement extends HTMLElement {
           <button class="window-button maximize" title="${this.maximized ? 'Restore' : 'Maximize'}" aria-label="${this.maximized ? 'Restore Pyre devtools' : 'Maximize Pyre devtools'}">${this.maximized ? lucideIcon('minimize') : lucideIcon('maximize')}</button>
           <button class="window-button panel-close" title="Close" aria-label="Close Pyre devtools">${lucideIcon('close')}</button>
         </div>
+        <header class="topbar">
+          <div class="brand">Pyre</div>
+          ${this.renderTopControls('')}
+        </header>
         <aside class="nav">
-          <div class="brand-row">
-            <div class="brand">Pyre</div>
-          </div>
           ${this.renderNavButton('tables', 'Tables')}
           ${this.renderNavButton('events', `Events ${this.events.length ? `<span>${this.events.length}</span>` : ''}`)}
           ${this.renderNavButton('debug', 'Debug')}
@@ -124,7 +173,7 @@ class PyreDevtoolsElement extends HTMLElement {
 
   private renderPage(): string {
     if (!this.snapshot) {
-      return '<div class="empty">Loading Pyre devtools...</div>';
+      return '<div class="empty">No registered Pyre clients.</div>';
     }
     if (this.page === 'events') {
       return this.renderEventsPage();
@@ -135,40 +184,77 @@ class PyreDevtoolsElement extends HTMLElement {
     return this.renderTablesPage();
   }
 
-  private renderTablesPage(): string {
-    const tables = Object.values(this.snapshot?.tables ?? {});
-    const selected = this.selectedTable ? this.snapshot?.tables[this.selectedTable] : tables[0];
+  private renderTopControls(extra: string): string {
+    const instances = this.registrySnapshot.instances;
+    const databases = this.snapshot?.databases ?? [];
     return `
+      <div class="scope-controls">
+        <label>Instance
+          <select data-instance-select>
+            ${instances.length === 0 ? '<option>No instances</option>' : instances.map((instance) => `<option value="${escapeAttr(instance.instanceId)}" ${instance.instanceId === this.selectedInstanceId ? 'selected' : ''}>${escapeHtml(instance.label)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Database
+          <select data-database-select>
+            ${databases.length === 0 ? '<option>No known databases</option>' : databases.map((database) => `<option value="${escapeAttr(database.databaseId)}" ${database.databaseId === this.selectedDatabaseId ? 'selected' : ''}>${escapeHtml(database.databaseId)}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      ${extra}
+    `;
+  }
+
+  private getSelectedDatabase(): DevtoolsDatabaseSummary | null {
+    return this.snapshot?.databases.find((database) => database.databaseId === this.selectedDatabaseId) ?? null;
+  }
+
+  private renderTablesPage(): string {
+    const database = this.getSelectedDatabase();
+    const tables = database?.tableSummaries ?? [];
+    const selected = this.selectedTable ? tables.find((table) => table.name === this.selectedTable) : tables[0];
+    return `
+      ${database ? this.renderDatabaseSummary(database) : ''}
       <div class="split">
         <section class="table-list">
           <h2>Tables</h2>
           ${tables.map((table) => `
             <button class="table-item ${selected?.name === table.name ? 'active' : ''}" data-table="${escapeAttr(table.name)}">
               <strong>${escapeHtml(table.name)}</strong>
-              <span>${table.count} rows · ${formatBytes(estimateJsonBytes(table.rows))}</span>
+              <span>${table.count ?? 0} rows · ${escapeHtml(table.sync ?? 'unknown')}</span>
             </button>
           `).join('')}
         </section>
-        <section class="table-detail">${selected ? this.renderTableDetail(selected) : '<div class="empty">No tables found.</div>'}</section>
+        <section class="table-detail">${selected ? this.renderTableDetail(selected) : '<div class="empty">No tables found for this database.</div>'}</section>
       </div>
     `;
   }
 
-  private renderTableDetail(table: PyreDevtoolsTableSnapshot): string {
+  private renderDatabaseSummary(database: DevtoolsDatabaseSummary): string {
+    return `
+      <div class="database-summary">
+        <code>${escapeHtml(database.lifecycle)}</code>
+        <span>${database.flaggedForSync ? 'Flagged for sync' : 'Not flagged for sync'}</span>
+        <span>${escapeHtml(database.indexedDbName)}</span>
+        ${database.error ? `<strong>${escapeHtml(database.error)}</strong>` : ''}
+      </div>
+    `;
+  }
+
+  private renderTableDetail(table: DevtoolsTableSummary): string {
     const schema = this.snapshot?.schema.tables[table.name];
     const schemaColumns = schema?.columns?.map((column) => column.name) ?? [];
     const indices = schema?.indices ?? [];
     const links = schema?.links ?? {};
-    const rows = table.rows.slice(0, 100);
+    const rows = this.tableRows;
     const columns = mergeColumns(schemaColumns, collectColumns(rows));
     const variantGroups = groupByVariant(rows);
     const lastSynced = formatLastSynced(table.cursor?.last_seen_updated_at);
-    const approxSize = formatBytes(estimateJsonBytes(table.rows));
+    const approxSize = formatBytes(estimateJsonBytes(rows));
     return `
       <header class="detail-header">
         <div>
           <h1>${escapeHtml(table.name)}</h1>
-          <p>${table.count} records · ${approxSize} · last synced ${escapeHtml(lastSynced.relative)}</p>
+          <p>${table.count ?? rows.length} records · current page ${approxSize} · last synced ${escapeHtml(lastSynced.relative)}</p>
           ${lastSynced.exact ? `<small title="${escapeAttr(lastSynced.exact)}">${escapeHtml(lastSynced.exact)}</small>` : ''}
         </div>
         <button class="info-toggle" type="button">${this.tableInfoOpen ? 'Hide info' : 'Info'}</button>
@@ -190,7 +276,7 @@ class PyreDevtoolsElement extends HTMLElement {
           </div>
         </div>
       ` : ''}
-      ${table.count > 100 ? '<p class="note">Showing first 100 rows.</p>' : ''}
+      <div class="pager"><button data-page-prev ${this.tablePageOffset === 0 ? 'disabled' : ''}>Previous</button><span>Rows ${this.tablePageOffset + 1}-${this.tablePageOffset + rows.length}</span><button data-page-next ${this.tableHasMore ? '' : 'disabled'}>Next</button></div>
       <div class="rows">${this.renderRows(rows, columns)}</div>
     `;
   }
@@ -238,13 +324,16 @@ class PyreDevtoolsElement extends HTMLElement {
       <h1>Debug</h1>
       <div class="debug-grid">
         <section><h2>Runtime</h2><pre>${formatJson({
-          indexedDbName: this.snapshot?.indexedDbName,
+          instanceId: this.snapshot?.instanceId,
+          cacheNamespace: this.snapshot?.cacheNamespace,
+          selectedDatabaseId: this.selectedDatabaseId,
+          indexedDbName: this.getSelectedDatabase()?.indexedDbName,
           server: this.snapshot?.server,
-          connectionId: this.snapshot?.connectionId,
           syncProgress: this.snapshot?.syncProgress,
         })}</pre></section>
         <section><h2>Custom Debug Values</h2><pre>${formatJson(this.snapshot?.debugValues)}</pre></section>
-        <section><h2>Sync State</h2><pre>${formatJson(this.snapshot?.syncState)}</pre></section>
+        <section><h2>Aggregate Sync State</h2><pre>${formatJson(this.snapshot?.aggregateSyncState)}</pre></section>
+        <section><h2>Databases</h2><pre>${formatJson(this.snapshot?.databases)}</pre></section>
         <section><h2>Schema</h2><pre>${formatJson(this.snapshot?.schema)}</pre></section>
       </div>
     `;
@@ -280,8 +369,30 @@ class PyreDevtoolsElement extends HTMLElement {
       button.addEventListener('click', () => {
         this.selectedTable = button.dataset.table ?? null;
         this.tableInfoOpen = false;
-        this.render();
+        this.tablePageOffset = 0;
+        void this.loadSelectedTablePage().then(() => this.render());
       });
+    });
+    this.shadowRootRef.querySelector<HTMLSelectElement>('[data-instance-select]')?.addEventListener('change', (event) => {
+      this.selectedInstanceId = (event.currentTarget as HTMLSelectElement).value || null;
+      this.selectedDatabaseId = null;
+      this.selectedTable = null;
+      this.tablePageOffset = 0;
+      void this.refresh();
+    });
+    this.shadowRootRef.querySelector<HTMLSelectElement>('[data-database-select]')?.addEventListener('change', (event) => {
+      this.selectedDatabaseId = (event.currentTarget as HTMLSelectElement).value || null;
+      this.selectedTable = null;
+      this.tablePageOffset = 0;
+      void this.refresh();
+    });
+    this.shadowRootRef.querySelector('[data-page-prev]')?.addEventListener('click', () => {
+      this.tablePageOffset = Math.max(0, this.tablePageOffset - this.tablePageLimit);
+      void this.loadSelectedTablePage().then(() => this.render({ preserveScroll: true }));
+    });
+    this.shadowRootRef.querySelector('[data-page-next]')?.addEventListener('click', () => {
+      this.tablePageOffset += this.tablePageLimit;
+      void this.loadSelectedTablePage().then(() => this.render({ preserveScroll: true }));
     });
     this.shadowRootRef.querySelectorAll<HTMLElement>('[data-event]').forEach((button) => {
       button.addEventListener('click', () => {
@@ -492,21 +603,28 @@ const styles = `
     * { box-sizing: border-box; }
     button { font: inherit; }
     .launcher { position: fixed; right: 18px; bottom: 18px; z-index: 2147483647; width: 42px; height: 42px; border: 0; border-radius: 14px; background: #111827; color: #fff; font-weight: 800; box-shadow: 0 12px 32px rgb(0 0 0 / 28%); cursor: pointer; }
-    .panel { position: fixed; right: 18px; bottom: 70px; z-index: 2147483646; width: min(1100px, calc(100vw - 36px)); height: min(720px, calc(100vh - 96px)); display: grid; grid-template-columns: 190px 1fr; overflow: hidden; border: 1px solid rgb(148 163 184 / 35%); border-radius: 18px; background: rgb(248 250 252 / 98%); color: #0f172a; box-shadow: 0 24px 70px rgb(15 23 42 / 30%); }
+    .panel { position: fixed; right: 18px; bottom: 70px; z-index: 2147483646; width: min(1100px, calc(100vw - 36px)); height: min(720px, calc(100vh - 96px)); display: grid; grid-template-columns: 190px 1fr; grid-template-rows: auto 1fr; overflow: hidden; border: 1px solid rgb(148 163 184 / 35%); border-radius: 18px; background: rgb(248 250 252 / 98%); color: #0f172a; box-shadow: 0 24px 70px rgb(15 23 42 / 30%); }
     .panel.maximized { inset: 12px; width: auto; height: auto; border-radius: 20px; }
     .window-actions { position: absolute; top: 12px; right: 12px; z-index: 2; display: flex; gap: 8px; padding: 5px; border: 1px solid rgb(148 163 184 / 24%); border-radius: 999px; background: rgb(255 255 255 / 72%); backdrop-filter: blur(14px); box-shadow: 0 10px 28px rgb(15 23 42 / 12%); }
     .window-button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 999px; background: transparent; color: #475569; cursor: pointer; }
     .window-button:hover { background: #e2e8f0; color: #0f172a; }
     .window-button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
     .panel-close:hover { background: #fee2e2; color: #b91c1c; }
+    .topbar { grid-column: 1 / -1; display: grid; grid-template-columns: 190px 1fr; align-items: center; gap: 16px; padding: 18px 66px 12px 18px; background: #0f172a; color: #e2e8f0; }
     .nav { display: flex; flex-direction: column; gap: 8px; padding: 14px; background: #0f172a; color: #e2e8f0; }
-    .brand-row { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; }
-    .brand { flex: 1; padding: 8px 10px; font-size: 20px; font-weight: 850; letter-spacing: -0.04em; }
+    .brand { padding: 8px 10px; font-size: 28px; font-weight: 850; letter-spacing: -0.04em; }
     .nav-item, .refresh { width: 100%; border: 0; border-radius: 10px; padding: 10px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
     .nav-item span { float: right; opacity: .68; }
     .nav-item.active, .nav-item:hover, .refresh:hover { background: rgb(255 255 255 / 10%); }
     .refresh { margin-top: auto; color: #93c5fd; }
-    .content { min-width: 0; overflow: auto; padding: 56px 18px 18px; }
+    .content { min-width: 0; overflow: auto; padding: 18px; }
+    .scope-controls { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; }
+    .scope-controls label { display: grid; gap: 4px; color: #94a3b8; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+    .scope-controls select { min-width: 190px; border: 1px solid #475569; border-radius: 10px; padding: 8px 10px; background: #1e293b; color: #e2e8f0; font: inherit; text-transform: none; letter-spacing: normal; }
+    .database-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; color: #475569; }
+    .pager { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; color: #64748b; }
+    .pager button { border: 1px solid #cbd5e1; border-radius: 999px; padding: 6px 10px; background: #fff; color: #0f172a; cursor: pointer; }
+    .pager button:disabled { opacity: .45; cursor: default; }
     .split { display: grid; grid-template-columns: 270px 1fr; min-height: 100%; gap: 16px; }
     .table-list, .event-list { overflow: auto; border-right: 1px solid #e2e8f0; padding-right: 12px; }
     h1, h2, p { margin: 0; }
@@ -539,7 +657,7 @@ const styles = `
     .event-detail pre, .debug-grid pre { max-height: 560px; }
     .debug-grid { display: grid; gap: 14px; }
     .empty { padding: 18px; border: 1px dashed #cbd5e1; border-radius: 12px; color: #64748b; }
-    @media (max-width: 760px) { .panel { grid-template-columns: 1fr; left: 12px; right: 12px; bottom: 64px; width: auto; } .panel.maximized { inset: 8px; } .nav { flex-direction: row; overflow: auto; padding-right: 96px; } .brand-row { padding: 0; } .brand { display: none; } .split { grid-template-columns: 1fr; } .table-list, .event-list { border-right: 0; border-bottom: 1px solid #e2e8f0; max-height: 220px; } }
-    @media (prefers-color-scheme: dark) { .panel { background: rgb(15 23 42 / 98%); color: #e2e8f0; border-color: rgb(148 163 184 / 25%); } .window-actions { background: rgb(15 23 42 / 72%); border-color: rgb(148 163 184 / 24%); } .window-button { color: #cbd5e1; } .window-button:hover { background: #334155; color: #fff; } .panel-close:hover { background: rgb(127 29 29 / 70%); color: #fecaca; } .content { background: #111827; } .table-list, .event-list { border-color: #334155; } .table-item, .event-item, table { background: #1e293b; color: #e2e8f0; border-color: #334155; } th { background: #0f172a; color: #cbd5e1; } td, th { border-color: #334155; } .copy-button { background: #0f172a; color: #cbd5e1; border-color: #475569; } .meta-grid div, .sync-card { background: #1e293b; color: #cbd5e1; } .sync-card strong { color: #e2e8f0; } .info-toggle { background: #1e293b; color: #e2e8f0; border-color: #334155; } code { background: #334155; color: #bfdbfe; } .empty { border-color: #475569; color: #94a3b8; } }
+    @media (max-width: 760px) { .panel { grid-template-columns: 1fr; left: 12px; right: 12px; bottom: 64px; width: auto; } .panel.maximized { inset: 8px; } .topbar { grid-template-columns: 1fr; padding-right: 96px; } .brand { padding: 0; font-size: 22px; } .nav { flex-direction: row; overflow: auto; } .split { grid-template-columns: 1fr; } .table-list, .event-list { border-right: 0; border-bottom: 1px solid #e2e8f0; max-height: 220px; } }
+    @media (prefers-color-scheme: dark) { .panel { background: rgb(15 23 42 / 98%); color: #e2e8f0; border-color: rgb(148 163 184 / 25%); } .window-actions { background: rgb(15 23 42 / 72%); border-color: rgb(148 163 184 / 24%); } .window-button { color: #cbd5e1; } .window-button:hover { background: #334155; color: #fff; } .panel-close:hover { background: rgb(127 29 29 / 70%); color: #fecaca; } .content { background: #111827; } .scope-controls select, .database-summary, .pager button { background: #1e293b; color: #e2e8f0; border-color: #334155; } .table-list, .event-list { border-color: #334155; } .table-item, .event-item, table { background: #1e293b; color: #e2e8f0; border-color: #334155; } th { background: #0f172a; color: #cbd5e1; } td, th { border-color: #334155; } .copy-button { background: #0f172a; color: #cbd5e1; border-color: #475569; } .meta-grid div, .sync-card { background: #1e293b; color: #cbd5e1; } .sync-card strong { color: #e2e8f0; } .info-toggle { background: #1e293b; color: #e2e8f0; border-color: #334155; } code { background: #334155; color: #bfdbfe; } .empty { border-color: #475569; color: #94a3b8; } }
   </style>
 `;

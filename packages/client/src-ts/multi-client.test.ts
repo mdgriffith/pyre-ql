@@ -2,6 +2,11 @@
 import { expect, test } from 'bun:test';
 
 import { PyreClient } from './index';
+import {
+  __resetPyreDevtoolsRegistryForTests,
+  getPyreDevtoolsRegistrySnapshot,
+  getPyreDevtoolsInstanceSnapshot,
+} from './devtools-registry';
 
 const schema = {
   tables: {},
@@ -36,7 +41,23 @@ function fakeInternalClient(disconnects: string[], databaseId: string, starts: s
       syncStateCallbacks.forEach((callback) => callback({ status: 'live', tables: {} }));
     },
     async getDevtoolsSnapshot() {
-      return {};
+      return {
+        tables: {
+          messages: {
+            name: 'messages',
+            count: databaseId.length,
+            sync: 'live',
+          },
+        },
+      };
+    },
+    async inspectDevtoolsTablePage(request: { offset?: number; limit?: number }) {
+      return {
+        rows: [{ databaseId }],
+        offset: request.offset ?? 0,
+        limit: request.limit ?? 100,
+        hasMore: false,
+      };
     },
   };
 }
@@ -413,4 +434,95 @@ test('Elm bridge routes mutation messages by databaseId', async () => {
       result: { kind: 'success' },
     },
   ]);
+});
+
+test('devtools registry tracks public clients and disambiguates duplicate namespaces', async () => {
+  __resetPyreDevtoolsRegistryForTests();
+  const first = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => fakeInternalClient([], config.databaseId),
+  });
+  const second = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => fakeInternalClient([], config.databaseId),
+  });
+
+  expect((await getPyreDevtoolsRegistrySnapshot()).instances.map((instance) => instance.label)).toEqual(['user_42', 'user_42 (2)']);
+
+  first.disconnect();
+  expect((await getPyreDevtoolsRegistrySnapshot()).instances.map((instance) => instance.label)).toEqual(['user_42']);
+  second.disconnect();
+  expect((await getPyreDevtoolsRegistrySnapshot()).instances).toEqual([]);
+});
+
+test('devtools snapshots keep known databases after unsync and classify scheduler state', async () => {
+  __resetPyreDevtoolsRegistryForTests();
+  const starts: string[] = [];
+  const clients = new Map<string, ReturnType<typeof fakeInternalClient>>();
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => {
+      const internalClient = fakeInternalClient([], config.databaseId, starts);
+      clients.set(config.databaseId, internalClient);
+      return internalClient;
+    },
+  });
+
+  await client.setSyncedDatabases(['main', 'campaign:123']);
+  const instanceId = (await getPyreDevtoolsRegistrySnapshot()).instances[0].instanceId;
+  let snapshot = await getPyreDevtoolsInstanceSnapshot(instanceId);
+  expect(snapshot?.databases.map((database) => ({ id: database.databaseId, lifecycle: database.lifecycle, flagged: database.flaggedForSync }))).toEqual([
+    { id: 'main', lifecycle: 'syncing', flagged: true },
+    { id: 'campaign:123', lifecycle: 'queued', flagged: true },
+  ]);
+
+  await client.unsyncDatabase('main');
+  snapshot = await getPyreDevtoolsInstanceSnapshot(instanceId);
+  expect(snapshot?.databases.map((database) => database.databaseId)).toEqual(['main', 'campaign:123']);
+  expect(snapshot?.databases.find((database) => database.databaseId === 'main')?.lifecycle).toBe('unsynced');
+  expect(snapshot?.databases.find((database) => database.databaseId === 'campaign:123')?.lifecycle).toBe('syncing');
+
+  clients.get('campaign:123')?.emitLive();
+  await Bun.sleep(0);
+  snapshot = await getPyreDevtoolsInstanceSnapshot(instanceId);
+  expect(snapshot?.databases.find((database) => database.databaseId === 'campaign:123')?.lifecycle).toBe('live');
+});
+
+test('devtools mutation events include database metadata and retain newest events', async () => {
+  __resetPyreDevtoolsRegistryForTests();
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => ({
+      ...fakeInternalClient([], config.databaseId),
+      run(databaseId: string, _queryModule: any, input: unknown, callback: (result: unknown) => void) {
+        callback({ ok: input !== 'fail', value: input, error: input === 'fail' ? 'nope' : undefined });
+      },
+    }),
+  });
+  const instanceId = (await getPyreDevtoolsRegistrySnapshot()).instances[0].instanceId;
+
+  for (let index = 0; index < 205; index += 1) {
+    await client.run('main', { operation: 'mutation', id: `Mutation${index}` }, index, () => {});
+  }
+  await client.run('secondary', { operation: 'mutation', id: 'FailMutation' }, 'fail', () => {});
+
+  const snapshot = await getPyreDevtoolsInstanceSnapshot(instanceId);
+  expect(snapshot?.events).toHaveLength(200);
+  expect(snapshot?.events[0].type).toBe('mutation.failed');
+  expect(snapshot?.events[0].payload).toMatchObject({
+    instanceId,
+    databaseId: 'secondary',
+    mutationId: 'FailMutation',
+    input: 'fail',
+    error: 'nope',
+  });
+  expect(snapshot?.events.some((event) => event.type === 'mutation.started' && (event.payload as any).mutationId === 'Mutation0')).toBe(false);
 });

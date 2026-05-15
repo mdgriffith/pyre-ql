@@ -107,6 +107,68 @@ export class IndexedDBStorage {
     });
   }
 
+  async getRowsPage(tableName: string, offset = 0, limit = 100): Promise<{ rows: unknown[]; hasMore: boolean }> {
+    const db = await this.getDB();
+    const normalizedOffset = Math.max(0, Math.floor(offset));
+    const normalizedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['tables'], 'readonly');
+      const store = tx.objectStore('tables');
+      const index = store.index('byTable');
+      const range = IDBKeyRange.only(tableName);
+      const rows: unknown[] = [];
+      let skipped = 0;
+      let hasMore = false;
+      const request = index.openCursor(range);
+
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve({ rows, hasMore });
+          return;
+        }
+
+        if (skipped < normalizedOffset) {
+          skipped += 1;
+          cursor.continue();
+          return;
+        }
+
+        if (rows.length >= normalizedLimit) {
+          hasMore = true;
+          resolve({ rows, hasMore });
+          return;
+        }
+
+        const { tableName: _, ...rest } = cursor.value as { tableName: string };
+        rows.push(rest);
+        cursor.continue();
+      };
+
+      request.onerror = () => {
+        reject(new Error(`Failed to read rows: ${request.error}`));
+      };
+    });
+  }
+
+  async countRows(tableName: string): Promise<number> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['tables'], 'readonly');
+      const store = tx.objectStore('tables');
+      const index = store.index('byTable');
+      const request = index.count(IDBKeyRange.only(tableName));
+
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+
+      request.onerror = () => {
+        reject(new Error(`Failed to count rows: ${request.error}`));
+      };
+    });
+  }
+
   async getAllTables(): Promise<Record<string, unknown[]>> {
     const db = await this.getDB();
     const tables: Record<string, unknown[]> = {};

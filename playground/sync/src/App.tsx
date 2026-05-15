@@ -46,7 +46,9 @@ function App() {
   const clientsRef = useRef<Client[]>([])
   const initialClientConnectedRef = useRef(false)
   const nextUserIdRef = useRef<number>(2) // Next userId to assign (starts at 2 since 1 is taken)
+  const nextClientNumberRef = useRef<number>(2)
   const pyreClientsRef = useRef<Map<string, PyreClient>>(new Map())
+  const connectingClientIdsRef = useRef<Set<string>>(new Set())
   const devtoolsRef = useRef<PyreDevtoolsHandle | null>(null)
 
   // Keep ref in sync with state
@@ -82,9 +84,15 @@ function App() {
   }, [])
 
   const connectClient = useCallback(async (clientId: string) => {
+    if (connectingClientIdsRef.current.has(clientId) || pyreClientsRef.current.has(clientId)) return
+    connectingClientIdsRef.current.add(clientId)
+
     // Check current state from ref to avoid stale closures
     const client = clientsRef.current.find((c) => c.id === clientId)
-    if (!client || client.connected || client.pyreClient) return
+    if (!client || client.connected || client.pyreClient) {
+      connectingClientIdsRef.current.delete(clientId)
+      return
+    }
 
     // Use requestedUserId if set, otherwise use nextUserId
     let userId: number
@@ -124,6 +132,7 @@ function App() {
         data: { error: error.message || 'Failed to login' },
         clientId,
       })
+      connectingClientIdsRef.current.delete(clientId)
       return
     }
 
@@ -212,6 +221,8 @@ function App() {
       })
       // Clean up on error
       pyreClientsRef.current.delete(clientId)
+    } finally {
+      connectingClientIdsRef.current.delete(clientId)
     }
   }, [addEvent])
 
@@ -219,9 +230,8 @@ function App() {
     devtoolsRef.current?.destroy()
     devtoolsRef.current = null
 
-    const selectedClient = clients.find((client) => client.id === selectedClientId)
-    if (selectedClient?.pyreClient && selectedClient.connected) {
-      devtoolsRef.current = mountPyreDevtools(selectedClient.pyreClient)
+    if (clients.some((client) => client.pyreClient && client.connected)) {
+      devtoolsRef.current = mountPyreDevtools()
     }
 
     return () => {
@@ -243,9 +253,10 @@ function App() {
     // This ensures we don't have race conditions with React batching
     const newUserId = nextUserIdRef.current
     nextUserIdRef.current = newUserId + 1
+    const newId = `${nextClientNumberRef.current}`
+    nextClientNumberRef.current += 1
 
     setClients((prev) => {
-      const newId = `${prev.length + 1}`
       const newClient: Client = {
         id: newId,
         name: `Client ${newId}`,
@@ -256,12 +267,12 @@ function App() {
         requestedUserId: newUserId, // Assign next sequential userId
         indexedDbName: `pyre-sync-playground-${newId}`,
       }
-      // Connect immediately after adding
-      setTimeout(() => {
-        connectClient(newId)
-      }, 0)
       return [...prev, newClient]
     })
+    // Connect after the state commit so connectClient can read the new client from clientsRef.
+    setTimeout(() => {
+      connectClient(newId)
+    }, 0)
   }, [connectClient])
 
   const submitQuery = useCallback(
@@ -415,6 +426,8 @@ function App() {
     setSelectedClientId('1')
     setEvents([])
     nextUserIdRef.current = 2
+    nextClientNumberRef.current = 2
+    connectingClientIdsRef.current.clear()
     initialClientConnectedRef.current = false
 
     // Wait longer before reconnecting to ensure databases are fully deleted

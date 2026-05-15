@@ -162,7 +162,7 @@ export async function catchup(
         const tableRows: any[] = [];
         let maxUpdatedAt: number | null = null;
 
-        for (const sql of tableSql.sql) {
+        for (let sqlIndex = 0; sqlIndex < tableSql.sql.length; sqlIndex += 1) {
             const queryResult = allQueryResults[resultIndex++];
             const columns = queryResult.columns;
             const rows = queryResult.rows || [];

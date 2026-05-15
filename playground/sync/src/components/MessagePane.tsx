@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, useState } from 'react'
+import { useEffect, useRef, useMemo, useState } from 'react'
 import './MessagePane.css'
 
 interface Client {
@@ -114,7 +114,7 @@ export default function MessagePane({ events, clients }: MessagePaneProps) {
         {groupedMessages.length === 0 ? (
           <div className="no-messages">No messages yet</div>
         ) : (
-          groupedMessages.map((group, index) => {
+          groupedMessages.map((group) => {
             if (group.type === 'request_response') {
               // Extract HTTP operation from request data
               const getHttpOperation = () => {

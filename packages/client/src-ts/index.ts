@@ -11,6 +11,10 @@ import {
   type CacheNamespace,
   type DatabaseId,
 } from './routing';
+import {
+  registerPyreDevtoolsClient,
+  unregisterPyreDevtoolsClient,
+} from './devtools-registry';
 import type {
   ElmApp,
   LiveSyncTransport,
@@ -18,7 +22,6 @@ import type {
   ServerConfig,
   ServerEndpoints,
   SyncState,
-  SyncStatus,
   SyncProgress,
   TableSyncStatus,
 } from './types';
@@ -80,15 +83,77 @@ export interface PyreDevtoolsEvent {
   payload?: unknown;
 }
 
+export type DevtoolsDatabaseLifecycle = 'not_started' | 'queued' | 'syncing' | 'live' | 'unsynced' | 'error';
+
 export interface PyreDevtoolsTableSnapshot {
   name: string;
   count: number;
-  rows: unknown[];
+  rows?: unknown[];
   sync?: TableSyncStatus;
   cursor?: {
     last_seen_updated_at: number | null;
     permission_hash: string;
   };
+}
+
+export interface DevtoolsTableSummary {
+  name: string;
+  count?: number;
+  sync?: TableSyncStatus;
+  cursor?: {
+    last_seen_updated_at: number | null;
+    permission_hash: string;
+  };
+}
+
+export interface DevtoolsDatabaseSummary {
+  databaseId: string;
+  indexedDbName: string;
+  flaggedForSync: boolean;
+  lifecycle: DevtoolsDatabaseLifecycle;
+  syncState?: SyncState;
+  tableSummaries?: DevtoolsTableSummary[];
+  error?: string;
+}
+
+export interface DevtoolsInstanceSummary {
+  instanceId: string;
+  label: string;
+  cacheNamespace?: string;
+}
+
+export interface PyreDevtoolsRegistrySnapshot {
+  instances: DevtoolsInstanceSummary[];
+}
+
+export interface PyreDevtoolsInstanceSnapshot {
+  instanceId: string;
+  label: string;
+  cacheNamespace?: string;
+  schema: SchemaMetadata;
+  server: PyreDevtoolsSnapshot['server'];
+  aggregateSyncState: SyncState;
+  syncProgress: SyncProgress | null;
+  debugValues: Record<string, unknown>;
+  databases: DevtoolsDatabaseSummary[];
+  events: PyreDevtoolsEvent[];
+}
+
+export interface PyreDevtoolsTablePageRequest {
+  instanceId: string;
+  databaseId: string;
+  tableName: string;
+  offset?: number;
+  limit?: number;
+  filter?: unknown;
+  sort?: unknown;
+}
+
+export interface PyreDevtoolsTablePage {
+  rows: unknown[];
+  offset: number;
+  limit: number;
+  hasMore: boolean;
 }
 
 export interface PyreDevtoolsSnapshot {
@@ -200,7 +265,7 @@ interface SingleDatabasePyreClientCreateConfig {
   elm?: PyreElmConfig;
 }
 
-export type PyreInternalClient = Pick<SingleDatabasePyreClient, 'run' | 'disconnect' | 'getDevtoolsSnapshot' | 'startSync' | 'onSyncState' | 'setSession'>;
+export type PyreInternalClient = Pick<SingleDatabasePyreClient, 'run' | 'disconnect' | 'getDevtoolsSnapshot' | 'inspectDevtoolsTablePage' | 'startSync' | 'onSyncState' | 'setSession'>;
 
 type PyreInternalClientFactory = (config: SingleDatabasePyreClientCreateConfig & {
   databaseId: DatabaseId;
@@ -445,28 +510,22 @@ class SingleDatabasePyreClient {
   }
 
   async getDevtoolsSnapshot(): Promise<PyreDevtoolsSnapshot> {
-    const [tables, cursor] = await Promise.all([
-      this.storage.getAllTables(),
-      this.storage.getSyncCursor(),
-    ]);
+    const cursor = await this.storage.getSyncCursor();
 
     const tableNames = new Set([
       ...Object.keys(this.schema.tables),
-      ...Object.keys(tables),
       ...Object.keys(cursor.tables),
     ]);
     const snapshots: Record<string, PyreDevtoolsTableSnapshot> = {};
 
-    Array.from(tableNames).sort().forEach((tableName) => {
-      const rows = tables[tableName] ?? [];
+    await Promise.all(Array.from(tableNames).sort().map(async (tableName) => {
       snapshots[tableName] = {
         name: tableName,
-        count: rows.length,
-        rows,
+        count: await this.storage.countRows(tableName),
         sync: this.lastSyncState.tables[tableName],
         cursor: cursor.tables[tableName],
       };
-    });
+    }));
 
     return {
       schema: this.schema,
@@ -484,6 +543,18 @@ class SingleDatabasePyreClient {
       syncProgress: this.lastSyncProgress,
       debugValues: { ...this.devtoolsDebugValues },
       tables: snapshots,
+    };
+  }
+
+  async inspectDevtoolsTablePage(request: Omit<PyreDevtoolsTablePageRequest, 'instanceId' | 'databaseId'>): Promise<PyreDevtoolsTablePage> {
+    const offset = Math.max(0, Math.floor(request.offset ?? 0));
+    const limit = Math.max(1, Math.min(500, Math.floor(request.limit ?? 100)));
+    const page = await this.storage.getRowsPage(request.tableName, offset, limit);
+    return {
+      rows: page.rows,
+      offset,
+      limit,
+      hasMore: page.hasMore,
     };
   }
 
@@ -925,9 +996,11 @@ class SingleDatabasePyreClient {
 }
 
 export class PyreClient {
+  private static readonly devtoolsEventLimit = 200;
   private config: ResolvedPyreClientConfig;
   private clients: Map<DatabaseId, Promise<PyreInternalClient>> = new Map();
   private clientGenerations: Map<DatabaseId, number> = new Map();
+  private knownDatabaseIds: DatabaseId[] = [];
   private syncedDatabaseIds: DatabaseId[] = [];
   private syncingDatabaseId: DatabaseId | null = null;
   private completedSyncDatabaseIds: Set<DatabaseId> = new Set();
@@ -936,17 +1009,25 @@ export class PyreClient {
   private bridgeCleanup: (() => void) | null = null;
   private devtoolsDebugValues: Record<string, unknown> = {};
   private devtoolsEventCounter = 0;
+  private devtoolsEvents: PyreDevtoolsEvent[] = [];
   private devtoolsEventCallbacks: Set<(event: PyreDevtoolsEvent) => void> = new Set();
+  private instanceId: string;
 
   private constructor(config: ResolvedPyreClientConfig) {
     this.config = config;
+    this.instanceId = registerPyreDevtoolsClient(this);
   }
 
   static async create(config: PyreClientConfig): Promise<PyreClient> {
     const resolved = await resolveMultiCreateConfig(config);
     const client = new PyreClient(resolved);
-    if (resolved.elm) {
-      client.attachElmBridge(resolved.elm);
+    try {
+      if (resolved.elm) {
+        client.attachElmBridge(resolved.elm);
+      }
+    } catch (error) {
+      client.disconnect();
+      throw error;
     }
     return client;
   }
@@ -957,6 +1038,10 @@ export class PyreClient {
     input: Input,
     callback: (result: unknown) => void
   ): Promise<QuerySubscription<Input> | void> {
+    this.markKnownDatabase(databaseId);
+    if (queryModule.operation === 'mutation') {
+      return this.runPublicMutation(databaseId, queryModule, input, callback);
+    }
     return this.getOrCreateClient(databaseId).then((client) => (
       client.run(databaseId, queryModule, input, callback)
     ));
@@ -964,6 +1049,7 @@ export class PyreClient {
 
   async getOrCreateClient(databaseId: DatabaseId): Promise<PyreInternalClient> {
     const targetDatabaseId = requireDatabaseId(databaseId);
+    this.markKnownDatabase(targetDatabaseId);
     const existing = this.clients.get(targetDatabaseId);
     if (existing) {
       return existing;
@@ -982,6 +1068,7 @@ export class PyreClient {
 
   async setSyncedDatabases(databaseIds: DatabaseId[]): Promise<void> {
     const nextDatabaseIds = dedupeDatabaseIds(databaseIds);
+    nextDatabaseIds.forEach((databaseId) => this.markKnownDatabase(databaseId));
     const nextSet = new Set(nextDatabaseIds);
 
     const removedDatabaseIds = this.syncedDatabaseIds.filter((databaseId) => !nextSet.has(databaseId));
@@ -994,6 +1081,10 @@ export class PyreClient {
     });
 
     this.syncedDatabaseIds = nextDatabaseIds;
+    this.emitDevtoolsEvent('sync.databases', {
+      instanceId: this.instanceId,
+      databaseIds: [...this.syncedDatabaseIds],
+    });
 
     for (const databaseId of nextDatabaseIds) {
       await this.getOrCreateClient(databaseId);
@@ -1004,6 +1095,7 @@ export class PyreClient {
 
   async syncDatabase(databaseId: DatabaseId): Promise<void> {
     const targetDatabaseId = requireDatabaseId(databaseId);
+    this.markKnownDatabase(targetDatabaseId);
     if (this.syncedDatabaseIds.includes(targetDatabaseId)) {
       return;
     }
@@ -1013,6 +1105,7 @@ export class PyreClient {
 
   async unsyncDatabase(databaseId: DatabaseId): Promise<void> {
     const targetDatabaseId = requireDatabaseId(databaseId);
+    this.markKnownDatabase(targetDatabaseId);
     await this.setSyncedDatabases(this.syncedDatabaseIds.filter((id) => id !== targetDatabaseId));
   }
 
@@ -1026,6 +1119,10 @@ export class PyreClient {
 
   getInternalDatabaseIds(): DatabaseId[] {
     return Array.from(this.clients.keys());
+  }
+
+  getKnownDatabaseIds(): DatabaseId[] {
+    return [...this.knownDatabaseIds];
   }
 
   getSyncedDatabaseIds(): DatabaseId[] {
@@ -1054,7 +1151,8 @@ export class PyreClient {
   }
 
   async getDevtoolsSnapshot(): Promise<PyreDevtoolsSnapshot> {
-    const firstClient = await Array.from(this.clients.values())[0];
+    const selectedDatabaseId = this.knownDatabaseIds[0];
+    const firstClient = selectedDatabaseId ? await this.clients.get(selectedDatabaseId) : undefined;
     if (firstClient) {
       const snapshot = await firstClient.getDevtoolsSnapshot();
       return {
@@ -1092,6 +1190,59 @@ export class PyreClient {
       debugValues: { ...this.devtoolsDebugValues },
       tables: {},
     };
+  }
+
+  async getDevtoolsInstanceSnapshot(): Promise<PyreDevtoolsInstanceSnapshot> {
+    const aggregateSyncState = this.aggregateSyncState();
+    const databases = await Promise.all(this.knownDatabaseIds.map(async (databaseId) => {
+      const client = await this.clients.get(databaseId);
+      const syncState = this.latestSyncStates.get(databaseId);
+      let tableSummaries: DevtoolsTableSummary[] | undefined;
+      if (client) {
+        const snapshot = await client.getDevtoolsSnapshot();
+        tableSummaries = Object.values(snapshot.tables).map((table) => ({
+          name: table.name,
+          count: table.count,
+          sync: table.sync,
+          cursor: table.cursor,
+        }));
+      }
+
+      return {
+        databaseId,
+        indexedDbName: this.getInternalIndexedDbName(databaseId),
+        flaggedForSync: this.syncedDatabaseIds.includes(databaseId),
+        lifecycle: this.classifyDatabaseLifecycle(databaseId),
+        syncState,
+        tableSummaries,
+        error: syncState?.error,
+      } satisfies DevtoolsDatabaseSummary;
+    }));
+
+    return {
+      instanceId: this.instanceId,
+      label: this.config.cacheNamespace,
+      cacheNamespace: this.config.cacheNamespace,
+      schema: this.config.schema,
+      server: this.devtoolsServerSnapshot(),
+      aggregateSyncState,
+      syncProgress: toSyncProgress(aggregateSyncState),
+      debugValues: { ...this.devtoolsDebugValues },
+      databases,
+      events: [...this.devtoolsEvents],
+    };
+  }
+
+  async inspectDevtoolsTablePage(request: Omit<PyreDevtoolsTablePageRequest, 'instanceId'>): Promise<PyreDevtoolsTablePage> {
+    this.markKnownDatabase(request.databaseId);
+    const client = await this.getOrCreateClient(request.databaseId);
+    return client.inspectDevtoolsTablePage({
+      tableName: request.tableName,
+      offset: request.offset,
+      limit: request.limit,
+      filter: request.filter,
+      sort: request.sort,
+    });
   }
 
   setDevtoolsDebugValue(name: string, value: unknown): void {
@@ -1161,6 +1312,14 @@ export class PyreClient {
 
           if (message.type === 'mutate') {
             if (config.onMutation) {
+              this.markKnownDatabase(message.databaseId);
+              this.emitDevtoolsEvent('mutation.custom_dispatched', {
+                instanceId: this.instanceId,
+                databaseId: message.databaseId,
+                mutationId: message.mutationId,
+                mutationName: message.mutationName,
+                input: message.mutationInput ?? {},
+              });
               try {
                 await config.onMutation({ client: this, message });
               } catch (error) {
@@ -1247,6 +1406,7 @@ export class PyreClient {
   }
 
   disconnect(): void {
+    unregisterPyreDevtoolsClient(this.instanceId);
     this.bridgeCleanup?.();
     this.bridgeCleanup = null;
     this.clients.forEach((clientPromise) => {
@@ -1256,6 +1416,7 @@ export class PyreClient {
     });
     this.clients.clear();
     this.clientGenerations.clear();
+    this.knownDatabaseIds = [];
     this.syncedDatabaseIds = [];
     this.syncingDatabaseId = null;
     this.completedSyncDatabaseIds.clear();
@@ -1279,6 +1440,11 @@ export class PyreClient {
     }
 
     this.syncingDatabaseId = nextDatabaseId;
+    this.emitDevtoolsEvent('sync.scheduler', {
+      instanceId: this.instanceId,
+      syncingDatabaseId: this.syncingDatabaseId,
+      queuedDatabaseIds: this.syncedDatabaseIds.filter((databaseId) => databaseId !== this.syncingDatabaseId && !this.completedSyncDatabaseIds.has(databaseId)),
+    });
     void clientPromise.then((client) => {
       if (this.syncingDatabaseId !== nextDatabaseId || !this.syncedDatabaseIds.includes(nextDatabaseId)) {
         return;
@@ -1288,13 +1454,62 @@ export class PyreClient {
     });
   }
 
+  private async runPublicMutation<Input>(
+    databaseId: DatabaseId,
+    queryModule: QueryModule<Input>,
+    input: Input,
+    callback: (result: unknown) => void
+  ): Promise<void> {
+    const targetDatabaseId = requireDatabaseId(databaseId);
+    const mutationId = queryModule.id;
+    if (!mutationId) {
+      throw new Error('Mutation module is missing id');
+    }
+
+    const startedAt = Date.now();
+    const eventPayload = {
+      instanceId: this.instanceId,
+      databaseId: targetDatabaseId,
+      mutationId,
+      mutationName: mutationId,
+      input: input ?? {},
+    };
+    this.emitDevtoolsEvent('mutation.started', eventPayload);
+    const client = await this.getOrCreateClient(targetDatabaseId);
+    client.run(targetDatabaseId, queryModule, input, (result) => {
+      const elapsedMs = Date.now() - startedAt;
+      const mutationResult = result as MutationResult | undefined;
+      if (mutationResult && mutationResult.ok === false) {
+        this.emitDevtoolsEvent('mutation.failed', {
+          ...eventPayload,
+          error: mutationResult.error ?? 'Mutation failed',
+          result,
+          elapsedMs,
+        });
+      } else {
+        this.emitDevtoolsEvent('mutation.completed', {
+          ...eventPayload,
+          result,
+          elapsedMs,
+        });
+      }
+      callback(result);
+    });
+  }
+
   private watchInternalClient(databaseId: DatabaseId, generation: number, client: PyreInternalClient): void {
+    this.markKnownDatabase(databaseId);
     client.onSyncState((state) => {
       if (this.clientGenerations.get(databaseId) !== generation) {
         return;
       }
 
       this.latestSyncStates.set(databaseId, state);
+      this.emitDevtoolsEvent('sync.database_state', {
+        instanceId: this.instanceId,
+        databaseId,
+        syncState: state,
+      });
       this.emitSyncState();
 
       if (!this.syncedDatabaseIds.includes(databaseId)) {
@@ -1358,10 +1573,6 @@ export class PyreClient {
   }
 
   private emitDevtoolsEvent(type: string, payload?: unknown): void {
-    if (this.devtoolsEventCallbacks.size === 0) {
-      return;
-    }
-
     const event = {
       id: this.devtoolsEventCounter,
       timestamp: Date.now(),
@@ -1369,10 +1580,59 @@ export class PyreClient {
       payload,
     } satisfies PyreDevtoolsEvent;
     this.devtoolsEventCounter += 1;
+    this.devtoolsEvents = [event, ...this.devtoolsEvents].slice(0, PyreClient.devtoolsEventLimit);
 
     this.devtoolsEventCallbacks.forEach((callback) => {
       callback(event);
     });
+  }
+
+  private markKnownDatabase(databaseId: DatabaseId): void {
+    const targetDatabaseId = requireDatabaseId(databaseId);
+    if (!this.knownDatabaseIds.includes(targetDatabaseId)) {
+      this.knownDatabaseIds.push(targetDatabaseId);
+      this.emitDevtoolsEvent('database.known', {
+        instanceId: this.instanceId,
+        databaseId: targetDatabaseId,
+      });
+    }
+  }
+
+  private classifyDatabaseLifecycle(databaseId: DatabaseId): DevtoolsDatabaseLifecycle {
+    const syncState = this.latestSyncStates.get(databaseId);
+    if (syncState?.error) {
+      return 'error';
+    }
+    if (!this.syncedDatabaseIds.includes(databaseId)) {
+      return 'unsynced';
+    }
+    if (this.syncingDatabaseId === databaseId) {
+      return 'syncing';
+    }
+    if (this.completedSyncDatabaseIds.has(databaseId)) {
+      return 'live';
+    }
+    if (this.syncedDatabaseIds.includes(databaseId)) {
+      return 'queued';
+    }
+    return 'not_started';
+  }
+
+  private devtoolsServerSnapshot(): PyreDevtoolsSnapshot['server'] {
+    const endpoints = {
+      catchup: '/sync',
+      events: '/sync/events',
+      query: '/db',
+      ...this.config.server.endpoints,
+    };
+    return {
+      baseUrl: this.config.server.baseUrl,
+      endpoints,
+      liveSyncTransport: this.config.server.liveSyncTransport ?? 'sse',
+      hasHeaders: hasServerHeaders(this.config.server),
+      credentials: getServerCredentials(this.config.server),
+      withCredentials: shouldIncludeCredentials(this.config.server),
+    };
   }
 
   private aggregateSyncState(): SyncState {
