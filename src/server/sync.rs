@@ -1,3 +1,4 @@
+use crate::server::database_id::{self, DatabaseId};
 use crate::sync::{self, SyncCursor, SyncPageResult, TableSyncData};
 use crate::sync_deltas::{self, AffectedRowTableGroup};
 use crate::sync_shape;
@@ -24,16 +25,24 @@ impl<'a> SyncServer<'a> {
         sync_cursor: &SyncCursor,
         session: &SyncSession,
         page_size: usize,
+        database_id: impl AsRef<str>,
     ) -> Result<SyncPageResult, Error> {
-        catchup(conn, self.context, sync_cursor, session, page_size).await
+        let result = catchup(conn, self.context, sync_cursor, session, page_size).await?;
+        database_id::with_database_id(database_id, result).map_err(Error::DatabaseId)
     }
 
     pub fn calculate_deltas(
         &self,
         affected_row_groups: &[AffectedRowTableGroup],
         connected_sessions: &ConnectedSessions,
+        database_id: impl AsRef<str>,
     ) -> Result<Vec<SessionDeltaMessage>, Error> {
-        calculate_deltas(self.context, affected_row_groups, connected_sessions)
+        calculate_deltas_with_database_id(
+            self.context,
+            affected_row_groups,
+            connected_sessions,
+            database_id,
+        )
     }
 }
 
@@ -41,6 +50,8 @@ impl<'a> SyncServer<'a> {
 pub struct DeltaMessage {
     #[serde(rename = "type")]
     pub type_: String,
+    #[serde(rename = "databaseId", skip_serializing_if = "Option::is_none")]
+    pub database_id: Option<DatabaseId>,
     pub data: Vec<AffectedRowTableGroup>,
 }
 
@@ -48,8 +59,22 @@ impl DeltaMessage {
     pub fn delta(data: Vec<AffectedRowTableGroup>) -> Self {
         Self {
             type_: "delta".to_string(),
+            database_id: None,
             data,
         }
+    }
+
+    pub fn delta_for_database(
+        database_id: impl AsRef<str>,
+        data: Vec<AffectedRowTableGroup>,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            type_: "delta".to_string(),
+            database_id: Some(
+                database_id::require_database_id(database_id).map_err(Error::DatabaseId)?,
+            ),
+            data,
+        })
     }
 }
 
@@ -80,6 +105,7 @@ pub async fn catchup(
         .map_err(Error::Sync)?;
 
     let mut result = SyncPageResult {
+        database_id: None,
         tables: HashMap::new(),
         has_more: false,
     };
@@ -171,6 +197,30 @@ pub fn calculate_deltas(
     affected_row_groups: &[AffectedRowTableGroup],
     connected_sessions: &ConnectedSessions,
 ) -> Result<Vec<SessionDeltaMessage>, Error> {
+    calculate_deltas_internal(context, affected_row_groups, connected_sessions, None)
+}
+
+pub fn calculate_deltas_with_database_id(
+    context: &typecheck::Context,
+    affected_row_groups: &[AffectedRowTableGroup],
+    connected_sessions: &ConnectedSessions,
+    database_id: impl AsRef<str>,
+) -> Result<Vec<SessionDeltaMessage>, Error> {
+    let database_id = database_id::require_database_id(database_id).map_err(Error::DatabaseId)?;
+    calculate_deltas_internal(
+        context,
+        affected_row_groups,
+        connected_sessions,
+        Some(database_id),
+    )
+}
+
+fn calculate_deltas_internal(
+    context: &typecheck::Context,
+    affected_row_groups: &[AffectedRowTableGroup],
+    connected_sessions: &ConnectedSessions,
+    database_id: Option<DatabaseId>,
+) -> Result<Vec<SessionDeltaMessage>, Error> {
     if affected_row_groups.is_empty() || connected_sessions.is_empty() {
         return Ok(Vec::new());
     }
@@ -182,7 +232,12 @@ pub fn calculate_deltas(
 
     for group in result.groups {
         let reshaped_table_groups = sync_shape::reshape_table_groups(&group.table_groups, context);
-        let message = DeltaMessage::delta(reshaped_table_groups);
+        let message = match &database_id {
+            Some(database_id) => {
+                DeltaMessage::delta_for_database(database_id, reshaped_table_groups)?
+            }
+            None => DeltaMessage::delta(reshaped_table_groups),
+        };
 
         for session_id in group.session_ids {
             messages.push(SessionDeltaMessage {
@@ -292,6 +347,7 @@ fn json_to_i64(value: &JsonValue) -> Option<i64> {
 #[derive(Debug)]
 pub enum Error {
     Database(libsql::Error),
+    DatabaseId(database_id::DatabaseIdError),
     InvalidPageSize,
     Json(serde_json::Error),
     Sync(sync::SyncError),
@@ -302,6 +358,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Database(error) => write!(f, "database error: {}", error),
+            Error::DatabaseId(error) => write!(f, "database id error: {}", error),
             Error::InvalidPageSize => write!(f, "page_size must be greater than zero"),
             Error::Json(error) => write!(f, "json error: {}", error),
             Error::Sync(sync::SyncError::DatabaseError(message)) => {

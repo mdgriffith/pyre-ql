@@ -35,6 +35,9 @@ pub struct TableCursor {
 /// Result of a sync page request
 #[derive(Serialize, Deserialize)]
 pub struct SyncPageResult {
+    /// The server-selected source database for this sync page.
+    #[serde(rename = "databaseId", skip_serializing_if = "Option::is_none")]
+    pub database_id: Option<String>,
     /// Data organized by table name
     pub tables: HashMap<String, TableSyncData>,
     /// Whether there is more data to fetch
@@ -773,6 +776,7 @@ pub fn get_sync_page_info(
     _page_size: usize,
 ) -> SyncPageResult {
     let mut result = SyncPageResult {
+        database_id: None,
         tables: HashMap::new(),
         has_more: false,
     };

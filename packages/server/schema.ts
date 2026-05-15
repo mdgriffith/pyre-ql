@@ -1,5 +1,28 @@
 import { Client } from "@libsql/client";
 import * as wasm from "./wasm/pyre_wasm.js";
+import { requireDatabaseId, type DatabaseId } from "./database-id";
+
+const DEFAULT_SCHEMA_KEY = "__default__";
+const introspectionsByDatabaseId = new Map<string, unknown>();
+
+function schemaKey(databaseId?: DatabaseId): string {
+    return databaseId ? requireDatabaseId(databaseId) : DEFAULT_SCHEMA_KEY;
+}
+
+export function activateSchemaForDatabase(databaseId?: DatabaseId): void {
+    const introspection = introspectionsByDatabaseId.get(schemaKey(databaseId));
+    if (introspection === undefined) {
+        if (!databaseId) {
+            return;
+        }
+
+        throw new Error(
+            `No schema loaded for databaseId: ${requireDatabaseId(databaseId)}`,
+        );
+    }
+
+    wasm.set_schema(introspection);
+}
 
 /**
  * Load schema from database into WASM cache.
@@ -14,7 +37,14 @@ import * as wasm from "./wasm/pyre_wasm.js";
  * await loadSchemaFromDatabase(db);
  * ```
  */
-export async function loadSchemaFromDatabase(db: Client): Promise<void> {
+export async function loadSchemaFromDatabase(db: Client): Promise<void>;
+export async function loadSchemaFromDatabase(databaseId: DatabaseId, db: Client): Promise<void>;
+export async function loadSchemaFromDatabase(
+    databaseOrDb: DatabaseId | Client,
+    maybeDb?: Client,
+): Promise<void> {
+    const databaseId = maybeDb ? requireDatabaseId(databaseOrDb as DatabaseId) : undefined;
+    const db = maybeDb ?? (databaseOrDb as Client);
     const isInitializedQuery = wasm.sql_is_initialized();
     const isInitializedResult = await db.execute(isInitializedQuery);
 
@@ -41,6 +71,7 @@ export async function loadSchemaFromDatabase(db: Client): Promise<void> {
         introspection = JSON.parse(introspectionResult.rows[0].result as string);
     }
 
+    introspectionsByDatabaseId.set(schemaKey(databaseId), introspection);
     wasm.set_schema(introspection);
 }
 

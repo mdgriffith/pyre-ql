@@ -1,7 +1,12 @@
 // @ts-nocheck
 import { expect, mock, test } from "bun:test";
 
+let introspectionResult = { schema_source: "test schema" };
+
 mock.module("./wasm/pyre_wasm.js", () => ({
+  sql_is_initialized: () => "select 1 as is_initialized",
+  sql_introspect: () => "select introspection",
+  set_schema: () => undefined,
   get_sync_status_sql: () => "select 1",
   get_sync_sql: () => ({ tables: [] }),
   calculate_sync_deltas: () => ({
@@ -70,8 +75,21 @@ mock.module("./query", () => ({
 }));
 
 const { runWithSync } = await import("./query-sync");
+const { loadSchemaFromDatabase } = await import("./schema");
+
+const schemaDb = {
+  execute: mock(async (sql: string) => {
+    if (sql.includes("is_initialized")) {
+      return { rows: [{ is_initialized: 1 }] };
+    }
+
+    return { rows: [{ result: JSON.stringify(introspectionResult) }] };
+  }),
+};
 
 test("runWithSync sends reshaped sync deltas", async () => {
+  await loadSchemaFromDatabase(schemaDb as any);
+
   const result = await runWithSync(
     {} as any,
     {} as any,
@@ -106,6 +124,9 @@ test("runWithSync sends reshaped sync deltas", async () => {
 });
 
 test("runWithSync stamps sync deltas with databaseId", async () => {
+  introspectionResult = { schema_source: "campaign schema" };
+  await loadSchemaFromDatabase("campaign:123", schemaDb as any);
+
   const result = await runWithSync(
     {} as any,
     {} as any,

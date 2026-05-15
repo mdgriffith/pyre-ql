@@ -403,6 +403,12 @@ export class IndexedDbService {
     try {
       await this.storage.init();
 
+      this.debugLog('[PyreClient] IndexedDB writeDelta table groups received', tableGroups.map((group) => ({
+        tableName: group.table_name,
+        rows: group.rows.length,
+        headers: group.headers,
+      })));
+
       for (const tableGroup of tableGroups) {
         const tableName = tableGroup.table_name;
         if (!tableName) {
@@ -417,8 +423,16 @@ export class IndexedDbService {
           return rowObj;
         });
 
-        const result = await this.storage.putRows(tableName, rows);
-        this.debugLog('[PyreClient] IndexedDB writeDelta table written', result);
+        try {
+          const result = await this.storage.putRows(tableName, rows);
+          this.debugLog('[PyreClient] IndexedDB writeDelta table written', result);
+        } catch (error) {
+          console.error('[PyreClient] Failed to write delta table:', tableName, error, {
+            rows: rows.length,
+            firstRowId: rows[0]?.id,
+            firstRowKeys: rows[0] ? Object.keys(rows[0]) : [],
+          });
+        }
       }
     } catch (error) {
       console.error('[PyreClient] Failed to write delta:', error);

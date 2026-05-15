@@ -265,7 +265,7 @@ Register or update a query with:
 ```elm
 PyreMsg
     (Pyre.QueryUpdate
-        (Pyre.GetUser "user-1" { id = 1 })
+        (Pyre.GetUser databaseId "user-1" { id = 1 })
     )
 ```
 
@@ -279,6 +279,7 @@ Pyre.getResult "user-1" model.pyre.getUser
 
 The generated `Pyre.elm` module sends JSON payloads that include:
 
+- `databaseId`
 - `queryName`
 - `querySource`
 - `queryInput`
@@ -286,6 +287,7 @@ The generated `Pyre.elm` module sends JSON payloads that include:
 
 Generated Elm mutation modules send JSON payloads that include:
 
+- `databaseId`
 - `requestId`
 - `mutationId`
 - `mutationName`

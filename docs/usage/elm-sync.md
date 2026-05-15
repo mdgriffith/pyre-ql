@@ -34,8 +34,12 @@ At startup:
 Routes:
 
 - **GET `/sync?databaseId=...`** → `Sync.catchup(db, syncCursor, session, pageSize, databaseId)`
-- **GET `/sync/events`** → stream deltas to connected clients
+- **GET `/sync/events?databaseId=...`** → stream deltas to clients connected for that database ID
 - **query route** (e.g. `POST /db/:queryId?databaseId=...`) → `Sync.run(db, queries, queryId, args, session, connectedClients, databaseId)`
+
+The server must authenticate normally, authorize the requested `databaseId`, choose the DB connection for that ID, and group live-sync connections by `databaseId`. Deltas must not be broadcast across database IDs.
+
+If the app has separate command-plane and tenant schemas, use separate generated Pyre artifacts and separate client/server runtime wiring for each schema family. `databaseId` selects a source database within one schema family; it is not a replacement for schema selection.
 
 If schema/migrations run after startup, reload schema cache before expecting sync to work.
 

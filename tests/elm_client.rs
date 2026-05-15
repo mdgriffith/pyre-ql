@@ -65,17 +65,18 @@ query GetGameWorld($slug: String) {
     let content = &generated.contents;
 
     assert!(
-        content.contains("module Pyre exposing (Model, QueryModel, Query(..), Msg(..), Effect(..), init, update, decodeIncomingDelta, getResult)"),
+        content.contains("module Pyre exposing (DatabaseId, QueryId, Model, QueryModel, Query(..), Msg(..), Effect(..), init, update, decodeIncomingDelta, getResult)"),
         "Pyre.elm should expose QueryModel and Query constructors. Generated:\n{}",
         content
     );
     assert!(
-        content.contains("type Query\n    = GetRulebookByName String String Query.GetRulebookByName.Input\n    | GetGameWorld String String Query.GetGameWorld.Input"),
+        content.contains("type alias DatabaseId =\n    String\n\n\ntype alias QueryId =\n    String")
+            && content.contains("type Query\n    = GetRulebookByName DatabaseId QueryId Query.GetRulebookByName.Input\n    | GetGameWorld DatabaseId QueryId Query.GetGameWorld.Input"),
         "Pyre.elm should generate a Query type for outbound upserts. Generated:\n{}",
         content
     );
     assert!(
-        content.contains("type Msg\n    = QueryUpdate Query\n    | GetRulebookByName_DataReceived String Query.GetRulebookByName.QueryDelta\n    | GetRulebookByName_Unregistered String String\n    | GetGameWorld_DataReceived String Query.GetGameWorld.QueryDelta\n    | GetGameWorld_Unregistered String String"),
+        content.contains("type Msg\n    = QueryUpdate Query\n    | GetRulebookByName_DataReceived QueryId Query.GetRulebookByName.QueryDelta\n    | GetRulebookByName_Unregistered DatabaseId QueryId\n    | GetGameWorld_DataReceived QueryId Query.GetGameWorld.QueryDelta\n    | GetGameWorld_Unregistered DatabaseId QueryId"),
         "Pyre.elm should collapse register/update into QueryUpdate. Generated:\n{}",
         content
     );
@@ -100,8 +101,8 @@ query GetGameWorld($slug: String) {
     assert!(
         content.contains("Just queryModel ->\n                    ( { model | getRulebookByName = Dict.insert queryId { queryModel | input = input } model.getRulebookByName }\n                    , Send (encodeUpdateInput databaseId queryId Query.GetRulebookByName.queryShape (Query.GetRulebookByName.encode input))")
             && content.contains("Nothing ->\n                    let\n                        queryModel =\n                            { input = input, result = Query.GetRulebookByName.ReturnData [], revision = 0 }\n                    in\n                    ( { model | getRulebookByName = Dict.insert queryId queryModel model.getRulebookByName }\n                    , Send (encodeRegister databaseId \"GetRulebookByName\" Query.GetRulebookByName.queryShape queryId (Query.GetRulebookByName.encode input))")
-            && content.contains("encodeRegister : String -> String -> Encode.Value -> String -> Encode.Value -> Encode.Value\nencodeRegister databaseId queryName queryShape queryId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"register\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"queryName\", Encode.string queryName )\n        , ( \"querySource\", queryShape )")
-            && content.contains("encodeUpdateInput : String -> String -> Encode.Value -> Encode.Value -> Encode.Value\nencodeUpdateInput databaseId queryId queryShape input =\n    Encode.object\n        [ ( \"type\", Encode.string \"update-input\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"queryId\", Encode.string queryId )\n        , ( \"querySource\", queryShape )"),
+            && content.contains("encodeRegister : DatabaseId -> String -> Encode.Value -> QueryId -> Encode.Value -> Encode.Value\nencodeRegister databaseId queryName queryShape queryId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"register\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"queryName\", Encode.string queryName )\n        , ( \"querySource\", queryShape )")
+            && content.contains("encodeUpdateInput : DatabaseId -> QueryId -> Encode.Value -> Encode.Value -> Encode.Value\nencodeUpdateInput databaseId queryId queryShape input =\n    Encode.object\n        [ ( \"type\", Encode.string \"update-input\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"queryId\", Encode.string queryId )\n        , ( \"querySource\", queryShape )"),
         "Pyre.elm should upsert queries by id. Generated:\n{}",
         content
     );
@@ -149,15 +150,16 @@ insert CreatePost($title: String) {
     let content = &generated.contents;
 
     assert!(
-        content.contains("module Query.CreatePost exposing (encode, id, name, mutationRequest, decodeMutationResult, MutationResult, Input, Post, ReturnData)"),
+        content.contains("module Query.CreatePost exposing (encode, DatabaseId, RequestId, id, name, mutationRequest, decodeMutationResult, MutationResult, Input, Post, ReturnData)"),
         "Mutation modules should expose bridge metadata helpers. Generated:\n{}",
         content
     );
     assert!(
         content.contains("id : String\nid =\n    \"")
             && content.contains("name : String\nname =\n    \"CreatePost\"")
-            && content.contains("mutationRequest : String -> String -> Input -> Encode.Value\nmutationRequest databaseId requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]")
-            && content.contains("type alias MutationResult =\n    { requestId : String\n    , mutationId : String\n    , mutationName : Maybe String\n    , result : Result String ReturnData\n    }")
+            && content.contains("type alias DatabaseId =\n    String\n\n\ntype alias RequestId =\n    String")
+            && content.contains("mutationRequest : DatabaseId -> RequestId -> Input -> Encode.Value\nmutationRequest databaseId requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]")
+            && content.contains("type alias MutationResult =\n    { requestId : RequestId\n    , mutationId : String\n    , mutationName : Maybe String\n    , result : Result String ReturnData\n    }")
             && content.contains("decodeMutationResult : Decode.Decoder MutationResult")
             && content.contains("decodeBridgeMutationResult : Decode.Decoder value -> Decode.Decoder (Result String value)"),
         "Mutation modules should emit request payloads and typed result decoders. Generated:\n{}",

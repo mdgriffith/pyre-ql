@@ -62,6 +62,7 @@ pub fn diff(
     let context_table_map: std::collections::HashMap<_, _> = context
         .tables
         .iter()
+        .filter(|(_, table)| table.schema == schema.namespace)
         .map(|(_, table)| {
             let context_table_name =
                 crate::ast::get_tablename(&table.record.name, &table.record.fields);
@@ -235,6 +236,18 @@ fn add_fields(
 mod tests {
     use super::*;
 
+    fn parse_schema(namespace: &str, source: &str) -> crate::ast::Schema {
+        let mut schema = crate::ast::Schema {
+            namespace: namespace.to_string(),
+            sync_mode: crate::ast::SyncMode::Synced,
+            session: None,
+            files: vec![],
+        };
+
+        crate::parser::run("schema.pyre", source, &mut schema).expect("schema parses");
+        schema
+    }
+
     #[test]
     fn unsupported_default_values_do_not_panic_or_emit_invalid_sql_default() {
         let fn_default =
@@ -281,6 +294,56 @@ mod tests {
 
         assert_eq!(columns.len(), 1);
         assert_eq!(columns[0].default_value, None);
+    }
+
+    #[test]
+    fn diff_uses_context_tables_from_selected_schema_namespace() {
+        let main_schema = parse_schema(
+            "Main",
+            r#"
+record MainRecord {
+    @public
+    @tablename("shared_table")
+    id       Id.Int @id
+    mainOnly String
+}
+"#,
+        );
+        let campaign_schema = parse_schema(
+            "Campaign",
+            r#"
+record CampaignRecord {
+    @public
+    @tablename("shared_table")
+    id           Id.Int @id
+    campaignOnly String
+}
+"#,
+        );
+        let database = crate::ast::Database {
+            schemas: vec![main_schema.clone(), campaign_schema],
+        };
+        let context = crate::typecheck::check_schema(&database).expect("database typechecks");
+        let introspection = crate::db::introspect::Introspection {
+            tables: vec![],
+            migration_state: crate::db::introspect::MigrationState::NoMigrationTable,
+            schema: crate::db::introspect::SchemaResult::Success {
+                schema: crate::ast::Schema::default(),
+                context: crate::typecheck::empty_context(),
+            },
+        };
+
+        let diff = super::diff(&context, &main_schema, &introspection);
+
+        assert_eq!(diff.added.len(), 1);
+        assert!(diff.added[0]
+            .columns
+            .iter()
+            .any(|column| column.name == "mainOnly"));
+        assert!(!diff.added[0]
+            .columns
+            .iter()
+            .any(|column| column.name == "campaignOnly"));
     }
 }
 

@@ -11,6 +11,7 @@ The app still runs `pyre generate`. Generated output includes:
 
 ```rust
 pyre::server::manifest
+pyre::server::database_id
 pyre::server::query
 pyre::server::schema
 pyre::server::sync
@@ -159,17 +160,23 @@ The manifest runtime still validates dynamic input and remains the final fail-lo
 For a `GET /sync` equivalent:
 
 ```rust
+use pyre::server::database_id::require_database_id;
+
+let database_id = require_database_id(request.query("databaseId"))?;
+let conn = database_for(&database_id).await?;
+
 let sync_result = sync_server
     .catchup(
         &conn,
         &sync_cursor,
         session.logical(),
         1000,
+        &database_id,
     )
     .await?;
 ```
 
-Return `sync_result` as JSON.
+Return `sync_result` as JSON. It includes `databaseId` so the browser runtime can route the catchup page to the matching local cache.
 
 ## Live Deltas After Mutations
 
@@ -181,6 +188,7 @@ let result = query::run(&conn, &manifest, query_id, input, &session).await?;
 let messages = sync_server.calculate_deltas(
     &result.affected_rows,
     &connected_sessions,
+    &database_id,
 )?;
 ```
 
@@ -197,9 +205,12 @@ for item in messages {
 ```json
 {
   "type": "delta",
+  "databaseId": "tenant:acme",
   "data": []
 }
 ```
+
+Use `pyre::server::database_id::require_database_id` at every Pyre endpoint boundary. The helper only validates presence/non-empty string; the app must still authenticate the request, authorize access to that `databaseId`, and map it to the correct database connection and schema family.
 
 ## Connected Sessions
 

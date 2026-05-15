@@ -58,6 +58,7 @@ function App() {
   const [selectedClientId, setSelectedClientId] = useState<string>('1')
   const [events, setEvents] = useState<Event[]>([])
   const [queries, setQueries] = useState<QueryMetadata[]>([])
+  const hasConnectedClient = clients.some((client) => client.pyreClient && client.connected)
 
   // Discover queries on mount
   useEffect(() => {
@@ -227,18 +228,17 @@ function App() {
   }, [addEvent])
 
   useEffect(() => {
-    devtoolsRef.current?.destroy()
-    devtoolsRef.current = null
-
-    if (clients.some((client) => client.pyreClient && client.connected)) {
+    if (hasConnectedClient && !devtoolsRef.current) {
       devtoolsRef.current = mountPyreDevtools()
     }
 
     return () => {
-      devtoolsRef.current?.destroy()
-      devtoolsRef.current = null
+      if (devtoolsRef.current) {
+        devtoolsRef.current.destroy()
+        devtoolsRef.current = null
+      }
     }
-  }, [clients, selectedClientId])
+  }, [hasConnectedClient])
 
   // Connect the initial client once, even in StrictMode.
   useEffect(() => {

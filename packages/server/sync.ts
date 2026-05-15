@@ -2,6 +2,7 @@ import { Client } from "@libsql/client";
 import * as wasm from "./wasm/pyre_wasm.js";
 import { normalizeForWasmJson } from "./wasm-json";
 import { requireDatabaseId, type DatabaseId } from "./database-id";
+import { activateSchemaForDatabase } from "./schema";
 
 export type SessionValue = null | number | string | Uint8Array;
 
@@ -115,6 +116,8 @@ export async function catchup(
     pageSize: number = 1000,
     databaseId?: DatabaseId,
 ): Promise<SyncPageResult> {
+    activateSchemaForDatabase(databaseId);
+
     // Step 1: Get sync status SQL
     const statusSql = wasm.get_sync_status_sql(syncCursor, session);
     if (typeof statusSql === "string" && statusSql.startsWith("Error:")) {

@@ -1,3 +1,5 @@
+#[cfg(feature = "database")]
+pub mod database_id;
 pub mod manifest;
 #[cfg(feature = "database")]
 pub mod query;

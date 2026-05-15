@@ -43,19 +43,55 @@ const defaultReshapeSyncTableGroups = () => ([
 
 let getSyncSqlMock = defaultSyncSql;
 let reshapeSyncTableGroupsMock = defaultReshapeSyncTableGroups;
+let introspectionResult = { schema_source: "" };
+let setSchemaCalls: unknown[] = [];
 
 mock.module("./wasm/pyre_wasm.js", () => ({
+  sql_is_initialized: () => "select 1 as is_initialized",
+  sql_introspect: () => "select introspection",
   get_sync_status_sql: () => "select 1",
   get_sync_sql: () => getSyncSqlMock(),
   calculate_sync_deltas: () => ({ groups: [] }),
   reshape_sync_table_groups: (groups: any) => reshapeSyncTableGroupsMock(groups),
+  set_schema: (introspection: unknown) => setSchemaCalls.push(introspection),
 }));
 
 const { catchup } = await import("./sync");
+const { loadSchemaFromDatabase } = await import("./schema");
 
 afterEach(() => {
   getSyncSqlMock = defaultSyncSql;
   reshapeSyncTableGroupsMock = defaultReshapeSyncTableGroups;
+  introspectionResult = { schema_source: "" };
+  setSchemaCalls = [];
+});
+
+test("catchup activates the schema loaded for its databaseId", async () => {
+  getSyncSqlMock = () => ({ tables: [] });
+  const mainIntrospection = { schema_source: "main schema" };
+  const campaignIntrospection = { schema_source: "campaign schema" };
+  const schemaDb = {
+    execute: mock(async (sql: string) => {
+      if (sql.includes("is_initialized")) {
+        return { rows: [{ is_initialized: 1 }] };
+      }
+
+      return { rows: [{ result: JSON.stringify(introspectionResult) }] };
+    }),
+  };
+  const db = {
+    execute: mock(async () => ({ rows: [] })),
+    batch: mock(async () => ([])),
+  };
+
+  introspectionResult = mainIntrospection;
+  await loadSchemaFromDatabase("main", schemaDb as any);
+  introspectionResult = campaignIntrospection;
+  await loadSchemaFromDatabase("campaign", schemaDb as any);
+
+  await catchup(db as any, { tables: {} }, {}, 1000, "main");
+
+  expect(setSchemaCalls.at(-1)).toEqual(mainIntrospection);
 });
 
 test("catchup reshapes flattened custom types before returning sync rows", async () => {

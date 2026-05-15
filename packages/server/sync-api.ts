@@ -1,6 +1,6 @@
 export { init } from "./init";
 export { databaseIdFromUrl, requireDatabaseId, withDatabaseId } from "./database-id";
-export { loadSchemaFromDatabase } from "./schema";
+export { activateSchemaForDatabase, loadSchemaFromDatabase } from "./schema";
 export { catchup } from "./sync";
 export { runWithSync as run } from "./query-sync";
 

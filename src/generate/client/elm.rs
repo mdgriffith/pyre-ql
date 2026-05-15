@@ -993,10 +993,10 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     if query.operation != ast::QueryOperation::Query {
         result.push_str(
-            "type alias MutationResult =\n    { requestId : String\n    , mutationId : String\n    , mutationName : Maybe String\n    , result : Result String ReturnData\n    }\n\n\n",
+            "type alias DatabaseId =\n    String\n\n\ntype alias RequestId =\n    String\n\n\ntype alias MutationResult =\n    { requestId : RequestId\n    , mutationId : String\n    , mutationName : Maybe String\n    , result : Result String ReturnData\n    }\n\n\n",
         );
         result.push_str(
-            "mutationRequest : String -> String -> Input -> Encode.Value\nmutationRequest databaseId requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]\n\n\n",
+            "mutationRequest : DatabaseId -> RequestId -> Input -> Encode.Value\nmutationRequest databaseId requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]\n\n\n",
         );
         result.push_str(
             "decodeMutationResult : Decode.Decoder MutationResult\ndecodeMutationResult =\n    Decode.map4\n        (\\requestId mutationId mutationName mutationResult ->\n            { requestId = requestId\n            , mutationId = mutationId\n            , mutationName = mutationName\n            , result = mutationResult\n            }\n        )\n        (Decode.field \"requestId\" Decode.string)\n        (Decode.field \"mutationId\" Decode.string)\n        (Decode.oneOf\n            [ Decode.field \"mutationName\" (Decode.nullable Decode.string)\n            , Decode.succeed Nothing\n            ]\n        )\n        (Decode.field \"result\" (decodeBridgeMutationResult decodeReturnData))\n\n\n",
@@ -1024,6 +1024,8 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     exposing_items.push("encode".to_string());
 
     if query.operation != ast::QueryOperation::Query {
+        exposing_items.push("DatabaseId".to_string());
+        exposing_items.push("RequestId".to_string());
         exposing_items.push("id".to_string());
         exposing_items.push("name".to_string());
         exposing_items.push("mutationRequest".to_string());
@@ -2026,7 +2028,7 @@ fn generate_pyre_module(
 
     // Module declaration
     result.push_str(
-        "module Pyre exposing (Model, QueryModel, Query(..), Msg(..), Effect(..), init, update, decodeIncomingDelta, getResult)\n\n\n",
+        "module Pyre exposing (DatabaseId, QueryId, Model, QueryModel, Query(..), Msg(..), Effect(..), init, update, decodeIncomingDelta, getResult)\n\n\n",
     );
 
     // Imports
@@ -2071,11 +2073,13 @@ fn generate_pyre_module(
 
     // Query type
     result.push_str("-- Query\n\n\n");
+    result.push_str("type alias DatabaseId =\n    String\n\n\n");
+    result.push_str("type alias QueryId =\n    String\n\n\n");
     result.push_str("type Query\n");
     for (i, name) in query_names.iter().enumerate() {
         let prefix = if i == 0 { "    = " } else { "    | " };
         result.push_str(&format!(
-            "{}{} String String Query.{}.Input\n",
+            "{}{} DatabaseId QueryId Query.{}.Input\n",
             prefix, name, name
         ));
     }
@@ -2087,10 +2091,10 @@ fn generate_pyre_module(
     result.push_str("    = QueryUpdate Query\n");
     for name in query_names {
         result.push_str(&format!(
-            "    | {}_DataReceived String Query.{}.QueryDelta\n",
+            "    | {}_DataReceived QueryId Query.{}.QueryDelta\n",
             name, name
         ));
-        result.push_str(&format!("    | {}_Unregistered String String\n", name));
+        result.push_str(&format!("    | {}_Unregistered DatabaseId QueryId\n", name));
     }
     result.push_str("\n\n");
 
@@ -2278,8 +2282,9 @@ fn generate_pyre_module(
         result.push_str("                    )\n\n");
     }
 
-    result
-        .push_str("getResult : String -> Dict String (QueryModel input result) -> Maybe result\n");
+    result.push_str(
+        "getResult : QueryId -> Dict QueryId (QueryModel input result) -> Maybe result\n",
+    );
     result.push_str("getResult queryId queries =\n");
     result.push_str("    Dict.get queryId queries\n");
     result.push_str("        |> Maybe.map .result\n\n\n");
@@ -2288,7 +2293,7 @@ fn generate_pyre_module(
     result.push_str("-- Encoders\n\n\n");
 
     result.push_str(
-        "encodeRegister : String -> String -> Encode.Value -> String -> Encode.Value -> Encode.Value\n",
+        "encodeRegister : DatabaseId -> String -> Encode.Value -> QueryId -> Encode.Value -> Encode.Value\n",
     );
     result.push_str("encodeRegister databaseId queryName queryShape queryId input =\n");
     result.push_str("    Encode.object\n");
@@ -2301,7 +2306,7 @@ fn generate_pyre_module(
     result.push_str("        ]\n\n\n");
 
     result.push_str(
-        "encodeUpdateInput : String -> String -> Encode.Value -> Encode.Value -> Encode.Value\n",
+        "encodeUpdateInput : DatabaseId -> QueryId -> Encode.Value -> Encode.Value -> Encode.Value\n",
     );
     result.push_str("encodeUpdateInput databaseId queryId queryShape input =\n");
     result.push_str("    Encode.object\n");
@@ -2312,7 +2317,7 @@ fn generate_pyre_module(
     result.push_str("        , ( \"queryInput\", input )\n");
     result.push_str("        ]\n\n\n");
 
-    result.push_str("encodeUnregister : String -> String -> Encode.Value\n");
+    result.push_str("encodeUnregister : DatabaseId -> QueryId -> Encode.Value\n");
     result.push_str("encodeUnregister databaseId queryId =\n");
     result.push_str("    Encode.object\n");
     result.push_str("        [ ( \"type\", Encode.string \"unregister\" )\n");

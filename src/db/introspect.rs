@@ -598,6 +598,12 @@ pub fn from_raw(mut raw: IntrospectionRaw) -> Introspection {
     // Attempt to parse the schema source
     let schema_result = match parser::run("schema.pyre", &raw.schema_source, &mut schema) {
         Ok(()) => {
+            if schema.namespace == ast::DEFAULT_SCHEMANAME {
+                if let Some(namespace) = infer_stored_schema_namespace(&schema) {
+                    schema.namespace = namespace;
+                }
+            }
+
             // Create a Database from the schema
             let database = ast::Database {
                 schemas: vec![schema.clone()],
@@ -639,6 +645,71 @@ pub fn from_raw(mut raw: IntrospectionRaw) -> Introspection {
         tables: raw.tables,
         migration_state: raw.migration_state,
         schema: schema_result,
+    }
+}
+
+fn infer_stored_schema_namespace(schema: &ast::Schema) -> Option<String> {
+    let mut namespaces = std::collections::HashSet::new();
+
+    for file in &schema.files {
+        for definition in &file.definitions {
+            if let ast::Definition::Record { fields, .. } = definition {
+                for link in ast::collect_links(fields) {
+                    if link.foreign.schema != ast::DEFAULT_SCHEMANAME {
+                        namespaces.insert(link.foreign.schema);
+                    }
+                }
+            }
+        }
+    }
+
+    if namespaces.len() == 1 {
+        namespaces.into_iter().next()
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_raw_infers_namespace_from_self_qualified_stored_links() {
+        let introspection = from_raw(IntrospectionRaw {
+            tables: vec![],
+            migration_state: MigrationState::NoMigrationTable,
+            schema_source: r#"
+record Parent {
+    @public
+    id       Id.Int @id
+    children @link(Campaign.Child.parentId)
+}
+
+record Child {
+    @public
+    id       Id.Int @id
+    parentId Parent.id
+    parent   @link(parentId, Campaign.Parent.id)
+}
+"#
+            .to_string(),
+            links: vec![],
+        });
+
+        match introspection.schema {
+            SchemaResult::Success { schema, context } => {
+                assert_eq!(schema.namespace, "Campaign");
+                assert_eq!(context.valid_namespaces.len(), 1);
+                assert!(context.valid_namespaces.contains("Campaign"));
+            }
+            SchemaResult::FailedToTypecheck { errors, .. } => {
+                panic!("schema should typecheck after namespace inference: {errors:?}")
+            }
+            SchemaResult::FailedToParse { errors, .. } => {
+                panic!("schema should parse: {errors:?}")
+            }
+        }
     }
 }
 

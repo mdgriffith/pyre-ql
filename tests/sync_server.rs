@@ -167,7 +167,7 @@ insert into notes (id, ownerId, body, updatedAt) values (3, 1, 'three', 30);
     session.insert("userId".to_string(), pyre::sync::SessionValue::Integer(1));
 
     let result = server
-        .catchup(&conn, &SyncCursor::new(), &session, 10)
+        .catchup(&conn, &SyncCursor::new(), &session, 10, "main")
         .await?;
     let notes = result.tables.get("notes").expect("notes should sync");
     let ids = notes
@@ -177,11 +177,12 @@ insert into notes (id, ownerId, body, updatedAt) values (3, 1, 'three', 30);
         .collect::<Vec<_>>();
 
     assert_eq!(ids, vec![json!(1), json!(3)]);
+    assert_eq!(result.database_id.as_deref(), Some("main"));
     assert_eq!(notes.last_seen_updated_at, Some(30));
 
     session.insert("userId".to_string(), pyre::sync::SessionValue::Integer(2));
     let result = server
-        .catchup(&conn, &SyncCursor::new(), &session, 10)
+        .catchup(&conn, &SyncCursor::new(), &session, 10, "main")
         .await?;
     let notes = result.tables.get("notes").expect("notes should sync");
     let ids = notes
@@ -379,11 +380,15 @@ record Note {
         ),
     ]);
 
-    let messages =
-        SyncServer::new(&db.context).calculate_deltas(&affected_rows, &connected_sessions)?;
+    let messages = SyncServer::new(&db.context).calculate_deltas(
+        &affected_rows,
+        &connected_sessions,
+        "main",
+    )?;
 
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].session_id, "user-1");
+    assert_eq!(messages[0].message.database_id.as_deref(), Some("main"));
     assert_eq!(messages[0].message.data[0].rows[0][0], json!(1));
     assert_eq!(messages[1].session_id, "user-2");
     assert_eq!(messages[1].message.data[0].rows[0][0], json!(2));
@@ -817,7 +822,7 @@ record Note {
     let server = SyncServer::new(loaded.context()?);
 
     let result = server
-        .catchup(&conn, &SyncCursor::new(), &HashMap::new(), 10)
+        .catchup(&conn, &SyncCursor::new(), &HashMap::new(), 10, "main")
         .await?;
     let notes = result.tables.get("notes").expect("notes should sync");
 

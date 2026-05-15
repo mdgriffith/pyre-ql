@@ -35,6 +35,8 @@ The app explicitly provides the database ID for each query or mutation and contr
 7. Sync responses and live sync messages include the database ID they came from so the client can write them to the correct cache database.
 8. The app should not manage one Pyre client per database. Pyre owns any internal per-database clients needed to keep the implementation simple.
 
+These rules apply to multiple source databases that share one Pyre schema. If an app has distinct schema families, such as a command-plane schema and a tenant schema, each schema family needs separate generated artifacts and separate client/server runtime wiring unless Pyre has explicit multi-schema-family support.
+
 ## Client API Shape
 
 The client requires the target database ID at the operation call site:
@@ -288,7 +290,8 @@ const result = await Sync.run(
   queryId,
   args,
   session,
-  connections
+  connections,
+  databaseId
 );
 
 await result.sync((sessionId, message) => {
@@ -304,3 +307,19 @@ The server may derive allowed database IDs from a signed cookie, JWT, or other s
 The server is the source of truth for valid database IDs. The client chooses among server-defined IDs, but the server must still validate every request and live sync connection.
 
 The server is also the source of truth for the cache namespace. In most apps this should be the authenticated user ID or another stable user/account cache identity.
+
+## Multiple Schema Families
+
+`databaseId` routes among source databases that have the same generated Pyre schema. It is not a schema selector.
+
+For an app with both a command-plane schema and a tenant schema:
+
+- Generate command-plane Pyre artifacts from the command-plane schema.
+- Generate tenant Pyre artifacts from the tenant schema.
+- Create one public `PyreClient` for command-plane work and one public `PyreClient` for tenant work, each using its matching `schemaMetadata`.
+- Use distinct base IndexedDB names per schema family, such as `app-command-pyre` and `app-tenant-pyre`.
+- Keep `cacheNamespace` server-defined and stable for the authenticated user/account.
+- Route server requests by both schema family and `databaseId`; for example, `command:*` IDs use command-plane generated queries and DB connections, while `tenant:*` IDs use tenant generated queries and DB connections.
+- Keep live-sync connection groups scoped to the selected `databaseId`.
+
+Do not mix command-plane and tenant schemas in one `PyreClient` instance. A single client currently owns one `schemaMetadata` value and one generated query surface.

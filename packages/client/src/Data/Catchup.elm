@@ -376,6 +376,24 @@ updateSyncCursor response cursor =
 
 computeSyncCursor : Db.Db -> SyncCursor -> SyncCursor
 computeSyncCursor db cursor =
+    let
+        cursorWithMissingTablesReset =
+            Dict.foldl
+                (\tableName entry acc ->
+                    case Dict.get tableName db.tables of
+                        Nothing ->
+                            resetCursorIfRowsAreMissing tableName entry acc
+
+                        Just tableData ->
+                            if Dict.isEmpty tableData then
+                                resetCursorIfRowsAreMissing tableName entry acc
+
+                            else
+                                acc
+                )
+                cursor
+                cursor
+    in
     Dict.foldl
         (\tableName tableData acc ->
             let
@@ -402,8 +420,22 @@ computeSyncCursor db cursor =
             in
             Dict.insert tableName updatedEntry acc
         )
-        cursor
+        cursorWithMissingTablesReset
         db.tables
+
+
+resetCursorIfRowsAreMissing : String -> SyncCursorEntry -> SyncCursor -> SyncCursor
+resetCursorIfRowsAreMissing tableName entry cursor =
+    case entry.lastSeenUpdatedAt of
+        Just _ ->
+            Dict.insert tableName
+                { lastSeenUpdatedAt = Nothing
+                , permissionHash = ""
+                }
+                cursor
+
+        Nothing ->
+            cursor
 
 
 computeMaxUpdatedAt : Dict Int (Dict String Data.Value.Value) -> Maybe Float
