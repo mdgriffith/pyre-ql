@@ -49,6 +49,7 @@
   "files": [
     "index.ts",
     "init.ts",
+    "database-id.ts",
     "query-sync.ts",
     "query.ts",
     "runtime",

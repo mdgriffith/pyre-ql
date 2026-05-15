@@ -1,4 +1,4 @@
-module Data.Catchup exposing (Model, Msg(..), ServerConfig, Status(..), UpdateResult, init, status, update)
+module Data.Catchup exposing (Model, Msg(..), ServerConfig, Status(..), UpdateResult, databaseId, init, status, update)
 
 import Data.Delta
 import Data.IndexedDb
@@ -16,6 +16,7 @@ import Url
 type alias ServerConfig =
     { baseUrl : String
     , catchupPath : String
+    , databaseId : Maybe String
     , headers : List ( String, String )
     , credentials : String
     , withCredentials : Bool
@@ -47,7 +48,8 @@ type alias CatchupTableResult =
 
 
 type alias CatchupResponse =
-    { tables : Dict String CatchupTableResult
+    { databaseId : Maybe String
+    , tables : Dict String CatchupTableResult
     , hasMore : Bool
     }
 
@@ -92,6 +94,11 @@ init server =
 status : Model -> Status
 status model =
     model.status
+
+
+databaseId : Model -> Maybe String
+databaseId model =
+    model.server.databaseId
 
 
 update : Msg -> Model -> Db.Db -> UpdateResult
@@ -146,54 +153,66 @@ handleCatchupResponse : Result Http.Error CatchupResponse -> Model -> Db.Db -> U
 handleCatchupResponse result model db =
     case result of
         Ok response ->
-            let
-                ( maybeDelta, updatedDb, dbCmds ) =
-                    applyCatchupDelta response db
+            case validateResponseDatabaseId model.server.databaseId response.databaseId of
+                Just message ->
+                    { model = { model | status = Error message, inProgress = False }
+                    , db = db
+                    , cmd = Cmd.none
+                    , dbCmds = []
+                    , delta = Nothing
+                    , touchedTables = []
+                    , error = Just message
+                    }
 
-                updatedCursor =
-                    updateSyncCursor response model.cursor
+                Nothing ->
+                    let
+                        ( maybeDelta, updatedDb, dbCmds ) =
+                            applyCatchupDelta response db
 
-                syncedCount =
-                    model.tablesSynced + Dict.size response.tables
+                        updatedCursor =
+                            updateSyncCursor response model.cursor
 
-                progress =
-                    { table = Nothing
-                    , tablesSynced = syncedCount
-                    , totalTables = Nothing
-                    , complete = not response.hasMore
+                        syncedCount =
+                            model.tablesSynced + Dict.size response.tables
+
+                        progress =
+                            { table = Nothing
+                            , tablesSynced = syncedCount
+                            , totalTables = Nothing
+                            , complete = not response.hasMore
+                            , error = Nothing
+                            }
+
+                        nextStatus =
+                            if response.hasMore then
+                                Syncing progress
+
+                            else
+                                Synced
+
+                        baseModel =
+                            { model
+                                | cursor = updatedCursor
+                                , tablesSynced = syncedCount
+                                , status = nextStatus
+                                , inProgress = response.hasMore
+                            }
+
+                        ( nextModel, cmd ) =
+                            if response.hasMore then
+                                ( baseModel, requestCatchup updatedCursor model.server )
+
+                            else
+                                ( { baseModel | inProgress = False }, Cmd.none )
+                    in
+                    { model = nextModel
+                    , db = updatedDb
+                    , cmd = cmd
+                    , dbCmds = Data.IndexedDb.writeSyncCursor updatedCursor :: dbCmds
+                    , delta = maybeDelta
+                    , touchedTables = Dict.keys response.tables
                     , error = Nothing
                     }
-
-                nextStatus =
-                    if response.hasMore then
-                        Syncing progress
-
-                    else
-                        Synced
-
-                baseModel =
-                    { model
-                        | cursor = updatedCursor
-                        , tablesSynced = syncedCount
-                        , status = nextStatus
-                        , inProgress = response.hasMore
-                    }
-
-                ( nextModel, cmd ) =
-                    if response.hasMore then
-                        ( baseModel, requestCatchup updatedCursor model.server )
-
-                    else
-                        ( { baseModel | inProgress = False }, Cmd.none )
-            in
-            { model = nextModel
-            , db = updatedDb
-            , cmd = cmd
-            , dbCmds = Data.IndexedDb.writeSyncCursor updatedCursor :: dbCmds
-            , delta = maybeDelta
-            , touchedTables = Dict.keys response.tables
-            , error = Nothing
-            }
 
         Err err ->
             let
@@ -214,11 +233,19 @@ requestCatchup : SyncCursor -> ServerConfig -> Cmd Msg
 requestCatchup cursor server =
     let
         params =
-            if Dict.isEmpty cursor then
-                []
+            List.concat
+                [ case server.databaseId of
+                    Just sourceDatabaseId ->
+                        [ ( "databaseId", sourceDatabaseId ) ]
 
-            else
-                [ ( "syncCursor", Encode.encode 0 (encodeSyncCursor cursor) ) ]
+                    Nothing ->
+                        []
+                , if Dict.isEmpty cursor then
+                    []
+
+                  else
+                    [ ( "syncCursor", Encode.encode 0 (encodeSyncCursor cursor) ) ]
+                ]
 
         url =
             appendQueryParams (server.baseUrl ++ server.catchupPath) params
@@ -445,9 +472,29 @@ encodeSyncCursorEntry entry =
 
 decodeCatchupResponse : Decode.Decoder CatchupResponse
 decodeCatchupResponse =
-    Decode.map2 CatchupResponse
+    Decode.map3 CatchupResponse
+        (Decode.maybe (Decode.field "databaseId" Decode.string))
         (Decode.field "tables" (Decode.dict decodeCatchupTable))
         (Decode.field "has_more" Decode.bool)
+
+
+validateResponseDatabaseId : Maybe String -> Maybe String -> Maybe String
+validateResponseDatabaseId expected actual =
+    case expected of
+        Nothing ->
+            Nothing
+
+        Just expectedId ->
+            case actual of
+                Just actualId ->
+                    if actualId == expectedId then
+                        Nothing
+
+                    else
+                        Just ("Catchup response databaseId mismatch: expected " ++ expectedId ++ ", got " ++ actualId)
+
+                Nothing ->
+                    Just ("Catchup response missing databaseId: expected " ++ expectedId)
 
 
 decodeCatchupTable : Decode.Decoder CatchupTableResult

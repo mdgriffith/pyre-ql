@@ -33,9 +33,9 @@ At startup:
 
 Routes:
 
-- **GET `/sync`** → `Sync.catchup(db, syncCursor, session, pageSize)`
+- **GET `/sync?databaseId=...`** → `Sync.catchup(db, syncCursor, session, pageSize, databaseId)`
 - **GET `/sync/events`** → stream deltas to connected clients
-- **query route** (e.g. `POST /db/:queryId`) → `Sync.run(db, queries, queryId, args, session, connectedClients)`
+- **query route** (e.g. `POST /db/:queryId?databaseId=...`) → `Sync.run(db, queries, queryId, args, session, connectedClients, databaseId)`
 
 If schema/migrations run after startup, reload schema cache before expecting sync to work.
 
@@ -44,6 +44,8 @@ If schema/migrations run after startup, reload schema cache before expecting syn
 Create one `PyreClient` instance per browser app instance:
 
 ```ts
+let mainDatabaseId = "main"
+
 const client = await PyreClient.create({
   schema: schemaMetadata,
   indexedDbName: "my-app-pyre",
@@ -56,7 +58,9 @@ const client = await PyreClient.create({
       body: JSON.stringify({ userId: 1 }),
     })
 
-    const { userId } = await response.json()
+    const bootstrap = await response.json()
+    mainDatabaseId = bootstrap.mainDatabaseId
+    const { userId } = bootstrap
 
     return {
       server: {
@@ -69,6 +73,7 @@ const client = await PyreClient.create({
           query: "/db",
         },
       },
+      cacheNamespace: userId,
       session: {
         userId,
       },
@@ -76,6 +81,8 @@ const client = await PyreClient.create({
   },
   onError: (error) => console.error(error),
 });
+
+await client.setSyncedDatabases([mainDatabaseId])
 ```
 
 Set `debug: true` if you want verbose runtime logging while debugging sync behavior. Leave it off in normal app usage.
@@ -86,7 +93,7 @@ If session-backed filters change, refresh the runtime session so active queries 
 client.setSession({ userId: 2 })
 ```
 
-Use `client.run(queryModule, input, callback)` for TypeScript-native consumers. For generated Elm clients, prefer `PyreClient.create({ connect, elm: { ... } })` so the runtime owns the port bridge.
+Use `client.run(databaseId, queryModule, input, callback)` for TypeScript-native consumers. For generated Elm clients, prefer `PyreClient.create({ connect, elm: { ... } })` so the runtime owns the port bridge.
 
 ### Auth-neutral server options
 
@@ -95,8 +102,11 @@ Use `client.run(queryModule, input, callback)` for TypeScript-native consumers. 
 For cookie-authenticated APIs, configure standard credentialed browser requests:
 
 ```ts
+let mainDatabaseId = "main"
+
 const client = await PyreClient.create({
   schema: schemaMetadata,
+  cacheNamespace: userId,
   server: {
     baseUrl: "https://api.example.com",
     credentials: "include",
@@ -109,6 +119,7 @@ For bearer tokens, API keys, or CSRF headers, configure headers:
 ```ts
 const client = await PyreClient.create({
   schema: schemaMetadata,
+  cacheNamespace: userId,
   server: {
     baseUrl: "https://api.example.com",
     credentials: "include",
@@ -155,7 +166,9 @@ const client = await PyreClient.create({
       body: JSON.stringify({ userId: 1 }),
     })
 
-    const { userId } = await response.json()
+    const bootstrap = await response.json()
+    mainDatabaseId = bootstrap.mainDatabaseId
+    const { userId } = bootstrap
 
     return {
       server: {
@@ -168,6 +181,7 @@ const client = await PyreClient.create({
           query: "/db",
         },
       },
+      cacheNamespace: userId,
       session: { userId },
     }
   },
@@ -176,6 +190,8 @@ const client = await PyreClient.create({
     onError: (error) => console.error(error),
   },
 })
+
+await client.setSyncedDatabases([mainDatabaseId])
 ```
 
 Default Elm bridge ports:
@@ -270,7 +286,7 @@ TS → Elm:
 - Forward incoming query data to the generated `Pyre.decodeIncomingDelta` path.
 - Forward incoming mutation results to the generated mutation module decoders.
 
-Generated mutation modules expose `mutationRequest requestId input` and `decodeMutationResult`, so Elm can initiate mutations and handle results without needing to know the bridge payload format.
+Generated mutation modules expose `mutationRequest databaseId requestId input` and `decodeMutationResult`, so Elm can initiate mutations and handle results without needing to know the bridge payload format.
 
 If you are bridging those generated messages into `@pyre/client`, prefer `await PyreClient.create({ ..., connect, elm: { ... } })`. That lets the client perform login or other bootstrap work, build the final server config, attach the built-in bridge automatically, execute standard mutations itself, and keep the host code close to app state.
 

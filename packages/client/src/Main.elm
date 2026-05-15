@@ -26,6 +26,12 @@ type alias Flags =
     { schema : Data.Schema.SchemaMetadata
     , server : Catchup.ServerConfig
     , liveSync : LiveSync.Config
+    , sync : SyncConfig
+    }
+
+
+type alias SyncConfig =
+    { autoStart : Bool
     }
 
 
@@ -43,6 +49,7 @@ type alias Model =
     , syncError : Maybe String
     , liveSyncStarted : Bool
     , liveSyncTransport : LiveSync.Transport
+    , syncRequested : Bool
     }
 
 
@@ -59,6 +66,11 @@ type Msg
     | DbMsg Db.Msg
     | Error String
     | CatchupMsg Catchup.Msg
+    | SyncControlReceived SyncControlMessage
+
+
+type SyncControlMessage
+    = StartSync
 
 
 
@@ -76,9 +88,14 @@ init flags =
       , syncError = Nothing
       , liveSyncStarted = False
       , liveSyncTransport = flags.liveSync.transport
+      , syncRequested = flags.sync.autoStart
       }
     , Cmd.batch
-        [ IndexedDb.requestInitialData
+        [ if flags.sync.autoStart then
+            IndexedDb.requestInitialData
+
+          else
+            Cmd.none
         , emitSyncState
             { status = SyncState.NotStarted
             , tables = SyncState.initialTableStatuses flags.schema.tables
@@ -156,6 +173,15 @@ update msg model =
         CatchupMsg catchupMsg ->
             applyCatchupUpdate (Catchup.update catchupMsg model.catchup model.db) model
 
+        SyncControlReceived StartSync ->
+            if model.syncRequested then
+                ( model, Cmd.none )
+
+            else
+                ( { model | syncRequested = True }
+                , IndexedDb.requestInitialData
+                )
+
         DbMsg dbMsg ->
             let
                 ( updatedDb, dbCmd ) =
@@ -188,25 +214,42 @@ handleIndexedDbIncoming incoming model =
 handleLiveSyncIncoming : LiveSync.Incoming -> Model -> ( Model, Cmd Msg )
 handleLiveSyncIncoming incoming model =
     case incoming of
-        LiveSync.DeltaReceived delta ->
-            -- Update database with delta
-            let
-                ( updatedDb, dbCmd ) =
-                    Db.update (Db.DeltaReceived delta) model.db
+        LiveSync.DeltaReceived messageDatabaseId delta ->
+            case validateLiveSyncDatabaseId model messageDatabaseId "delta" of
+                Just message ->
+                    ( { model | syncError = Just message }
+                    , Cmd.batch
+                        [ emitSyncState (toSyncState model)
+                        , Data.Error.sendError message
+                        ]
+                    )
 
-                -- Notify query manager with fine-grained reactivity
-                ( updatedQueryManager, triggerCmds ) =
-                    QueryManager.notifyTablesChanged model.schema updatedDb model.queryManager delta
-            in
-            ( { model | db = updatedDb, queryManager = updatedQueryManager }
-            , Cmd.batch
-                [ Cmd.map DbMsg dbCmd
-                , Cmd.batch triggerCmds
-                ]
-            )
+                Nothing ->
+                    -- Update database with delta
+                    let
+                        ( updatedDb, dbCmd ) =
+                            Db.update (Db.DeltaReceived delta) model.db
 
-        LiveSync.LiveSyncConnected _ ->
-            ( model, Cmd.none )
+                        -- Notify query manager with fine-grained reactivity
+                        ( updatedQueryManager, triggerCmds ) =
+                            QueryManager.notifyTablesChanged model.schema updatedDb model.queryManager delta
+                    in
+                    ( { model | db = updatedDb, queryManager = updatedQueryManager }
+                    , Cmd.batch
+                        [ Cmd.map DbMsg dbCmd
+                        , Cmd.batch triggerCmds
+                        ]
+                    )
+
+        LiveSync.LiveSyncConnected messageDatabaseId _ ->
+            case validateLiveSyncDatabaseId model messageDatabaseId "connected" of
+                Just message ->
+                    ( { model | syncError = Just message }
+                    , Data.Error.sendError message
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         LiveSync.LiveSyncError error ->
             ( { model | syncError = Just error }
@@ -216,27 +259,60 @@ handleLiveSyncIncoming incoming model =
                 ]
             )
 
-        LiveSync.SyncProgressReceived _ ->
-            let
-                updatedModel =
-                    { model | syncStatus = SyncState.CatchingUp }
-            in
-            ( updatedModel
-            , emitSyncState (toSyncState updatedModel)
-            )
+        LiveSync.SyncProgressReceived messageDatabaseId _ ->
+            case validateLiveSyncDatabaseId model messageDatabaseId "syncProgress" of
+                Just message ->
+                    ( { model | syncError = Just message }
+                    , Data.Error.sendError message
+                    )
 
-        LiveSync.SyncCompleteReceived ->
-            let
-                updatedModel =
-                    { model
-                        | syncStatus = SyncState.Live
-                        , tableSyncStatuses = SyncState.markAllTablesLive model.tableSyncStatuses
-                        , syncError = Nothing
-                    }
-            in
-            ( updatedModel
-            , emitSyncState (toSyncState updatedModel)
-            )
+                Nothing ->
+                    let
+                        updatedModel =
+                            { model | syncStatus = SyncState.CatchingUp }
+                    in
+                    ( updatedModel
+                    , emitSyncState (toSyncState updatedModel)
+                    )
+
+        LiveSync.SyncCompleteReceived messageDatabaseId ->
+            case validateLiveSyncDatabaseId model messageDatabaseId "syncComplete" of
+                Just message ->
+                    ( { model | syncError = Just message }
+                    , Data.Error.sendError message
+                    )
+
+                Nothing ->
+                    let
+                        updatedModel =
+                            { model
+                                | syncStatus = SyncState.Live
+                                , tableSyncStatuses = SyncState.markAllTablesLive model.tableSyncStatuses
+                                , syncError = Nothing
+                            }
+                    in
+                    ( updatedModel
+                    , emitSyncState (toSyncState updatedModel)
+                    )
+
+
+validateLiveSyncDatabaseId : Model -> Maybe String -> String -> Maybe String
+validateLiveSyncDatabaseId model actual eventName =
+    case Catchup.databaseId model.catchup of
+        Nothing ->
+            Nothing
+
+        Just expected ->
+            case actual of
+                Just actualId ->
+                    if actualId == expected then
+                        Nothing
+
+                    else
+                        Just ("Live sync " ++ eventName ++ " databaseId mismatch: expected " ++ expected ++ ", got " ++ actualId)
+
+                Nothing ->
+                    Just ("Live sync " ++ eventName ++ " missing databaseId: expected " ++ expected)
 
 
 handleQueryManagerIncoming : QueryManager.Incoming -> Model -> ( Model, List (Cmd Msg) )
@@ -608,6 +684,15 @@ subscriptions model =
                         -- Send error to console
                         Error ("Failed to decode QueryClient message: " ++ Decode.errorToString err)
             )
+        , receiveSyncControlMessage
+            (\jsonValue ->
+                case Decode.decodeValue decodeSyncControlMessage jsonValue of
+                    Ok incoming ->
+                        SyncControlReceived incoming
+
+                    Err err ->
+                        Error ("Failed to decode sync control message: " ++ Decode.errorToString err)
+            )
         ]
 
 
@@ -634,12 +719,15 @@ main =
                             , server =
                                 { baseUrl = ""
                                 , catchupPath = ""
+                                , databaseId = Nothing
                                 , headers = []
                                 , credentials = "same-origin"
                                 , withCredentials = False
                                 }
                             , liveSync =
                                 { transport = LiveSync.Sse }
+                            , sync =
+                                { autoStart = True }
                             }
         , update = update
         , subscriptions = subscriptions
@@ -648,7 +736,7 @@ main =
 
 decodeFlags : Decode.Decoder Flags
 decodeFlags =
-    Decode.map3 Flags
+    Decode.map4 Flags
         (Decode.field "schema" Data.Schema.decodeSchemaMetadata)
         (Decode.field "server" decodeServerConfig)
         (Decode.oneOf
@@ -656,13 +744,42 @@ decodeFlags =
             , Decode.succeed { transport = LiveSync.Sse }
             ]
         )
+        (Decode.oneOf
+            [ Decode.field "sync" decodeSyncConfig
+            , Decode.succeed { autoStart = True }
+            ]
+        )
+
+
+decodeSyncConfig : Decode.Decoder SyncConfig
+decodeSyncConfig =
+    Decode.map SyncConfig
+        (Decode.field "autoStart" Decode.bool)
+
+
+decodeSyncControlMessage : Decode.Decoder SyncControlMessage
+decodeSyncControlMessage =
+    Decode.field "type" Decode.string
+        |> Decode.andThen
+            (\type_ ->
+                case type_ of
+                    "startSync" ->
+                        Decode.succeed StartSync
+
+                    _ ->
+                        Decode.fail ("Unknown sync control message type: " ++ type_)
+            )
+
+
+port receiveSyncControlMessage : (Decode.Value -> msg) -> Sub msg
 
 
 decodeServerConfig : Decode.Decoder Catchup.ServerConfig
 decodeServerConfig =
-    Decode.map5 Catchup.ServerConfig
+    Decode.map6 Catchup.ServerConfig
         (Decode.field "baseUrl" Decode.string)
         (Decode.field "catchupPath" Decode.string)
+        (Decode.maybe (Decode.field "databaseId" Decode.string))
         (Decode.oneOf
             [ Decode.field "headers" decodeHeaders
             , Decode.succeed []

@@ -6,6 +6,9 @@
  */
 
 export { run } from "./query";
+export { databaseIdFromUrl, requireDatabaseId, withDatabaseId } from "./database-id";
+
+export type { DatabaseId } from "./database-id";
 
 // Export only the types that are part of the public API for the functions above
 export type {

@@ -47,6 +47,7 @@ let reshapeSyncTableGroupsMock = defaultReshapeSyncTableGroups;
 mock.module("./wasm/pyre_wasm.js", () => ({
   get_sync_status_sql: () => "select 1",
   get_sync_sql: () => getSyncSqlMock(),
+  calculate_sync_deltas: () => ({ groups: [] }),
   reshape_sync_table_groups: (groups: any) => reshapeSyncTableGroupsMock(groups),
 }));
 
@@ -110,6 +111,18 @@ test("catchup reshapes flattened custom types before returning sync rows", async
     },
     has_more: false,
   });
+});
+
+test("catchup stamps response with databaseId when provided", async () => {
+  getSyncSqlMock = () => ({ tables: [] });
+  const db = {
+    execute: mock(async () => ({ rows: [] })),
+    batch: mock(async () => ([])),
+  };
+
+  const result = await catchup(db as any, { tables: {} }, {}, 1000, "campaign:123");
+
+  expect(result.databaseId).toBe("campaign:123");
 });
 
 test("catchup normalizes bigint row values before reshaping", async () => {

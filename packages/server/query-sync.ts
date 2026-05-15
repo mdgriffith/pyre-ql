@@ -1,6 +1,7 @@
 import { Client } from "@libsql/client";
 import * as wasm from "./wasm/pyre_wasm.js";
 import { normalizeForWasmJson } from "./wasm-json";
+import { requireDatabaseId, type DatabaseId } from "./database-id";
 import {
   run,
   type QueryMap,
@@ -10,7 +11,10 @@ import {
   type SyncDeltasFn,
 } from "./query";
 
-const syncWithWasm: SyncDeltasFn = async (affectedRowGroups, connectedSessions, sendToSession) => {
+function syncWithWasmForDatabase(databaseId?: DatabaseId): SyncDeltasFn {
+  const normalizedDatabaseId = databaseId ? requireDatabaseId(databaseId) : undefined;
+
+  return async (affectedRowGroups, connectedSessions, sendToSession) => {
   const deltasResult = wasm.calculate_sync_deltas(affectedRowGroups, connectedSessions);
 
   if (typeof deltasResult === "string" && deltasResult.startsWith("Error:")) {
@@ -30,6 +34,7 @@ const syncWithWasm: SyncDeltasFn = async (affectedRowGroups, connectedSessions, 
 
     const deltaMessage = {
       type: "delta",
+      ...(normalizedDatabaseId ? { databaseId: normalizedDatabaseId } : {}),
       data: typeof reshapedTableGroupsResult === "string"
         ? JSON.parse(reshapedTableGroupsResult)
         : reshapedTableGroupsResult,
@@ -39,7 +44,10 @@ const syncWithWasm: SyncDeltasFn = async (affectedRowGroups, connectedSessions, 
       sendToSession(sessionId, deltaMessage);
     }
   }
-};
+  };
+}
+
+const syncWithWasm: SyncDeltasFn = syncWithWasmForDatabase();
 
 export async function runWithSync(
   db: Client,
@@ -47,7 +55,8 @@ export async function runWithSync(
   queryId: string,
   args: any,
   executingSession: Session,
-  connectedSessions?: Map<string, { session: Record<string, SessionValue>; [key: string]: any }>
+  connectedSessions?: Map<string, { session: Record<string, SessionValue>; [key: string]: any }>,
+  databaseId?: DatabaseId,
 ): Promise<QueryResult> {
-  return run(db, queryMap, queryId, args, executingSession, connectedSessions, syncWithWasm);
+  return run(db, queryMap, queryId, args, executingSession, connectedSessions, databaseId ? syncWithWasmForDatabase(databaseId) : syncWithWasm);
 }

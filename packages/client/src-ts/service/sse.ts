@@ -1,14 +1,17 @@
 import type { ElmApp } from '../types';
+import { resolveEndpointUrl, type DatabaseId } from '../routing';
 
 export interface SSEConfig {
   baseUrl: string;
   eventsPath: string;
   credentials?: RequestCredentials;
   withCredentials?: boolean;
+  databaseId?: DatabaseId;
 }
 
 export interface LiveSyncMessage {
   type: string;
+  databaseId?: string;
   connectionId?: string;
   data?: unknown;
   error?: string;
@@ -72,7 +75,7 @@ export class SSEManager {
     }
 
     try {
-      const sseUrl = `${this.config.baseUrl}${this.config.eventsPath}`;
+      const sseUrl = buildSSEUrl(this.config);
       this.debugLog('[PyreClient] SSE attempting connection', { sseUrl });
       const eventSource = new EventSource(sseUrl, {
         withCredentials: shouldIncludeCredentials(this.config),
@@ -85,13 +88,14 @@ export class SSEManager {
 
       eventSource.addEventListener('connected', (event: MessageEvent) => {
         try {
-          const message = JSON.parse(event.data) as { connectionId?: string };
+          const message = JSON.parse(event.data) as { connectionId?: string; databaseId?: string };
           const connectionId = message.connectionId;
           if (connectionId) {
             this.connectionId = connectionId;
             this.debugLog('[PyreClient] SSE connected', { connectionId });
             const connectedMessage = {
               type: 'connected',
+              databaseId: message.databaseId,
               connectionId,
             };
             this.emitMessage(connectedMessage);
@@ -108,9 +112,10 @@ export class SSEManager {
 
       eventSource.addEventListener('delta', (event: MessageEvent) => {
         try {
-          const message = JSON.parse(event.data) as { data?: unknown };
+          const message = JSON.parse(event.data) as { databaseId?: string; data?: unknown };
           const deltaMessage = {
             type: 'delta',
+            databaseId: message.databaseId,
             data: message.data,
           };
           this.emitMessage(deltaMessage);
@@ -121,9 +126,10 @@ export class SSEManager {
 
       eventSource.addEventListener('syncProgress', (event: MessageEvent) => {
         try {
-          const message = JSON.parse(event.data) as { data?: unknown };
+          const message = JSON.parse(event.data) as { databaseId?: string; data?: unknown };
           const progressMessage = {
             type: 'syncProgress',
+            databaseId: message.databaseId,
             data: message.data,
           };
           this.emitMessage(progressMessage);
@@ -132,9 +138,11 @@ export class SSEManager {
         }
       });
 
-      eventSource.addEventListener('syncComplete', () => {
+      eventSource.addEventListener('syncComplete', (event: MessageEvent) => {
+        const message = parseOptionalSSEData(event.data);
         const completeMessage = {
           type: 'syncComplete',
+          databaseId: message.databaseId,
         };
         this.emitMessage(completeMessage);
       });
@@ -181,6 +189,24 @@ export class SSEManager {
 
     this.connectionId = null;
   }
+}
+
+function parseOptionalSSEData(data: unknown): { databaseId?: string } {
+  if (typeof data !== 'string' || data.trim() === '') {
+    return {};
+  }
+
+  try {
+    return JSON.parse(data) as { databaseId?: string };
+  } catch {
+    return {};
+  }
+}
+
+export function buildSSEUrl(config: SSEConfig): string {
+  return resolveEndpointUrl(config.baseUrl, config.eventsPath, {
+    databaseId: config.databaseId,
+  });
 }
 
 function shouldIncludeCredentials(config: SSEConfig): boolean {

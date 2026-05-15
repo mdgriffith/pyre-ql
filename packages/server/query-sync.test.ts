@@ -104,3 +104,22 @@ test("runWithSync sends reshaped sync deltas", async () => {
     },
   ]);
 });
+
+test("runWithSync stamps sync deltas with databaseId", async () => {
+  const result = await runWithSync(
+    {} as any,
+    {} as any,
+    "query-id",
+    {},
+    {},
+    new Map([["s1", { session: {} }]]),
+    "campaign:123",
+  );
+
+  const sent: Array<{ sessionId: string; message: any }> = [];
+  await result.sync((sessionId, message) => {
+    sent.push({ sessionId, message });
+  });
+
+  expect(sent[0].message.databaseId).toBe("campaign:123");
+});

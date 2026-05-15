@@ -41,11 +41,11 @@ type Message
 
 
 type Incoming
-    = DeltaReceived Delta
-    | SyncProgressReceived SyncProgress
-    | LiveSyncConnected String
+    = DeltaReceived (Maybe String) Delta
+    | SyncProgressReceived (Maybe String) SyncProgress
+    | LiveSyncConnected (Maybe String) String
     | LiveSyncError String
-    | SyncCompleteReceived
+    | SyncCompleteReceived (Maybe String)
 
 
 port sseOut : Encode.Value -> Cmd msg
@@ -103,23 +103,27 @@ decodeIncoming =
             (\type_ ->
                 case type_ of
                     "delta" ->
-                        Decode.field "data" Data.Delta.decodeDelta
-                            |> Decode.map DeltaReceived
+                        Decode.map2 DeltaReceived
+                            (Decode.maybe (Decode.field "databaseId" Decode.string))
+                            (Decode.field "data" Data.Delta.decodeDelta)
 
                     "syncProgress" ->
-                        Decode.field "data" decodeSyncProgress
-                            |> Decode.map SyncProgressReceived
+                        Decode.map2 SyncProgressReceived
+                            (Decode.maybe (Decode.field "databaseId" Decode.string))
+                            (Decode.field "data" decodeSyncProgress)
 
                     "connected" ->
-                        Decode.field "connectionId" Decode.string
-                            |> Decode.map LiveSyncConnected
+                        Decode.map2 LiveSyncConnected
+                            (Decode.maybe (Decode.field "databaseId" Decode.string))
+                            (Decode.field "connectionId" Decode.string)
 
                     "error" ->
                         Decode.field "error" Decode.string
                             |> Decode.map LiveSyncError
 
                     "syncComplete" ->
-                        Decode.succeed SyncCompleteReceived
+                        Decode.maybe (Decode.field "databaseId" Decode.string)
+                            |> Decode.map SyncCompleteReceived
 
                     _ ->
                         Decode.fail ("Unknown live sync incoming type: " ++ type_)

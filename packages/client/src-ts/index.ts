@@ -4,6 +4,13 @@ import { QueryClientService } from './service/query-client';
 import { QueryManagerService, type MutationResult } from './service/query-manager';
 import { SSEManager, type LiveSyncMessage } from './service/sse';
 import { WebSocketManager } from './service/websocket';
+import {
+  deriveIndexedDbName,
+  requireDatabaseId,
+  resolveEndpointUrl,
+  type CacheNamespace,
+  type DatabaseId,
+} from './routing';
 import type {
   ElmApp,
   LiveSyncTransport,
@@ -27,7 +34,16 @@ export type {
   TableSyncStatus,
 } from './types';
 export type { MutationResult } from './service/query-manager';
+export type { CacheNamespace, DatabaseId } from './routing';
 
+interface PyreBridgeClient {
+  run<Input = unknown>(
+    databaseId: DatabaseId,
+    queryModule: QueryModule<Input>,
+    input: Input,
+    callback: (result: unknown) => void
+  ): QuerySubscription<Input> | void | Promise<QuerySubscription<Input> | void>;
+}
 
 export interface QueryModule<Input = unknown> {
   operation: 'query' | 'insert' | 'update' | 'delete' | 'mutation';
@@ -43,6 +59,7 @@ export interface QuerySubscription<Input = unknown> {
 }
 
 export interface RegisteredQuery<Input = unknown> {
+  databaseId: DatabaseId;
   queryId: string;
   querySource: unknown;
   input: Input;
@@ -104,6 +121,7 @@ export interface ElmBridgeApp {
 
 export interface ElmBridgeQueryMessage {
   type: 'register' | 'update-input' | 'unregister';
+  databaseId: DatabaseId;
   queryId: string;
   queryName?: string;
   querySource?: unknown;
@@ -112,6 +130,7 @@ export interface ElmBridgeQueryMessage {
 
 export interface ElmBridgeMutationMessage {
   type: 'mutate';
+  databaseId: DatabaseId;
   requestId: string;
   mutationId: string;
   mutationName?: string;
@@ -135,7 +154,7 @@ export interface ElmBridgeConfig {
   syncStatePort?: string;
   mutationResultPort?: string;
   onMutation?: (payload: {
-    client: PyreClient;
+    client: PyreBridgeClient;
     message: ElmBridgeMutationMessage;
   }) => Promise<void> | void;
   onError?: (error: Error, context: { phase: 'incoming-message' | 'mutation-handler' }) => void;
@@ -143,9 +162,12 @@ export interface ElmBridgeConfig {
 
 export interface PyreElmConfig extends ElmBridgeConfig {}
 
-export interface PyreClientConfig {
+interface SingleDatabasePyreClientConfig {
   schema: SchemaMetadata;
   server: ServerConfig;
+  databaseId?: DatabaseId;
+  cacheNamespace?: CacheNamespace;
+  autoStartSync?: boolean;
   resolvedHeaders?: Record<string, string>;
   indexedDbName?: string;
   debug?: boolean;
@@ -154,24 +176,71 @@ export interface PyreClientConfig {
   elm?: PyreElmConfig;
 }
 
-export interface PyreClientCreateConfig {
+interface SingleDatabasePyreClientCreateConfig {
   schema: SchemaMetadata;
   server?: ServerConfig;
+  databaseId?: DatabaseId;
+  cacheNamespace?: CacheNamespace;
+  autoStartSync?: boolean;
   indexedDbName?: string;
   debug?: boolean;
   onError?: (error: Error) => void;
   session?: Record<string, unknown>;
   connect?: () => Promise<{
     server: ServerConfig;
+    databaseId?: DatabaseId;
+    cacheNamespace?: CacheNamespace;
     session?: Record<string, unknown>;
   }> | {
     server: ServerConfig;
+    databaseId?: DatabaseId;
+    cacheNamespace?: CacheNamespace;
     session?: Record<string, unknown>;
   };
   elm?: PyreElmConfig;
 }
 
-export class PyreClient {
+export type PyreInternalClient = Pick<SingleDatabasePyreClient, 'run' | 'disconnect' | 'getDevtoolsSnapshot' | 'startSync' | 'onSyncState' | 'setSession'>;
+
+type PyreInternalClientFactory = (config: SingleDatabasePyreClientCreateConfig & {
+  databaseId: DatabaseId;
+  cacheNamespace: CacheNamespace;
+}) => Promise<PyreInternalClient>;
+
+export interface PyreClientConfig {
+  schema: SchemaMetadata;
+  server?: ServerConfig;
+  cacheNamespace?: CacheNamespace;
+  indexedDbName?: string;
+  debug?: boolean;
+  onError?: (error: Error) => void;
+  session?: Record<string, unknown>;
+  connect?: () => Promise<{
+    server: ServerConfig;
+    cacheNamespace?: CacheNamespace;
+    session?: Record<string, unknown>;
+  }> | {
+    server: ServerConfig;
+    cacheNamespace?: CacheNamespace;
+    session?: Record<string, unknown>;
+  };
+  createInternalClient?: PyreInternalClientFactory;
+  elm?: PyreElmConfig;
+}
+
+interface ResolvedPyreClientConfig {
+  schema: SchemaMetadata;
+  server: ServerConfig;
+  cacheNamespace: CacheNamespace;
+  indexedDbName?: string;
+  debug?: boolean;
+  onError?: (error: Error) => void;
+  session?: Record<string, unknown>;
+  createInternalClient: PyreInternalClientFactory;
+  elm?: PyreElmConfig;
+}
+
+class SingleDatabasePyreClient {
   private elmApp: ElmApp;
   private storage: IndexedDBStorage;
   private indexedDbService: IndexedDbService;
@@ -200,8 +269,11 @@ export class PyreClient {
   private devtoolsEventCounter = 0;
   private devtoolsEventCallbacks: Set<(event: PyreDevtoolsEvent) => void> = new Set();
 
-  constructor(config: PyreClientConfig) {
-    const dbName = config.indexedDbName ?? 'pyre-client';
+  constructor(config: SingleDatabasePyreClientConfig) {
+    const baseIndexedDbName = config.indexedDbName ?? 'pyre-client';
+    const dbName = config.cacheNamespace && config.databaseId
+      ? deriveIndexedDbName(baseIndexedDbName, config.cacheNamespace, config.databaseId)
+      : baseIndexedDbName;
     const liveSyncTransport = config.server.liveSyncTransport ?? 'sse';
     this.debug = config.debug ?? false;
     this.server = config.server;
@@ -235,12 +307,16 @@ export class PyreClient {
           server: {
             baseUrl: config.server.baseUrl,
             catchupPath: this.endpoints.catchup,
+            databaseId: config.databaseId ?? null,
             headers: serverHeadersToPairs(initialHeaders),
             credentials: getServerCredentials(config.server),
             withCredentials: shouldIncludeCredentials(config.server),
           },
           liveSync: {
             transport: liveSyncTransport,
+          },
+          sync: {
+            autoStart: config.autoStartSync ?? true,
           },
         },
       });
@@ -256,10 +332,12 @@ export class PyreClient {
       eventsPath: this.endpoints.events,
       credentials: config.server.credentials,
       withCredentials: config.server.withCredentials,
+      databaseId: config.databaseId,
     }, undefined, this.logDebug);
     this.webSocketManager = new WebSocketManager({
       baseUrl: config.server.baseUrl,
       eventsPath: this.endpoints.events,
+      databaseId: config.databaseId,
     }, undefined, this.logDebug);
     this.queryManager = new QueryManagerService(this.logDebug);
     this.queryClient = new QueryClientService(() => this.session, (payload) => {
@@ -313,9 +391,9 @@ export class PyreClient {
     }
   };
 
-  static async create(config: PyreClientCreateConfig): Promise<PyreClient> {
+  static async create(config: SingleDatabasePyreClientCreateConfig): Promise<SingleDatabasePyreClient> {
     const resolvedConfig = await resolveCreateConfig(config);
-    const client = new PyreClient(resolvedConfig);
+    const client = new SingleDatabasePyreClient(resolvedConfig);
     await client.init();
     if (resolvedConfig.elm) {
       client.bridgeCleanup = client.attachElmBridge(resolvedConfig.elm);
@@ -325,6 +403,10 @@ export class PyreClient {
 
   async init(): Promise<void> {
     await this.storage.init();
+  }
+
+  startSync(): void {
+    this.elmApp.ports.receiveSyncControlMessage?.send({ type: 'startSync' });
   }
 
   onSyncProgress(callback: (progress: SyncProgress) => void): () => void {
@@ -425,15 +507,18 @@ export class PyreClient {
   }
 
   run<Input = unknown>(
+    databaseId: DatabaseId,
     queryModule: QueryModule<Input>,
     input: Input,
     callback: (result: unknown) => void
   ): QuerySubscription<Input> | void {
+    const targetDatabaseId = requireDatabaseId(databaseId);
+
     if (queryModule.operation === 'query') {
-      return this.runQuery(queryModule, input, callback);
+      return this.runQuery(targetDatabaseId, queryModule, input, callback);
     }
 
-    this.runMutation(queryModule, input, callback);
+    this.runMutation(targetDatabaseId, queryModule, input, callback);
     return;
   }
 
@@ -665,6 +750,7 @@ export class PyreClient {
 
             const subscription = this.registerQuery(
               {
+                databaseId: message.databaseId,
                 queryId: message.queryId,
                 queryName,
                 querySource,
@@ -714,6 +800,7 @@ export class PyreClient {
   }
 
   private runQuery<Input>(
+    databaseId: DatabaseId,
     queryModule: QueryModule<Input>,
     input: Input,
     callback: (result: unknown) => void
@@ -732,6 +819,7 @@ export class PyreClient {
 
     return this.registerQuery(
       {
+        databaseId,
         queryId,
         querySource: queryShape,
         input: normalizedInput,
@@ -743,6 +831,7 @@ export class PyreClient {
   }
 
   private runMutation<Input>(
+    databaseId: DatabaseId,
     queryModule: QueryModule<Input>,
     input: Input,
     callback: (result: unknown) => void
@@ -755,8 +844,8 @@ export class PyreClient {
     const requestId = `mutation_${this.mutationCounter}_${Date.now()}`;
     this.mutationCounter += 1;
     const payload = input ?? {};
-    const baseUrl = `${this.server.baseUrl}${this.endpoints.query}`;
-    this.emitDevtoolsEvent('mutation:request', { requestId, mutationId, input: payload });
+    const baseUrl = resolveEndpointUrl(this.server.baseUrl, this.endpoints.query, { databaseId });
+    this.emitDevtoolsEvent('mutation:request', { requestId, mutationId, databaseId, input: payload });
     void (async () => {
       this.queryManager.sendMutation(
         requestId,
@@ -778,11 +867,14 @@ export class PyreClient {
     message: ElmBridgeMutationMessage,
     mutationResultPort?: ElmBridgePort
   ): void {
-    const baseUrl = `${this.server.baseUrl}${this.endpoints.query}`;
+    const baseUrl = resolveEndpointUrl(this.server.baseUrl, this.endpoints.query, {
+      databaseId: message.databaseId,
+    });
     this.emitDevtoolsEvent('mutation:request', {
       requestId: message.requestId,
       mutationId: message.mutationId,
       mutationName: message.mutationName,
+      databaseId: message.databaseId,
       input: message.mutationInput ?? {},
     });
     void (async () => {
@@ -830,6 +922,504 @@ export class PyreClient {
       callback(event);
     });
   }
+}
+
+export class PyreClient {
+  private config: ResolvedPyreClientConfig;
+  private clients: Map<DatabaseId, Promise<PyreInternalClient>> = new Map();
+  private clientGenerations: Map<DatabaseId, number> = new Map();
+  private syncedDatabaseIds: DatabaseId[] = [];
+  private syncingDatabaseId: DatabaseId | null = null;
+  private completedSyncDatabaseIds: Set<DatabaseId> = new Set();
+  private syncStateCallbacks: Set<(state: SyncState) => void> = new Set();
+  private latestSyncStates: Map<DatabaseId, SyncState> = new Map();
+  private bridgeCleanup: (() => void) | null = null;
+  private devtoolsDebugValues: Record<string, unknown> = {};
+  private devtoolsEventCounter = 0;
+  private devtoolsEventCallbacks: Set<(event: PyreDevtoolsEvent) => void> = new Set();
+
+  private constructor(config: ResolvedPyreClientConfig) {
+    this.config = config;
+  }
+
+  static async create(config: PyreClientConfig): Promise<PyreClient> {
+    const resolved = await resolveMultiCreateConfig(config);
+    const client = new PyreClient(resolved);
+    if (resolved.elm) {
+      client.attachElmBridge(resolved.elm);
+    }
+    return client;
+  }
+
+  run<Input = unknown>(
+    databaseId: DatabaseId,
+    queryModule: QueryModule<Input>,
+    input: Input,
+    callback: (result: unknown) => void
+  ): Promise<QuerySubscription<Input> | void> {
+    return this.getOrCreateClient(databaseId).then((client) => (
+      client.run(databaseId, queryModule, input, callback)
+    ));
+  }
+
+  async getOrCreateClient(databaseId: DatabaseId): Promise<PyreInternalClient> {
+    const targetDatabaseId = requireDatabaseId(databaseId);
+    const existing = this.clients.get(targetDatabaseId);
+    if (existing) {
+      return existing;
+    }
+
+    const generation = (this.clientGenerations.get(targetDatabaseId) ?? 0) + 1;
+    this.clientGenerations.set(targetDatabaseId, generation);
+
+    const created = this.config.createInternalClient(this.internalClientConfig(targetDatabaseId));
+    this.clients.set(targetDatabaseId, created);
+    void created.then((client) => {
+      this.watchInternalClient(targetDatabaseId, generation, client);
+    });
+    return created;
+  }
+
+  async setSyncedDatabases(databaseIds: DatabaseId[]): Promise<void> {
+    const nextDatabaseIds = dedupeDatabaseIds(databaseIds);
+    const nextSet = new Set(nextDatabaseIds);
+
+    const removedDatabaseIds = this.syncedDatabaseIds.filter((databaseId) => !nextSet.has(databaseId));
+    removedDatabaseIds.forEach((databaseId) => {
+      this.completedSyncDatabaseIds.delete(databaseId);
+      if (this.syncingDatabaseId === databaseId) {
+        this.syncingDatabaseId = null;
+      }
+      this.disconnectInternalClient(databaseId);
+    });
+
+    this.syncedDatabaseIds = nextDatabaseIds;
+
+    for (const databaseId of nextDatabaseIds) {
+      await this.getOrCreateClient(databaseId);
+    }
+
+    this.startNextSync();
+  }
+
+  async syncDatabase(databaseId: DatabaseId): Promise<void> {
+    const targetDatabaseId = requireDatabaseId(databaseId);
+    if (this.syncedDatabaseIds.includes(targetDatabaseId)) {
+      return;
+    }
+
+    await this.setSyncedDatabases([...this.syncedDatabaseIds, targetDatabaseId]);
+  }
+
+  async unsyncDatabase(databaseId: DatabaseId): Promise<void> {
+    const targetDatabaseId = requireDatabaseId(databaseId);
+    await this.setSyncedDatabases(this.syncedDatabaseIds.filter((id) => id !== targetDatabaseId));
+  }
+
+  getInternalIndexedDbName(databaseId: DatabaseId): string {
+    return deriveIndexedDbName(
+      this.config.indexedDbName ?? 'pyre-client',
+      this.config.cacheNamespace,
+      databaseId
+    );
+  }
+
+  getInternalDatabaseIds(): DatabaseId[] {
+    return Array.from(this.clients.keys());
+  }
+
+  getSyncedDatabaseIds(): DatabaseId[] {
+    return [...this.syncedDatabaseIds];
+  }
+
+  onSyncState(callback: (state: SyncState) => void): () => void {
+    this.syncStateCallbacks.add(callback);
+    callback(this.aggregateSyncState());
+    return () => {
+      this.syncStateCallbacks.delete(callback);
+    };
+  }
+
+  onSyncProgress(callback: (progress: SyncProgress) => void): () => void {
+    return this.onSyncState((state) => {
+      callback(toSyncProgress(state));
+    });
+  }
+
+  onDevtoolsEvent(callback: (event: PyreDevtoolsEvent) => void): () => void {
+    this.devtoolsEventCallbacks.add(callback);
+    return () => {
+      this.devtoolsEventCallbacks.delete(callback);
+    };
+  }
+
+  async getDevtoolsSnapshot(): Promise<PyreDevtoolsSnapshot> {
+    const firstClient = await Array.from(this.clients.values())[0];
+    if (firstClient) {
+      const snapshot = await firstClient.getDevtoolsSnapshot();
+      return {
+        ...snapshot,
+        indexedDbName: this.syncedDatabaseIds.length === 1
+          ? snapshot.indexedDbName
+          : this.config.indexedDbName ?? 'pyre-client',
+        syncState: this.aggregateSyncState(),
+        syncProgress: toSyncProgress(this.aggregateSyncState()),
+        debugValues: { ...snapshot.debugValues, ...this.devtoolsDebugValues },
+      };
+    }
+
+    const endpoints = {
+      catchup: '/sync',
+      events: '/sync/events',
+      query: '/db',
+      ...this.config.server.endpoints,
+    };
+
+    return {
+      schema: this.config.schema,
+      indexedDbName: this.config.indexedDbName ?? 'pyre-client',
+      server: {
+        baseUrl: this.config.server.baseUrl,
+        endpoints,
+        liveSyncTransport: this.config.server.liveSyncTransport ?? 'sse',
+        hasHeaders: hasServerHeaders(this.config.server),
+        credentials: getServerCredentials(this.config.server),
+        withCredentials: shouldIncludeCredentials(this.config.server),
+      },
+      connectionId: null,
+      syncState: this.aggregateSyncState(),
+      syncProgress: toSyncProgress(this.aggregateSyncState()),
+      debugValues: { ...this.devtoolsDebugValues },
+      tables: {},
+    };
+  }
+
+  setDevtoolsDebugValue(name: string, value: unknown): void {
+    if (value === undefined) {
+      delete this.devtoolsDebugValues[name];
+    } else {
+      this.devtoolsDebugValues[name] = value;
+    }
+    this.emitDevtoolsEvent('debug:value', { name, value });
+  }
+
+  getConnectionId(): string | null {
+    return null;
+  }
+
+  setSession(session: Record<string, unknown> | null): void {
+    this.config.session = session ?? {};
+    this.clients.forEach((clientPromise) => {
+      void clientPromise.then((client) => {
+        client.setSession(session);
+      });
+    });
+  }
+
+  attachElmBridge(config: ElmBridgeConfig): () => void {
+    this.bridgeCleanup?.();
+    const registrations = new Map<string, Promise<QuerySubscription<unknown> | void>>();
+    const receivePort = getElmBridgePort(config.app, config.receivePort ?? 'pyreStoreOut');
+    const queryResultPort = getElmBridgePort(config.app, config.queryResultPort ?? 'pyre_receiveQueryDelta');
+    const syncStatePort = config.syncStatePort
+      ? getElmBridgePort(config.app, config.syncStatePort)
+      : getElmBridgePort(config.app, 'pyre_receiveSyncState')
+      ;
+    const mutationResultPort = config.mutationResultPort
+      ? getElmBridgePort(config.app, config.mutationResultPort)
+      : getElmBridgePort(config.app, 'pyre_receiveMutationResult')
+      ;
+
+    const onSyncStateUnsubscribe = syncStatePort?.send
+      ? this.onSyncState((syncState) => {
+        syncStatePort.send?.({
+          status: syncState.status,
+          tables: syncState.tables,
+          error: syncState.error ? { message: syncState.error } : null,
+        });
+      })
+      : () => {};
+
+    const unsubscribeAll = () => {
+      registrations.forEach((subscriptionPromise) => {
+        void subscriptionPromise.then((subscription) => {
+          subscription?.unsubscribe();
+        });
+      });
+      registrations.clear();
+      onSyncStateUnsubscribe();
+      receivePort?.unsubscribe?.(handleIncoming);
+      if (this.bridgeCleanup === unsubscribeAll) {
+        this.bridgeCleanup = null;
+      }
+    };
+
+    const handleIncoming = (incoming: unknown) => {
+      void (async () => {
+        try {
+          const message = parseElmBridgeIncomingMessage(incoming);
+
+          if (message.type === 'mutate') {
+            if (config.onMutation) {
+              try {
+                await config.onMutation({ client: this, message });
+              } catch (error) {
+                reportElmBridgeError(config, error, 'mutation-handler');
+              }
+            } else {
+              await this.run(
+                message.databaseId,
+                { operation: 'mutation', id: message.mutationId },
+                message.mutationInput ?? {},
+                (result) => {
+                  mutationResultPort?.send?.({
+                    type: 'mutation-result',
+                    requestId: message.requestId,
+                    mutationId: message.mutationId,
+                    mutationName: message.mutationName ?? null,
+                    result: result as MutationResult,
+                  } satisfies ElmBridgeMutationResultMessage);
+                }
+              );
+            }
+            return;
+          }
+
+          if (message.type === 'register') {
+            const queryName = asNonEmptyString(message.queryName, 'register message queryName');
+            const querySource = asQueryShape(message.querySource);
+
+            const existingRegistration = registrations.get(message.queryId);
+            if (existingRegistration) {
+              void existingRegistration.then((subscription) => subscription?.unsubscribe());
+            }
+
+            const subscriptionPromise = Promise.resolve(this.run(
+              message.databaseId,
+              {
+                operation: 'query',
+                queryShape: querySource,
+              },
+              message.queryInput ?? {},
+              (result) => {
+                queryResultPort?.send?.({
+                  type: 'full',
+                  queryId: message.queryId,
+                  queryName,
+                  revision: Date.now(),
+                  result,
+                });
+              }
+            ));
+
+            registrations.set(message.queryId, subscriptionPromise);
+            return;
+          }
+
+          if (message.type === 'update-input') {
+            const registration = registrations.get(message.queryId);
+            if (!registration) {
+              throw new Error(`update-input for unknown query id: ${message.queryId}`);
+            }
+
+            const subscription = await registration;
+            subscription?.update(message.queryInput);
+            return;
+          }
+
+          const registration = registrations.get(message.queryId);
+          if (!registration) {
+            return;
+          }
+
+          const subscription = await registration;
+          subscription?.unsubscribe();
+          registrations.delete(message.queryId);
+        } catch (error) {
+          reportElmBridgeError(config, error, 'incoming-message');
+        }
+      })();
+    };
+
+    receivePort?.subscribe?.(handleIncoming);
+    this.bridgeCleanup = unsubscribeAll;
+    return unsubscribeAll;
+  }
+
+  disconnect(): void {
+    this.bridgeCleanup?.();
+    this.bridgeCleanup = null;
+    this.clients.forEach((clientPromise) => {
+      void clientPromise.then((client) => {
+        client.disconnect();
+      });
+    });
+    this.clients.clear();
+    this.clientGenerations.clear();
+    this.syncedDatabaseIds = [];
+    this.syncingDatabaseId = null;
+    this.completedSyncDatabaseIds.clear();
+    this.latestSyncStates.clear();
+    this.emitSyncState();
+  }
+
+  private startNextSync(): void {
+    if (this.syncingDatabaseId) {
+      return;
+    }
+
+    const nextDatabaseId = this.syncedDatabaseIds.find((databaseId) => !this.completedSyncDatabaseIds.has(databaseId));
+    if (!nextDatabaseId) {
+      return;
+    }
+
+    const clientPromise = this.clients.get(nextDatabaseId);
+    if (!clientPromise) {
+      return;
+    }
+
+    this.syncingDatabaseId = nextDatabaseId;
+    void clientPromise.then((client) => {
+      if (this.syncingDatabaseId !== nextDatabaseId || !this.syncedDatabaseIds.includes(nextDatabaseId)) {
+        return;
+      }
+
+      client.startSync();
+    });
+  }
+
+  private watchInternalClient(databaseId: DatabaseId, generation: number, client: PyreInternalClient): void {
+    client.onSyncState((state) => {
+      if (this.clientGenerations.get(databaseId) !== generation) {
+        return;
+      }
+
+      this.latestSyncStates.set(databaseId, state);
+      this.emitSyncState();
+
+      if (!this.syncedDatabaseIds.includes(databaseId)) {
+        return;
+      }
+
+      if (state.status !== 'live') {
+        return;
+      }
+
+      this.completedSyncDatabaseIds.add(databaseId);
+      if (this.syncingDatabaseId === databaseId) {
+        this.syncingDatabaseId = null;
+      }
+
+      this.startNextSync();
+    });
+  }
+
+  private disconnectInternalClient(databaseId: DatabaseId): void {
+    const clientPromise = this.clients.get(databaseId);
+    this.clients.delete(databaseId);
+    this.latestSyncStates.delete(databaseId);
+    this.emitSyncState();
+    this.clientGenerations.set(databaseId, (this.clientGenerations.get(databaseId) ?? 0) + 1);
+    if (!clientPromise) {
+      return;
+    }
+
+    void clientPromise.then((client) => {
+      client.disconnect();
+    });
+  }
+
+  private internalClientConfig(databaseId: DatabaseId): SingleDatabasePyreClientCreateConfig & {
+    databaseId: DatabaseId;
+    cacheNamespace: CacheNamespace;
+  } {
+    return {
+      schema: this.config.schema,
+      server: this.config.server,
+      databaseId,
+      cacheNamespace: this.config.cacheNamespace,
+      autoStartSync: false,
+      indexedDbName: this.config.indexedDbName,
+      debug: this.config.debug,
+      onError: this.config.onError,
+      session: this.config.session,
+    };
+  }
+
+  private emitSyncState(): void {
+    if (this.syncStateCallbacks.size === 0) {
+      return;
+    }
+
+    const state = this.aggregateSyncState();
+    this.syncStateCallbacks.forEach((callback) => {
+      callback(state);
+    });
+  }
+
+  private emitDevtoolsEvent(type: string, payload?: unknown): void {
+    if (this.devtoolsEventCallbacks.size === 0) {
+      return;
+    }
+
+    const event = {
+      id: this.devtoolsEventCounter,
+      timestamp: Date.now(),
+      type,
+      payload,
+    } satisfies PyreDevtoolsEvent;
+    this.devtoolsEventCounter += 1;
+
+    this.devtoolsEventCallbacks.forEach((callback) => {
+      callback(event);
+    });
+  }
+
+  private aggregateSyncState(): SyncState {
+    const activeStates = this.syncedDatabaseIds
+      .map((databaseId) => this.latestSyncStates.get(databaseId))
+      .filter((state): state is SyncState => Boolean(state));
+
+    if (activeStates.length === 0) {
+      return createInitialSyncState(this.config.schema);
+    }
+
+    const tables: Record<string, TableSyncStatus> = {};
+    Object.keys(this.config.schema.tables).forEach((tableName) => {
+      const tableStates = activeStates.map((state) => state.tables[tableName] ?? 'waiting');
+      if (tableStates.every((status) => status === 'live')) {
+        tables[tableName] = 'live';
+      } else if (tableStates.some((status) => status === 'catching_up')) {
+        tables[tableName] = 'catching_up';
+      } else {
+        tables[tableName] = 'waiting';
+      }
+    });
+
+    const errorState = activeStates.find((state) => state.error);
+    return {
+      status: activeStates.every((state) => state.status === 'live') ? 'live' : 'catching_up',
+      tables,
+      error: errorState?.error,
+    };
+  }
+}
+
+function dedupeDatabaseIds(databaseIds: DatabaseId[]): DatabaseId[] {
+  const seen = new Set<DatabaseId>();
+  const result: DatabaseId[] = [];
+
+  databaseIds.forEach((databaseId) => {
+    const targetDatabaseId = requireDatabaseId(databaseId);
+    if (seen.has(targetDatabaseId)) {
+      return;
+    }
+
+    seen.add(targetDatabaseId);
+    result.push(targetDatabaseId);
+  });
+
+  return result;
 }
 
 function createInitialSyncState(schema: SchemaMetadata): SyncState {
@@ -925,9 +1515,40 @@ function getElmBridgePort(app: ElmBridgeApp, portName: string): ElmBridgePort | 
   return app.ports?.[portName];
 }
 
-async function resolveCreateConfig(config: PyreClientCreateConfig): Promise<PyreClientConfig> {
+async function resolveCreateConfig(config: SingleDatabasePyreClientCreateConfig): Promise<SingleDatabasePyreClientConfig> {
   if ((config.server || config.session) && config.connect) {
     throw new Error('Provide either server/session or connect, not both');
+  }
+
+  const connected = config.connect ? await config.connect() : null;
+  const server = connected?.server ?? config.server;
+
+  if (!server) {
+    throw new Error('SingleDatabasePyreClient.create requires server or connect');
+  }
+
+  const session = connected?.session ?? config.session;
+  const databaseId = connected?.databaseId ?? config.databaseId;
+  const cacheNamespace = connected?.cacheNamespace ?? config.cacheNamespace;
+  const resolvedHeaders = await resolveServerHeaders(server);
+
+  return {
+    schema: config.schema,
+    server,
+    databaseId,
+    cacheNamespace,
+    autoStartSync: config.autoStartSync,
+    resolvedHeaders,
+    indexedDbName: config.indexedDbName,
+    onError: config.onError,
+    session,
+    elm: config.elm,
+  };
+}
+
+async function resolveMultiCreateConfig(config: PyreClientConfig): Promise<ResolvedPyreClientConfig> {
+  if ((config.server || config.session || config.cacheNamespace) && config.connect) {
+    throw new Error('Provide either server/session/cacheNamespace or connect, not both');
   }
 
   const connected = config.connect ? await config.connect() : null;
@@ -937,16 +1558,20 @@ async function resolveCreateConfig(config: PyreClientCreateConfig): Promise<Pyre
     throw new Error('PyreClient.create requires server or connect');
   }
 
-  const session = connected?.session ?? config.session;
-  const resolvedHeaders = await resolveServerHeaders(server);
+  const cacheNamespace = connected?.cacheNamespace ?? config.cacheNamespace;
+  if (!cacheNamespace) {
+    throw new Error('PyreClient.create requires cacheNamespace');
+  }
 
   return {
     schema: config.schema,
     server,
-    resolvedHeaders,
+    cacheNamespace,
     indexedDbName: config.indexedDbName,
+    debug: config.debug,
     onError: config.onError,
-    session,
+    session: connected?.session ?? config.session,
+    createInternalClient: config.createInternalClient ?? ((internalConfig) => SingleDatabasePyreClient.create(internalConfig)),
     elm: config.elm,
   };
 }
@@ -972,6 +1597,7 @@ function parseElmBridgeIncomingMessage(message: unknown): ElmBridgeIncomingMessa
   if (type === 'mutate') {
     return {
       type: 'mutate',
+      databaseId: requireDatabaseId(raw.databaseId, 'mutate message databaseId'),
       requestId: asNonEmptyString(raw.requestId, 'mutate message requestId'),
       mutationId: asNonEmptyString(raw.mutationId, 'mutate message mutationId'),
       mutationName: typeof raw.mutationName === 'string' && raw.mutationName.trim() !== '' ? raw.mutationName : undefined,
@@ -985,6 +1611,7 @@ function parseElmBridgeIncomingMessage(message: unknown): ElmBridgeIncomingMessa
 
   return {
     type,
+    databaseId: requireDatabaseId(raw.databaseId, 'Pyre bridge message databaseId'),
     queryId: asNonEmptyString(raw.queryId, 'Pyre bridge message queryId'),
     queryName: typeof raw.queryName === 'string' && raw.queryName.trim() !== '' ? raw.queryName : undefined,
     querySource: raw.querySource,

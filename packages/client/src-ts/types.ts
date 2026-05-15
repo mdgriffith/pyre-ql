@@ -87,6 +87,9 @@ export interface ElmPorts {
   receiveQueryClientMessage?: {
     send: (message: unknown) => void;
   };
+  receiveSyncControlMessage?: {
+    send: (message: unknown) => void;
+  };
 }
 
 export interface ElmApp {
@@ -104,6 +107,9 @@ export interface ElmFlags {
   };
   liveSync: {
     transport: LiveSyncTransport;
+  };
+  sync?: {
+    autoStart: boolean;
   };
 }
 

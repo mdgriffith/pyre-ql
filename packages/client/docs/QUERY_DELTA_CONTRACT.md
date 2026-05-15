@@ -13,7 +13,7 @@ flowchart LR
     Server[(Server)]
     IndexedDb[(IndexedDB)]
 
-    App -->|"run(query, input, cb)"| PyreClient
+    App -->|"run(databaseId, query, input, cb)"| PyreClient
     PyreClient --> QueryClient
     QueryClient -->|register/query input| DbClient
     DbClient <-->|sync| Server
@@ -22,13 +22,14 @@ flowchart LR
     QueryClient -->|result callback| App
 ```
 
-The application-facing API remains unchanged. This is a private internal split between DbClient and QueryClient.
+The application-facing API routes each query through an explicit server-defined database ID. This document covers the private internal split between DbClient and QueryClient after that routing decision has been made.
 
 ## External API (Unchanged)
 
 ```ts
-const pyreClient = new PyreClient({
+const pyreClient = await PyreClient.create({
   schema: schemaMetadata,
+  cacheNamespace: userId,
   server: {
     baseUrl: "http://localhost:3000",
     liveSyncTransport,
@@ -46,6 +47,7 @@ const pyreClient = new PyreClient({
 // Query for all users and all posts
 // The query will run immediately (may return empty), then re-run when sync completes
 const unsubscribe = client.pyreClient.run(
+  databaseId,
   ListUsersAndPosts,
   {},
   (result) => {

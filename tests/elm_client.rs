@@ -70,12 +70,12 @@ query GetGameWorld($slug: String) {
         content
     );
     assert!(
-        content.contains("type Query\n    = GetRulebookByName String Query.GetRulebookByName.Input\n    | GetGameWorld String Query.GetGameWorld.Input"),
+        content.contains("type Query\n    = GetRulebookByName String String Query.GetRulebookByName.Input\n    | GetGameWorld String String Query.GetGameWorld.Input"),
         "Pyre.elm should generate a Query type for outbound upserts. Generated:\n{}",
         content
     );
     assert!(
-        content.contains("type Msg\n    = QueryUpdate Query\n    | GetRulebookByName_DataReceived String Query.GetRulebookByName.QueryDelta\n    | GetRulebookByName_Unregistered String\n    | GetGameWorld_DataReceived String Query.GetGameWorld.QueryDelta\n    | GetGameWorld_Unregistered String"),
+        content.contains("type Msg\n    = QueryUpdate Query\n    | GetRulebookByName_DataReceived String Query.GetRulebookByName.QueryDelta\n    | GetRulebookByName_Unregistered String String\n    | GetGameWorld_DataReceived String Query.GetGameWorld.QueryDelta\n    | GetGameWorld_Unregistered String String"),
         "Pyre.elm should collapse register/update into QueryUpdate. Generated:\n{}",
         content
     );
@@ -86,8 +86,8 @@ query GetGameWorld($slug: String) {
     );
     assert!(
         content.contains("update msg model =\n    case msg of\n        QueryUpdate query ->\n            updateQuery query model")
-            && content.contains("updateQuery : Query -> Model -> ( Model, Effect )\nupdateQuery query model =\n    case query of\n        GetRulebookByName queryId input ->")
-            && content.contains("        GetGameWorld queryId input ->"),
+            && content.contains("updateQuery : Query -> Model -> ( Model, Effect )\nupdateQuery query model =\n    case query of\n        GetRulebookByName databaseId queryId input ->")
+            && content.contains("        GetGameWorld databaseId queryId input ->"),
         "Pyre.elm should delegate QueryUpdate handling to updateQuery. Generated:\n{}",
         content
     );
@@ -98,10 +98,10 @@ query GetGameWorld($slug: String) {
         content
     );
     assert!(
-        content.contains("Just queryModel ->\n                    ( { model | getRulebookByName = Dict.insert queryId { queryModel | input = input } model.getRulebookByName }\n                    , Send (encodeUpdateInput queryId Query.GetRulebookByName.queryShape (Query.GetRulebookByName.encode input))")
-            && content.contains("Nothing ->\n                    let\n                        queryModel =\n                            { input = input, result = Query.GetRulebookByName.ReturnData [], revision = 0 }\n                    in\n                    ( { model | getRulebookByName = Dict.insert queryId queryModel model.getRulebookByName }\n                    , Send (encodeRegister \"GetRulebookByName\" Query.GetRulebookByName.queryShape queryId (Query.GetRulebookByName.encode input))")
-            && content.contains("encodeRegister : String -> Encode.Value -> String -> Encode.Value -> Encode.Value\nencodeRegister queryName queryShape queryId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"register\" )\n        , ( \"queryName\", Encode.string queryName )\n        , ( \"querySource\", queryShape )")
-            && content.contains("encodeUpdateInput : String -> Encode.Value -> Encode.Value -> Encode.Value\nencodeUpdateInput queryId queryShape input =\n    Encode.object\n        [ ( \"type\", Encode.string \"update-input\" )\n        , ( \"queryId\", Encode.string queryId )\n        , ( \"querySource\", queryShape )"),
+        content.contains("Just queryModel ->\n                    ( { model | getRulebookByName = Dict.insert queryId { queryModel | input = input } model.getRulebookByName }\n                    , Send (encodeUpdateInput databaseId queryId Query.GetRulebookByName.queryShape (Query.GetRulebookByName.encode input))")
+            && content.contains("Nothing ->\n                    let\n                        queryModel =\n                            { input = input, result = Query.GetRulebookByName.ReturnData [], revision = 0 }\n                    in\n                    ( { model | getRulebookByName = Dict.insert queryId queryModel model.getRulebookByName }\n                    , Send (encodeRegister databaseId \"GetRulebookByName\" Query.GetRulebookByName.queryShape queryId (Query.GetRulebookByName.encode input))")
+            && content.contains("encodeRegister : String -> String -> Encode.Value -> String -> Encode.Value -> Encode.Value\nencodeRegister databaseId queryName queryShape queryId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"register\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"queryName\", Encode.string queryName )\n        , ( \"querySource\", queryShape )")
+            && content.contains("encodeUpdateInput : String -> String -> Encode.Value -> Encode.Value -> Encode.Value\nencodeUpdateInput databaseId queryId queryShape input =\n    Encode.object\n        [ ( \"type\", Encode.string \"update-input\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"queryId\", Encode.string queryId )\n        , ( \"querySource\", queryShape )"),
         "Pyre.elm should upsert queries by id. Generated:\n{}",
         content
     );
@@ -156,7 +156,7 @@ insert CreatePost($title: String) {
     assert!(
         content.contains("id : String\nid =\n    \"")
             && content.contains("name : String\nname =\n    \"CreatePost\"")
-            && content.contains("mutationRequest : String -> Input -> Encode.Value\nmutationRequest requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]")
+            && content.contains("mutationRequest : String -> String -> Input -> Encode.Value\nmutationRequest databaseId requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]")
             && content.contains("type alias MutationResult =\n    { requestId : String\n    , mutationId : String\n    , mutationName : Maybe String\n    , result : Result String ReturnData\n    }")
             && content.contains("decodeMutationResult : Decode.Decoder MutationResult")
             && content.contains("decodeBridgeMutationResult : Decode.Decoder value -> Decode.Decoder (Result String value)"),

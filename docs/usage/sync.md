@@ -154,7 +154,9 @@ Information moves through the system in three main paths:
 import { PyreClient } from '@pyre/client';
 import { schemaMetadata } from './pyre/generated/typescript/core/schema';
 
-const client = new PyreClient({
+const bootstrap = await fetch('/bootstrap').then((response) => response.json());
+
+const client = await PyreClient.create({
   schema: schemaMetadata,
   server: {
     baseUrl: 'http://localhost:3000',
@@ -167,9 +169,10 @@ const client = new PyreClient({
   session: {
     userId: 1,
   },
+  cacheNamespace: bootstrap.userId,
 });
 
-await client.init();
+await client.setSyncedDatabases([bootstrap.mainDatabaseId]);
 ```
 
 ### Optional devtools
@@ -307,7 +310,7 @@ The intended flow is:
 
 For mutations, the flow is:
 
-1. Elm sends a generated `Query.SomeMutation.mutationRequest requestId input` payload
+1. Elm sends a generated `Query.SomeMutation.mutationRequest databaseId requestId input` payload
 2. Your JS/TS host forwards that payload to `PyreClient`
 3. `PyreClient` POSTs the mutation to the server using `mutationId`
 4. `PyreClient` forwards the immediate mutation result back into Elm with the same `requestId`

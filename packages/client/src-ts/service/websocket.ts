@@ -1,8 +1,10 @@
 import type { LiveSyncMessage } from './sse';
+import { resolveEndpointUrl, type DatabaseId } from '../routing';
 
 export interface WebSocketConfig {
   baseUrl: string;
   eventsPath: string;
+  databaseId?: DatabaseId;
   reconnectDelayMs?: number;
 }
 
@@ -110,7 +112,9 @@ export class WebSocketManager {
   }
 
   private buildWebSocketUrl(): string {
-    const url = new URL(this.config.eventsPath, this.config.baseUrl);
+    const url = new URL(resolveEndpointUrl(this.config.baseUrl, this.config.eventsPath, {
+      databaseId: this.config.databaseId,
+    }));
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return url.toString();
   }
@@ -126,4 +130,12 @@ export class WebSocketManager {
       this.socket = null;
     }
   }
+}
+
+export function buildWebSocketUrl(config: WebSocketConfig): string {
+  const url = new URL(resolveEndpointUrl(config.baseUrl, config.eventsPath, {
+    databaseId: config.databaseId,
+  }));
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.toString();
 }

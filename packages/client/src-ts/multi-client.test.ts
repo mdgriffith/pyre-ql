@@ -1,0 +1,416 @@
+// @ts-nocheck
+import { expect, test } from 'bun:test';
+
+import { PyreClient } from './index';
+
+const schema = {
+  tables: {},
+  queryFieldToTable: {},
+};
+
+const server = {
+  baseUrl: 'https://api.example.test',
+};
+
+function fakeInternalClient(disconnects: string[], databaseId: string, starts: string[] = []) {
+  const syncStateCallbacks: Array<(state: { status: string; tables: Record<string, string> }) => void> = [];
+  return {
+    run(receivedDatabaseId: string) {
+      if (receivedDatabaseId !== databaseId) {
+        throw new Error(`expected ${databaseId}, got ${receivedDatabaseId}`);
+      }
+      return undefined;
+    },
+    disconnect() {
+      disconnects.push(databaseId);
+    },
+    startSync() {
+      starts.push(databaseId);
+    },
+    onSyncState(callback: (state: { status: string; tables: Record<string, string> }) => void) {
+      syncStateCallbacks.push(callback);
+      callback({ status: 'not_started', tables: {} });
+      return () => {};
+    },
+    emitLive() {
+      syncStateCallbacks.forEach((callback) => callback({ status: 'live', tables: {} }));
+    },
+    async getDevtoolsSnapshot() {
+      return {};
+    },
+  };
+}
+
+function fakePort() {
+  let callback: ((message: unknown) => void) | null = null;
+  const sent: unknown[] = [];
+  return {
+    sent,
+    port: {
+      subscribe(next: (message: unknown) => void) {
+        callback = next;
+      },
+      unsubscribe() {
+        callback = null;
+      },
+      send(message: unknown) {
+        sent.push(message);
+      },
+    },
+    emit(message: unknown) {
+      callback?.(message);
+    },
+  };
+}
+
+test('PyreClient requires cacheNamespace', async () => {
+  await expect(PyreClient.create({
+    schema,
+    server,
+  })).rejects.toThrow('PyreClient.create requires cacheNamespace');
+});
+
+test('PyreClient creates one internal client per databaseId', async () => {
+  const createdConfigs: any[] = [];
+  const disconnects: string[] = [];
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    indexedDbName: 'pyre-client',
+    createInternalClient: async (config) => {
+      createdConfigs.push(config);
+      return fakeInternalClient(disconnects, config.databaseId);
+    },
+  });
+
+  await client.run('campaign:123', { operation: 'insert', id: 'CreateNote' }, {}, () => {});
+  await client.run('campaign:456', { operation: 'insert', id: 'CreateNote' }, {}, () => {});
+  await client.run('campaign:123', { operation: 'insert', id: 'CreateNote' }, {}, () => {});
+
+  expect(createdConfigs.map((config) => config.databaseId)).toEqual([
+    'campaign:123',
+    'campaign:456',
+  ]);
+  expect(client.getInternalDatabaseIds()).toEqual(['campaign:123', 'campaign:456']);
+  expect(createdConfigs.every((config) => config.autoStartSync === false)).toBe(true);
+
+  client.disconnect();
+  await Bun.sleep(0);
+  expect(disconnects.sort()).toEqual(['campaign:123', 'campaign:456']);
+});
+
+test('PyreClient derives readable separate IndexedDB names per databaseId', async () => {
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user:42',
+    indexedDbName: 'pyre-client',
+    createInternalClient: async (config) => fakeInternalClient([], config.databaseId),
+  });
+
+  const campaign123 = client.getInternalIndexedDbName('campaign:123');
+  const campaign456 = client.getInternalIndexedDbName('campaign:456');
+
+  expect(campaign123).toStartWith('pyre-client:user_42:campaign_123_');
+  expect(campaign456).toStartWith('pyre-client:user_42:campaign_456_');
+  expect(campaign123).not.toBe(campaign456);
+});
+
+test('setSyncedDatabases preserves order and dedupes databaseIds', async () => {
+  const createdConfigs: any[] = [];
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => {
+      createdConfigs.push(config);
+      return fakeInternalClient([], config.databaseId);
+    },
+  });
+
+  await client.setSyncedDatabases(['main', 'campaign:123', 'main', 'campaign:456']);
+
+  expect(client.getSyncedDatabaseIds()).toEqual(['main', 'campaign:123', 'campaign:456']);
+  expect(createdConfigs.map((config) => config.databaseId)).toEqual(['main', 'campaign:123', 'campaign:456']);
+});
+
+test('setSyncedDatabases reuses existing clients and disconnects removed databases', async () => {
+  const createdConfigs: any[] = [];
+  const disconnects: string[] = [];
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => {
+      createdConfigs.push(config);
+      return fakeInternalClient(disconnects, config.databaseId);
+    },
+  });
+
+  await client.setSyncedDatabases(['main', 'campaign:123']);
+  await client.setSyncedDatabases(['campaign:123', 'campaign:456']);
+  await Bun.sleep(0);
+
+  expect(client.getSyncedDatabaseIds()).toEqual(['campaign:123', 'campaign:456']);
+  expect(createdConfigs.map((config) => config.databaseId)).toEqual(['main', 'campaign:123', 'campaign:456']);
+  expect(disconnects).toEqual(['main']);
+  expect(client.getInternalDatabaseIds()).toEqual(['campaign:123', 'campaign:456']);
+});
+
+test('syncDatabase and unsyncDatabase update active set incrementally', async () => {
+  const disconnects: string[] = [];
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => fakeInternalClient(disconnects, config.databaseId),
+  });
+
+  await client.syncDatabase('main');
+  await client.syncDatabase('campaign:123');
+  await client.syncDatabase('main');
+  await client.unsyncDatabase('main');
+  await Bun.sleep(0);
+
+  expect(client.getSyncedDatabaseIds()).toEqual(['campaign:123']);
+  expect(disconnects).toEqual(['main']);
+});
+
+test('setSyncedDatabases rejects missing databaseIds', async () => {
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => fakeInternalClient([], config.databaseId),
+  });
+
+  await expect(client.setSyncedDatabases(['main', ''])).rejects.toThrow('databaseId is required');
+});
+
+test('setSyncedDatabases starts sync one database at a time in order', async () => {
+  const starts: string[] = [];
+  const clients = new Map<string, ReturnType<typeof fakeInternalClient>>();
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => {
+      const internalClient = fakeInternalClient([], config.databaseId, starts);
+      clients.set(config.databaseId, internalClient);
+      return internalClient;
+    },
+  });
+
+  await client.setSyncedDatabases(['main', 'campaign:123', 'campaign:456']);
+  await Bun.sleep(0);
+
+  expect(starts).toEqual(['main']);
+
+  clients.get('main')?.emitLive();
+  await Bun.sleep(0);
+  expect(starts).toEqual(['main', 'campaign:123']);
+
+  clients.get('campaign:123')?.emitLive();
+  await Bun.sleep(0);
+  expect(starts).toEqual(['main', 'campaign:123', 'campaign:456']);
+});
+
+test('setSyncedDatabases does not start removed pending databases', async () => {
+  const starts: string[] = [];
+  const clients = new Map<string, ReturnType<typeof fakeInternalClient>>();
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => {
+      const internalClient = fakeInternalClient([], config.databaseId, starts);
+      clients.set(config.databaseId, internalClient);
+      return internalClient;
+    },
+  });
+
+  await client.setSyncedDatabases(['main', 'campaign:123']);
+  await Bun.sleep(0);
+  await client.setSyncedDatabases(['main']);
+  clients.get('main')?.emitLive();
+  await Bun.sleep(0);
+
+  expect(starts).toEqual(['main']);
+});
+
+test('removing active database disconnects it and starts next eligible database', async () => {
+  const starts: string[] = [];
+  const disconnects: string[] = [];
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => fakeInternalClient(disconnects, config.databaseId, starts),
+  });
+
+  await client.setSyncedDatabases(['main', 'campaign:123']);
+  await Bun.sleep(0);
+  await client.setSyncedDatabases(['campaign:123']);
+  await Bun.sleep(0);
+
+  expect(starts).toEqual(['main', 'campaign:123']);
+  expect(disconnects).toEqual(['main']);
+});
+
+test('stale live events from removed clients are ignored', async () => {
+  const starts: string[] = [];
+  const clients = new Map<string, ReturnType<typeof fakeInternalClient>>();
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => {
+      const internalClient = fakeInternalClient([], config.databaseId, starts);
+      clients.set(config.databaseId, internalClient);
+      return internalClient;
+    },
+  });
+
+  await client.setSyncedDatabases(['main', 'campaign:123', 'campaign:456']);
+  await Bun.sleep(0);
+  await client.setSyncedDatabases(['campaign:456']);
+  await Bun.sleep(0);
+  clients.get('main')?.emitLive();
+  await Bun.sleep(0);
+
+  expect(starts).toEqual(['main', 'campaign:456']);
+});
+
+test('reordering pending databases changes the next sync priority', async () => {
+  const starts: string[] = [];
+  const clients = new Map<string, ReturnType<typeof fakeInternalClient>>();
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => {
+      const internalClient = fakeInternalClient([], config.databaseId, starts);
+      clients.set(config.databaseId, internalClient);
+      return internalClient;
+    },
+  });
+
+  await client.setSyncedDatabases(['main', 'campaign:123', 'campaign:456']);
+  await Bun.sleep(0);
+  await client.setSyncedDatabases(['main', 'campaign:456', 'campaign:123']);
+  clients.get('main')?.emitLive();
+  await Bun.sleep(0);
+
+  expect(starts).toEqual(['main', 'campaign:456']);
+});
+
+test('Elm bridge routes register messages by databaseId', async () => {
+  const receivedRuns: any[] = [];
+  const outbound = fakePort();
+  const results = fakePort();
+  await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => ({
+      ...fakeInternalClient([], config.databaseId),
+      run(databaseId: string, queryModule: any, input: unknown, callback: (result: unknown) => void) {
+        receivedRuns.push({ databaseId, queryModule, input });
+        callback({ rows: [databaseId] });
+        return {
+          update() {},
+          unsubscribe() {},
+        };
+      },
+    }),
+    elm: {
+      app: {
+        ports: {
+          pyreStoreOut: outbound.port,
+          pyre_receiveQueryDelta: results.port,
+        },
+      },
+    },
+  });
+
+  outbound.emit({
+    type: 'register',
+    databaseId: 'campaign:123',
+    queryId: 'q1',
+    queryName: 'CampaignNotes',
+    querySource: { note: {} },
+    queryInput: { limit: 10 },
+  });
+  await Bun.sleep(0);
+
+  expect(receivedRuns).toEqual([
+    {
+      databaseId: 'campaign:123',
+      queryModule: { operation: 'query', queryShape: { note: {} } },
+      input: { limit: 10 },
+    },
+  ]);
+  expect(results.sent).toEqual([
+    {
+      type: 'full',
+      queryId: 'q1',
+      queryName: 'CampaignNotes',
+      revision: expect.any(Number),
+      result: { rows: ['campaign:123'] },
+    },
+  ]);
+});
+
+test('Elm bridge routes mutation messages by databaseId', async () => {
+  const receivedRuns: any[] = [];
+  const outbound = fakePort();
+  const results = fakePort();
+  await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => ({
+      ...fakeInternalClient([], config.databaseId),
+      run(databaseId: string, queryModule: any, input: unknown, callback: (result: unknown) => void) {
+        receivedRuns.push({ databaseId, queryModule, input });
+        callback({ kind: 'success' });
+      },
+    }),
+    elm: {
+      app: {
+        ports: {
+          pyreStoreOut: outbound.port,
+          pyre_receiveMutationResult: results.port,
+        },
+      },
+    },
+  });
+
+  outbound.emit({
+    type: 'mutate',
+    databaseId: 'campaign:123',
+    requestId: 'm1',
+    mutationId: 'CreateNote',
+    mutationName: 'CreateNote',
+    mutationInput: { body: 'Hello' },
+  });
+  await Bun.sleep(0);
+
+  expect(receivedRuns).toEqual([
+    {
+      databaseId: 'campaign:123',
+      queryModule: { operation: 'mutation', id: 'CreateNote' },
+      input: { body: 'Hello' },
+    },
+  ]);
+  expect(results.sent).toEqual([
+    {
+      type: 'mutation-result',
+      requestId: 'm1',
+      mutationId: 'CreateNote',
+      mutationName: 'CreateNote',
+      result: { kind: 'success' },
+    },
+  ]);
+});

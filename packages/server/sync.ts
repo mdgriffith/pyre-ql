@@ -1,6 +1,7 @@
 import { Client } from "@libsql/client";
 import * as wasm from "./wasm/pyre_wasm.js";
 import { normalizeForWasmJson } from "./wasm-json";
+import { requireDatabaseId, type DatabaseId } from "./database-id";
 
 export type SessionValue = null | number | string | Uint8Array;
 
@@ -18,6 +19,7 @@ export interface SyncCursor {
  * Result of a sync page request.
  */
 export interface SyncPageResult {
+    databaseId?: DatabaseId;
     tables: Record<
         string,
         {
@@ -110,7 +112,8 @@ export async function catchup(
     db: Client,
     syncCursor: SyncCursor,
     session: SyncSession,
-    pageSize: number = 1000
+    pageSize: number = 1000,
+    databaseId?: DatabaseId,
 ): Promise<SyncPageResult> {
     // Step 1: Get sync status SQL
     const statusSql = wasm.get_sync_status_sql(syncCursor, session);
@@ -133,6 +136,7 @@ export async function catchup(
             : syncSqlResult;
 
     const result: SyncPageResult = {
+        ...(databaseId ? { databaseId: requireDatabaseId(databaseId) } : {}),
         tables: {},
         has_more: false,
     };

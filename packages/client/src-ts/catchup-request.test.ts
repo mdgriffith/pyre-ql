@@ -107,6 +107,343 @@ test('Elm catchup request includes restored syncCursor on startup', async () => 
   }
 });
 
+test('Elm catchup request includes databaseId when configured', async () => {
+  const requestedUrls: string[] = [];
+  const previousXmlHttpRequest = globalThis.XMLHttpRequest;
+
+  class MockXMLHttpRequest {
+    listeners: Record<string, Array<() => void>> = {};
+    status = 200;
+    statusText = 'OK';
+    responseURL = '';
+    responseType = '';
+    response = JSON.stringify({ databaseId: 'campaign:123', tables: {}, has_more: false });
+    timeout = 0;
+    withCredentials = false;
+
+    addEventListener(type: string, callback: () => void) {
+      this.listeners[type] = this.listeners[type] ?? [];
+      this.listeners[type].push(callback);
+    }
+
+    open(_method: string, url: string) {
+      this.responseURL = url;
+      requestedUrls.push(url);
+    }
+
+    setRequestHeader() {}
+
+    send() {
+      queueMicrotask(() => {
+        (this.listeners.load ?? []).forEach((listener) => listener());
+      });
+    }
+
+    abort() {}
+
+    getAllResponseHeaders() {
+      return '';
+    }
+  }
+
+  globalThis.XMLHttpRequest = MockXMLHttpRequest;
+
+  try {
+    const Elm = loadElm(Object.create(globalThis));
+    const app = Elm.Main.init({
+      flags: {
+        schema,
+        server: {
+          baseUrl: 'http://example.test',
+          catchupPath: '/sync',
+          databaseId: 'campaign:123',
+        },
+        liveSync: {
+          transport: 'sse',
+        },
+      },
+    });
+
+    app.ports.indexedDbOut.subscribe((message) => {
+      if (message?.type !== 'requestInitialData') {
+        return;
+      }
+
+      app.ports.receiveIndexedDbMessage.send({
+        type: 'initialData',
+        data: {
+          tables: { maps: [] },
+          cursor: { tables: {} },
+        },
+      });
+    });
+
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(requestedUrls).toHaveLength(1);
+    const url = new URL(requestedUrls[0]);
+    expect(url.searchParams.get('databaseId')).toBe('campaign:123');
+  } finally {
+    globalThis.XMLHttpRequest = previousXmlHttpRequest;
+  }
+});
+
+test('Elm catchup waits for startSync when autoStart is false', async () => {
+  const requestedUrls: string[] = [];
+  const previousXmlHttpRequest = globalThis.XMLHttpRequest;
+
+  class MockXMLHttpRequest {
+    listeners: Record<string, Array<() => void>> = {};
+    status = 200;
+    statusText = 'OK';
+    responseURL = '';
+    responseType = '';
+    response = JSON.stringify({ databaseId: 'campaign:123', tables: {}, has_more: false });
+    timeout = 0;
+    withCredentials = false;
+
+    addEventListener(type: string, callback: () => void) {
+      this.listeners[type] = this.listeners[type] ?? [];
+      this.listeners[type].push(callback);
+    }
+
+    open(_method: string, url: string) {
+      this.responseURL = url;
+      requestedUrls.push(url);
+    }
+
+    setRequestHeader() {}
+
+    send() {
+      queueMicrotask(() => {
+        (this.listeners.load ?? []).forEach((listener) => listener());
+      });
+    }
+
+    abort() {}
+
+    getAllResponseHeaders() {
+      return '';
+    }
+  }
+
+  globalThis.XMLHttpRequest = MockXMLHttpRequest;
+
+  try {
+    const Elm = loadElm(Object.create(globalThis));
+    const app = Elm.Main.init({
+      flags: {
+        schema,
+        server: {
+          baseUrl: 'http://example.test',
+          catchupPath: '/sync',
+          databaseId: 'campaign:123',
+        },
+        liveSync: {
+          transport: 'sse',
+        },
+        sync: {
+          autoStart: false,
+        },
+      },
+    });
+
+    app.ports.indexedDbOut.subscribe((message) => {
+      if (message?.type !== 'requestInitialData') {
+        return;
+      }
+
+      app.ports.receiveIndexedDbMessage.send({
+        type: 'initialData',
+        data: {
+          tables: { maps: [] },
+          cursor: { tables: {} },
+        },
+      });
+    });
+
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+    expect(requestedUrls).toHaveLength(0);
+
+    app.ports.receiveSyncControlMessage.send({ type: 'startSync' });
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(requestedUrls).toHaveLength(1);
+    expect(new URL(requestedUrls[0]).searchParams.get('databaseId')).toBe('campaign:123');
+  } finally {
+    globalThis.XMLHttpRequest = previousXmlHttpRequest;
+  }
+});
+
+test('Elm catchup rejects missing response databaseId when configured', async () => {
+  const errors: string[] = [];
+  const previousXmlHttpRequest = globalThis.XMLHttpRequest;
+
+  class MockXMLHttpRequest {
+    listeners: Record<string, Array<() => void>> = {};
+    status = 200;
+    statusText = 'OK';
+    responseURL = '';
+    responseType = '';
+    response = JSON.stringify({ tables: {}, has_more: false });
+    timeout = 0;
+    withCredentials = false;
+
+    addEventListener(type: string, callback: () => void) {
+      this.listeners[type] = this.listeners[type] ?? [];
+      this.listeners[type].push(callback);
+    }
+
+    open(_method: string, url: string) {
+      this.responseURL = url;
+    }
+
+    setRequestHeader() {}
+
+    send() {
+      queueMicrotask(() => {
+        (this.listeners.load ?? []).forEach((listener) => listener());
+      });
+    }
+
+    abort() {}
+
+    getAllResponseHeaders() {
+      return '';
+    }
+  }
+
+  globalThis.XMLHttpRequest = MockXMLHttpRequest;
+
+  try {
+    const Elm = loadElm(Object.create(globalThis));
+    const app = Elm.Main.init({
+      flags: {
+        schema,
+        server: {
+          baseUrl: 'http://example.test',
+          catchupPath: '/sync',
+          databaseId: 'campaign:123',
+        },
+        liveSync: {
+          transport: 'sse',
+        },
+      },
+    });
+
+    app.ports.errorOut.subscribe((message) => {
+      errors.push(message);
+    });
+
+    app.ports.indexedDbOut.subscribe((message) => {
+      if (message?.type !== 'requestInitialData') {
+        return;
+      }
+
+      app.ports.receiveIndexedDbMessage.send({
+        type: 'initialData',
+        data: {
+          tables: { maps: [] },
+          cursor: { tables: {} },
+        },
+      });
+    });
+
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(errors).toContain('Catchup response missing databaseId: expected campaign:123');
+  } finally {
+    globalThis.XMLHttpRequest = previousXmlHttpRequest;
+  }
+});
+
+test('Elm catchup rejects mismatched response databaseId', async () => {
+  const errors: string[] = [];
+  const previousXmlHttpRequest = globalThis.XMLHttpRequest;
+
+  class MockXMLHttpRequest {
+    listeners: Record<string, Array<() => void>> = {};
+    status = 200;
+    statusText = 'OK';
+    responseURL = '';
+    responseType = '';
+    response = JSON.stringify({ databaseId: 'campaign:456', tables: {}, has_more: false });
+    timeout = 0;
+    withCredentials = false;
+
+    addEventListener(type: string, callback: () => void) {
+      this.listeners[type] = this.listeners[type] ?? [];
+      this.listeners[type].push(callback);
+    }
+
+    open(_method: string, url: string) {
+      this.responseURL = url;
+    }
+
+    setRequestHeader() {}
+
+    send() {
+      queueMicrotask(() => {
+        (this.listeners.load ?? []).forEach((listener) => listener());
+      });
+    }
+
+    abort() {}
+
+    getAllResponseHeaders() {
+      return '';
+    }
+  }
+
+  globalThis.XMLHttpRequest = MockXMLHttpRequest;
+
+  try {
+    const Elm = loadElm(Object.create(globalThis));
+    const app = Elm.Main.init({
+      flags: {
+        schema,
+        server: {
+          baseUrl: 'http://example.test',
+          catchupPath: '/sync',
+          databaseId: 'campaign:123',
+        },
+        liveSync: {
+          transport: 'sse',
+        },
+      },
+    });
+
+    app.ports.errorOut.subscribe((message) => {
+      errors.push(message);
+    });
+
+    app.ports.indexedDbOut.subscribe((message) => {
+      if (message?.type !== 'requestInitialData') {
+        return;
+      }
+
+      app.ports.receiveIndexedDbMessage.send({
+        type: 'initialData',
+        data: {
+          tables: { maps: [] },
+          cursor: { tables: {} },
+        },
+      });
+    });
+
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(errors).toContain('Catchup response databaseId mismatch: expected campaign:123, got campaign:456');
+  } finally {
+    globalThis.XMLHttpRequest = previousXmlHttpRequest;
+  }
+});
+
 test('Elm catchup request includes credentials and headers when configured', async () => {
   const requestCredentials: boolean[] = [];
   const requestHeaders: Record<string, string> = {};

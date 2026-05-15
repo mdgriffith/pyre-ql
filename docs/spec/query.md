@@ -577,14 +577,15 @@ Each generated mutation module must expose:
 
 - `id : String` using the mutation interface hash
 - `name : String` using the mutation name from the `.pyre` definition
-- `mutationRequest : String -> Input -> Encode.Value`
+- `mutationRequest : String -> String -> Input -> Encode.Value`
 - `decodeMutationResult : Decode.Decoder MutationResult`
 
-`mutationRequest requestId input` must encode this payload shape:
+`mutationRequest databaseId requestId input` must encode this payload shape:
 
 ```json
 {
   "type": "mutate",
+  "databaseId": "main",
   "requestId": "client-generated-request-id",
   "mutationId": "stable-mutation-interface-hash",
   "mutationName": "CreatePost",
@@ -597,6 +598,7 @@ Each generated mutation module must expose:
 Rules:
 
 - `requestId` is caller-owned and is used only for client-side bookkeeping
+- `databaseId` is server-defined and routes the mutation to the correct source database
 - `mutationId` is the stable server mutation identity and is the value `PyreClient` uses to construct the server request
 - `mutationName` is descriptive metadata for debugging and Elm-side routing; it is not the execution key
 - `mutationInput` is the normal generated Elm encoding for the mutation input record

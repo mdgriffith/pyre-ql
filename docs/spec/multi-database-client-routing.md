@@ -147,6 +147,7 @@ const client = await PyreClient.create({
   schema,
   server,
   session,
+  cacheNamespace: bootstrap.userId,
 });
 
 client.run(
