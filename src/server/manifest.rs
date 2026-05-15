@@ -26,6 +26,10 @@ pub struct Manifest {
 pub struct QueryManifest {
     pub id: String,
     pub operation: String,
+    #[serde(default)]
+    pub primary_db: String,
+    #[serde(default)]
+    pub attached_dbs: Vec<String>,
     pub input_schema: HashMap<String, FieldSchema>,
     pub session_args: Vec<String>,
     pub optional_input_args: Vec<String>,

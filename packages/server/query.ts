@@ -11,6 +11,8 @@ type Validator<T> = ZodType<T>;
  */
 export interface QueryMetadata {
     id: string;
+    primary_db?: string;
+    attached_dbs?: string[];
     sql: SqlInfo[];
     session_args: string[];
     optional_input_args: string[];

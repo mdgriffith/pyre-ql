@@ -590,6 +590,7 @@ pub fn from_raw(mut raw: IntrospectionRaw) -> Introspection {
 
     let mut schema = ast::Schema {
         namespace: ast::DEFAULT_SCHEMANAME.to_string(),
+        sync_mode: ast::SyncMode::Synced,
         session: None,
         files: vec![],
     };

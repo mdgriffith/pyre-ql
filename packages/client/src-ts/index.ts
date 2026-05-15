@@ -20,6 +20,7 @@ export type {
   LiveSyncTransport,
   ServerConfig,
   ServerEndpoints,
+  ServerHeaders,
   SyncProgress,
   SyncState,
   SyncStatus,
@@ -81,8 +82,10 @@ export interface PyreDevtoolsSnapshot {
     endpoints: ServerEndpoints;
     liveSyncTransport: LiveSyncTransport;
     hasHeaders: boolean;
+    credentials: RequestCredentials;
+    withCredentials: boolean;
   };
-  sessionId: string | null;
+  connectionId: string | null;
   syncState: SyncState;
   syncProgress: SyncProgress | null;
   debugValues: Record<string, unknown>;
@@ -143,6 +146,7 @@ export interface PyreElmConfig extends ElmBridgeConfig {}
 export interface PyreClientConfig {
   schema: SchemaMetadata;
   server: ServerConfig;
+  resolvedHeaders?: Record<string, string>;
   indexedDbName?: string;
   debug?: boolean;
   onError?: (error: Error) => void;
@@ -173,10 +177,10 @@ export class PyreClient {
   private indexedDbService: IndexedDbService;
   private sseManager: SSEManager;
   private webSocketManager: WebSocketManager;
-  private sessionId: string | null = null;
+  private connectionId: string | null = null;
   private syncStateCallbacks: Set<(state: SyncState) => void> = new Set();
   private syncProgressCallbacks: Set<(progress: SyncProgress) => void> = new Set();
-  private sessionCallbacks: Set<(sessionId: string) => void> = new Set();
+  private connectionCallbacks: Set<(connectionId: string) => void> = new Set();
   private lastSyncState: SyncState;
   private lastSyncProgress: SyncProgress | null = null;
   private pendingLiveState: SyncState | null = null;
@@ -224,12 +228,16 @@ export class PyreClient {
     }
 
     try {
+      const initialHeaders = config.resolvedHeaders ?? getStaticServerHeaders(config.server);
       this.elmApp = Elm.Main.init({
         flags: {
           schema: config.schema,
           server: {
             baseUrl: config.server.baseUrl,
             catchupPath: this.endpoints.catchup,
+            headers: serverHeadersToPairs(initialHeaders),
+            credentials: getServerCredentials(config.server),
+            withCredentials: shouldIncludeCredentials(config.server),
           },
           liveSync: {
             transport: liveSyncTransport,
@@ -246,6 +254,8 @@ export class PyreClient {
     this.sseManager = new SSEManager({
       baseUrl: config.server.baseUrl,
       eventsPath: this.endpoints.events,
+      credentials: config.server.credentials,
+      withCredentials: config.server.withCredentials,
     }, undefined, this.logDebug);
     this.webSocketManager = new WebSocketManager({
       baseUrl: config.server.baseUrl,
@@ -335,13 +345,13 @@ export class PyreClient {
     };
   }
 
-  onSession(callback: (sessionId: string) => void): () => void {
-    this.sessionCallbacks.add(callback);
-    if (this.sessionId) {
-      callback(this.sessionId);
+  onConnection(callback: (connectionId: string) => void): () => void {
+    this.connectionCallbacks.add(callback);
+    if (this.connectionId) {
+      callback(this.connectionId);
     }
     return () => {
-      this.sessionCallbacks.delete(callback);
+      this.connectionCallbacks.delete(callback);
     };
   }
 
@@ -383,9 +393,11 @@ export class PyreClient {
         baseUrl: this.server.baseUrl,
         endpoints: this.endpoints,
         liveSyncTransport: this.server.liveSyncTransport ?? 'sse',
-        hasHeaders: Boolean(this.server.headers && Object.keys(this.server.headers).length > 0),
+        hasHeaders: hasServerHeaders(this.server),
+        credentials: getServerCredentials(this.server),
+        withCredentials: shouldIncludeCredentials(this.server),
       },
-      sessionId: this.sessionId,
+      connectionId: this.connectionId,
       syncState: this.lastSyncState,
       syncProgress: this.lastSyncProgress,
       debugValues: { ...this.devtoolsDebugValues },
@@ -402,8 +414,8 @@ export class PyreClient {
     this.emitDevtoolsEvent('debug:value', { name, value });
   }
 
-  getSessionId(): string | null {
-    return this.sessionId;
+  getConnectionId(): string | null {
+    return this.connectionId;
   }
 
   setSession(session: Record<string, unknown> | null): void {
@@ -430,7 +442,7 @@ export class PyreClient {
     this.bridgeCleanup = null;
     this.sseManager.disconnect();
     this.webSocketManager.disconnect();
-    this.sessionId = null;
+    this.connectionId = null;
     this.pendingLiveState = null;
     this.pendingLiveQueries.clear();
     const resetState = {
@@ -446,11 +458,14 @@ export class PyreClient {
   private handleLiveSyncMessage = (message: LiveSyncMessage): void => {
     this.emitDevtoolsEvent(`sync:${message.type}`, message);
 
-    if (message.type === 'connected' && message.sessionId) {
-      this.sessionId = message.sessionId;
-      this.sessionCallbacks.forEach((callback) => {
-        callback(message.sessionId!);
-      });
+    if (message.type === 'connected') {
+      const connectionId = message.connectionId;
+      if (connectionId) {
+        this.connectionId = connectionId;
+        this.connectionCallbacks.forEach((callback) => {
+          callback(connectionId);
+        });
+      }
     }
 
     if (message.type === 'syncProgress') {
@@ -742,17 +757,21 @@ export class PyreClient {
     const payload = input ?? {};
     const baseUrl = `${this.server.baseUrl}${this.endpoints.query}`;
     this.emitDevtoolsEvent('mutation:request', { requestId, mutationId, input: payload });
-    this.queryManager.sendMutation(
-      requestId,
-      mutationId,
-      baseUrl,
-      payload,
-      (result) => {
-        this.emitDevtoolsEvent('mutation:result', { requestId, mutationId, result });
-        callback(result);
-      },
-      this.server.headers
-    );
+    void (async () => {
+      this.queryManager.sendMutation(
+        requestId,
+        mutationId,
+        baseUrl,
+        payload,
+        (result) => {
+          this.emitDevtoolsEvent('mutation:result', { requestId, mutationId, result });
+          callback(result);
+        },
+        await resolveServerHeaders(this.server),
+        getServerCredentials(this.server),
+        this.server.withCredentials === true
+      );
+    })();
   }
 
   private runBridgeMutation(
@@ -766,28 +785,32 @@ export class PyreClient {
       mutationName: message.mutationName,
       input: message.mutationInput ?? {},
     });
-    this.queryManager.sendMutation(
-      message.requestId,
-      message.mutationId,
-      baseUrl,
-      message.mutationInput ?? {},
-      (result) => {
-        this.emitDevtoolsEvent('mutation:result', {
-          requestId: message.requestId,
-          mutationId: message.mutationId,
-          mutationName: message.mutationName,
-          result,
-        });
-        mutationResultPort?.send?.({
-          type: 'mutation-result',
-          requestId: message.requestId,
-          mutationId: message.mutationId,
-          mutationName: message.mutationName ?? null,
-          result,
-        } satisfies ElmBridgeMutationResultMessage);
-      },
-      this.server.headers
-    );
+    void (async () => {
+      this.queryManager.sendMutation(
+        message.requestId,
+        message.mutationId,
+        baseUrl,
+        message.mutationInput ?? {},
+        (result) => {
+          this.emitDevtoolsEvent('mutation:result', {
+            requestId: message.requestId,
+            mutationId: message.mutationId,
+            mutationName: message.mutationName,
+            result,
+          });
+          mutationResultPort?.send?.({
+            type: 'mutation-result',
+            requestId: message.requestId,
+            mutationId: message.mutationId,
+            mutationName: message.mutationName ?? null,
+            result,
+          } satisfies ElmBridgeMutationResultMessage);
+        },
+        await resolveServerHeaders(this.server),
+        getServerCredentials(this.server),
+        this.server.withCredentials === true
+      );
+    })();
   }
 
   private emitDevtoolsEvent(type: string, payload?: unknown): void {
@@ -811,14 +834,56 @@ export class PyreClient {
 
 function createInitialSyncState(schema: SchemaMetadata): SyncState {
   const tables: Record<string, TableSyncStatus> = {};
-  Object.keys(schema.tables).forEach((tableName) => {
-    tables[tableName] = 'waiting';
-  });
+  Object.entries(schema.tables)
+    .filter(([, table]) => table.sync !== 'query-only')
+    .forEach(([tableName]) => {
+      tables[tableName] = 'waiting';
+    });
 
   return {
     status: 'not_started',
     tables,
   };
+}
+
+function getServerCredentials(server: ServerConfig): RequestCredentials {
+  if (server.credentials) {
+    return server.credentials;
+  }
+
+  return server.withCredentials === true ? 'include' : 'same-origin';
+}
+
+function shouldIncludeCredentials(server: ServerConfig): boolean {
+  return getServerCredentials(server) === 'include';
+}
+
+function getStaticServerHeaders(server: ServerConfig): Record<string, string> {
+  if (!server.headers || typeof server.headers === 'function') {
+    return {};
+  }
+
+  return server.headers;
+}
+
+async function resolveServerHeaders(server: ServerConfig): Promise<Record<string, string>> {
+  if (!server.headers) {
+    return {};
+  }
+
+  if (typeof server.headers === 'function') {
+    return server.headers();
+  }
+
+  return server.headers;
+}
+
+function serverHeadersToPairs(headers: Record<string, string>): Array<[string, string]> {
+  return Object.entries(headers);
+}
+
+function hasServerHeaders(server: ServerConfig): boolean {
+  return Boolean(server.headers);
 }
 
 function parseSyncStateMessage(message: unknown): SyncState | null {
@@ -873,10 +938,12 @@ async function resolveCreateConfig(config: PyreClientCreateConfig): Promise<Pyre
   }
 
   const session = connected?.session ?? config.session;
+  const resolvedHeaders = await resolveServerHeaders(server);
 
   return {
     schema: config.schema,
     server,
+    resolvedHeaders,
     indexedDbName: config.indexedDbName,
     onError: config.onError,
     session,

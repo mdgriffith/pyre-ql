@@ -242,6 +242,7 @@ fn format_definition(
         }
         ast::Definition::Session(_) => (),
         ast::Definition::Comment { .. } => (),
+        ast::Definition::SyncMode(_) => (),
         ast::Definition::Tagged { .. } => (),
         ast::Definition::Record {
             name,

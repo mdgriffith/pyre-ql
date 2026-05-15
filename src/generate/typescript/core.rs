@@ -316,6 +316,22 @@ fn to_query_metadata_file(
     let mut meta_block = String::new();
     meta_block.push_str("export const meta = {\n");
     meta_block.push_str(&format!("  id: \"{}\",\n", &query.interface_hash));
+    if let Some(info) = query_info {
+        meta_block.push_str(&format!(
+            "  primary_db: {},\n",
+            string::quote(&info.primary_db)
+        ));
+        let mut attached_dbs: Vec<&String> = info.attached_dbs.iter().collect();
+        attached_dbs.sort();
+        meta_block.push_str(&format!(
+            "  attached_dbs: [{}],\n",
+            attached_dbs
+                .iter()
+                .map(|db| string::quote(db))
+                .collect::<Vec<String>>()
+                .join(", ")
+        ));
+    }
     meta_block.push_str(&format!(
         "  operation: \"{}\" as const,\n",
         match query.operation {
@@ -804,6 +820,19 @@ fn to_schema_metadata(context: &typecheck::Context) -> String {
 
         result.push_str(&format!("    {}: {{\n", string::quote(&table_name)));
         result.push_str(&format!("      name: {},\n", string::quote(&table_name)));
+        result.push_str(&format!(
+            "      namespace: {},\n",
+            string::quote(&table.schema)
+        ));
+        let sync_mode = context
+            .namespace_sync_modes
+            .get(&table.schema)
+            .copied()
+            .unwrap_or(ast::SyncMode::Synced);
+        result.push_str(&format!(
+            "      sync: {},\n",
+            string::quote(sync_mode.as_str())
+        ));
         result.push_str("      columns: [\n");
 
         let mut is_first_column = true;

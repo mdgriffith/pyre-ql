@@ -242,14 +242,13 @@ handleLiveSyncIncoming incoming model =
 handleQueryManagerIncoming : QueryManager.Incoming -> Model -> ( Model, List (Cmd Msg) )
 handleQueryManagerIncoming incoming model =
     case incoming of
-        QueryManager.SendMutation requestId mutationId baseUrl headers input ->
+        QueryManager.SendMutation requestId mutationId baseUrl headers credentials withCredentials input ->
             -- Mutations are handled via HTTP request
             let
                 url =
                     buildMutationUrl baseUrl mutationId
-            in
-            ( model
-            , [ Http.request
+
+                request =
                     { method = "POST"
                     , headers = List.map (\( key, value ) -> Http.header key value) headers
                     , url = url
@@ -282,6 +281,13 @@ handleQueryManagerIncoming incoming model =
                     , timeout = Nothing
                     , tracker = Nothing
                     }
+            in
+            ( model
+            , [ if credentials == "include" || withCredentials then
+                    Http.riskyRequest request
+
+                else
+                    Http.request request
               ]
             )
 
@@ -628,6 +634,9 @@ main =
                             , server =
                                 { baseUrl = ""
                                 , catchupPath = ""
+                                , headers = []
+                                , credentials = "same-origin"
+                                , withCredentials = False
                                 }
                             , liveSync =
                                 { transport = LiveSync.Sse }
@@ -651,9 +660,33 @@ decodeFlags =
 
 decodeServerConfig : Decode.Decoder Catchup.ServerConfig
 decodeServerConfig =
-    Decode.map2 Catchup.ServerConfig
+    Decode.map5 Catchup.ServerConfig
         (Decode.field "baseUrl" Decode.string)
         (Decode.field "catchupPath" Decode.string)
+        (Decode.oneOf
+            [ Decode.field "headers" decodeHeaders
+            , Decode.succeed []
+            ]
+        )
+        (Decode.oneOf
+            [ Decode.field "credentials" Decode.string
+            , Decode.succeed "same-origin"
+            ]
+        )
+        (Decode.oneOf
+            [ Decode.field "withCredentials" Decode.bool
+            , Decode.succeed False
+            ]
+        )
+
+
+decodeHeaders : Decode.Decoder (List ( String, String ))
+decodeHeaders =
+    Decode.list
+        (Decode.map2 Tuple.pair
+            (Decode.index 0 Decode.string)
+            (Decode.index 1 Decode.string)
+        )
 
 
 reExecuteAllQueries : Data.Schema.SchemaMetadata -> Db.Db -> QueryManager.Model -> ( QueryManager.Model, List (Cmd Msg) )

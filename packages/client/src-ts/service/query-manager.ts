@@ -98,7 +98,9 @@ export class QueryManagerService {
     baseUrl: string,
     input: unknown,
     callback?: MutationResultCallback,
-    headers?: Record<string, string>
+    headers?: Record<string, string>,
+    credentials?: RequestCredentials,
+    withCredentials?: boolean
   ): void {
     if (callback) {
       this.mutationCallbacks.set(requestId, callback);
@@ -115,6 +117,8 @@ export class QueryManagerService {
       baseUrl,
       input,
       headers: headerPairs,
+      credentials: credentials ?? (withCredentials === true ? 'include' : 'same-origin'),
+      withCredentials: credentials === 'include' || withCredentials === true,
     };
     this.elmApp?.ports.receiveQueryManagerMessage?.send(mutationMessage);
     this.debugLog('[PyreClient] port receiveQueryManagerMessage ->', mutationMessage);

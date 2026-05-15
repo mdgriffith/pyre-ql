@@ -25,6 +25,8 @@ export interface ColumnInfo {
 
 export interface TableMetadata {
   name: string;
+  namespace?: string;
+  sync?: 'synced' | 'query-only';
   columns?: ColumnInfo[];
   links: Record<string, LinkInfo>;
   indices: IndexInfo[];

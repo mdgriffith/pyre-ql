@@ -111,7 +111,7 @@ decodeIncoming =
                             |> Decode.map SyncProgressReceived
 
                     "connected" ->
-                        Decode.field "sessionId" Decode.string
+                        Decode.field "connectionId" Decode.string
                             |> Decode.map LiveSyncConnected
 
                     "error" ->

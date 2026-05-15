@@ -248,6 +248,7 @@ fn to_string_definition(definition: &ast::Definition) -> String {
         }
         ast::Definition::Session(_) => "".to_string(),
         ast::Definition::Comment { .. } => "".to_string(),
+        ast::Definition::SyncMode(_) => "".to_string(),
         ast::Definition::Tagged { name, variants, .. } => {
             let mut result = format!("type {}\n", name);
             let mut is_first = true;
@@ -482,6 +483,7 @@ fn to_decoder_definition(
         ast::Definition::Lines { .. } => (),
         ast::Definition::Session(_) => (),
         ast::Definition::Comment { .. } => (),
+        ast::Definition::SyncMode(_) => (),
         ast::Definition::Tagged { name, variants, .. } => {
             for variant in variants {
                 match &variant.fields {
@@ -665,6 +667,7 @@ fn to_encoder_definition(database: &ast::Database, definition: &ast::Definition)
         ast::Definition::Lines { .. } => "".to_string(),
         ast::Definition::Comment { .. } => "".to_string(),
         ast::Definition::Session(_) => "".to_string(),
+        ast::Definition::SyncMode(_) => "".to_string(),
         ast::Definition::Tagged { name, variants, .. } => {
             let mut result = "".to_string();
 

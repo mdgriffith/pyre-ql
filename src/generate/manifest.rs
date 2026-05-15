@@ -17,6 +17,8 @@ struct Manifest {
 struct QueryManifest {
     id: String,
     operation: String,
+    primary_db: String,
+    attached_dbs: Vec<String>,
     input_schema: HashMap<String, FieldSchema>,
     session_args: Vec<String>,
     optional_input_args: Vec<String>,
@@ -93,6 +95,8 @@ fn query_manifest(
     QueryManifest {
         id: query.interface_hash.clone(),
         operation: operation_to_string(&query.operation),
+        primary_db: query_info.primary_db.clone(),
+        attached_dbs: sorted_strings(&query_info.attached_dbs),
         input_schema: input_schema(query),
         session_args: session_args(&query_info.variables),
         optional_input_args: query
@@ -114,6 +118,12 @@ fn query_manifest(
             .collect(),
         sql: query_sql(context, query, query_info),
     }
+}
+
+fn sorted_strings(values: &std::collections::HashSet<String>) -> Vec<String> {
+    let mut result: Vec<String> = values.iter().cloned().collect();
+    result.sort();
+    result
 }
 
 fn input_schema(query: &ast::Query) -> HashMap<String, FieldSchema> {

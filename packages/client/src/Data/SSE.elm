@@ -99,7 +99,7 @@ decodeIncoming =
                             |> Decode.map SyncProgressReceived
 
                     "connected" ->
-                        Decode.field "sessionId" Decode.string
+                        Decode.field "connectionId" Decode.string
                             |> Decode.map SSEConnected
 
                     "error" ->

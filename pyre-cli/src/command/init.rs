@@ -32,6 +32,7 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
 
         database.schemas.push(ast::Schema {
             namespace: "Base".to_string(),
+            sync_mode: ast::SyncMode::Synced,
             session: None,
             files: vec![ast::SchemaFile {
                 path: base_dir.join("schema.pyre").to_string_lossy().to_string(),
@@ -52,6 +53,7 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
 
         database.schemas.push(ast::Schema {
             namespace: "User".to_string(),
+            sync_mode: ast::SyncMode::Synced,
             session: None,
             files: vec![ast::SchemaFile {
                 path: user_dir.join("schema.pyre").to_string_lossy().to_string(),
@@ -103,6 +105,7 @@ pub fn init(options: &Options, multidb: bool) -> io::Result<()> {
         }];
         database.schemas.push(ast::Schema {
             namespace: ast::DEFAULT_SCHEMANAME.to_string(),
+            sync_mode: ast::SyncMode::Synced,
             session: None,
             files: vec![ast::SchemaFile {
                 path: pyre_dir.join("schema.pyre").to_str().unwrap().to_string(),

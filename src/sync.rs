@@ -70,6 +70,15 @@ fn push_storage_column(column_names: &mut Vec<String>, column_name: String) {
     }
 }
 
+fn table_sync_enabled(context: &typecheck::Context, table: &typecheck::Table) -> bool {
+    context
+        .namespace_sync_modes
+        .get(&table.schema)
+        .copied()
+        .unwrap_or(ast::SyncMode::Synced)
+        == ast::SyncMode::Synced
+}
+
 fn collect_sync_storage_columns(
     context: &typecheck::Context,
     column_type: &ast::ColumnType,
@@ -458,6 +467,10 @@ pub fn get_sync_status_sql(
 
     // Iterate through all tables in the context
     for (_record_name, table) in &context.tables {
+        if !table_sync_enabled(context, table) {
+            continue;
+        }
+
         // Get the actual table name from @tablename directive
         let actual_table_name = ast::get_tablename(&table.record.name, &table.record.fields);
         let quoted_table_name = string::quote(&actual_table_name);
@@ -505,9 +518,10 @@ pub fn get_sync_status_sql(
     }
 
     if union_parts.is_empty() {
-        return Err(SyncError::SqlGenerationError(
-            "No tables found in context".to_string(),
-        ));
+        return Ok(
+            "SELECT NULL AS table_name, NULL AS sync_layer, NULL AS permission_hash, NULL AS last_seen_updated_at, NULL AS max_updated_at WHERE 0"
+                .to_string(),
+        );
     }
 
     // Combine all subqueries with UNION ALL
@@ -632,6 +646,9 @@ pub fn get_sync_sql(
                     "Table ".to_string() + &status.table_name + " not found in context",
                 )
             })?;
+        if !table_sync_enabled(context, table) {
+            continue;
+        }
 
         let actual_table_name = &status.table_name;
 
@@ -762,6 +779,10 @@ pub fn get_sync_page_info(
 
     // Iterate through all tables in the context
     for (_record_name, table) in &context.tables {
+        if !table_sync_enabled(context, table) {
+            continue;
+        }
+
         // Get the actual table name from @tablename directive
         let actual_table_name = ast::get_tablename(&table.record.name, &table.record.fields);
 

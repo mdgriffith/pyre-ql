@@ -106,3 +106,88 @@ test('Elm catchup request includes restored syncCursor on startup', async () => 
     globalThis.XMLHttpRequest = previousXmlHttpRequest;
   }
 });
+
+test('Elm catchup request includes credentials and headers when configured', async () => {
+  const requestCredentials: boolean[] = [];
+  const requestHeaders: Record<string, string> = {};
+  const previousXmlHttpRequest = globalThis.XMLHttpRequest;
+
+  class MockXMLHttpRequest {
+    listeners: Record<string, Array<() => void>> = {};
+    status = 200;
+    statusText = 'OK';
+    responseURL = '';
+    responseType = '';
+    response = JSON.stringify({ tables: {}, has_more: false });
+    timeout = 0;
+    withCredentials = false;
+
+    addEventListener(type: string, callback: () => void) {
+      this.listeners[type] = this.listeners[type] ?? [];
+      this.listeners[type].push(callback);
+    }
+
+    open(_method: string, url: string) {
+      this.responseURL = url;
+    }
+
+    setRequestHeader(key: string, value: string) {
+      requestHeaders[key] = value;
+    }
+
+    send() {
+      requestCredentials.push(this.withCredentials);
+      queueMicrotask(() => {
+        (this.listeners.load ?? []).forEach((listener) => listener());
+      });
+    }
+
+    abort() {}
+
+    getAllResponseHeaders() {
+      return '';
+    }
+  }
+
+  globalThis.XMLHttpRequest = MockXMLHttpRequest;
+
+  try {
+    const Elm = loadElm(Object.create(globalThis));
+    const app = Elm.Main.init({
+      flags: {
+        schema,
+        server: {
+          baseUrl: 'http://example.test',
+          catchupPath: '/sync',
+          headers: [['Authorization', 'Bearer token-1']],
+          credentials: 'include',
+        },
+        liveSync: {
+          transport: 'sse',
+        },
+      },
+    });
+
+    app.ports.indexedDbOut.subscribe((message) => {
+      if (message?.type !== 'requestInitialData') {
+        return;
+      }
+
+      app.ports.receiveIndexedDbMessage.send({
+        type: 'initialData',
+        data: {
+          tables: { maps: [] },
+          cursor: { tables: {} },
+        },
+      });
+    });
+
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(requestCredentials).toEqual([true]);
+    expect(requestHeaders.Authorization).toBe('Bearer token-1');
+  } finally {
+    globalThis.XMLHttpRequest = previousXmlHttpRequest;
+  }
+});

@@ -55,6 +55,113 @@ record GameEntity {
 }
 
 #[test]
+fn query_only_namespaces_are_excluded_from_sync_sql() {
+    let main_source = r#"
+@syncable(false)
+
+record Account {
+    id Int @id
+    updatedAt Int
+    @public
+}
+"#;
+    let campaign_source = r#"
+record Quest {
+    id Int @id
+    updatedAt Int
+    @public
+}
+"#;
+
+    let mut main = ast::Schema {
+        namespace: "Main".to_string(),
+        ..ast::Schema::default()
+    };
+    parser::run("schema/Main/schema.pyre", main_source, &mut main).expect("main schema parses");
+
+    let mut campaign = ast::Schema {
+        namespace: "Campaign".to_string(),
+        ..ast::Schema::default()
+    };
+    parser::run(
+        "schema/Campaign/schema.pyre",
+        campaign_source,
+        &mut campaign,
+    )
+    .expect("campaign schema parses");
+
+    let database = ast::Database {
+        schemas: vec![main, campaign],
+    };
+    let context = typecheck::check_schema(&database).expect("schema should typecheck");
+
+    let status_sql =
+        pyre::sync::get_sync_status_sql(&SyncCursor::new(), &context, &Default::default())
+            .expect("sync status SQL should generate");
+    assert!(status_sql.contains("quests"));
+    assert!(!status_sql.contains("accounts"));
+
+    let sync_status = SyncStatusResult {
+        tables: vec![
+            TableSyncStatus {
+                table_name: "accounts".to_string(),
+                sync_layer: 0,
+                needs_sync: true,
+                max_updated_at: None,
+                permission_hash: "main".to_string(),
+            },
+            TableSyncStatus {
+                table_name: "quests".to_string(),
+                sync_layer: 0,
+                needs_sync: true,
+                max_updated_at: None,
+                permission_hash: "campaign".to_string(),
+            },
+        ],
+    };
+    let sync_sql = get_sync_sql(
+        &sync_status,
+        &SyncCursor::new(),
+        &context,
+        &Default::default(),
+        100,
+    )
+    .expect("sync SQL should generate");
+
+    assert_eq!(sync_sql.tables.len(), 1);
+    assert_eq!(sync_sql.tables[0].table_name, "quests");
+}
+
+#[test]
+fn all_query_only_schemas_have_empty_sync_status() {
+    let schema_source = r#"
+@syncable(false)
+
+record Account {
+    id Int @id
+    updatedAt Int
+    @public
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema parses");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let context = typecheck::check_schema(&database).expect("schema should typecheck");
+    let status_sql =
+        pyre::sync::get_sync_status_sql(&SyncCursor::new(), &context, &Default::default())
+            .expect("sync status SQL should generate");
+
+    assert_eq!(
+        status_sql,
+        "SELECT NULL AS table_name, NULL AS sync_layer, NULL AS permission_hash, NULL AS last_seen_updated_at, NULL AS max_updated_at WHERE 0"
+    );
+}
+
+#[test]
 fn sync_sql_includes_flattened_custom_type_columns() {
     let schema_source = r#"
 type TileFormat

@@ -10,8 +10,31 @@ pub struct Database {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Schema {
     pub namespace: String,
+    pub sync_mode: SyncMode,
     pub session: Option<SessionDetails>,
     pub files: Vec<SchemaFile>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SyncMode {
+    Synced,
+    QueryOnly,
+}
+
+impl SyncMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SyncMode::Synced => "synced",
+            SyncMode::QueryOnly => "query-only",
+        }
+    }
+
+    pub fn syncable_literal(&self) -> &'static str {
+        match self {
+            SyncMode::Synced => "true",
+            SyncMode::QueryOnly => "false",
+        }
+    }
 }
 
 pub const DEFAULT_SCHEMANAME: &str = "_default";
@@ -20,6 +43,7 @@ impl Default for Schema {
     fn default() -> Self {
         Schema {
             namespace: DEFAULT_SCHEMANAME.to_string(),
+            sync_mode: SyncMode::Synced,
             session: None,
             files: Vec::new(),
         }
@@ -72,6 +96,7 @@ pub enum Definition {
         start: Option<Location>,
         end: Option<Location>,
     },
+    SyncMode(SyncMode),
     Session(SessionDetails),
     Record {
         name: String,

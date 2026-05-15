@@ -137,6 +137,10 @@ export async function catchup(
         has_more: false,
     };
 
+    if (!Array.isArray(sqlResult.tables) || sqlResult.tables.length === 0) {
+        return result;
+    }
+
     // Collect all SQL statements for batch execution
     const allSqlStatements: string[] = [];
     for (const tableSql of sqlResult.tables) {

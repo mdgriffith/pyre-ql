@@ -47,6 +47,7 @@ pub async fn introspect<'a>(
 
                             let schema = ast::Schema {
                                 namespace: full_namespace,
+                                sync_mode: ast::SyncMode::Synced,
                                 session: None,
                                 files: vec![schema_file],
                             };

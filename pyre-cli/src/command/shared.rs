@@ -96,6 +96,7 @@ pub fn parse_single_schema(
 ) -> io::Result<ast::Schema> {
     let mut schema = ast::Schema {
         namespace: ast::DEFAULT_SCHEMANAME.to_string(),
+        sync_mode: ast::SyncMode::Synced,
         files: vec![],
         session: None,
     };
@@ -126,6 +127,7 @@ pub fn parse_single_schema_from_source(
 ) -> io::Result<ast::Schema> {
     let mut schema = ast::Schema {
         namespace: ast::DEFAULT_SCHEMANAME.to_string(),
+        sync_mode: ast::SyncMode::Synced,
         session: None,
         files: vec![],
     };
@@ -156,6 +158,7 @@ pub fn parse_database_schemas(
     for (namespace, schema_files) in paths.schema_files.iter() {
         let mut schema = ast::Schema {
             namespace: namespace.clone(),
+            sync_mode: ast::SyncMode::Synced,
             session: None,
             files: vec![],
         };

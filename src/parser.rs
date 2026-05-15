@@ -178,6 +178,7 @@ fn parse_schema<'a>(input: Text<'a>, schema: &'a mut ast::Schema) -> ParseResult
     let (input, definitions) = many1(parse_definition)(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = eof(input)?;
+    add_sync_mode(schema, &definitions);
     add_session(schema, &definitions);
 
     let file = ast::SchemaFile {
@@ -187,6 +188,15 @@ fn parse_schema<'a>(input: Text<'a>, schema: &'a mut ast::Schema) -> ParseResult
 
     schema.files.push(file);
     Ok((input, ()))
+}
+
+fn add_sync_mode(schema: &mut ast::Schema, definitions: &Vec<ast::Definition>) {
+    for definition in definitions {
+        if let ast::Definition::SyncMode(sync_mode) = definition {
+            schema.sync_mode = *sync_mode;
+            return;
+        }
+    }
 }
 
 fn add_session(schema: &mut ast::Schema, definitions: &Vec<ast::Definition>) {
@@ -205,10 +215,29 @@ fn parse_definition(input: Text) -> ParseResult<ast::Definition> {
     alt((
         parse_tagged,
         parse_comment,
+        parse_syncable_directive,
         parse_record,
         parse_session,
         parse_lines,
     ))(input)
+}
+
+fn parse_syncable_directive(input: Text) -> ParseResult<ast::Definition> {
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("@syncable")(input)?;
+    let (input, _) = cut(tag("("))(input)?;
+    let (input, _) = space0(input)?;
+    let (input, mode) = cut(alt((
+        value(ast::SyncMode::Synced, tag("true")),
+        value(ast::SyncMode::QueryOnly, tag("false")),
+    )))(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = cut(tag(")"))(input)?;
+    let (input, _) = hspace0(input)?;
+    let (input, _) = alt((line_ending, eof))(input)?;
+    let (input, _) = multispace0(input)?;
+
+    Ok((input, ast::Definition::SyncMode(mode)))
 }
 
 fn parse_lines(input: Text) -> ParseResult<ast::Definition> {

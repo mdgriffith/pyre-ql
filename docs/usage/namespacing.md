@@ -64,10 +64,26 @@ If the namespace exists but that table does not exist in that namespace, typeche
 - Record/type names are global across the loaded database, not per-namespace. In practice, this means you should avoid defining the same record/type name in two namespaces.
 - Prefer one `session { ... }` definition across all namespaces to avoid ambiguity.
 
+## Sync Policy
+
+Namespaces sync by default. Add `@syncable(false)` at the top of a schema file when a namespace should be queryable through Pyre but excluded from catchup/live sync. You can use `@syncable(true)` to be explicit about the default synced behavior.
+
+```pyre
+@syncable(false)
+
+record Account {
+    id Int @id
+    @public
+}
+```
+
+For a main/campaign split, mark the `Main` namespace with `@syncable(false)` and leave `Campaign` as the default synced namespace.
+
 ## Practical checklist
 
 - Use `pyre/schema.pyre` for single-namespace projects.
 - Use `pyre/schema/<Namespace>/schema.pyre` when splitting domains.
 - Use `@link(..., Table.field)` for same-namespace links.
 - Use `@link(..., Namespace.Table.field)` for cross-namespace links.
+- Use `@syncable(false)` for namespaces that should be queried but not stored in frontend sync state.
 - When migrating multi-namespace projects, always pass `--namespace`.

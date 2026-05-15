@@ -240,7 +240,7 @@ class PyreDevtoolsElement extends HTMLElement {
         <section><h2>Runtime</h2><pre>${formatJson({
           indexedDbName: this.snapshot?.indexedDbName,
           server: this.snapshot?.server,
-          sessionId: this.snapshot?.sessionId,
+          connectionId: this.snapshot?.connectionId,
           syncProgress: this.snapshot?.syncProgress,
         })}</pre></section>
         <section><h2>Custom Debug Values</h2><pre>${formatJson(this.snapshot?.debugValues)}</pre></section>

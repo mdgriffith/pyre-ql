@@ -3,18 +3,20 @@ import type { ElmApp } from '../types';
 export interface SSEConfig {
   baseUrl: string;
   eventsPath: string;
+  credentials?: RequestCredentials;
+  withCredentials?: boolean;
 }
 
 export interface LiveSyncMessage {
   type: string;
-  sessionId?: string;
+  connectionId?: string;
   data?: unknown;
   error?: string;
 }
 
 export class SSEManager {
   private eventSource: EventSource | null = null;
-  private sessionId: string | null = null;
+  private connectionId: string | null = null;
   private config: SSEConfig | null = null;
   private shouldReconnect = true;
   private onMessage: ((message: LiveSyncMessage) => void) | null = null;
@@ -72,7 +74,9 @@ export class SSEManager {
     try {
       const sseUrl = `${this.config.baseUrl}${this.config.eventsPath}`;
       this.debugLog('[PyreClient] SSE attempting connection', { sseUrl });
-      const eventSource = new EventSource(sseUrl);
+      const eventSource = new EventSource(sseUrl, {
+        withCredentials: shouldIncludeCredentials(this.config),
+      });
 
       eventSource.onopen = () => {
         this.eventSource = eventSource;
@@ -81,13 +85,14 @@ export class SSEManager {
 
       eventSource.addEventListener('connected', (event: MessageEvent) => {
         try {
-          const message = JSON.parse(event.data) as { sessionId?: string };
-          if (message.sessionId) {
-            this.sessionId = message.sessionId;
-            this.debugLog('[PyreClient] SSE connected', { sessionId: message.sessionId });
+          const message = JSON.parse(event.data) as { connectionId?: string };
+          const connectionId = message.connectionId;
+          if (connectionId) {
+            this.connectionId = connectionId;
+            this.debugLog('[PyreClient] SSE connected', { connectionId });
             const connectedMessage = {
               type: 'connected',
-              sessionId: message.sessionId,
+              connectionId,
             };
             this.emitMessage(connectedMessage);
           }
@@ -138,7 +143,7 @@ export class SSEManager {
         const state = eventSource.readyState;
         this.debugLog('[PyreClient] SSE connection state changed', {
           readyState: state,
-          sessionId: this.sessionId,
+          connectionId: this.connectionId,
           shouldReconnect: this.shouldReconnect,
         });
 
@@ -147,7 +152,7 @@ export class SSEManager {
           if (this.shouldReconnect) {
             this.debugLog('[PyreClient] SSE waiting for EventSource auto-reconnect');
           }
-        } else if (state === EventSource.CONNECTING && !this.sessionId) {
+        } else if (state === EventSource.CONNECTING && !this.connectionId) {
           this.debugLog('[PyreClient] SSE failed before session established');
           const errorMessage = {
             type: 'error',
@@ -167,13 +172,17 @@ export class SSEManager {
 
   disconnect(): void {
     this.shouldReconnect = false;
-    this.debugLog('[PyreClient] SSE disconnect requested', { sessionId: this.sessionId });
+    this.debugLog('[PyreClient] SSE disconnect requested', { connectionId: this.connectionId });
 
     if (this.eventSource) {
       this.eventSource.close();
       this.eventSource = null;
     }
 
-    this.sessionId = null;
+    this.connectionId = null;
   }
+}
+
+function shouldIncludeCredentials(config: SSEConfig): boolean {
+  return config.credentials === 'include' || config.withCredentials === true;
 }

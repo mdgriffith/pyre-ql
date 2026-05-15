@@ -52,20 +52,21 @@ const client = await PyreClient.create({
     const response = await fetch("http://localhost:3000/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ userId: 1 }),
     })
 
-    const { sessionId, userId } = await response.json()
-    const queryParams = new URLSearchParams({ sessionId }).toString()
+    const { userId } = await response.json()
 
     return {
       server: {
         baseUrl: "http://localhost:3000",
+        credentials: "include",
         liveSyncTransport: "sse",
         endpoints: {
-          catchup: `/sync?${queryParams}`,
-          events: `/sync/events?${queryParams}`,
-          query: `/db?${queryParams}`,
+          catchup: "/sync",
+          events: "/sync/events",
+          query: "/db",
         },
       },
       session: {
@@ -86,6 +87,42 @@ client.setSession({ userId: 2 })
 ```
 
 Use `client.run(queryModule, input, callback)` for TypeScript-native consumers. For generated Elm clients, prefer `PyreClient.create({ connect, elm: { ... } })` so the runtime owns the port bridge.
+
+### Auth-neutral server options
+
+`PyreClient` does not prescribe an authentication scheme. The server should authenticate each request using its normal app mechanism, then build the server-side Pyre session from that authenticated request context.
+
+For cookie-authenticated APIs, configure standard credentialed browser requests:
+
+```ts
+const client = await PyreClient.create({
+  schema: schemaMetadata,
+  server: {
+    baseUrl: "https://api.example.com",
+    credentials: "include",
+  },
+})
+```
+
+For bearer tokens, API keys, or CSRF headers, configure headers:
+
+```ts
+const client = await PyreClient.create({
+  schema: schemaMetadata,
+  server: {
+    baseUrl: "https://api.example.com",
+    credentials: "include",
+    headers: async () => ({
+      Authorization: `Bearer ${await getAccessToken()}`,
+      "X-CSRF-Token": getCsrfToken(),
+    }),
+  },
+})
+```
+
+`credentials` accepts the fetch credential modes: `"omit"`, `"same-origin"`, and `"include"`. `withCredentials: true` is still accepted as shorthand for `credentials: "include"`.
+
+Headers are used for HTTP catchup and mutation requests. Native browser `EventSource` cannot send custom headers, so SSE live sync can only use cookies through `credentials: "include"`.
 
 Use `client.onSyncState(...)` for high-level sync lifecycle updates:
 
@@ -114,20 +151,21 @@ const client = await PyreClient.create({
     const response = await fetch("http://localhost:3000/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ userId: 1 }),
     })
 
-    const { sessionId, userId } = await response.json()
-    const queryParams = new URLSearchParams({ sessionId }).toString()
+    const { userId } = await response.json()
 
     return {
       server: {
         baseUrl: "http://localhost:3000",
+        credentials: "include",
         liveSyncTransport: "sse",
         endpoints: {
-          catchup: `/sync?${queryParams}`,
-          events: `/sync/events?${queryParams}`,
-          query: `/db?${queryParams}`,
+          catchup: "/sync",
+          events: "/sync/events",
+          query: "/db",
         },
       },
       session: { userId },
@@ -240,6 +278,7 @@ If you are bridging those generated messages into `@pyre/client`, prefer `await 
 
 1. **CORS headers for custom headers**
    - If you send custom request headers, include them in `Access-Control-Allow-Headers`.
+   - If you use `credentials: "include"`, configure CORS to allow credentials and use an explicit allowed origin.
 
 2. **Session consistency**
    - Keep one session per runtime instance. Recreating sessions repeatedly can produce confusing behavior.

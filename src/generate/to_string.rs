@@ -23,6 +23,9 @@ fn to_string_definition(namespace: &str, definition: &ast::Definition) -> String
     match definition {
         ast::Definition::Lines { count } => "\n".repeat((*count).min(2) as usize),
         ast::Definition::Comment { text } => format!("//{}\n", text),
+        ast::Definition::SyncMode(sync_mode) => {
+            format!("@syncable({})\n", sync_mode.syncable_literal())
+        }
         ast::Definition::Session(session) => {
             let indent_collection: Indentation = collect_indentation(&session.fields, 4);
 

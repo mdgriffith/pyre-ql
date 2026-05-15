@@ -46,6 +46,7 @@ const client = new PyreClient({
     headers: {
       Authorization: 'Bearer token',
     },
+    credentials: 'same-origin',
   },
   indexedDbName: 'pyre-client',
   debug: true,
@@ -72,28 +73,31 @@ const readyClient = await PyreClient.create({
 
 Set `debug: true` to enable verbose runtime logging. By default, `@pyre/client` does not emit its internal `console.log` diagnostics.
 
-// Or resolve async setup during create:
+// Or resolve async setup during create. Auth is supplied through normal HTTP
+// configuration; Pyre does not treat live-sync ids as credentials.
 const factoryClient = await PyreClient.create({
   schema: schemaMetadata,
   connect: async () => {
     const response = await fetch('http://localhost:3000/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ userId: 1 }),
     });
 
-    const { sessionId } = await response.json();
-    const queryParams = new URLSearchParams({ sessionId }).toString();
+    const { userId } = await response.json();
 
     return {
       server: {
         baseUrl: 'http://localhost:3000',
+        credentials: 'include',
         endpoints: {
-          catchup: `/sync?${queryParams}`,
-          events: `/sync/events?${queryParams}`,
-          query: `/db?${queryParams}`,
+          catchup: '/sync',
+          events: '/sync/events',
+          query: '/db',
         },
       },
+      session: { userId },
     };
   },
 });
@@ -112,6 +116,58 @@ client.onSyncProgress((progress) => {
 // Refresh active queries when session-backed filters change
 client.setSession({ userId: 2 });
 ```
+
+### Server auth configuration
+
+`@pyre/client` is auth-neutral. Configure the HTTP behavior your app needs and let your server build the Pyre session from its normal authenticated request context.
+
+Cookie-authenticated APIs should use `credentials: 'include'`:
+
+```typescript
+const client = await PyreClient.create({
+  schema: schemaMetadata,
+  server: {
+    baseUrl: 'https://api.example.com',
+    credentials: 'include',
+  },
+});
+```
+
+Bearer tokens, API keys, and CSRF headers can use static headers:
+
+```typescript
+const client = await PyreClient.create({
+  schema: schemaMetadata,
+  server: {
+    baseUrl: 'https://api.example.com',
+    credentials: 'include',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'X-CSRF-Token': csrfToken,
+    },
+  },
+});
+```
+
+Use dynamic headers for rotating tokens:
+
+```typescript
+const client = await PyreClient.create({
+  schema: schemaMetadata,
+  server: {
+    baseUrl: 'https://api.example.com',
+    credentials: 'include',
+    headers: async () => ({
+      Authorization: `Bearer ${await getAccessToken()}`,
+      'X-CSRF-Token': getCsrfToken(),
+    }),
+  },
+});
+```
+
+`credentials` accepts the standard fetch values: `'omit'`, `'same-origin'`, or `'include'`. The older `withCredentials: true` option is equivalent to `credentials: 'include'`.
+
+Custom headers are applied to HTTP catchup and mutation requests. Native browser `EventSource` does not support custom headers, so SSE live sync can only use cookie credentials via `credentials: 'include'`.
 
 ### Registering Queries
 
@@ -180,22 +236,24 @@ const client = await PyreClient.create({
     const response = await fetch('http://localhost:3000/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ userId: 1 }),
     });
 
-    const { sessionId } = await response.json();
-    const queryParams = new URLSearchParams({ sessionId }).toString();
+    const { userId } = await response.json();
 
     return {
       server: {
         baseUrl: 'http://localhost:3000',
+        credentials: 'include',
         liveSyncTransport: 'sse',
         endpoints: {
-          catchup: `/sync?${queryParams}`,
-          events: `/sync/events?${queryParams}`,
-          query: `/db?${queryParams}`,
+          catchup: '/sync',
+          events: '/sync/events',
+          query: '/db',
         },
       },
+      session: { userId },
     };
   },
   elm: {

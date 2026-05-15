@@ -107,6 +107,7 @@ pub struct Context {
     pub current_filepath: String,
 
     pub valid_namespaces: HashSet<String>,
+    pub namespace_sync_modes: HashMap<String, ast::SyncMode>,
     pub session: Option<ast::SessionDetails>,
     pub funcs: HashMap<String, platform::FuncDefinition>,
 
@@ -150,6 +151,7 @@ pub fn empty_context() -> Context {
     let mut context = Context {
         current_filepath: "".to_string(),
         valid_namespaces: HashSet::new(),
+        namespace_sync_modes: HashMap::new(),
         session: None,
         funcs: fns,
         types: HashMap::new(),
@@ -749,6 +751,11 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
         .iter()
         .map(|schema| schema.namespace.clone())
         .collect();
+    context.namespace_sync_modes = database
+        .schemas
+        .iter()
+        .map(|schema| (schema.namespace.clone(), schema.sync_mode))
+        .collect();
 
     // Check for duplicate records
     // Check for duplicate types
@@ -912,6 +919,7 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                 .push(variant_def);
                         }
                     }
+                    ast::Definition::SyncMode(_) => {}
                     _ => {}
                 }
             }

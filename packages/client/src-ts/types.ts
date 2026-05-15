@@ -19,10 +19,14 @@ export interface ServerEndpoints {
   query: string;
 }
 
+export type ServerHeaders = Record<string, string> | (() => Record<string, string> | Promise<Record<string, string>>);
+
 export interface ServerConfig {
   baseUrl: string;
   endpoints?: Partial<ServerEndpoints>;
-  headers?: Record<string, string>;
+  headers?: ServerHeaders;
+  credentials?: RequestCredentials;
+  withCredentials?: boolean;
   liveSyncTransport?: LiveSyncTransport;
 }
 
@@ -94,6 +98,9 @@ export interface ElmFlags {
   server: {
     baseUrl: string;
     catchupPath: string;
+    headers: Array<[string, string]>;
+    credentials: RequestCredentials;
+    withCredentials: boolean;
   };
   liveSync: {
     transport: LiveSyncTransport;

@@ -40,7 +40,7 @@ type Msg
 
 
 type Incoming
-    = SendMutation String String String (List ( String, String )) Encode.Value -- requestId, mutationId, baseUrl, headers, input
+    = SendMutation String String String (List ( String, String )) String Bool Encode.Value -- requestId, mutationId, baseUrl, headers, credentials, withCredentials, input
 
 
 {-| Incoming messages from QueryClient (TypeScript side)
@@ -90,7 +90,7 @@ update msg model =
 handleIncoming : Incoming -> Model -> ( Model, Cmd Msg )
 handleIncoming incoming model =
     case incoming of
-        SendMutation _ _ _ _ _ ->
+        SendMutation _ _ _ _ _ _ _ ->
             -- Mutations are handled by Main, not QueryManager
             ( model, Cmd.none )
 
@@ -1120,13 +1120,23 @@ decodeIncoming =
             (\type_ ->
                 case type_ of
                     "sendMutation" ->
-                        Decode.map5 SendMutation
+                        Decode.map7 SendMutation
                             (Decode.field "requestId" Decode.string)
                             (Decode.field "mutationId" Decode.string)
                             (Decode.field "baseUrl" Decode.string)
                             (Decode.oneOf
                                 [ Decode.field "headers" decodeHeaders
                                 , Decode.succeed []
+                                ]
+                            )
+                            (Decode.oneOf
+                                [ Decode.field "credentials" Decode.string
+                                , Decode.succeed "same-origin"
+                                ]
+                            )
+                            (Decode.oneOf
+                                [ Decode.field "withCredentials" Decode.bool
+                                , Decode.succeed False
                                 ]
                             )
                             (Decode.field "input" Decode.value)

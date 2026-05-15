@@ -16,6 +16,9 @@ import Url
 type alias ServerConfig =
     { baseUrl : String
     , catchupPath : String
+    , headers : List ( String, String )
+    , credentials : String
+    , withCredentials : Bool
     }
 
 
@@ -220,10 +223,37 @@ requestCatchup cursor server =
         url =
             appendQueryParams (server.baseUrl ++ server.catchupPath) params
     in
-    Http.get
-        { url = url
-        , expect = Http.expectJson CatchupResponseReceived decodeCatchupResponse
-        }
+    if includeCredentials server then
+        Http.riskyRequest
+            { method = "GET"
+            , headers = httpHeaders server.headers
+            , url = url
+            , body = Http.emptyBody
+            , expect = Http.expectJson CatchupResponseReceived decodeCatchupResponse
+            , timeout = Nothing
+            , tracker = Nothing
+            }
+
+    else
+        Http.request
+            { method = "GET"
+            , headers = httpHeaders server.headers
+            , url = url
+            , body = Http.emptyBody
+            , expect = Http.expectJson CatchupResponseReceived decodeCatchupResponse
+            , timeout = Nothing
+            , tracker = Nothing
+            }
+
+
+includeCredentials : ServerConfig -> Bool
+includeCredentials server =
+    server.credentials == "include" || server.withCredentials
+
+
+httpHeaders : List ( String, String ) -> List Http.Header
+httpHeaders headers =
+    List.map (\( key, value ) -> Http.header key value) headers
 
 
 applyCatchupDelta : CatchupResponse -> Db.Db -> ( Maybe Data.Delta.Delta, Db.Db, List (Cmd Db.Msg) )
