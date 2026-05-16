@@ -116,10 +116,16 @@ query GetRulebookVersionBundle($rulebookName: String, $versionTag: String) {
     let context = typecheck::check_schema(&database).expect("schema typechecks");
 
     let query_list = parser::parse_query("query.pyre", query_source).expect("query parses");
-    typecheck::check_queries(&query_list, &context).expect("query typechecks");
+    let query_info = typecheck::check_queries(&query_list, &context).expect("query typechecks");
 
     let mut files: Vec<GeneratedFile<String>> = Vec::new();
-    elm::generate_queries(&context, &query_list, Path::new("client/elm"), &mut files);
+    elm::generate_queries(
+        &context,
+        &query_info,
+        &query_list,
+        Path::new("client/elm"),
+        &mut files,
+    );
 
     let generated = files
         .iter()

@@ -4,6 +4,7 @@ use crate::filesystem::{generate_text_file, GeneratedFile};
 
 use crate::generate::typealias;
 use crate::typecheck;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 const ELM_DELTA_MODULE: &str = include_str!("./static/elm/src/Db/Delta.elm");
@@ -23,6 +24,10 @@ pub fn generate(
         to_schema_ids(database),
     ));
     files.push(generate_text_file(
+        base_path.join("Db/Database.elm"),
+        to_database_ids(database),
+    ));
+    files.push(generate_text_file(
         base_path.join("Db/Decode.elm"),
         to_schema_decoders(database),
     ));
@@ -38,6 +43,82 @@ pub fn generate(
         base_path.join("Db/Updates.elm"),
         ELM_UPDATES_MODULE,
     ));
+}
+
+fn to_database_ids(database: &ast::Database) -> String {
+    let mut namespaces: Vec<String> = database
+        .schemas
+        .iter()
+        .map(|schema| schema.namespace.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    namespaces.sort();
+
+    let mut result = String::new();
+    result.push_str("module Db.Database exposing (DatabaseId, fromString, toString, encode");
+    for namespace in &namespaces {
+        result.push_str(&format!(", {}", elm_database_namespace(namespace)));
+    }
+    result.push_str(")\n\n");
+    result.push_str("import Json.Encode as Encode\n\n\n");
+
+    result.push_str("type DatabaseId namespace\n");
+    result.push_str("    = DatabaseId String\n\n\n");
+
+    for namespace in &namespaces {
+        let name = elm_database_namespace(namespace);
+        result.push_str(&format!("type {}\n", name));
+        result.push_str(&format!("    = {}\n\n\n", name));
+    }
+
+    result.push_str("fromString : String -> DatabaseId namespace\n");
+    result.push_str("fromString =\n");
+    result.push_str("    DatabaseId\n\n\n");
+
+    result.push_str("toString : DatabaseId namespace -> String\n");
+    result.push_str("toString (DatabaseId value) =\n");
+    result.push_str("    value\n\n\n");
+
+    result.push_str("encode : DatabaseId namespace -> Encode.Value\n");
+    result.push_str("encode databaseId =\n");
+    result.push_str("    Encode.string (toString databaseId)\n");
+
+    result
+}
+
+fn elm_database_namespace(namespace: &str) -> String {
+    if namespace == ast::DEFAULT_SCHEMANAME {
+        return "Default".to_string();
+    }
+
+    let mut result = String::new();
+    let mut capitalize_next = true;
+    for ch in namespace.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if result.is_empty() && ch.is_ascii_digit() {
+                result.push('D');
+            }
+            if capitalize_next {
+                result.push(ch.to_ascii_uppercase());
+                capitalize_next = false;
+            } else {
+                result.push(ch);
+            }
+        } else {
+            capitalize_next = true;
+        }
+    }
+
+    if result.is_empty() {
+        "Default".to_string()
+    } else {
+        result
+    }
+}
+
+fn elm_database_id_type(namespace: &str) -> String {
+    format!("(DatabaseId {})", elm_database_namespace(namespace))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -616,7 +697,23 @@ fn to_json_type_decoder(database: &ast::Database, type_: &ast::ColumnType) -> St
         ast::ColumnType::String => "Decode.string".to_string(),
         ast::ColumnType::Int => "Decode.int".to_string(),
         ast::ColumnType::Float => "Decode.float".to_string(),
+        ast::ColumnType::Bool => "bool".to_string(),
         ast::ColumnType::DateTime => "dateTime".to_string(),
+        ast::ColumnType::Date => "Decode.string".to_string(),
+        ast::ColumnType::Json => "json".to_string(),
+        ast::ColumnType::JsonTyped(inner) => to_json_type_decoder(database, inner),
+        ast::ColumnType::List(inner) => {
+            format!("(Decode.list {})", to_json_type_decoder(database, inner))
+        }
+        ast::ColumnType::Dict(inner) => {
+            format!("(Decode.dict {})", to_json_type_decoder(database, inner))
+        }
+        ast::ColumnType::Nullable(inner) => {
+            format!(
+                "(Decode.nullable {})",
+                to_json_type_decoder(database, inner)
+            )
+        }
         ast::ColumnType::IdInt { .. } => "Db.Id.decodeInt".to_string(),
         ast::ColumnType::IdUuid { .. } => "Db.Id.decodeUuid".to_string(),
         ast::ColumnType::ForeignKey { table, field } if field == "id" => {
@@ -819,6 +916,7 @@ fn to_elm_encoder(lookup: &ElmLookup, type_: &ast::ColumnType) -> String {
 
 pub fn generate_queries(
     context: &typecheck::Context,
+    all_query_info: &HashMap<String, typecheck::QueryInfo>,
     query_list: &ast::QueryList,
     base_out_dir: &Path,
     files: &mut Vec<GeneratedFile<String>>,
@@ -836,7 +934,7 @@ pub fn generate_queries(
                     base_out_dir
                         .join("Query")
                         .join(format!("{}.elm", q.name.to_string())),
-                    to_query_file(context, q),
+                    to_query_file(context, all_query_info.get(&q.name), q),
                 ));
             }
             ast::QueryDef::QueryComment { .. } | ast::QueryDef::QueryLines { .. } => continue,
@@ -847,12 +945,16 @@ pub fn generate_queries(
     if !query_names.is_empty() {
         files.push(generate_text_file(
             base_out_dir.join("Pyre.elm"),
-            generate_pyre_module(context, query_list, &query_names),
+            generate_pyre_module(context, all_query_info, query_list, &query_names),
         ));
     }
 }
 
-fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
+fn to_query_file(
+    context: &typecheck::Context,
+    query_info: Option<&typecheck::QueryInfo>,
+    query: &ast::Query,
+) -> String {
     // Collect type names as we generate them
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -866,6 +968,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     let mut result = String::new();
 
     result.push_str("import Db\n");
+    result.push_str("import Db.Database\n");
     result.push_str("import Db.Decode\n");
     result.push_str("import Db.Delta\n");
     result.push_str("import Db.Encode\n");
@@ -968,7 +1071,7 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
                     format!("(Decode.nullable {})", decoder)
                 } else {
                     if is_link {
-                        format!("(Decode.list {})", decoder)
+                        format!("(Decode.oneOf [ Decode.list {}, Decode.null [] ])", decoder)
                     } else {
                         decoder.to_string()
                     }
@@ -992,12 +1095,23 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
     typealias::return_data_aliases(context, query, &mut result, &decoder_formatter);
 
     if query.operation != ast::QueryOperation::Query {
+        let database_type = query_info
+            .map(|info| elm_database_id_type(&info.primary_db))
+            .unwrap_or_else(|| elm_database_id_type(ast::DEFAULT_SCHEMANAME));
         result.push_str(
-            "type alias DatabaseId =\n    String\n\n\ntype alias RequestId =\n    String\n\n\ntype alias MutationResult =\n    { requestId : RequestId\n    , mutationId : String\n    , mutationName : Maybe String\n    , result : Result String ReturnData\n    }\n\n\n",
+            "type alias DatabaseId namespace =\n    Db.Database.DatabaseId namespace\n\n\ntype alias RequestId =\n    String\n\n\ntype alias MutationResult =\n    { requestId : RequestId\n    , mutationId : String\n    , mutationName : Maybe String\n    , result : Result String ReturnData\n    }\n\n\n",
         );
-        result.push_str(
-            "mutationRequest : DatabaseId -> RequestId -> Input -> Encode.Value\nmutationRequest databaseId requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"databaseId\", Encode.string databaseId )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]\n\n\n",
-        );
+        if let Some(info) = query_info {
+            let namespace = elm_database_namespace(&info.primary_db);
+            result.push_str(&format!(
+                "type alias {} =\n    Db.Database.{}\n\n\n",
+                namespace, namespace
+            ));
+        }
+        result.push_str(&format!(
+            "mutationRequest : {} -> RequestId -> Input -> Encode.Value\nmutationRequest databaseId requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"databaseId\", Db.Database.encode databaseId )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]\n\n\n",
+            database_type
+        ));
         result.push_str(
             "decodeMutationResult : Decode.Decoder MutationResult\ndecodeMutationResult =\n    Decode.map4\n        (\\requestId mutationId mutationName mutationResult ->\n            { requestId = requestId\n            , mutationId = mutationId\n            , mutationName = mutationName\n            , result = mutationResult\n            }\n        )\n        (Decode.field \"requestId\" Decode.string)\n        (Decode.field \"mutationId\" Decode.string)\n        (Decode.oneOf\n            [ Decode.field \"mutationName\" (Decode.nullable Decode.string)\n            , Decode.succeed Nothing\n            ]\n        )\n        (Decode.field \"result\" (decodeBridgeMutationResult decodeReturnData))\n\n\n",
         );
@@ -1025,6 +1139,9 @@ fn to_query_file(context: &typecheck::Context, query: &ast::Query) -> String {
 
     if query.operation != ast::QueryOperation::Query {
         exposing_items.push("DatabaseId".to_string());
+        if let Some(info) = query_info {
+            exposing_items.push(elm_database_namespace(&info.primary_db));
+        }
         exposing_items.push("RequestId".to_string());
         exposing_items.push("id".to_string());
         exposing_items.push("name".to_string());
@@ -1332,7 +1449,7 @@ fn to_query_field_spec_json(
     let mut limit: Option<i32> = None;
 
     // Collect all field selections and args
-    let mut field_selections: Vec<(String, bool, bool)> = Vec::new();
+    let mut field_selections: Vec<(String, String, bool, bool)> = Vec::new();
     let mut selected_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     let mut explicit_columns: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1386,7 +1503,12 @@ fn to_query_field_spec_json(
                                     continue;
                                 }
                                 if selected_names.insert(column.name.clone()) {
-                                    field_selections.push((column.name.clone(), false, false));
+                                    field_selections.push((
+                                        column.name.clone(),
+                                        column.name.clone(),
+                                        false,
+                                        false,
+                                    ));
                                 }
                             }
                         }
@@ -1407,9 +1529,11 @@ fn to_query_field_spec_json(
                         .iter()
                         .any(|f| matches!(f, ast::ArgField::Field(_)));
 
-                if selected_names.insert(nested_field.name.clone()) {
+                let aliased_name = ast::get_aliased_name(nested_field);
+                if selected_names.insert(aliased_name.clone()) {
                     field_selections.push((
                         nested_field.name.clone(),
+                        aliased_name,
                         is_relationship,
                         has_nested_fields,
                     ));
@@ -1425,7 +1549,7 @@ fn to_query_field_spec_json(
     }
 
     // Generate field selections
-    for (field_name, is_relationship, has_nested_fields) in field_selections {
+    for (field_name, aliased_name, is_relationship, has_nested_fields) in field_selections {
         if !is_first {
             result.push_str(&format!("\n{}, ", indent));
         }
@@ -1453,7 +1577,7 @@ fn to_query_field_spec_json(
                 });
                 result.push_str(&format!(
                     "({}, {})",
-                    string::quote(&field_name),
+                    string::quote(&aliased_name),
                     to_query_field_spec_json(context, nested_field, nested_table, indent_level + 1)
                 ));
             }
@@ -1461,7 +1585,7 @@ fn to_query_field_spec_json(
             // Regular field or relationship without nested - just true
             result.push_str(&format!(
                 "({}, Encode.bool True)",
-                string::quote(&field_name)
+                string::quote(&aliased_name)
             ));
         }
     }
@@ -2021,18 +2145,30 @@ fn find_nested_query_field<'a>(
 
 fn generate_pyre_module(
     _context: &typecheck::Context,
+    all_query_info: &HashMap<String, typecheck::QueryInfo>,
     query_list: &ast::QueryList,
     query_names: &[String],
 ) -> String {
     let mut result = String::new();
 
     // Module declaration
-    result.push_str(
-        "module Pyre exposing (DatabaseId, QueryId, Model, QueryModel, Query(..), Msg(..), Effect(..), init, update, decodeIncomingDelta, getResult)\n\n\n",
-    );
+    let mut database_namespaces: Vec<String> = query_names
+        .iter()
+        .filter_map(|name| all_query_info.get(name).map(|info| info.primary_db.clone()))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    database_namespaces.sort();
+
+    result.push_str("module Pyre exposing (DatabaseId");
+    for namespace in &database_namespaces {
+        result.push_str(&format!(", {}", elm_database_namespace(namespace)));
+    }
+    result.push_str(", QueryId, Model, QueryModel, Query(..), Msg(..), Effect(..), init, update, decodeIncomingDelta, getResult)\n\n\n");
 
     // Imports
     result.push_str("import Dict exposing (Dict)\n");
+    result.push_str("import Db.Database\n");
     result.push_str("import Json.Decode as Decode\n");
     result.push_str("import Json.Encode as Encode\n");
 
@@ -2073,14 +2209,26 @@ fn generate_pyre_module(
 
     // Query type
     result.push_str("-- Query\n\n\n");
-    result.push_str("type alias DatabaseId =\n    String\n\n\n");
+    result
+        .push_str("type alias DatabaseId namespace =\n    Db.Database.DatabaseId namespace\n\n\n");
+    for namespace in &database_namespaces {
+        let name = elm_database_namespace(namespace);
+        result.push_str(&format!(
+            "type alias {} =\n    Db.Database.{}\n\n\n",
+            name, name
+        ));
+    }
     result.push_str("type alias QueryId =\n    String\n\n\n");
     result.push_str("type Query\n");
     for (i, name) in query_names.iter().enumerate() {
         let prefix = if i == 0 { "    = " } else { "    | " };
+        let database_type = all_query_info
+            .get(name)
+            .map(|info| elm_database_id_type(&info.primary_db))
+            .unwrap_or_else(|| elm_database_id_type(ast::DEFAULT_SCHEMANAME));
         result.push_str(&format!(
-            "{}{} DatabaseId QueryId Query.{}.Input\n",
-            prefix, name, name
+            "{}{} {} QueryId Query.{}.Input\n",
+            prefix, name, database_type, name
         ));
     }
     result.push_str("\n\n");
@@ -2094,7 +2242,14 @@ fn generate_pyre_module(
             "    | {}_DataReceived QueryId Query.{}.QueryDelta\n",
             name, name
         ));
-        result.push_str(&format!("    | {}_Unregistered DatabaseId QueryId\n", name));
+        let database_type = all_query_info
+            .get(name)
+            .map(|info| elm_database_id_type(&info.primary_db))
+            .unwrap_or_else(|| elm_database_id_type(ast::DEFAULT_SCHEMANAME));
+        result.push_str(&format!(
+            "    | {}_Unregistered {} QueryId\n",
+            name, database_type
+        ));
     }
     result.push_str("\n\n");
 
@@ -2293,12 +2448,12 @@ fn generate_pyre_module(
     result.push_str("-- Encoders\n\n\n");
 
     result.push_str(
-        "encodeRegister : DatabaseId -> String -> Encode.Value -> QueryId -> Encode.Value -> Encode.Value\n",
+        "encodeRegister : DatabaseId namespace -> String -> Encode.Value -> QueryId -> Encode.Value -> Encode.Value\n",
     );
     result.push_str("encodeRegister databaseId queryName queryShape queryId input =\n");
     result.push_str("    Encode.object\n");
     result.push_str("        [ ( \"type\", Encode.string \"register\" )\n");
-    result.push_str("        , ( \"databaseId\", Encode.string databaseId )\n");
+    result.push_str("        , ( \"databaseId\", Db.Database.encode databaseId )\n");
     result.push_str("        , ( \"queryName\", Encode.string queryName )\n");
     result.push_str("        , ( \"querySource\", queryShape )\n");
     result.push_str("        , ( \"queryId\", Encode.string queryId )\n");
@@ -2306,22 +2461,22 @@ fn generate_pyre_module(
     result.push_str("        ]\n\n\n");
 
     result.push_str(
-        "encodeUpdateInput : DatabaseId -> QueryId -> Encode.Value -> Encode.Value -> Encode.Value\n",
+        "encodeUpdateInput : DatabaseId namespace -> QueryId -> Encode.Value -> Encode.Value -> Encode.Value\n",
     );
     result.push_str("encodeUpdateInput databaseId queryId queryShape input =\n");
     result.push_str("    Encode.object\n");
     result.push_str("        [ ( \"type\", Encode.string \"update-input\" )\n");
-    result.push_str("        , ( \"databaseId\", Encode.string databaseId )\n");
+    result.push_str("        , ( \"databaseId\", Db.Database.encode databaseId )\n");
     result.push_str("        , ( \"queryId\", Encode.string queryId )\n");
     result.push_str("        , ( \"querySource\", queryShape )\n");
     result.push_str("        , ( \"queryInput\", input )\n");
     result.push_str("        ]\n\n\n");
 
-    result.push_str("encodeUnregister : DatabaseId -> QueryId -> Encode.Value\n");
+    result.push_str("encodeUnregister : DatabaseId namespace -> QueryId -> Encode.Value\n");
     result.push_str("encodeUnregister databaseId queryId =\n");
     result.push_str("    Encode.object\n");
     result.push_str("        [ ( \"type\", Encode.string \"unregister\" )\n");
-    result.push_str("        , ( \"databaseId\", Encode.string databaseId )\n");
+    result.push_str("        , ( \"databaseId\", Db.Database.encode databaseId )\n");
     result.push_str("        , ( \"queryId\", Encode.string queryId )\n");
     result.push_str("        ]\n\n\n");
 

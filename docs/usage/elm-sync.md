@@ -8,6 +8,7 @@ There are three layers:
 
 1. **Elm app**
    - Owns UI state.
+   - Owns concrete database ID construction, such as `"main"` or `"campaign:123"`.
    - Registers/unregisters queries.
    - Receives query results/deltas.
 
@@ -40,6 +41,8 @@ Routes:
 The server must authenticate normally, authorize the requested `databaseId`, choose the DB connection for that ID, and group live-sync connections by `databaseId`. Deltas must not be broadcast across database IDs.
 
 If the app has separate command-plane and tenant schemas, use separate generated Pyre artifacts and separate client/server runtime wiring for each schema family. `databaseId` selects a source database within one schema family; it is not a replacement for schema selection.
+
+Generated Elm query and mutation constructors are typed by Pyre schema namespace, such as `Main` or `Campaign`, but the app still owns the concrete database ID string format. Keep that format in one app module and construct typed IDs with `Db.Database.fromString`.
 
 If schema/migrations run after startup, reload schema cache before expecting sync to work.
 
@@ -98,6 +101,53 @@ client.setSession({ userId: 2 })
 ```
 
 Use `client.run(databaseId, queryModule, input, callback)` for TypeScript-native consumers. For generated Elm clients, prefer `PyreClient.create({ connect, elm: { ... } })` so the runtime owns the port bridge.
+
+## Elm database IDs
+
+Pyre generates `Db.Database.elm` with an opaque typed database ID:
+
+```elm
+type DatabaseId namespace
+    = DatabaseId String
+
+fromString : String -> DatabaseId namespace
+toString : DatabaseId namespace -> String
+```
+
+Pyre also generates namespace marker types from schema namespaces. For example, schemas named `Main` and `Campaign` produce `Db.Database.Main` and `Db.Database.Campaign`.
+
+The app should define concrete constructors in one place:
+
+```elm
+module App.Database exposing (main, campaign)
+
+import Db.Database
+import Pyre
+
+
+main : Pyre.DatabaseId Pyre.Main
+main =
+    Db.Database.fromString "main"
+
+
+campaign : Int -> Pyre.DatabaseId Pyre.Campaign
+campaign campaignId =
+    Db.Database.fromString ("campaign:" ++ String.fromInt campaignId)
+```
+
+Generated query and mutation constructors require the matching namespace:
+
+```elm
+Pyre.QueryUpdate
+    (Pyre.GameKeystone (App.Database.campaign gameId) queryId input)
+
+Query.GameUpdate.mutationRequest
+    (App.Database.campaign gameId)
+    requestId
+    input
+```
+
+The JSON sent through ports still contains a plain string `databaseId`. The type parameter only prevents accidentally sending a `Main` database ID to a `Campaign` query, or vice versa.
 
 ### Auth-neutral server options
 

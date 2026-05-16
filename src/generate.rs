@@ -55,7 +55,7 @@ pub fn write_queries(
     all_query_info: &HashMap<String, typecheck::QueryInfo>,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
-    write_client_queries(context, query_list, files);
+    write_client_queries(context, query_list, all_query_info, files);
     let typescript_core_dir = Path::new("typescript/core");
     let typescript_dir = Path::new("typescript");
     generate::typescript::core::generate_queries(
@@ -88,9 +88,10 @@ pub fn write_queries(
 fn write_client_queries(
     context: &typecheck::Context,
     query_list: &ast::QueryList,
+    all_query_info: &HashMap<String, typecheck::QueryInfo>,
     files: &mut Vec<crate::filesystem::GeneratedFile<String>>,
 ) {
     // Create relative path: client/{lang} (relative to base_out_dir)
     let out_dir = Path::new("client/elm");
-    generate::client::elm::generate_queries(context, query_list, out_dir, files)
+    generate::client::elm::generate_queries(context, all_query_info, query_list, out_dir, files)
 }

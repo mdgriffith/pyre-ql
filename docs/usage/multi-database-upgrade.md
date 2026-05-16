@@ -8,6 +8,7 @@ Use this guide when an app needs one Pyre client/server integration to talk to m
 - The client sends `databaseId` with every Pyre query, mutation, catchup request, and live-sync connection.
 - The server authenticates the request, authorizes access to the requested `databaseId`, and maps that ID to the correct database connection.
 - Pyre keeps one IndexedDB cache per `databaseId` inside the configured `cacheNamespace`.
+- Generated Elm APIs type database IDs by Pyre schema namespace, but the app owns the concrete string format.
 
 ## Client Requirements
 
@@ -49,18 +50,39 @@ client.run(bootstrap.activeTenantDatabaseId, Query.ListDocuments, {}, (result) =
 })
 ```
 
-Generated Elm query constructors include `databaseId` and `queryId`:
+Generated Elm query constructors include `databaseId` and `queryId`. The database ID is typed by the query's generated namespace:
 
 ```elm
 Pyre.QueryUpdate
     (Pyre.ListDocuments tenantDatabaseId "documents" {})
 ```
 
-Generated Elm mutation modules also require `databaseId`:
+Generated Elm mutation modules also require typed `databaseId`:
 
 ```elm
 Query.DocumentCreate.mutationRequest tenantDatabaseId "create-document-1" input
 ```
+
+Centralize app-specific database ID construction instead of concatenating strings at call sites:
+
+```elm
+module App.Database exposing (command, tenant)
+
+import Db.Database
+import Pyre
+
+
+command : Pyre.DatabaseId Pyre.Command
+command =
+    Db.Database.fromString "command"
+
+
+tenant : String -> Pyre.DatabaseId Pyre.Tenant
+tenant tenantKey =
+    Db.Database.fromString ("tenant:" ++ tenantKey)
+```
+
+The generated types prevent passing a `Command` database ID to a `Tenant` query, while the wire payload still sends the opaque string `databaseId`.
 
 ## Server Requirements
 
@@ -163,6 +185,7 @@ If Pyre is extended later to support multiple schema families inside one public 
 
 - Bootstrap returns `cacheNamespace`, Pyre session data, and allowed database IDs.
 - Client passes `databaseId` to every query and mutation.
+- Elm apps centralize concrete database ID constructors and pass generated typed IDs to query/mutation constructors.
 - Client calls `setSyncedDatabases` with the databases that should sync locally.
 - Elm-generated query and mutation calls include `databaseId`.
 - Server rejects Pyre requests missing `databaseId`.

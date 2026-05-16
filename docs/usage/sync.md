@@ -269,6 +269,27 @@ PyreMsg
     )
 ```
 
+`databaseId` is a typed generated value, not a raw string. Pyre generates `Db.Database.DatabaseId namespace` plus namespace markers from schema namespaces. Apps should centralize their concrete ID format in one module:
+
+```elm
+module App.Database exposing (main, campaign)
+
+import Db.Database
+import Pyre
+
+
+main : Pyre.DatabaseId Pyre.Main
+main =
+    Db.Database.fromString "main"
+
+
+campaign : Int -> Pyre.DatabaseId Pyre.Campaign
+campaign campaignId =
+    Db.Database.fromString ("campaign:" ++ String.fromInt campaignId)
+```
+
+Generated constructors use the query's `primary_db` metadata, so a `Campaign` query requires `Pyre.DatabaseId Pyre.Campaign` and a `Main` query requires `Pyre.DatabaseId Pyre.Main`.
+
 Read the current result with:
 
 ```elm
@@ -312,7 +333,7 @@ The intended flow is:
 
 For mutations, the flow is:
 
-1. Elm sends a generated `Query.SomeMutation.mutationRequest databaseId requestId input` payload
+1. Elm sends a generated `Query.SomeMutation.mutationRequest databaseId requestId input` payload, where `databaseId` is typed by the mutation's database namespace
 2. Your JS/TS host forwards that payload to `PyreClient`
 3. `PyreClient` POSTs the mutation to the server using `mutationId`
 4. `PyreClient` forwards the immediate mutation result back into Elm with the same `requestId`
@@ -322,6 +343,7 @@ For mutations, the flow is:
 
 - The generated Elm query modules now expose `queryShape`.
 - Generated Elm mutation modules expose `id`, `name`, `mutationRequest`, and `decodeMutationResult`.
+- Generated Elm query and mutation constructors require typed database IDs by schema namespace.
 - `Pyre.elm` uses those generated `queryShape` values automatically.
 - `@where`, `@sort`, and `@limit` are preserved in generated query shapes.
 - Session-aware filters require keeping `PyreClient` session state current via `setSession`.

@@ -16,6 +16,7 @@ The app explicitly provides the database ID for each query or mutation and contr
 ## Terms
 
 - **Database ID**: An opaque server-defined string identifying a source database, such as `main`, `campaign:123`, or `tenant:acme`.
+- **Database Namespace**: A Pyre schema namespace, such as `Main` or `Campaign`, used by generated metadata to describe which database family a query expects.
 - **Cache Namespace**: A server-defined string identifying the authenticated local-cache boundary, usually the user ID.
 - **Source Database**: The server-side SQLite/libSQL database selected by a database ID.
 - **Cache Database**: The browser IndexedDB database used by Pyre for one source database.
@@ -183,18 +184,47 @@ The generated operation metadata may still describe the database type an operati
 
 Elm integrations must also provide the database ID for every query and mutation request.
 
-Generated Elm helpers should require a `databaseId` argument or include it in the generated request value sent through ports.
+Generated Elm helpers require a `databaseId` argument and include it in the generated request value sent through ports. The concrete database ID string belongs to the app, but generated Elm types preserve the query's database namespace.
 
-Example shape:
+Generated support module shape:
 
 ```elm
-Pyre.query databaseId Query.CampaignNotes input
+type DatabaseId namespace
+    = DatabaseId String
+
+fromString : String -> DatabaseId namespace
+toString : DatabaseId namespace -> String
 ```
 
-or:
+Apps should define one source of truth for concrete IDs:
 
 ```elm
-Pyre.mutate databaseId Query.CreateCampaignNote input
+module App.Database exposing (main, campaign)
+
+import Db.Database
+import Pyre
+
+
+main : Pyre.DatabaseId Pyre.Main
+main =
+    Db.Database.fromString "main"
+
+
+campaign : Int -> Pyre.DatabaseId Pyre.Campaign
+campaign campaignId =
+    Db.Database.fromString ("campaign:" ++ String.fromInt campaignId)
+```
+
+Generated query and mutation constructors then require the matching namespace:
+
+```elm
+Pyre.QueryUpdate
+    (Pyre.CampaignNotes (App.Database.campaign campaignId) queryId input)
+
+Query.CreateCampaignNote.mutationRequest
+    (App.Database.campaign campaignId)
+    requestId
+    input
 ```
 
 The TypeScript bridge forwards that database ID to the meta-client:
@@ -204,6 +234,8 @@ client.run(message.databaseId, queryModule, message.queryInput, callback);
 ```
 
 Elm-originated messages that omit `databaseId` should fail before reaching the server.
+
+If a generated operation targets `Main`, Elm should not compile when passed `DatabaseId Campaign`; if it targets `Campaign`, Elm should not compile when passed `DatabaseId Main`. Pyre still treats the serialized database ID as opaque at runtime.
 
 ## Sync Routing
 
