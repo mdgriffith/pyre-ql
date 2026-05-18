@@ -151,34 +151,25 @@ type EntityChange = {
 
 Generated Elm should expose typed table-stream constructors in the same spirit as generated query constructors.
 
+The first generated version is intentionally small. It emits an `EntityStream.elm` module with one constructor per table. Each constructor accepts `Maybe (List id)` for primary-ID filtering only. `Nothing` subscribes to all incoming rows for that table; `Just ids` serializes to `{ "id": { "$in": ids } }`.
+
 Sketch:
 
 ```elm
 type EntitySubscription
-    = Posts PostsWhere
-    | Comments CommentsWhere
-
-
-type alias PostsWhere =
-    { authorId : Maybe (Db.Id.User)
-    }
-
-
-type alias CommentsWhere =
-    { postId : Maybe (List Db.Id.Post)
-    }
+    = Post (Maybe (List Int))
+    | Comment (Maybe (List String))
 ```
 
 The generated app-facing module should let the app register subscriptions by ID:
 
 ```elm
-type EntityStream
-    = EntityStream DatabaseId StreamId (List EntitySubscription)
-
-
-type Msg
-    = EntityStreamUpdate EntityStream
-    | EntityChangesReceived StreamId EntityChangeBatch
+EntityStream.register
+    databaseId
+    "visible-posts"
+    [ EntityStream.Post (Just [ 1, 2, 3 ])
+    , EntityStream.Comment Nothing
+    ]
 ```
 
 The generated module serializes subscriptions into the common port shape:
@@ -191,6 +182,28 @@ The generated module serializes subscriptions into the common port shape:
   "tables": [
     { "tableName": "posts", "where": { "author_id": 1 } }
   ]
+}
+```
+
+The TypeScript bridge sends batches back through `pyre_receiveEntityChanges` by default:
+
+```json
+{
+  "type": "entity-change-batch",
+  "streamId": "visible-posts",
+  "databaseId": "main",
+  "sequence": 1,
+  "source": "indexeddb-initial",
+  "changes": []
+}
+```
+
+Streams are removed with:
+
+```json
+{
+  "type": "unregister-entity-stream",
+  "streamId": "visible-posts"
 }
 ```
 

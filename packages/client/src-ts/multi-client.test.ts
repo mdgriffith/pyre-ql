@@ -517,6 +517,147 @@ test('Elm bridge routes mutation messages by databaseId', async () => {
   ]);
 });
 
+test('Elm bridge routes entity stream registrations and batches by streamId', async () => {
+  const receivedSubscriptions: any[] = [];
+  const unsubscribed: string[] = [];
+  const outbound = fakePort();
+  const entityChanges = fakePort();
+  await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => ({
+      ...fakeInternalClient([], config.databaseId),
+      onEntityChanges(subscription: unknown, callback: (batch: unknown) => void) {
+        receivedSubscriptions.push({ databaseId: config.databaseId, subscription });
+        callback({
+          type: 'entity-change-batch',
+          databaseId: config.databaseId,
+          sequence: 1,
+          source: 'indexeddb-initial',
+          changes: [{ tableName: 'posts', id: 1, op: 'row', row: { id: 1, author_id: 10 } }],
+        });
+        return () => {
+          unsubscribed.push(config.databaseId);
+        };
+      },
+    }),
+    elm: {
+      app: {
+        ports: {
+          pyreStoreOut: outbound.port,
+          pyre_receiveEntityChanges: entityChanges.port,
+        },
+      },
+    },
+  });
+
+  outbound.emit({
+    type: 'register-entity-stream',
+    databaseId: 'campaign:123',
+    streamId: 'visible-posts',
+    tables: [{ tableName: 'posts', where: { id: { $in: [1, 2] } } }],
+  });
+  await Bun.sleep(0);
+
+  expect(receivedSubscriptions).toEqual([
+    {
+      databaseId: 'campaign:123',
+      subscription: { tables: [{ tableName: 'posts', where: { id: { $in: [1, 2] } } }] },
+    },
+  ]);
+  expect(entityChanges.sent).toEqual([
+    {
+      type: 'entity-change-batch',
+      streamId: 'visible-posts',
+      databaseId: 'campaign:123',
+      sequence: 1,
+      source: 'indexeddb-initial',
+      changes: [{ tableName: 'posts', id: 1, op: 'row', row: { id: 1, author_id: 10 } }],
+    },
+  ]);
+
+  outbound.emit({ type: 'unregister-entity-stream', streamId: 'visible-posts' });
+  await Bun.sleep(0);
+
+  expect(unsubscribed).toEqual(['campaign:123']);
+});
+
+test('Elm bridge replaces an existing entity stream registration with the same streamId', async () => {
+  const unsubscribed: string[] = [];
+  const outbound = fakePort();
+  await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => ({
+      ...fakeInternalClient([], config.databaseId),
+      onEntityChanges() {
+        return () => {
+          unsubscribed.push(config.databaseId);
+        };
+      },
+    }),
+    elm: {
+      app: {
+        ports: {
+          pyreStoreOut: outbound.port,
+        },
+      },
+    },
+  });
+
+  outbound.emit({
+    type: 'register-entity-stream',
+    databaseId: 'campaign:123',
+    streamId: 'visible-posts',
+    tables: [{ tableName: 'posts' }],
+  });
+  await Bun.sleep(0);
+  outbound.emit({
+    type: 'register-entity-stream',
+    databaseId: 'campaign:456',
+    streamId: 'visible-posts',
+    tables: [{ tableName: 'posts' }],
+  });
+  await Bun.sleep(0);
+
+  expect(unsubscribed).toEqual(['campaign:123']);
+});
+
+test('Elm bridge reports invalid entity stream registrations', async () => {
+  const errors: Array<{ message: string; phase: string }> = [];
+  const outbound = fakePort();
+  await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => fakeInternalClient([], config.databaseId),
+    elm: {
+      app: {
+        ports: {
+          pyreStoreOut: outbound.port,
+        },
+      },
+      onError(error, context) {
+        errors.push({ message: error.message, phase: context.phase });
+      },
+    },
+  });
+
+  outbound.emit({
+    type: 'register-entity-stream',
+    databaseId: 'campaign:123',
+    streamId: 'visible-posts',
+    tables: [{ tableName: 'posts', where: { id: { $gt: 1 } } }],
+  });
+  await Bun.sleep(0);
+
+  expect(errors).toEqual([
+    { message: 'Entity subscription table posts where.id uses unsupported operator $gt', phase: 'incoming-message' },
+  ]);
+});
+
 test('devtools registry tracks public clients and disambiguates duplicate namespaces', async () => {
   __resetPyreDevtoolsRegistryForTests();
   const first = await PyreClient.create({

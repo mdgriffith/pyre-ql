@@ -466,6 +466,7 @@ fn write_elm_build_files(ctx: &TestContext) {
     imports.push_str("import Db.Delta\n");
     imports.push_str("import Db.Encode\n");
     imports.push_str("import Db.Id\n");
+    imports.push_str("import EntityStream\n");
 
     let query_dir = elm_root.join("Query");
     if query_dir.exists() {

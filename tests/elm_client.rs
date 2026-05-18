@@ -77,12 +77,12 @@ query GetGameWorld($slug: String) {
     );
     assert!(
         content.contains("type alias DatabaseId namespace =\n    Db.Database.DatabaseId namespace\n\n\ntype alias Default =\n    Db.Database.Default\n\n\ntype alias QueryId =\n    String")
-            && content.contains("type Query\n    = GetRulebookByName DatabaseId Default QueryId Query.GetRulebookByName.Input\n    | GetGameWorld DatabaseId Default QueryId Query.GetGameWorld.Input"),
+            && content.contains("type Query\n    = GetRulebookByName (DatabaseId Default) QueryId Query.GetRulebookByName.Input\n    | GetGameWorld (DatabaseId Default) QueryId Query.GetGameWorld.Input"),
         "Pyre.elm should generate a Query type for outbound upserts. Generated:\n{}",
         content
     );
     assert!(
-        content.contains("type Msg\n    = QueryUpdate Query\n    | GetRulebookByName_DataReceived QueryId Query.GetRulebookByName.QueryDelta\n    | GetRulebookByName_Unregistered DatabaseId Default QueryId\n    | GetGameWorld_DataReceived QueryId Query.GetGameWorld.QueryDelta\n    | GetGameWorld_Unregistered DatabaseId Default QueryId"),
+        content.contains("type Msg\n    = QueryUpdate Query\n    | GetRulebookByName_DataReceived QueryId Query.GetRulebookByName.QueryDelta\n    | GetRulebookByName_Unregistered (DatabaseId Default) QueryId\n    | GetGameWorld_DataReceived QueryId Query.GetGameWorld.QueryDelta\n    | GetGameWorld_Unregistered (DatabaseId Default) QueryId"),
         "Pyre.elm should collapse register/update into QueryUpdate. Generated:\n{}",
         content
     );
@@ -171,11 +171,92 @@ insert CreatePost($title: String) {
             && content.contains("name : String\nname =\n    \"CreatePost\"")
             && content.contains("type alias DatabaseId namespace =\n    Db.Database.DatabaseId namespace\n\n\ntype alias RequestId =\n    String")
             && content.contains("type alias Default =\n    Db.Database.Default")
-            && content.contains("mutationRequest : DatabaseId Default -> RequestId -> Input -> Encode.Value\nmutationRequest databaseId requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"databaseId\", Db.Database.encode databaseId )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]")
+            && content.contains("mutationRequest : (DatabaseId Default) -> RequestId -> Input -> Encode.Value\nmutationRequest databaseId requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"databaseId\", Db.Database.encode databaseId )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]")
             && content.contains("type alias MutationResult =\n    { requestId : RequestId\n    , mutationId : String\n    , mutationName : Maybe String\n    , result : Result String ReturnData\n    }")
             && content.contains("decodeMutationResult : Decode.Decoder MutationResult")
             && content.contains("decodeBridgeMutationResult : Decode.Decoder value -> Decode.Decoder (Result String value)"),
         "Mutation modules should emit request payloads and typed result decoders. Generated:\n{}",
+        content
+    );
+}
+
+#[test]
+fn generated_entity_stream_module_encodes_id_filtered_streams() {
+    let schema_source = r#"
+record Post {
+    @public
+
+    id    Id.Int @id
+    title String
+}
+
+record Comment {
+    @public
+
+    id     Id.Uuid @id
+    postId Post.id
+    body   String
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema parses");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let mut files: Vec<GeneratedFile<String>> = Vec::new();
+    elm::generate(Path::new("client/elm"), &database, &mut files);
+
+    let generated = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("EntityStream.elm"))
+        .expect("generated EntityStream.elm file");
+
+    let content = &generated.contents;
+
+    assert!(
+        content.contains("module EntityStream exposing (DatabaseId, EntityChange(..), EntityChangeBatch, EntityChangeBatchSource(..), EntitySubscription(..), StreamId, decodeIncomingBatch, register, unregister)"),
+        "EntityStream.elm should expose the slim bridge API. Generated:\n{}",
+        content
+    );
+    assert!(
+        content.contains("type EntitySubscription\n    = Comment (Maybe (List String))\n    | Post (Maybe (List Int))"),
+        "EntityStream.elm should generate table constructors with optional ID filters. Generated:\n{}",
+        content
+    );
+    assert!(
+        content.contains("register : DatabaseId namespace -> StreamId -> List EntitySubscription -> Encode.Value")
+            && content.contains("( \"type\", Encode.string \"register-entity-stream\" )")
+            && content.contains("( \"tables\", Encode.list encodeSubscription subscriptions )"),
+        "EntityStream.elm should encode register-entity-stream payloads. Generated:\n{}",
+        content
+    );
+    assert!(
+        content.contains(
+            "Comment ids ->\n            tableSubscription \"comments\" ids Encode.string"
+        ) && content
+            .contains("Post ids ->\n            tableSubscription \"posts\" ids Encode.int")
+            && content.contains("[ ( \"$in\", Encode.list encodeId values ) ]"),
+        "EntityStream.elm should encode ID $in filters for each table. Generated:\n{}",
+        content
+    );
+    assert!(
+        content.contains("type alias CommentEntity =\n    { id : String\n    , postId : Int\n    , body : String\n    }")
+            && content.contains("type alias PostEntity =\n    { id : Int\n    , title : String\n    }"),
+        "EntityStream.elm should generate typed row aliases. Generated:\n{}",
+        content
+    );
+    assert!(
+        content.contains("type EntityChange\n    = CommentRow CommentEntity\n    | PostRow PostEntity\n    | EntityDecodeFailed String Decode.Value")
+            && content.contains("decodeComment : Decode.Decoder CommentEntity")
+            && content.contains("|> Db.Decode.andField \"id\" Decode.string")
+            && content.contains("|> Db.Decode.andField \"postId\" Decode.int")
+            && content.contains("decodePost : Decode.Decoder PostEntity")
+            && content.contains("\"comments\" ->\n                        decodeRow CommentRow decodeComment row")
+            && content.contains("\"posts\" ->\n                        decodeRow PostRow decodePost row"),
+        "EntityStream.elm should decode batches into typed table row variants. Generated:\n{}",
         content
     );
 }

@@ -307,6 +307,7 @@ Default ports:
 
 - receive: `pyreStoreOut`
 - query results: `pyre_receiveQueryDelta`
+- entity stream results: `pyre_receiveEntityChanges`
 - sync state: `pyre_receiveSyncState`
 - mutation results: `pyre_receiveMutationResult`
 
@@ -318,7 +319,10 @@ This built-in bridge handles:
 - `update-input`
 - `unregister`
 - `mutate`
+- `register-entity-stream`
+- `unregister-entity-stream`
 - forwarding revisioned query results back into Elm
+- forwarding entity stream batches back into Elm with `streamId`
 - sending mutation requests to the server automatically
 - forwarding mutation results back into Elm with `requestId`
 - forwarding sync state back into Elm

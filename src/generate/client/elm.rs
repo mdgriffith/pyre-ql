@@ -43,6 +43,443 @@ pub fn generate(
         base_path.join("Db/Updates.elm"),
         ELM_UPDATES_MODULE,
     ));
+    files.push(generate_text_file(
+        base_path.join("EntityStream.elm"),
+        to_entity_stream_module(database),
+    ));
+}
+
+fn to_entity_stream_module(database: &ast::Database) -> String {
+    let records = collect_entity_stream_records(database);
+    let mut result = String::new();
+
+    result.push_str("module EntityStream exposing (DatabaseId, EntityChange(..), EntityChangeBatch, EntityChangeBatchSource(..), EntitySubscription(..), StreamId, decodeIncomingBatch, register, unregister)\n\n\n");
+    result.push_str("import Db\n");
+    result.push_str("import Db.Database\n");
+    result.push_str("import Db.Decode\n");
+    result.push_str("import Db.Id\n");
+    result.push_str("import Dict exposing (Dict)\n");
+    result.push_str("import Json.Decode as Decode\n");
+    result.push_str("import Json.Encode as Encode\n");
+    result.push_str("import Time\n\n\n");
+
+    result
+        .push_str("type alias DatabaseId namespace =\n    Db.Database.DatabaseId namespace\n\n\n");
+    result.push_str("type alias StreamId =\n    String\n\n\n");
+
+    result.push_str("type EntitySubscription\n");
+    if records.is_empty() {
+        result.push_str("    = EntitySubscriptionUnavailable\n\n\n");
+    } else {
+        for (index, record) in records.iter().enumerate() {
+            let prefix = if index == 0 { "    = " } else { "    | " };
+            result.push_str(&format!(
+                "{}{} (Maybe (List {}))\n",
+                prefix, record.record_name, record.id_type
+            ));
+        }
+        result.push_str("\n\n");
+    }
+
+    for record in &records {
+        result.push_str(&entity_stream_row_alias(database, record));
+    }
+
+    result.push_str("type EntityChange\n");
+    if records.is_empty() {
+        result.push_str("    = EntityDecodeFailed String Decode.Value\n\n\n");
+    } else {
+        for (index, record) in records.iter().enumerate() {
+            let prefix = if index == 0 { "    = " } else { "    | " };
+            result.push_str(&format!(
+                "{}{}Row {}\n",
+                prefix, record.record_name, record.row_type
+            ));
+        }
+        result.push_str("    | EntityDecodeFailed String Decode.Value\n\n\n");
+    }
+
+    result.push_str("type EntityChangeBatchSource\n    = IndexedDbInitial\n    | Catchup\n    | Live\n    | UnknownSource String\n\n\n");
+    result.push_str("type alias EntityChangeBatch =\n    { streamId : StreamId\n    , databaseId : Maybe String\n    , sequence : Int\n    , source : EntityChangeBatchSource\n    , changes : List EntityChange\n    }\n\n\n");
+
+    result.push_str(
+        "register : DatabaseId namespace -> StreamId -> List EntitySubscription -> Encode.Value\n",
+    );
+    result.push_str("register databaseId streamId subscriptions =\n");
+    result.push_str("    Encode.object\n");
+    result.push_str("        [ ( \"type\", Encode.string \"register-entity-stream\" )\n");
+    result.push_str("        , ( \"databaseId\", Db.Database.encode databaseId )\n");
+    result.push_str("        , ( \"streamId\", Encode.string streamId )\n");
+    result.push_str("        , ( \"tables\", Encode.list encodeSubscription subscriptions )\n");
+    result.push_str("        ]\n\n\n");
+
+    result.push_str("unregister : StreamId -> Encode.Value\n");
+    result.push_str("unregister streamId =\n");
+    result.push_str("    Encode.object\n");
+    result.push_str("        [ ( \"type\", Encode.string \"unregister-entity-stream\" )\n");
+    result.push_str("        , ( \"streamId\", Encode.string streamId )\n");
+    result.push_str("        ]\n\n\n");
+
+    result
+        .push_str("decodeIncomingBatch : Decode.Value -> Result Decode.Error EntityChangeBatch\n");
+    result.push_str("decodeIncomingBatch json =\n");
+    result.push_str("    Decode.decodeValue entityChangeBatchDecoder json\n\n\n");
+
+    result.push_str("encodeSubscription : EntitySubscription -> Encode.Value\n");
+    result.push_str("encodeSubscription subscription =\n");
+    result.push_str("    case subscription of\n");
+    if records.is_empty() {
+        result.push_str("        EntitySubscriptionUnavailable ->\n");
+        result.push_str("            tableSubscription \"\" Nothing Encode.string\n\n\n");
+    } else {
+        for record in &records {
+            result.push_str(&format!("        {} ids ->\n", record.record_name));
+            result.push_str(&format!(
+                "            tableSubscription \"{}\" ids {}\n\n",
+                record.table_name, record.id_encoder
+            ));
+        }
+        result.push_str("\n");
+    }
+
+    result.push_str(
+        "tableSubscription : String -> Maybe (List id) -> (id -> Encode.Value) -> Encode.Value\n",
+    );
+    result.push_str("tableSubscription tableName ids encodeId =\n");
+    result.push_str("    Encode.object\n");
+    result.push_str(
+        "        (( \"tableName\", Encode.string tableName ) :: encodeIdWhere encodeId ids)\n\n\n",
+    );
+
+    result.push_str("encodeIdWhere : (id -> Encode.Value) -> Maybe (List id) -> List ( String, Encode.Value )\n");
+    result.push_str("encodeIdWhere encodeId ids =\n");
+    result.push_str("    case ids of\n");
+    result.push_str("        Nothing ->\n");
+    result.push_str("            []\n\n");
+    result.push_str("        Just values ->\n");
+    result.push_str("            [ ( \"where\"\n");
+    result.push_str("              , Encode.object\n");
+    result.push_str("                    [ ( \"id\"\n");
+    result.push_str("                      , Encode.object\n");
+    result.push_str("                            [ ( \"$in\", Encode.list encodeId values ) ]\n");
+    result.push_str("                      )\n");
+    result.push_str("                    ]\n");
+    result.push_str("              )\n");
+    result.push_str("            ]\n\n\n");
+
+    result.push_str("entityChangeBatchDecoder : Decode.Decoder EntityChangeBatch\n");
+    result.push_str("entityChangeBatchDecoder =\n");
+    result.push_str("    Decode.map5 EntityChangeBatch\n");
+    result.push_str("        (Decode.field \"streamId\" Decode.string)\n");
+    result.push_str("        (Decode.maybe (Decode.field \"databaseId\" Decode.string))\n");
+    result.push_str("        (Decode.field \"sequence\" Decode.int)\n");
+    result.push_str("        (Decode.field \"source\" sourceDecoder)\n");
+    result.push_str("        (Decode.field \"changes\" (Decode.list entityChangeDecoder))\n\n\n");
+
+    for record in &records {
+        result.push_str(&entity_stream_row_decoder(database, record));
+    }
+
+    result.push_str("sourceDecoder : Decode.Decoder EntityChangeBatchSource\n");
+    result.push_str("sourceDecoder =\n");
+    result.push_str("    Decode.string\n");
+    result.push_str("        |> Decode.map\n");
+    result.push_str("            (\\source ->\n");
+    result.push_str("                case source of\n");
+    result.push_str("                    \"indexeddb-initial\" ->\n");
+    result.push_str("                        IndexedDbInitial\n\n");
+    result.push_str("                    \"catchup\" ->\n");
+    result.push_str("                        Catchup\n\n");
+    result.push_str("                    \"live\" ->\n");
+    result.push_str("                        Live\n\n");
+    result.push_str("                    other ->\n");
+    result.push_str("                        UnknownSource other\n");
+    result.push_str("            )\n\n\n");
+
+    result.push_str("entityChangeDecoder : Decode.Decoder EntityChange\n");
+    result.push_str("entityChangeDecoder =\n");
+    result.push_str("    Decode.map2 Tuple.pair\n");
+    result.push_str("        (Decode.field \"tableName\" Decode.string)\n");
+    result.push_str("        (Decode.field \"row\" Decode.value)\n");
+    result.push_str("        |> Decode.map\n");
+    result.push_str("            (\\( tableName, row ) ->\n");
+    result.push_str("                case tableName of\n");
+    for record in &records {
+        result.push_str(&format!(
+            "                    \"{}\" ->\n",
+            record.table_name
+        ));
+        result.push_str(&format!(
+            "                        decodeRow {}Row {} row\n\n",
+            record.record_name, record.row_decoder
+        ));
+    }
+    result.push_str("                    other ->\n");
+    result.push_str("                        EntityDecodeFailed other row\n");
+    result.push_str("            )\n");
+
+    result.push_str("\n\n");
+    result.push_str(
+        "decodeRow : (row -> EntityChange) -> Decode.Decoder row -> Decode.Value -> EntityChange\n",
+    );
+    result.push_str("decodeRow toChange rowDecoder row =\n");
+    result.push_str("    case Decode.decodeValue rowDecoder row of\n");
+    result.push_str("        Ok decoded ->\n");
+    result.push_str("            toChange decoded\n\n");
+    result.push_str("        Err decodeErr ->\n");
+    result.push_str("            EntityDecodeFailed (Decode.errorToString decodeErr) row\n");
+
+    result
+}
+
+#[derive(Debug)]
+struct EntityStreamRecord {
+    record_name: String,
+    table_name: String,
+    row_type: String,
+    id_type: String,
+    id_encoder: &'static str,
+    row_decoder: String,
+    fields: Vec<ast::Field>,
+}
+
+fn collect_entity_stream_records(database: &ast::Database) -> Vec<EntityStreamRecord> {
+    let mut records = Vec::new();
+
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for definition in &file.definitions {
+                if let ast::Definition::Record { name, fields, .. } = definition {
+                    if let Some((id_type, id_encoder)) = entity_stream_id_type(fields) {
+                        records.push(EntityStreamRecord {
+                            record_name: name.clone(),
+                            table_name: ast::get_tablename(name, fields),
+                            row_type: format!("{}Entity", name),
+                            id_type,
+                            id_encoder,
+                            row_decoder: format!("decode{}", name),
+                            fields: fields.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    records.sort_by(|a, b| a.record_name.cmp(&b.record_name));
+    records
+}
+
+fn entity_stream_row_alias(database: &ast::Database, record: &EntityStreamRecord) -> String {
+    let mut result = format!("type alias {} =\n", record.row_type);
+    let mut is_first = true;
+
+    for field in &record.fields {
+        let ast::Field::Column(column) = field else {
+            continue;
+        };
+
+        if is_first {
+            result.push_str("    { ");
+        } else {
+            result.push_str("    , ");
+        }
+
+        let maybe = if column.nullable { "Maybe " } else { "" };
+        result.push_str(&format!(
+            "{} : {}{}\n",
+            column.name,
+            maybe,
+            entity_stream_elm_type(database, &column.type_)
+        ));
+        is_first = false;
+    }
+
+    if is_first {
+        result.push_str("    {}\n");
+    } else {
+        result.push_str("    }\n");
+    }
+    result.push_str("\n\n");
+    result
+}
+
+fn entity_stream_row_decoder(database: &ast::Database, record: &EntityStreamRecord) -> String {
+    let mut result = format!(
+        "{} : Decode.Decoder {}\n{} =\n    Decode.succeed {}\n",
+        record.row_decoder, record.row_type, record.row_decoder, record.row_type
+    );
+
+    for field in &record.fields {
+        let ast::Field::Column(column) = field else {
+            continue;
+        };
+
+        let decoder = entity_stream_decoder(database, &column.type_);
+        let decoder = if column.nullable {
+            format!("(Decode.nullable {})", decoder)
+        } else {
+            decoder
+        };
+        result.push_str(&format!(
+            "        |> Db.Decode.andField \"{}\" {}\n",
+            column.name, decoder
+        ));
+    }
+
+    result.push_str("\n\n");
+    result
+}
+
+fn entity_stream_elm_type(database: &ast::Database, type_: &ast::ColumnType) -> String {
+    match type_ {
+        ast::ColumnType::IdInt { table } => {
+            if table.is_empty() {
+                "Int".to_string()
+            } else {
+                format!("Db.Id.{}", table)
+            }
+        }
+        ast::ColumnType::IdUuid { table } => {
+            if table.is_empty() {
+                "String".to_string()
+            } else {
+                format!("Db.Id.{}", table)
+            }
+        }
+        ast::ColumnType::ForeignKey { table, field } => {
+            if let Some(column_type) = database_column_type(database, table, field) {
+                entity_stream_elm_type(database, &column_type)
+            } else if field == "id" {
+                format!("Db.Id.{}", table)
+            } else {
+                "String".to_string()
+            }
+        }
+        ast::ColumnType::JsonTyped(inner) => entity_stream_elm_type(database, inner),
+        ast::ColumnType::List(inner) => format!("List {}", entity_stream_elm_type(database, inner)),
+        ast::ColumnType::Dict(inner) => {
+            format!("Dict String {}", entity_stream_elm_type(database, inner))
+        }
+        ast::ColumnType::Nullable(inner) => {
+            format!("Maybe {}", entity_stream_elm_type(database, inner))
+        }
+        _ => elm_type_from_column_type(type_, true),
+    }
+}
+
+fn entity_stream_decoder(database: &ast::Database, type_: &ast::ColumnType) -> String {
+    match type_ {
+        ast::ColumnType::IdInt { table } => {
+            if table.is_empty() {
+                "Decode.int".to_string()
+            } else {
+                "Db.Id.decodeInt".to_string()
+            }
+        }
+        ast::ColumnType::IdUuid { table } => {
+            if table.is_empty() {
+                "Decode.string".to_string()
+            } else {
+                "Db.Id.decodeUuid".to_string()
+            }
+        }
+        ast::ColumnType::ForeignKey { table, field } => {
+            if let Some(column_type) = database_column_type(database, table, field) {
+                entity_stream_decoder(database, &column_type)
+            } else if field == "id" {
+                match id_kind_for_brand(database, table) {
+                    Some(IdKind::Int) => "Db.Id.decodeInt".to_string(),
+                    Some(IdKind::Uuid) => "Db.Id.decodeUuid".to_string(),
+                    None => "Decode.string".to_string(),
+                }
+            } else {
+                "Decode.string".to_string()
+            }
+        }
+        ast::ColumnType::JsonTyped(inner) => entity_stream_decoder(database, inner),
+        ast::ColumnType::List(inner) => {
+            format!("(Decode.list {})", entity_stream_decoder(database, inner))
+        }
+        ast::ColumnType::Dict(inner) => {
+            format!("(Decode.dict {})", entity_stream_decoder(database, inner))
+        }
+        ast::ColumnType::Nullable(inner) => format!(
+            "(Decode.nullable {})",
+            entity_stream_decoder(database, inner)
+        ),
+        _ => to_elm_decoder_from_column_type(&ElmLookup::default(), type_),
+    }
+}
+
+fn database_column_type(
+    database: &ast::Database,
+    record_name: &str,
+    field_name: &str,
+) -> Option<ast::ColumnType> {
+    for schema in &database.schemas {
+        for file in &schema.files {
+            for definition in &file.definitions {
+                if let ast::Definition::Record { name, fields, .. } = definition {
+                    if !name.eq_ignore_ascii_case(record_name) {
+                        continue;
+                    }
+
+                    for field in fields {
+                        if let ast::Field::Column(column) = field {
+                            if column.name == field_name {
+                                return Some(column.type_.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn entity_stream_id_type(fields: &Vec<ast::Field>) -> Option<(String, &'static str)> {
+    for field in fields {
+        if let ast::Field::Column(column) = field {
+            if column.name != "id" {
+                continue;
+            }
+
+            return match &column.type_ {
+                ast::ColumnType::IdInt { table } => Some((
+                    if table.is_empty() {
+                        "Int".to_string()
+                    } else {
+                        format!("Db.Id.{}", table)
+                    },
+                    if table.is_empty() {
+                        "Encode.int"
+                    } else {
+                        "Db.Id.encodeInt"
+                    },
+                )),
+                ast::ColumnType::IdUuid { table } => Some((
+                    if table.is_empty() {
+                        "String".to_string()
+                    } else {
+                        format!("Db.Id.{}", table)
+                    },
+                    if table.is_empty() {
+                        "Encode.string"
+                    } else {
+                        "Db.Id.encodeUuid"
+                    },
+                )),
+                ast::ColumnType::Int => Some(("Int".to_string(), "Encode.int")),
+                ast::ColumnType::String => Some(("String".to_string(), "Encode.string")),
+                _ => None,
+            };
+        }
+    }
+
+    None
 }
 
 fn to_database_ids(database: &ast::Database) -> String {
