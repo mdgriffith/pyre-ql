@@ -6,6 +6,8 @@ A headless Elm application for Pyre data synchronization and querying. This clie
 
 - **Elm (`src/`)**: Manages in-memory state, executes queries, handles deltas, and sends mutations
 - **TypeScript (`src-ts/`)**: Boots the Elm app and wires IndexedDB/SSE/query manager services
+- See [`docs/CLIENT_DATA_FLOW.md`](docs/CLIENT_DATA_FLOW.md) for the end-to-end client data flow and delta shapes.
+- See [`docs/TABLE_ENTITY_STREAM.md`](docs/TABLE_ENTITY_STREAM.md) for a draft lower-level table/entity stream API.
 
 ## Setup
 
@@ -195,6 +197,44 @@ const subscription = client.run(
 subscription?.update({});
 subscription?.unsubscribe();
 ```
+
+### Entity Change Streams
+
+Use `onEntityChanges` when you want table rows directly instead of a query-shaped result tree. The first callback is always an `indexeddb-initial` batch, even when no persisted rows match. Later callbacks contain matching incoming catchup or live table deltas.
+
+```typescript
+const posts = new Map<string | number, unknown>();
+
+const unsubscribe = await client.onEntityChanges(
+  'main',
+  {
+    tables: [
+      { tableName: 'posts', where: { author_id: currentUserId } },
+      { tableName: 'comments', where: { post_id: { $in: visiblePostIds } } },
+    ],
+  },
+  (batch) => {
+    for (const change of batch.changes) {
+      if (change.tableName === 'posts') {
+        posts.set(change.id, change.row);
+      }
+    }
+
+    renderPosts([...posts.values()]);
+  }
+);
+
+unsubscribe();
+```
+
+Entity streams emit current rows only:
+
+- `source: 'indexeddb-initial'` for the initial persisted snapshot
+- `source: 'catchup'` or `source: 'live'` for incoming server deltas
+- `op: 'row'` for every change
+- no delete events, previous values, field-level diffs, or membership-left events
+
+If filter inputs change, unsubscribe and create a new subscription.
 
 `QueryShape` supports:
 

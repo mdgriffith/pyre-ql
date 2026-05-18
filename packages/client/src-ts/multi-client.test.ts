@@ -37,6 +37,11 @@ function fakeInternalClient(disconnects: string[], databaseId: string, starts: s
       callback({ status: 'not_started', tables: {} });
       return () => {};
     },
+    onEntityChanges(_subscription: unknown, _callback: (batch: unknown) => void) {
+      return () => {
+        disconnects.push(`entity:${databaseId}`);
+      };
+    },
     emitLive() {
       syncStateCallbacks.forEach((callback) => callback({ status: 'live', tables: {} }));
     },
@@ -119,6 +124,82 @@ test('PyreClient creates one internal client per databaseId', async () => {
   client.disconnect();
   await Bun.sleep(0);
   expect(disconnects.sort()).toEqual(['campaign:123', 'campaign:456']);
+});
+
+test('PyreClient routes entity change subscriptions by databaseId', async () => {
+  const createdConfigs: any[] = [];
+  const disconnects: string[] = [];
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => {
+      createdConfigs.push(config);
+      return fakeInternalClient(disconnects, config.databaseId);
+    },
+  });
+
+  const unsubscribe = await client.onEntityChanges(
+    'campaign:123',
+    { tables: [{ tableName: 'posts' }] },
+    () => {}
+  );
+  unsubscribe();
+
+  expect(createdConfigs.map((config) => config.databaseId)).toEqual(['campaign:123']);
+  expect(disconnects).toEqual(['entity:campaign:123']);
+});
+
+test('PyreClient rejects invalid entity subscriptions before creating an internal client', async () => {
+  const createdConfigs: any[] = [];
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => {
+      createdConfigs.push(config);
+      return fakeInternalClient([], config.databaseId);
+    },
+  });
+
+  await expect(client.onEntityChanges('campaign:123', { tables: [] }, () => {})).rejects.toThrow('at least one table');
+  expect(createdConfigs).toHaveLength(0);
+});
+
+test('PyreClient forwards initial entity batches from the internal client', async () => {
+  const batches: unknown[] = [];
+  const client = await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => ({
+      ...fakeInternalClient([], config.databaseId),
+      onEntityChanges(_subscription: unknown, callback: (batch: unknown) => void) {
+        callback({
+          type: 'entity-change-batch',
+          databaseId: config.databaseId,
+          sequence: 1,
+          source: 'indexeddb-initial',
+          changes: [{ tableName: 'posts', id: 1, op: 'row', row: { id: 1 } }],
+        });
+        return () => {};
+      },
+    }),
+  });
+
+  await client.onEntityChanges('campaign:123', { tables: [{ tableName: 'posts' }] }, (batch) => {
+    batches.push(batch);
+  });
+
+  expect(batches).toEqual([
+    {
+      type: 'entity-change-batch',
+      databaseId: 'campaign:123',
+      sequence: 1,
+      source: 'indexeddb-initial',
+      changes: [{ tableName: 'posts', id: 1, op: 'row', row: { id: 1 } }],
+    },
+  ]);
 });
 
 test('PyreClient derives readable separate IndexedDB names per databaseId', async () => {

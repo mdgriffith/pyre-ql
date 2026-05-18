@@ -1,5 +1,12 @@
 import loadElm from '../dist/engine.mjs';
 import { IndexedDBStorage, IndexedDbService } from './service/indexeddb';
+import {
+  EntityStreamService,
+  validateEntitySubscription,
+  type EntityChangeBatch,
+  type EntitySubscription,
+  type ServerTableGroup,
+} from './service/entity-stream';
 import { QueryClientService } from './service/query-client';
 import { QueryManagerService, type MutationResult } from './service/query-manager';
 import { SSEManager, type LiveSyncMessage } from './service/sse';
@@ -37,6 +44,15 @@ export type {
   TableSyncStatus,
 } from './types';
 export type { MutationResult } from './service/query-manager';
+export type {
+  EntityChange,
+  EntityChangeBatch,
+  EntityChangeBatchSource,
+  EntitySubscription,
+  EntityTableSubscription,
+  EntityWhere,
+  EntityWhereValue,
+} from './service/entity-stream';
 export type { CacheNamespace, DatabaseId } from './routing';
 
 interface PyreBridgeClient {
@@ -265,7 +281,7 @@ interface SingleDatabasePyreClientCreateConfig {
   elm?: PyreElmConfig;
 }
 
-export type PyreInternalClient = Pick<SingleDatabasePyreClient, 'run' | 'disconnect' | 'getDevtoolsSnapshot' | 'inspectDevtoolsTablePage' | 'startSync' | 'onSyncState' | 'setSession'>;
+export type PyreInternalClient = Pick<SingleDatabasePyreClient, 'run' | 'disconnect' | 'getDevtoolsSnapshot' | 'inspectDevtoolsTablePage' | 'startSync' | 'onSyncState' | 'setSession' | 'onEntityChanges'>;
 
 type PyreInternalClientFactory = (config: SingleDatabasePyreClientCreateConfig & {
   databaseId: DatabaseId;
@@ -321,6 +337,7 @@ class SingleDatabasePyreClient {
   private pendingLiveQueries: Set<string> = new Set();
   private queryManager: QueryManagerService;
   private queryClient: QueryClientService;
+  private entityStream: EntityStreamService;
   private bridgeCleanup: (() => void) | null = null;
   private debug: boolean;
   private session: Record<string, unknown>;
@@ -330,6 +347,7 @@ class SingleDatabasePyreClient {
   private mutationCounter = 0;
   private schema: SchemaMetadata;
   private indexedDbName: string;
+  private databaseId?: DatabaseId;
   private devtoolsDebugValues: Record<string, unknown> = {};
   private devtoolsEventCounter = 0;
   private devtoolsEventCallbacks: Set<(event: PyreDevtoolsEvent) => void> = new Set();
@@ -344,6 +362,7 @@ class SingleDatabasePyreClient {
     this.server = config.server;
     this.schema = config.schema;
     this.indexedDbName = dbName;
+    this.databaseId = config.databaseId;
     this.endpoints = {
       catchup: '/sync',
       events: '/sync/events',
@@ -405,6 +424,7 @@ class SingleDatabasePyreClient {
       databaseId: config.databaseId,
     }, undefined, this.logDebug);
     this.queryManager = new QueryManagerService(this.logDebug);
+    this.entityStream = new EntityStreamService();
     this.queryClient = new QueryClientService(() => this.session, (payload) => {
       if (config.onError) {
         config.onError(new Error(payload.message));
@@ -502,6 +522,42 @@ class SingleDatabasePyreClient {
     };
   }
 
+  async onEntityChanges(subscription: EntitySubscription, callback: (batch: EntityChangeBatch) => void): Promise<() => void> {
+    validateEntitySubscription(subscription);
+    const initialSequence = this.entityStream.reserveSequence();
+    const pendingBatches: EntityChangeBatch[] = [];
+    let initialLoaded = false;
+
+    const unsubscribe = this.entityStream.subscribe(subscription, (batch) => {
+      if (initialLoaded) {
+        callback(batch);
+        return;
+      }
+
+      pendingBatches.push(batch);
+    });
+
+    const initialRows = await this.loadInitialEntityRows(subscription);
+    const initialBatch = this.entityStream.createBatchFromRows(
+      subscription,
+      initialRows,
+      'indexeddb-initial',
+      this.databaseId,
+      initialSequence
+    );
+    callback(initialBatch ?? {
+      type: 'entity-change-batch',
+      databaseId: this.databaseId,
+      sequence: initialSequence,
+      source: 'indexeddb-initial',
+      changes: [],
+    });
+
+    initialLoaded = true;
+    pendingBatches.forEach(callback);
+    return unsubscribe;
+  }
+
   onDevtoolsEvent(callback: (event: PyreDevtoolsEvent) => void): () => void {
     this.devtoolsEventCallbacks.add(callback);
     return () => {
@@ -557,6 +613,39 @@ class SingleDatabasePyreClient {
       hasMore: page.hasMore,
     };
   }
+
+  private async loadInitialEntityRows(subscription: EntitySubscription): Promise<Map<string, Array<Record<string, unknown>>>> {
+    const rowsByTable = new Map<string, Array<Record<string, unknown>>>();
+    const tableNames = Array.from(new Set(subscription.tables.map((table) => table.tableName)));
+
+    await Promise.all(tableNames.map(async (tableName) => {
+      const rows: Array<Record<string, unknown>> = [];
+      let offset = 0;
+      const limit = 500;
+
+      while (true) {
+        const page = await this.storage.getRowsPage(tableName, offset, limit);
+        page.rows.forEach((row) => {
+          if (isRecord(row)) {
+            rows.push(row);
+          }
+        });
+
+        if (!page.hasMore) {
+          break;
+        }
+
+        offset += limit;
+      }
+
+      if (rows.length > 0) {
+        rowsByTable.set(tableName, rows);
+      }
+    }));
+
+    return rowsByTable;
+  }
+
 
   setDevtoolsDebugValue(name: string, value: unknown): void {
     if (value === undefined) {
@@ -614,6 +703,14 @@ class SingleDatabasePyreClient {
   private handleLiveSyncMessage = (message: LiveSyncMessage): void => {
     this.emitDevtoolsEvent(`sync:${message.type}`, message);
 
+    if (message.type === 'delta' && this.shouldAcceptLiveDelta(message)) {
+      this.entityStream.handleTableDelta(
+        message.data as ServerTableGroup[],
+        this.lastSyncState.status === 'live' ? 'live' : 'catchup',
+        this.databaseId
+      );
+    }
+
     if (message.type === 'connected') {
       const connectionId = message.connectionId;
       if (connectionId) {
@@ -645,6 +742,18 @@ class SingleDatabasePyreClient {
       this.handleRawSyncState(nextState);
     }
   };
+
+  private shouldAcceptLiveDelta(message: LiveSyncMessage): boolean {
+    if (!Array.isArray(message.data)) {
+      return false;
+    }
+
+    if (!this.databaseId) {
+      return true;
+    }
+
+    return message.databaseId === this.databaseId;
+  }
 
   private handleRawSyncState(state: SyncState): void {
     if (state.status !== 'live') {
@@ -1148,6 +1257,18 @@ export class PyreClient {
     return () => {
       this.devtoolsEventCallbacks.delete(callback);
     };
+  }
+
+  async onEntityChanges(
+    databaseId: DatabaseId,
+    subscription: EntitySubscription,
+    callback: (batch: EntityChangeBatch) => void
+  ): Promise<() => void> {
+    const targetDatabaseId = requireDatabaseId(databaseId);
+    validateEntitySubscription(subscription);
+    this.markKnownDatabase(targetDatabaseId);
+    const client = await this.getOrCreateClient(targetDatabaseId);
+    return client.onEntityChanges(subscription, callback);
   }
 
   async getDevtoolsSnapshot(): Promise<PyreDevtoolsSnapshot> {
@@ -1885,6 +2006,10 @@ function asObject(value: unknown, label: string): Record<string, unknown> {
   }
 
   return value as Record<string, unknown>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function asNonEmptyString(value: unknown, label: string): string {
