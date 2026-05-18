@@ -34,7 +34,7 @@ At startup:
 
 Routes:
 
-- **GET `/sync?databaseId=...`** → `Sync.catchup(db, syncCursor, session, pageSize, databaseId)`
+- **POST `/sync`** with `{ databaseId, syncCursor }` → `Sync.catchup(db, syncCursor, session, pageSize, databaseId)`
 - **GET `/sync/events?databaseId=...`** → stream deltas to clients connected for that database ID
 - **query route** (e.g. `POST /db/:queryId?databaseId=...`) → `Sync.run(db, queries, queryId, args, session, connectedClients, databaseId)`
 

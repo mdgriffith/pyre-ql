@@ -25,6 +25,31 @@ fn check_schema_and_get_layers(schema_source: &str) -> std::collections::HashMap
 }
 
 #[test]
+fn test_tablename_rejects_unsafe_sql_identifier() {
+    let schema_source = r#"
+record User {
+    @tablename("users-with-dash")
+    @public
+    id Int @id
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema should parse");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let errors = typecheck::check_schema(&database).expect_err("schema should fail typecheck");
+
+    assert!(errors.iter().any(|error| matches!(
+        &error.error_type,
+        ErrorType::InvalidTypeUsage { message }
+            if message.contains("Invalid @tablename value")
+    )));
+}
+
+#[test]
 fn test_list_type_must_be_wrapped_in_json() {
     let schema_source = r#"
 record User {

@@ -8,6 +8,8 @@ use pyre::server::schema::{
 };
 use pyre::server::sync::{
     calculate_deltas, catchup, ConnectedSessions, DeltaMessage, SyncServer, SyncSession,
+    MAX_LIVE_SYNC_DELTA_PAYLOAD_BYTES, MAX_LIVE_SYNC_DELTA_ROWS,
+    MAX_LIVE_SYNC_FANOUT_RECIPIENTS,
 };
 use pyre::sync::{SyncCursor, TableCursor, TableSyncData};
 use pyre::sync_deltas::AffectedRowTableGroup;
@@ -193,6 +195,48 @@ insert into notes (id, ownerId, body, updatedAt) values (3, 1, 'three', 30);
 
     assert_eq!(ids, vec![json!(2)]);
     assert_eq!(notes.last_seen_updated_at, Some(20));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn catchup_binds_string_session_permissions() -> Result<(), Box<dyn std::error::Error>> {
+    let db = TestDatabase::new(
+        r#"
+session {
+    tenant String
+}
+
+record Note {
+    id Int @id
+    tenant String
+    body String
+    updatedAt Int
+    @allow(query) { tenant == Session.tenant }
+}
+"#,
+    )
+    .await?;
+    let conn = db.db.connect()?;
+    conn.execute_batch(
+        r#"
+insert into notes (id, tenant, body, updatedAt) values (1, 'safe', 'one', 10);
+insert into notes (id, tenant, body, updatedAt) values (2, 'x'' OR 1=1 --', 'two', 20);
+"#,
+    )
+    .await?;
+
+    let mut session = HashMap::new();
+    session.insert(
+        "tenant".to_string(),
+        pyre::sync::SessionValue::Text("x' OR 1=1 --".to_string()),
+    );
+
+    let result = catchup(&conn, &db.context, &SyncCursor::new(), &session, 10).await?;
+    let notes = result.tables.get("notes").expect("notes should sync");
+
+    assert_eq!(notes.rows.len(), 1);
+    assert_eq!(notes.rows[0]["id"], json!(2));
 
     Ok(())
 }
@@ -541,6 +585,122 @@ insert CreateNote($body: String) {
     assert_eq!(messages[0].message.type_, "delta");
     assert_eq!(messages[0].message.data[0].table_name, "notes");
     assert_eq!(messages[0].message.data[0].rows.len(), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn native_deltas_send_sync_required_when_row_count_exceeds_cap(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = TestDatabase::new(
+        r#"
+record Note {
+    id Int @id
+    body String
+    updatedAt Int
+    @public
+}
+"#,
+    )
+    .await?;
+    let affected_rows = vec![AffectedRowTableGroup {
+        table_name: "notes".to_string(),
+        headers: vec![
+            "id".to_string(),
+            "body".to_string(),
+            "updatedAt".to_string(),
+        ],
+        rows: (0..=MAX_LIVE_SYNC_DELTA_ROWS)
+            .map(|index| vec![json!(index), json!("one"), json!(10)])
+            .collect(),
+    }];
+    let connected_sessions = ConnectedSessions::from([("a".to_string(), SyncSession::new())]);
+
+    let messages = calculate_deltas(&db.context, &affected_rows, &connected_sessions)?;
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].message.type_, "syncRequired");
+    assert!(messages[0].message.data.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn native_deltas_send_sync_required_when_payload_exceeds_cap(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = TestDatabase::new(
+        r#"
+record Note {
+    id Int @id
+    body String
+    updatedAt Int
+    @public
+}
+"#,
+    )
+    .await?;
+    let affected_rows = vec![AffectedRowTableGroup {
+        table_name: "notes".to_string(),
+        headers: vec![
+            "id".to_string(),
+            "body".to_string(),
+            "updatedAt".to_string(),
+        ],
+        rows: vec![vec![
+            json!(1),
+            json!("x".repeat(MAX_LIVE_SYNC_DELTA_PAYLOAD_BYTES)),
+            json!(10),
+        ]],
+    }];
+    let server = SyncServer::new(&db.context);
+    let connected_sessions = ConnectedSessions::from([("a".to_string(), SyncSession::new())]);
+
+    let messages = server.calculate_deltas(&affected_rows, &connected_sessions, "main")?;
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].message.type_, "syncRequired");
+    assert_eq!(messages[0].message.database_id.as_deref(), Some("main"));
+    assert!(messages[0].message.data.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn native_deltas_send_sync_required_when_recipient_count_exceeds_cap(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = TestDatabase::new(
+        r#"
+record Note {
+    id Int @id
+    body String
+    updatedAt Int
+    @public
+}
+"#,
+    )
+    .await?;
+    let affected_rows = vec![AffectedRowTableGroup {
+        table_name: "notes".to_string(),
+        headers: vec![
+            "id".to_string(),
+            "body".to_string(),
+            "updatedAt".to_string(),
+        ],
+        rows: vec![vec![json!(1), json!("one"), json!(10)]],
+    }];
+    let connected_sessions = (0..=MAX_LIVE_SYNC_FANOUT_RECIPIENTS)
+        .map(|index| (format!("s{}", index), SyncSession::new()))
+        .collect::<ConnectedSessions>();
+
+    let messages = calculate_deltas(&db.context, &affected_rows, &connected_sessions)?;
+
+    assert_eq!(messages.len(), MAX_LIVE_SYNC_FANOUT_RECIPIENTS + 1);
+    assert!(messages
+        .iter()
+        .all(|message| message.message.type_ == "syncRequired"));
+    assert!(messages
+        .iter()
+        .all(|message| message.message.data.is_empty()));
 
     Ok(())
 }

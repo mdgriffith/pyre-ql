@@ -17,13 +17,14 @@
    - `Data.QueryManager` is notified so queries re-run.
    - The cursor is updated in memory and the loop continues until `has_more = false`.
 
-4. **SSE handshake (`Data.SSE`)**
+4. **SSE handshake (`Data.LiveSync`)**
    - After catchup completes, `Main.elm` opens the SSE connection.
    - The server emits `connected` when the stream is live.
 
 5. **Live updates (SSE deltas)**
-   - `Data.SSE` delivers delta messages to `Main.handleSSEIncoming`.
-   - Deltas are applied to `Db`, and `Data.QueryManager` re-runs affected queries.
+    - `Data.LiveSync` delivers delta messages to `Main.handleLiveSyncIncoming`.
+    - Deltas are applied to `Db`, and `Data.QueryManager` re-runs affected queries.
+    - If the server sends `syncRequired` or `catchupRequired`, the client starts a POST catchup from its current cursor instead of applying a live delta.
 
 ## Flow diagram
 
@@ -34,19 +35,21 @@ flowchart TD
     IndexedDbReply --> DbInit[Db.update initial data]
     DbInit --> CatchupInit[Data.Catchup.InitialDataLoaded]
 
-    CatchupInit --> CatchupFetch[GET /sync catchup]
+    CatchupInit --> CatchupFetch[POST /sync catchup]
     CatchupFetch --> CatchupDelta[Apply catchup delta to Db]
     CatchupDelta --> QueryNotify[QueryManager.notify]
     QueryNotify --> HasMore{has_more?}
     HasMore -->|Yes| CatchupFetch
     HasMore -->|No| CatchupDone[Catchup complete]
 
-    CatchupDone --> SSEConnect[Data.SSE.connect]
+    CatchupDone --> SSEConnect[Data.LiveSync.connect]
     SSEConnect --> SSEConnected[SSE connected]
     SSEConnected --> LiveSSE
 
     LiveSSE --> DbDelta[Db.update delta]
     DbDelta --> QueryNotify
+    LiveSSE --> SyncRequired[syncRequired]
+    SyncRequired --> CatchupFetch
 ```
 
 ## Key ordering guarantees

@@ -30,6 +30,8 @@ function deltaMessage(databaseId?: string) {
 
 async function startSyncedElmApp() {
   const previousXmlHttpRequest = globalThis.XMLHttpRequest;
+  const requests: Array<{ method: string; url: string; body?: string }> = [];
+  let currentMethod = 'GET';
 
   class MockXMLHttpRequest {
     listeners: Record<string, Array<() => void>> = {};
@@ -46,13 +48,15 @@ async function startSyncedElmApp() {
       this.listeners[type].push(callback);
     }
 
-    open(_method: string, url: string) {
+    open(method: string, url: string) {
+      currentMethod = method;
       this.responseURL = url;
     }
 
     setRequestHeader() {}
 
-    send() {
+    send(body?: string) {
+      requests.push({ method: currentMethod, url: this.responseURL, body });
       queueMicrotask(() => {
         (this.listeners.load ?? []).forEach((listener) => listener());
       });
@@ -99,7 +103,7 @@ async function startSyncedElmApp() {
   await Bun.sleep(0);
   await Bun.sleep(0);
 
-  return { app, restore: () => { globalThis.XMLHttpRequest = previousXmlHttpRequest; } };
+  return { app, requests, restore: () => { globalThis.XMLHttpRequest = previousXmlHttpRequest; } };
 }
 
 test('Elm live sync rejects missing delta databaseId when configured', async () => {
@@ -172,6 +176,37 @@ test('Elm live sync accepts matching delta databaseId', async () => {
 
     expect(errors).toHaveLength(0);
     expect(writes).toHaveLength(1);
+  } finally {
+    restore();
+  }
+});
+
+test('Elm live syncRequired starts catchup from the current cursor', async () => {
+  const { app, requests, restore } = await startSyncedElmApp();
+
+  try {
+    const requestCountAfterInitialCatchup = requests.length;
+
+    app.ports.receiveSSEMessage.send({
+      type: 'syncRequired',
+      databaseId: 'campaign:123',
+    });
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(requests).toHaveLength(requestCountAfterInitialCatchup + 1);
+    expect(requests.at(-1)?.method).toBe('POST');
+    expect(JSON.parse(requests.at(-1)?.body ?? '{}')).toEqual({
+      databaseId: 'campaign:123',
+      syncCursor: {
+        tables: {
+          maps: {
+            last_seen_updated_at: null,
+            permission_hash: '',
+          },
+        },
+      },
+    });
   } finally {
     restore();
   }

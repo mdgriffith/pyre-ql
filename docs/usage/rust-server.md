@@ -157,18 +157,19 @@ The manifest runtime still validates dynamic input and remains the final fail-lo
 
 ## Catchup Endpoint
 
-For a `GET /sync` equivalent:
+For a `POST /sync` equivalent:
 
 ```rust
 use pyre::server::database_id::require_database_id;
 
-let database_id = require_database_id(request.query("databaseId"))?;
+let body: CatchupBody = request.json().await?;
+let database_id = require_database_id(body.database_id)?;
 let conn = database_for(&database_id).await?;
 
 let sync_result = sync_server
     .catchup(
         &conn,
-        &sync_cursor,
+        &body.sync_cursor,
         session.logical(),
         1000,
         &database_id,

@@ -15,11 +15,24 @@ pub fn decapitalize(s: &str) -> String {
 }
 
 pub fn quote(s: &str) -> String {
-    format!("\"{}\"", s)
+    format!("\"{}\"", s.replace('"', "\"\""))
 }
 
 pub fn single_quote(s: &str) -> String {
-    format!("'{}'", s)
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+pub fn is_safe_sql_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+
+    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 pub fn snake_to_camel_and_singular(input: &str) -> String {

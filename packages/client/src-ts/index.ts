@@ -746,6 +746,14 @@ class SingleDatabasePyreClient {
       this.handleRawSyncState(nextState);
     }
 
+    if ((message.type === 'syncRequired' || message.type === 'catchupRequired') && this.shouldAcceptLiveControlMessage(message)) {
+      const nextState = {
+        ...this.lastSyncState,
+        status: 'catching_up' as const,
+      };
+      this.handleRawSyncState(nextState);
+    }
+
     if (message.type === 'syncComplete') {
       const liveTables: Record<string, TableSyncStatus> = {};
       Object.keys(this.lastSyncState.tables).forEach((tableName) => {
@@ -765,6 +773,14 @@ class SingleDatabasePyreClient {
       return false;
     }
 
+    if (!this.databaseId) {
+      return true;
+    }
+
+    return message.databaseId === this.databaseId;
+  }
+
+  private shouldAcceptLiveControlMessage(message: LiveSyncMessage): boolean {
     if (!this.databaseId) {
       return true;
     }

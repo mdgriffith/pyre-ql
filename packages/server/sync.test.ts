@@ -42,6 +42,7 @@ const defaultReshapeSyncTableGroups = () => ([
 ]);
 
 let getSyncSqlMock = defaultSyncSql;
+let getSyncStatusSqlMock = () => "select 1";
 let reshapeSyncTableGroupsMock = defaultReshapeSyncTableGroups;
 let introspectionResult = { schema_source: "" };
 let setSchemaCalls: unknown[] = [];
@@ -49,8 +50,8 @@ let setSchemaCalls: unknown[] = [];
 mock.module("./wasm/pyre_wasm.js", () => ({
   sql_is_initialized: () => "select 1 as is_initialized",
   sql_introspect: () => "select introspection",
-  get_sync_status_sql: () => "select 1",
-  get_sync_sql: () => getSyncSqlMock(),
+  get_sync_status_sql: () => getSyncStatusSqlMock(),
+  get_sync_sql: (...args: unknown[]) => getSyncSqlMock(...args),
   calculate_sync_deltas: () => ({ groups: [] }),
   reshape_sync_table_groups: (groups: any) => reshapeSyncTableGroupsMock(groups),
   set_schema: (introspection: unknown) => setSchemaCalls.push(introspection),
@@ -61,6 +62,7 @@ const { loadSchemaFromDatabase } = await import("./schema");
 
 afterEach(() => {
   getSyncSqlMock = defaultSyncSql;
+  getSyncStatusSqlMock = () => "select 1";
   reshapeSyncTableGroupsMock = defaultReshapeSyncTableGroups;
   introspectionResult = { schema_source: "" };
   setSchemaCalls = [];
@@ -151,11 +153,21 @@ test("catchup reshapes flattened custom types before returning sync rows", async
 
 test("catchup stamps response with databaseId when provided", async () => {
   getSyncSqlMock = () => ({ tables: [] });
+  const schemaDb = {
+    execute: mock(async (sql: string) => {
+      if (sql.includes("is_initialized")) {
+        return { rows: [{ is_initialized: 1 }] };
+      }
+
+      return { rows: [{ result: JSON.stringify({ schema_source: "campaign schema" }) }] };
+    }),
+  };
   const db = {
     execute: mock(async () => ({ rows: [] })),
     batch: mock(async () => ([])),
   };
 
+  await loadSchemaFromDatabase("campaign:123", schemaDb as any);
   const result = await catchup(db as any, { tables: {} }, {}, 1000, "campaign:123");
 
   expect(result.databaseId).toBe("campaign:123");
@@ -248,4 +260,98 @@ test("catchup unwraps double-encoded json objects for json columns", async () =>
     },
     updatedAt: 1700000000,
   });
+});
+
+test("catchup executes status and table sync SQL with bound params", async () => {
+  getSyncStatusSqlMock = () => ({ sql: "select ? as status", params: ["tenant' OR 1=1 --"] });
+  getSyncSqlMock = () => ({
+    tables: [
+      {
+        table_name: "maps",
+        permission_hash: "perm",
+        sql: ["select ? as id, ? as name, ? as updatedAt"],
+        params: [[1, "World", 1700000000]],
+        headers: ["id", "name", "updatedAt"],
+        json_columns: [],
+      },
+    ],
+  });
+  reshapeSyncTableGroupsMock = (groups: any) => groups;
+  const db = {
+    execute: mock(async () => ({ rows: [{ table_name: "maps", needs_sync: 1 }] })),
+    batch: mock(async () => ([
+      {
+        columns: ["id", "name", "updatedAt"],
+        rows: [{ id: 1, name: "World", updatedAt: 1700000000 }],
+      },
+    ])),
+  };
+
+  await catchup(db as any, { tables: {} }, {}, 1000);
+
+  expect(db.execute).toHaveBeenCalledWith({ sql: "select ? as status", args: ["tenant' OR 1=1 --"] });
+  expect(db.batch).toHaveBeenCalledWith([
+    { sql: "select ? as id, ? as name, ? as updatedAt", args: [1, "World", 1700000000] },
+  ]);
+});
+
+test("catchup caps pageSize before requesting sync SQL and slicing rows", async () => {
+  let requestedPageSize = 0;
+  getSyncSqlMock = (_statusRows?: unknown, _cursor?: unknown, _session?: unknown, pageSize?: number) => {
+    requestedPageSize = pageSize ?? 0;
+    return defaultSyncSql();
+  };
+  reshapeSyncTableGroupsMock = (groups: any) => groups;
+  const rows = Array.from({ length: 5001 }, (_, index) => ({
+    id: index + 1,
+    name: `Map ${index + 1}`,
+    tiling: null,
+    tiling__tileRootKey: null,
+    tiling__tileWidth: null,
+    tiling__format: null,
+    updatedAt: index + 1,
+  }));
+  const db = {
+    execute: mock(async () => ({ rows: [{ table_name: "maps", needs_sync: 1 }] })),
+    batch: mock(async () => ([
+      {
+        columns: ["id", "name", "tiling", "tiling__tileRootKey", "tiling__tileWidth", "tiling__format", "updatedAt"],
+        rows,
+      },
+    ])),
+  };
+
+  const result = await catchup(db as any, { tables: {} }, {}, 999999);
+
+  expect(requestedPageSize).toBe(5000);
+  expect(result.tables.maps.rows).toHaveLength(5000);
+  expect(result.has_more).toBe(true);
+});
+
+test("catchup rejects oversized sync cursors before wasm work", async () => {
+  const tables: Record<string, { last_seen_updated_at: number | null; permission_hash: string }> = {};
+  for (let index = 0; index < 513; index += 1) {
+    tables[`table_${index}`] = { last_seen_updated_at: null, permission_hash: "perm" };
+  }
+  const db = {
+    execute: mock(async () => ({ rows: [] })),
+    batch: mock(async () => ([])),
+  };
+
+  await expect(catchup(db as any, { tables }, {}, 1000)).rejects.toThrow("max is 512");
+  expect(db.execute).not.toHaveBeenCalled();
+});
+
+test("catchup rejects oversized sync cursor permission hashes", async () => {
+  const db = {
+    execute: mock(async () => ({ rows: [] })),
+    batch: mock(async () => ([])),
+  };
+
+  await expect(catchup(db as any, {
+    tables: {
+      maps: { last_seen_updated_at: null, permission_hash: "x".repeat(257) },
+    },
+  }, {}, 1000)).rejects.toThrow("permission_hash");
+  expect(db.execute).not.toHaveBeenCalled();
 });

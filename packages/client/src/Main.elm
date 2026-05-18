@@ -295,6 +295,16 @@ handleLiveSyncIncoming incoming model =
                     , emitSyncState (toSyncState updatedModel)
                     )
 
+        LiveSync.SyncRequiredReceived messageDatabaseId ->
+            case validateLiveSyncDatabaseId model messageDatabaseId "syncRequired" of
+                Just message ->
+                    ( { model | syncError = Just message }
+                    , Data.Error.sendError message
+                    )
+
+                Nothing ->
+                    applyCatchupUpdate (Catchup.update Catchup.CatchupRequired model.catchup model.db) model
+
 
 validateLiveSyncDatabaseId : Model -> Maybe String -> String -> Maybe String
 validateLiveSyncDatabaseId model actual eventName =

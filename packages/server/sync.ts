@@ -5,6 +5,52 @@ import { requireDatabaseId, type DatabaseId } from "./database-id";
 import { activateSchemaForDatabase } from "./schema";
 
 export type SessionValue = null | number | string | Uint8Array;
+export const DEFAULT_SYNC_PAGE_SIZE = 1000;
+export const MAX_SYNC_PAGE_SIZE = 5000;
+export const MAX_SYNC_CURSOR_TABLES = 512;
+export const MAX_SYNC_CURSOR_PERMISSION_HASH_BYTES = 256;
+
+function normalizePageSize(pageSize: number): number {
+    if (!Number.isFinite(pageSize) || pageSize <= 0) {
+        throw new Error("pageSize must be greater than zero");
+    }
+
+    return Math.min(Math.floor(pageSize), MAX_SYNC_PAGE_SIZE);
+}
+
+function normalizeParams(params: unknown[] | undefined): unknown[] {
+    return (params ?? []).map((value) => {
+        if (Array.isArray(value)) {
+            return Uint8Array.from(value as number[]);
+        }
+        return value;
+    });
+}
+
+function validateSyncCursor(syncCursor: SyncCursor): void {
+    if (!syncCursor || typeof syncCursor !== "object" || !syncCursor.tables || typeof syncCursor.tables !== "object") {
+        throw new Error("syncCursor must be an object with tables");
+    }
+
+    const entries = Object.entries(syncCursor.tables);
+    if (entries.length > MAX_SYNC_CURSOR_TABLES) {
+        throw new Error(`syncCursor references ${entries.length} tables; max is ${MAX_SYNC_CURSOR_TABLES}`);
+    }
+
+    for (const [tableName, entry] of entries) {
+        if (!entry || typeof entry !== "object") {
+            throw new Error(`syncCursor entry for ${tableName} must be an object`);
+        }
+
+        if (typeof entry.permission_hash !== "string") {
+            throw new Error(`syncCursor permission_hash for ${tableName} must be a string`);
+        }
+
+        if (new TextEncoder().encode(entry.permission_hash).byteLength > MAX_SYNC_CURSOR_PERMISSION_HASH_BYTES) {
+            throw new Error(`syncCursor permission_hash for ${tableName} is too large`);
+        }
+    }
+}
 
 /**
  * Sync cursor tracks the last seen state for each table.
@@ -113,22 +159,26 @@ export async function catchup(
     db: Client,
     syncCursor: SyncCursor,
     session: SyncSession,
-    pageSize: number = 1000,
+    pageSize: number = DEFAULT_SYNC_PAGE_SIZE,
     databaseId?: DatabaseId,
 ): Promise<SyncPageResult> {
     activateSchemaForDatabase(databaseId);
+    const effectivePageSize = normalizePageSize(pageSize);
+    validateSyncCursor(syncCursor);
 
     // Step 1: Get sync status SQL
-    const statusSql = wasm.get_sync_status_sql(syncCursor, session);
-    if (typeof statusSql === "string" && statusSql.startsWith("Error:")) {
-        throw new Error(statusSql);
+    const statusStatement = wasm.get_sync_status_sql(syncCursor, session);
+    if (typeof statusStatement === "string" && statusStatement.startsWith("Error:")) {
+        throw new Error(statusStatement);
     }
+    const statusSql = typeof statusStatement === "string" ? statusStatement : statusStatement.sql;
+    const statusParams = typeof statusStatement === "string" ? [] : normalizeParams(statusStatement.params);
 
     // Step 2: Execute sync status SQL
-    const statusResult = await db.execute(statusSql as string);
+    const statusResult = await db.execute(statusParams.length > 0 ? { sql: statusSql, args: statusParams } : statusSql);
 
     // Step 3: Get sync SQL for tables that need syncing
-    const syncSqlResult = wasm.get_sync_sql(statusResult.rows, syncCursor, session, pageSize);
+    const syncSqlResult = wasm.get_sync_sql(statusResult.rows, syncCursor, session, effectivePageSize);
     if (typeof syncSqlResult === "string" && syncSqlResult.startsWith("Error:")) {
         throw new Error(syncSqlResult);
     }
@@ -149,9 +199,15 @@ export async function catchup(
     }
 
     // Collect all SQL statements for batch execution
-    const allSqlStatements: string[] = [];
+    const allSqlStatements: any[] = [];
     for (const tableSql of sqlResult.tables) {
-        allSqlStatements.push(...tableSql.sql);
+        for (let index = 0; index < tableSql.sql.length; index += 1) {
+            const params = normalizeParams(tableSql.params?.[index]);
+            allSqlStatements.push(params.length > 0
+                ? { sql: tableSql.sql[index], args: params }
+                : tableSql.sql[index]
+            );
+        }
     }
 
     // Execute all SQL statements in a single batch
@@ -189,8 +245,8 @@ export async function catchup(
             }
         }
 
-        const hasMoreForTable = tableRows.length > pageSize;
-        const finalRows = hasMoreForTable ? tableRows.slice(0, pageSize) : tableRows;
+        const hasMoreForTable = tableRows.length > effectivePageSize;
+        const finalRows = hasMoreForTable ? tableRows.slice(0, effectivePageSize) : tableRows;
 
         const reshapedGroup = reshapeSyncTableGroups([
             {

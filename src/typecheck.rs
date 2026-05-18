@@ -1105,8 +1105,25 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
 
                                 ast::Field::FieldDirective(ast::FieldDirective::TableName((
                                     tablename_range,
-                                    _tablename,
-                                ))) => tablenames.push(convert_range(tablename_range)),
+                                    tablename,
+                                ))) => {
+                                    tablenames.push(convert_range(tablename_range));
+                                    if !crate::ext::string::is_safe_sql_identifier(tablename) {
+                                        errors.push(Error {
+                                            filepath: file.path.clone(),
+                                            error_type: ErrorType::InvalidTypeUsage {
+                                                message: format!(
+                                                    "Invalid @tablename value '{}'. Table names must contain only letters, numbers, and underscores, and cannot start with a number.",
+                                                    tablename
+                                                ),
+                                            },
+                                            locations: vec![Location {
+                                                contexts: to_range(&start, &end),
+                                                primary: vec![convert_range(tablename_range)],
+                                            }],
+                                        });
+                                    }
+                                }
 
                                 ast::Field::FieldDirective(ast::FieldDirective::Permissions(
                                     perm,

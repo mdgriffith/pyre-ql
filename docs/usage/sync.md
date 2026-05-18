@@ -100,7 +100,7 @@ flowchart TD
     Elm[Elm app\nUI state + generated Pyre module]
     Bridge[TypeScript host / bridge\nports + app session]
     Cache[(IndexedDB\nlocal persistence)]
-    Catchup[/GET /sync\ncatchup/]
+    Catchup[/POST /sync\ncatchup/]
     Events[/GET /sync/events\nSSE live stream/]
     Query[/POST /db\nqueries + mutations/]
     Server[Pyre server sync runtime\npermissions + delta generation]
@@ -147,7 +147,7 @@ flowchart TD
 Information moves through the system in three main paths:
 
 - Startup: `PyreClient` restores cached state from IndexedDB, then performs server catchup.
-- Live sync: the server pushes deltas over `/sync/events`, and `PyreClient` applies and persists them.
+- Live sync: the server pushes deltas over `/sync/events`, and `PyreClient` applies and persists them. If a live delta is too large, the server can send `syncRequired`; the client then performs POST catchup from its current cursor.
 - Query/mutation flow: Elm emits generated payloads, the TS host forwards them to `PyreClient`, mutations go to the server, and results come back into Elm through ports.
 
 ```typescript

@@ -16,6 +16,8 @@ const schema = {
 
 test('Elm catchup request includes restored syncCursor on startup', async () => {
   const requestedUrls: string[] = [];
+  const requestedMethods: string[] = [];
+  const requestBodies: string[] = [];
   const previousXmlHttpRequest = globalThis.XMLHttpRequest;
 
   class MockXMLHttpRequest {
@@ -34,14 +36,16 @@ test('Elm catchup request includes restored syncCursor on startup', async () => 
       this.listeners[type].push(callback);
     }
 
-    open(_method: string, url: string) {
+    open(method: string, url: string) {
       this.responseURL = url;
+      requestedMethods.push(method);
       requestedUrls.push(url);
     }
 
     setRequestHeader() {}
 
-    send() {
+    send(body?: string) {
+      requestBodies.push(body ?? '');
       queueMicrotask(() => {
         (this.listeners.load ?? []).forEach((listener) => listener());
       });
@@ -96,12 +100,18 @@ test('Elm catchup request includes restored syncCursor on startup', async () => 
     await Bun.sleep(0);
 
     expect(requestedUrls).toHaveLength(1);
-    expect(requestedUrls[0]).toContain('/sync?syncCursor=');
-
-    const url = new URL(requestedUrls[0]);
-    expect(url.searchParams.get('syncCursor')).toBe(
-      '{"tables":{"maps":{"last_seen_updated_at":null,"permission_hash":"perm-hash"}}}'
-    );
+    expect(requestedMethods).toEqual(['POST']);
+    expect(requestedUrls[0]).toBe('http://example.test/sync');
+    expect(JSON.parse(requestBodies[0])).toEqual({
+      syncCursor: {
+        tables: {
+          maps: {
+            last_seen_updated_at: null,
+            permission_hash: 'perm-hash',
+          },
+        },
+      },
+    });
   } finally {
     globalThis.XMLHttpRequest = previousXmlHttpRequest;
   }
@@ -109,6 +119,8 @@ test('Elm catchup request includes restored syncCursor on startup', async () => 
 
 test('Elm catchup request includes databaseId when configured', async () => {
   const requestedUrls: string[] = [];
+  const requestedMethods: string[] = [];
+  const requestBodies: string[] = [];
   const previousXmlHttpRequest = globalThis.XMLHttpRequest;
 
   class MockXMLHttpRequest {
@@ -126,14 +138,16 @@ test('Elm catchup request includes databaseId when configured', async () => {
       this.listeners[type].push(callback);
     }
 
-    open(_method: string, url: string) {
+    open(method: string, url: string) {
       this.responseURL = url;
+      requestedMethods.push(method);
       requestedUrls.push(url);
     }
 
     setRequestHeader() {}
 
-    send() {
+    send(body?: string) {
+      requestBodies.push(body ?? '');
       queueMicrotask(() => {
         (this.listeners.load ?? []).forEach((listener) => listener());
       });
@@ -182,8 +196,19 @@ test('Elm catchup request includes databaseId when configured', async () => {
     await Bun.sleep(0);
 
     expect(requestedUrls).toHaveLength(1);
-    const url = new URL(requestedUrls[0]);
-    expect(url.searchParams.get('databaseId')).toBe('campaign:123');
+    expect(requestedMethods).toEqual(['POST']);
+    expect(requestedUrls[0]).toBe('http://example.test/sync');
+    expect(JSON.parse(requestBodies[0])).toEqual({
+      databaseId: 'campaign:123',
+      syncCursor: {
+        tables: {
+          maps: {
+            last_seen_updated_at: null,
+            permission_hash: '',
+          },
+        },
+      },
+    });
   } finally {
     globalThis.XMLHttpRequest = previousXmlHttpRequest;
   }
@@ -191,6 +216,8 @@ test('Elm catchup request includes databaseId when configured', async () => {
 
 test('Elm catchup waits for startSync when autoStart is false', async () => {
   const requestedUrls: string[] = [];
+  const requestedMethods: string[] = [];
+  const requestBodies: string[] = [];
   const previousXmlHttpRequest = globalThis.XMLHttpRequest;
 
   class MockXMLHttpRequest {
@@ -208,14 +235,16 @@ test('Elm catchup waits for startSync when autoStart is false', async () => {
       this.listeners[type].push(callback);
     }
 
-    open(_method: string, url: string) {
+    open(method: string, url: string) {
       this.responseURL = url;
+      requestedMethods.push(method);
       requestedUrls.push(url);
     }
 
     setRequestHeader() {}
 
-    send() {
+    send(body?: string) {
+      requestBodies.push(body ?? '');
       queueMicrotask(() => {
         (this.listeners.load ?? []).forEach((listener) => listener());
       });
@@ -272,7 +301,8 @@ test('Elm catchup waits for startSync when autoStart is false', async () => {
     await Bun.sleep(0);
 
     expect(requestedUrls).toHaveLength(1);
-    expect(new URL(requestedUrls[0]).searchParams.get('databaseId')).toBe('campaign:123');
+    expect(requestedMethods).toEqual(['POST']);
+    expect(JSON.parse(requestBodies[0]).databaseId).toBe('campaign:123');
   } finally {
     globalThis.XMLHttpRequest = previousXmlHttpRequest;
   }

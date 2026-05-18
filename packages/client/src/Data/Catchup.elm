@@ -10,7 +10,6 @@ import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
 import String
-import Url
 
 
 type alias ServerConfig =
@@ -66,6 +65,7 @@ type alias Model =
 
 type Msg
     = InitialDataLoaded Data.IndexedDb.SyncCursor
+    | CatchupRequired
     | CatchupResponseReceived (Result Http.Error CatchupResponse)
 
 
@@ -119,6 +119,20 @@ update msg model db =
             , db = db
             , cmd = cmd
             , dbCmds = [ Data.IndexedDb.writeSyncCursor updatedCursor ]
+            , delta = Nothing
+            , touchedTables = []
+            , error = Nothing
+            }
+
+        CatchupRequired ->
+            let
+                ( nextModel, cmd ) =
+                    startCatchupIfReady model
+            in
+            { model = nextModel
+            , db = db
+            , cmd = cmd
+            , dbCmds = []
             , delta = Nothing
             , touchedTables = []
             , error = Nothing
@@ -232,30 +246,18 @@ handleCatchupResponse result model db =
 requestCatchup : SyncCursor -> ServerConfig -> Cmd Msg
 requestCatchup cursor server =
     let
-        params =
-            List.concat
-                [ case server.databaseId of
-                    Just sourceDatabaseId ->
-                        [ ( "databaseId", sourceDatabaseId ) ]
-
-                    Nothing ->
-                        []
-                , if Dict.isEmpty cursor then
-                    []
-
-                  else
-                    [ ( "syncCursor", Encode.encode 0 (encodeSyncCursor cursor) ) ]
-                ]
-
         url =
-            appendQueryParams (server.baseUrl ++ server.catchupPath) params
+            server.baseUrl ++ server.catchupPath
+
+        body =
+            Http.jsonBody (encodeCatchupRequest cursor server)
     in
     if includeCredentials server then
         Http.riskyRequest
-            { method = "GET"
+            { method = "POST"
             , headers = httpHeaders server.headers
             , url = url
-            , body = Http.emptyBody
+            , body = body
             , expect = Http.expectJson CatchupResponseReceived decodeCatchupResponse
             , timeout = Nothing
             , tracker = Nothing
@@ -263,14 +265,28 @@ requestCatchup cursor server =
 
     else
         Http.request
-            { method = "GET"
+            { method = "POST"
             , headers = httpHeaders server.headers
             , url = url
-            , body = Http.emptyBody
+            , body = body
             , expect = Http.expectJson CatchupResponseReceived decodeCatchupResponse
             , timeout = Nothing
             , tracker = Nothing
             }
+
+
+encodeCatchupRequest : SyncCursor -> ServerConfig -> Encode.Value
+encodeCatchupRequest cursor server =
+    Encode.object <|
+        List.concat
+            [ case server.databaseId of
+                Just sourceDatabaseId ->
+                    [ ( "databaseId", Encode.string sourceDatabaseId ) ]
+
+                Nothing ->
+                    []
+            , [ ( "syncCursor", encodeSyncCursor cursor ) ]
+            ]
 
 
 includeCredentials : ServerConfig -> Bool
@@ -544,32 +560,6 @@ decodeMaybeTimestamp =
         , Decode.float |> Decode.map Just
         , Decode.int |> Decode.map (\value -> Just (toFloat value))
         ]
-
-
-appendQueryParams : String -> List ( String, String ) -> String
-appendQueryParams url params =
-    case String.split "?" url of
-        base :: queryParts ->
-            let
-                existing =
-                    String.join "?" queryParts
-
-                encodedParams =
-                    params
-                        |> List.map (\( key, value ) -> key ++ "=" ++ Url.percentEncode value)
-
-                combined =
-                    List.filter (\item -> not (String.isEmpty item)) (existing :: encodedParams)
-                        |> String.join "&"
-            in
-            if String.isEmpty combined then
-                base
-
-            else
-                base ++ "?" ++ combined
-
-        [] ->
-            url
 
 
 httpErrorToString : Http.Error -> String

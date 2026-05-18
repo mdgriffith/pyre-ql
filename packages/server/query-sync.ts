@@ -12,6 +12,36 @@ import {
   type SyncDeltasFn,
 } from "./query";
 
+export const MAX_LIVE_SYNC_DELTA_ROWS = 5000;
+export const MAX_LIVE_SYNC_DELTA_PAYLOAD_BYTES = 1024 * 1024;
+export const MAX_LIVE_SYNC_FANOUT_RECIPIENTS = 1000;
+
+function countRows(tableGroups: unknown): number {
+  if (!Array.isArray(tableGroups)) {
+    return 0;
+  }
+
+  return tableGroups.reduce((total, tableGroup) => {
+    if (typeof tableGroup !== "object" || tableGroup == null || !("rows" in tableGroup)) {
+      return total;
+    }
+
+    return total + (Array.isArray(tableGroup.rows) ? tableGroup.rows.length : 0);
+  }, 0);
+}
+
+function liveSyncRequiresCatchup(message: unknown, rowCount: number, recipientCount: number): boolean {
+  if (rowCount > MAX_LIVE_SYNC_DELTA_ROWS) {
+    return true;
+  }
+
+  if (recipientCount > MAX_LIVE_SYNC_FANOUT_RECIPIENTS) {
+    return true;
+  }
+
+  return new TextEncoder().encode(JSON.stringify(message)).byteLength > MAX_LIVE_SYNC_DELTA_PAYLOAD_BYTES;
+}
+
 function syncWithWasmForDatabase(databaseId?: DatabaseId): SyncDeltasFn {
   const normalizedDatabaseId = databaseId ? requireDatabaseId(databaseId) : undefined;
 
@@ -35,16 +65,25 @@ function syncWithWasmForDatabase(databaseId?: DatabaseId): SyncDeltasFn {
         continue;
       }
 
+      const data = typeof reshapedTableGroupsResult === "string"
+        ? JSON.parse(reshapedTableGroupsResult)
+        : reshapedTableGroupsResult;
+
       const deltaMessage = {
         type: "delta",
         ...(normalizedDatabaseId ? { databaseId: normalizedDatabaseId } : {}),
-        data: typeof reshapedTableGroupsResult === "string"
-          ? JSON.parse(reshapedTableGroupsResult)
-          : reshapedTableGroupsResult,
+        data,
       };
 
+      const message = liveSyncRequiresCatchup(deltaMessage, countRows(data), group.session_ids.length)
+        ? {
+          type: "syncRequired",
+          ...(normalizedDatabaseId ? { databaseId: normalizedDatabaseId } : {}),
+        }
+        : deltaMessage;
+
       for (const sessionId of group.session_ids) {
-        sendToSession(sessionId, deltaMessage);
+        sendToSession(sessionId, message);
       }
     }
   };

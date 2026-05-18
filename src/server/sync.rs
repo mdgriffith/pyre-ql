@@ -10,6 +10,10 @@ use std::collections::HashMap;
 pub type SyncSession = HashMap<String, sync::SessionValue>;
 pub type ConnectedSessions = HashMap<String, SyncSession>;
 
+pub const MAX_LIVE_SYNC_DELTA_ROWS: usize = 5000;
+pub const MAX_LIVE_SYNC_DELTA_PAYLOAD_BYTES: usize = 1024 * 1024;
+pub const MAX_LIVE_SYNC_FANOUT_RECIPIENTS: usize = 1000;
+
 pub struct SyncServer<'a> {
     context: &'a typecheck::Context,
 }
@@ -52,6 +56,7 @@ pub struct DeltaMessage {
     pub type_: String,
     #[serde(rename = "databaseId", skip_serializing_if = "Option::is_none")]
     pub database_id: Option<DatabaseId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub data: Vec<AffectedRowTableGroup>,
 }
 
@@ -76,6 +81,24 @@ impl DeltaMessage {
             data,
         })
     }
+
+    pub fn sync_required() -> Self {
+        Self {
+            type_: "syncRequired".to_string(),
+            database_id: None,
+            data: Vec::new(),
+        }
+    }
+
+    pub fn sync_required_for_database(database_id: impl AsRef<str>) -> Result<Self, Error> {
+        Ok(Self {
+            type_: "syncRequired".to_string(),
+            database_id: Some(
+                database_id::require_database_id(database_id).map_err(Error::DatabaseId)?,
+            ),
+            data: Vec::new(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -92,13 +115,11 @@ pub async fn catchup(
     session: &SyncSession,
     page_size: usize,
 ) -> Result<SyncPageResult, Error> {
-    if page_size == 0 {
-        return Err(Error::InvalidPageSize);
-    }
+    let page_size = sync::normalize_page_size(page_size).map_err(Error::Sync)?;
 
-    let status_sql =
-        sync::get_sync_status_sql(sync_cursor, context, session).map_err(Error::Sync)?;
-    let status_rows = query_objects(conn, &status_sql).await?;
+    let status_statement =
+        sync::get_sync_status_statement(sync_cursor, context, session).map_err(Error::Sync)?;
+    let status_rows = query_objects(conn, &status_statement.sql, &status_statement.params).await?;
     let sync_status = sync::parse_sync_status(sync_cursor, context, session, &status_rows)
         .map_err(Error::Sync)?;
     let sync_sql = sync::get_sync_sql(&sync_status, sync_cursor, context, session, page_size)
@@ -118,8 +139,9 @@ pub async fn catchup(
         let mut table_rows = Vec::new();
         let mut max_updated_at = None;
 
-        for statement in &table_sql.sql {
-            let rows = query_objects(conn, statement).await?;
+        for (statement_index, statement) in table_sql.sql.iter().enumerate() {
+            let params = table_sql.params.get(statement_index).cloned().unwrap_or_default();
+            let rows = query_objects(conn, statement, &params).await?;
 
             for mut row in rows {
                 decode_json_columns(&mut row, &table_sql.json_columns)?;
@@ -232,11 +254,19 @@ fn calculate_deltas_internal(
 
     for group in result.groups {
         let reshaped_table_groups = sync_shape::reshape_table_groups(&group.table_groups, context);
-        let message = match &database_id {
+        let delta_message = match &database_id {
             Some(database_id) => {
                 DeltaMessage::delta_for_database(database_id, reshaped_table_groups)?
             }
             None => DeltaMessage::delta(reshaped_table_groups),
+        };
+        let message = if live_sync_requires_catchup(&delta_message, group.session_ids.len())? {
+            match &database_id {
+                Some(database_id) => DeltaMessage::sync_required_for_database(database_id)?,
+                None => DeltaMessage::sync_required(),
+            }
+        } else {
+            delta_message
         };
 
         for session_id in group.session_ids {
@@ -251,11 +281,42 @@ fn calculate_deltas_internal(
     Ok(messages)
 }
 
+fn live_sync_requires_catchup(
+    message: &DeltaMessage,
+    recipient_count: usize,
+) -> Result<bool, Error> {
+    if count_rows(&message.data) > MAX_LIVE_SYNC_DELTA_ROWS {
+        return Ok(true);
+    }
+
+    if recipient_count > MAX_LIVE_SYNC_FANOUT_RECIPIENTS {
+        return Ok(true);
+    }
+
+    Ok(serde_json::to_vec(message).map_err(Error::Json)?.len() > MAX_LIVE_SYNC_DELTA_PAYLOAD_BYTES)
+}
+
+fn count_rows(table_groups: &[AffectedRowTableGroup]) -> usize {
+    table_groups.iter().map(|group| group.rows.len()).sum()
+}
+
 async fn query_objects(
     conn: &libsql::Connection,
     sql: &str,
+    params: &[sync::SessionValue],
 ) -> Result<Vec<HashMap<String, JsonValue>>, Error> {
-    let mut rows = conn.query(sql, ()).await.map_err(Error::Database)?;
+    let values = params
+        .iter()
+        .cloned()
+        .map(session_value_to_libsql)
+        .collect::<Vec<_>>();
+    let mut rows = if values.is_empty() {
+        conn.query(sql, ()).await.map_err(Error::Database)?
+    } else {
+        conn.query(sql, libsql::params_from_iter(values))
+            .await
+            .map_err(Error::Database)?
+    };
     let column_names = (0..rows.column_count())
         .map(|index| rows.column_name(index).unwrap_or("").to_string())
         .collect::<Vec<_>>();
@@ -275,6 +336,16 @@ async fn query_objects(
     }
 
     Ok(result)
+}
+
+fn session_value_to_libsql(value: sync::SessionValue) -> libsql::Value {
+    match value {
+        sync::SessionValue::Null => libsql::Value::Null,
+        sync::SessionValue::Integer(value) => libsql::Value::Integer(value),
+        sync::SessionValue::Real(value) => libsql::Value::Real(value),
+        sync::SessionValue::Text(value) => libsql::Value::Text(value),
+        sync::SessionValue::Blob(value) => libsql::Value::Blob(value),
+    }
 }
 
 fn libsql_value_to_json(value: libsql::Value) -> JsonValue {
@@ -369,6 +440,12 @@ impl std::fmt::Display for Error {
             }
             Error::Sync(sync::SyncError::PermissionError(message)) => {
                 write!(f, "sync permission error: {}", message)
+            }
+            Error::Sync(sync::SyncError::InvalidPageSize) => {
+                write!(f, "page_size must be greater than zero")
+            }
+            Error::Sync(sync::SyncError::InvalidSyncCursor(message)) => {
+                write!(f, "invalid sync cursor: {}", message)
             }
             Error::SyncDeltas(sync_deltas::SyncDeltasError::TableNotFound(table_name)) => {
                 write!(f, "sync delta table not found: {}", table_name)

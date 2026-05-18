@@ -86,10 +86,10 @@ The generated types prevent passing a `Command` database ID to a `Tenant` query,
 
 ## Server Requirements
 
-Every Pyre endpoint must require `databaseId`:
+Every Pyre endpoint must require an authorized `databaseId`. Catchup receives it in the POST body with the sync cursor:
 
 ```ts
-const databaseId = request.query.databaseId
+const { databaseId, syncCursor } = await request.json()
 const session = authenticate(request)
 
 authorizeDatabaseAccess(session, databaseId)

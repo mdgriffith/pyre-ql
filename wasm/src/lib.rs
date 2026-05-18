@@ -86,7 +86,10 @@ pub fn get_sync_page_info(sync_cursor: JsValue, session: JsValue, page_size: usi
 pub fn get_sync_status_sql(sync_cursor: JsValue, session: JsValue) -> JsValue {
     let result = sync::get_sync_status_sql_wasm(sync_cursor, session);
     match result {
-        Ok(sql) => serde_wasm_bindgen::to_value(&sql).unwrap(),
+        Ok(statement) => {
+            let json_str = serde_json::to_string(&statement).unwrap();
+            js_sys::JSON::parse(&json_str).unwrap()
+        }
         Err(e) => {
             // e is already a String, no need for .to_string()
             serde_wasm_bindgen::to_value(&("Error: ".to_string() + &e)).unwrap()

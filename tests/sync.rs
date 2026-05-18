@@ -55,6 +55,151 @@ record GameEntity {
 }
 
 #[test]
+fn sync_status_sql_uses_bound_params_for_session_permissions() {
+    let schema_source = r#"
+session {
+    workspaceSlug String
+}
+
+record Note {
+    id Int @id
+    workspaceSlug String
+    updatedAt Int
+    @allow(query) { workspaceSlug == Session.workspaceSlug }
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema should parse");
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let context = typecheck::check_schema(&database).expect("schema should typecheck");
+    let mut session = std::collections::HashMap::new();
+    session.insert(
+        "workspaceSlug".to_string(),
+        pyre::sync::SessionValue::Text("x' OR 1=1 --".to_string()),
+    );
+
+    let statement = pyre::sync::get_sync_status_statement(&SyncCursor::new(), &context, &session)
+        .expect("sync status statement should generate");
+
+    assert!(statement.sql.contains("\"notes\".\"workspaceSlug\" = ?"));
+    assert!(!statement.sql.contains("x' OR 1=1"));
+    assert_eq!(statement.params.len(), 1);
+}
+
+#[test]
+fn sync_sql_caps_page_size() {
+    let schema_source = r#"
+record Note {
+    id Int @id
+    updatedAt Int
+    @public
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema should parse");
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let context = typecheck::check_schema(&database).expect("schema should typecheck");
+    let sync_status = SyncStatusResult {
+        tables: vec![TableSyncStatus {
+            table_name: "notes".to_string(),
+            sync_layer: 0,
+            needs_sync: true,
+            max_updated_at: None,
+            permission_hash: "perm".to_string(),
+        }],
+    };
+
+    let result = get_sync_sql(
+        &sync_status,
+        &SyncCursor::new(),
+        &context,
+        &Default::default(),
+        999_999,
+    )
+    .expect("sync sql should generate");
+
+    assert!(result.tables[0].sql[0].ends_with("LIMIT 5001"));
+}
+
+#[test]
+fn sync_cursor_rejects_unknown_tables() {
+    let schema_source = r#"
+record Note {
+    id Int @id
+    updatedAt Int
+    @public
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema should parse");
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let context = typecheck::check_schema(&database).expect("schema should typecheck");
+    let mut cursor = SyncCursor::new();
+    cursor.insert(
+        "not_a_table".to_string(),
+        pyre::sync::TableCursor {
+            last_seen_updated_at: Some(1),
+            permission_hash: "perm".to_string(),
+        },
+    );
+
+    let err = pyre::sync::get_sync_status_statement(&cursor, &context, &Default::default())
+        .expect_err("unknown cursor table should be rejected");
+
+    match err {
+        pyre::sync::SyncError::InvalidSyncCursor(message) => {
+            assert!(message.contains("unknown table"));
+        }
+        _ => panic!("expected invalid sync cursor error"),
+    }
+}
+
+#[test]
+fn sync_cursor_rejects_oversized_permission_hashes() {
+    let schema_source = r#"
+record Note {
+    id Int @id
+    updatedAt Int
+    @public
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema should parse");
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let context = typecheck::check_schema(&database).expect("schema should typecheck");
+    let mut cursor = SyncCursor::new();
+    cursor.insert(
+        "notes".to_string(),
+        pyre::sync::TableCursor {
+            last_seen_updated_at: Some(1),
+            permission_hash: "x".repeat(pyre::sync::MAX_SYNC_CURSOR_PERMISSION_HASH_BYTES + 1),
+        },
+    );
+
+    let err = pyre::sync::get_sync_status_statement(&cursor, &context, &Default::default())
+        .expect_err("oversized permission hash should be rejected");
+
+    match err {
+        pyre::sync::SyncError::InvalidSyncCursor(message) => {
+            assert!(message.contains("permission_hash"));
+        }
+        _ => panic!("expected invalid sync cursor error"),
+    }
+}
+
+#[test]
 fn query_only_namespaces_are_excluded_from_sync_sql() {
     let main_source = r#"
 @syncable(false)

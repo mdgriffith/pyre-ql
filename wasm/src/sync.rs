@@ -174,16 +174,38 @@ pub struct SyncSqlResultWasm {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct SyncStatementWasm {
+    pub sql: String,
+    pub params: Vec<SessionValueWasm>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct TableSyncSqlWasm {
     pub table_name: String,
     pub permission_hash: String,
     pub sql: Vec<String>,
+    pub params: Vec<Vec<SessionValueWasm>>,
     pub headers: Vec<String>,
     pub json_columns: Vec<String>,
 }
 
+impl From<sync::SessionValue> for SessionValueWasm {
+    fn from(value: sync::SessionValue) -> Self {
+        match value {
+            sync::SessionValue::Null => SessionValueWasm::Null,
+            sync::SessionValue::Integer(value) => SessionValueWasm::Integer(value),
+            sync::SessionValue::Real(value) => SessionValueWasm::Real(value),
+            sync::SessionValue::Text(value) => SessionValueWasm::Text(value),
+            sync::SessionValue::Blob(value) => SessionValueWasm::Blob(value),
+        }
+    }
+}
+
 /// Generate sync status SQL - returns a single SQL query that checks which tables need syncing
-pub fn get_sync_status_sql_wasm(sync_cursor: JsValue, session: JsValue) -> Result<String, String> {
+pub fn get_sync_status_sql_wasm(
+    sync_cursor: JsValue,
+    session: JsValue,
+) -> Result<SyncStatementWasm, String> {
     let introspection = match cache::get() {
         Some(introspection) => introspection,
         None => return Err("No schema found".to_string()),
@@ -200,10 +222,23 @@ pub fn get_sync_status_sql_wasm(sync_cursor: JsValue, session: JsValue) -> Resul
 
     let context = get_schema_context(&introspection)?;
 
-    sync::get_sync_status_sql(&cursor_rust, context, &session_rust).map_err(|e| match e {
-        sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
-        sync::SyncError::SqlGenerationError(msg) => "SQL generation error: ".to_string() + &msg,
-        sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
+    let statement = sync::get_sync_status_statement(&cursor_rust, context, &session_rust).map_err(
+        |e| match e {
+            sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
+            sync::SyncError::SqlGenerationError(msg) => "SQL generation error: ".to_string() + &msg,
+            sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
+            sync::SyncError::InvalidPageSize => "Invalid page size".to_string(),
+            sync::SyncError::InvalidSyncCursor(msg) => "Invalid sync cursor: ".to_string() + &msg,
+        },
+    )?;
+
+    Ok(SyncStatementWasm {
+        sql: statement.sql,
+        params: statement
+            .params
+            .into_iter()
+            .map(SessionValueWasm::from)
+            .collect(),
     })
 }
 
@@ -242,6 +277,8 @@ pub fn get_sync_sql_wasm(
             sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
             sync::SyncError::SqlGenerationError(msg) => "SQL generation error: ".to_string() + &msg,
             sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
+            sync::SyncError::InvalidPageSize => "Invalid page size".to_string(),
+            sync::SyncError::InvalidSyncCursor(msg) => "Invalid sync cursor: ".to_string() + &msg,
         })?;
 
     // Generate sync SQL
@@ -256,6 +293,8 @@ pub fn get_sync_sql_wasm(
         sync::SyncError::DatabaseError(msg) => "Database error: ".to_string() + &msg,
         sync::SyncError::SqlGenerationError(msg) => "SQL generation error: ".to_string() + &msg,
         sync::SyncError::PermissionError(msg) => "Permission error: ".to_string() + &msg,
+        sync::SyncError::InvalidPageSize => "Invalid page size".to_string(),
+        sync::SyncError::InvalidSyncCursor(msg) => "Invalid sync cursor: ".to_string() + &msg,
     })?;
 
     Ok(SyncSqlResultWasm {
@@ -266,6 +305,11 @@ pub fn get_sync_sql_wasm(
                 table_name: t.table_name,
                 permission_hash: t.permission_hash,
                 sql: t.sql,
+                params: t
+                    .params
+                    .into_iter()
+                    .map(|params| params.into_iter().map(SessionValueWasm::from).collect())
+                    .collect(),
                 headers: t.headers,
                 json_columns: t.json_columns,
             })

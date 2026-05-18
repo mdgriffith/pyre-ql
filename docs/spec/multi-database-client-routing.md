@@ -76,12 +76,23 @@ const client = await PyreClient.create({
 
 ## Request Transport
 
-Pyre sends the selected database ID with every server request using the `databaseId` query parameter.
+Pyre sends the selected database ID with every server request. Catchup uses a POST body so cursor state is not placed in URLs; live sync and mutation routes still use URL routing where appropriate.
 
 ```text
-GET  /sync?databaseId=campaign%3A123
+POST /sync
 GET  /sync/events?databaseId=campaign%3A123
 POST /db/CreateNote?databaseId=campaign%3A123
+```
+
+Catchup body:
+
+```json
+{
+  "databaseId": "campaign:123",
+  "syncCursor": {
+    "tables": {}
+  }
+}
 ```
 
 `databaseId` is used instead of `database` because the value is an identifier, not a database object or connection.
@@ -304,13 +315,14 @@ This keeps the existing single-database runtime model intact while giving apps a
 The app server owns database lookup, authorization, and connection grouping.
 
 ```ts
-const databaseId = request.query.databaseId;
+const { databaseId, syncCursor } = await request.json();
 const session = authenticate(request);
 
 authorize(session, databaseId);
 
 const db = databaseFor(databaseId);
 const connections = connectionsFor(databaseId);
+const catchupResult = await Sync.catchup(db, syncCursor, session, 1000, databaseId);
 ```
 
 For mutations:

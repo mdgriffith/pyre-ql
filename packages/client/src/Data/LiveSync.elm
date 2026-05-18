@@ -46,6 +46,7 @@ type Incoming
     | LiveSyncConnected (Maybe String) String
     | LiveSyncError String
     | SyncCompleteReceived (Maybe String)
+    | SyncRequiredReceived (Maybe String)
 
 
 port sseOut : Encode.Value -> Cmd msg
@@ -124,6 +125,14 @@ decodeIncoming =
                     "syncComplete" ->
                         Decode.maybe (Decode.field "databaseId" Decode.string)
                             |> Decode.map SyncCompleteReceived
+
+                    "syncRequired" ->
+                        Decode.maybe (Decode.field "databaseId" Decode.string)
+                            |> Decode.map SyncRequiredReceived
+
+                    "catchupRequired" ->
+                        Decode.maybe (Decode.field "databaseId" Decode.string)
+                            |> Decode.map SyncRequiredReceived
 
                     _ ->
                         Decode.fail ("Unknown live sync incoming type: " ++ type_)

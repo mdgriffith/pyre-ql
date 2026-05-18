@@ -521,8 +521,8 @@ record Post {
         sync::SessionValue::Text("user".to_string()),
     );
 
-    let result = sync::get_sync_status_sql(&sync_cursor, context, &session);
-    assert!(result.is_ok(), "Sync status SQL should be generated");
+    let result = sync::get_sync_status_statement(&sync_cursor, context, &session);
+    assert!(result.is_ok(), "Sync status SQL statement should be generated");
 }
 
 #[test]
@@ -666,10 +666,11 @@ record GameDocument {
     let mut session: HashMap<String, sync::SessionValue> = HashMap::new();
     session.insert("isAdmin".to_string(), sync::SessionValue::Integer(1));
 
-    let sync_status_sql = match sync::get_sync_status_sql(&sync_cursor, &context, &session) {
-        Ok(sql) => sql,
+    let sync_status_statement = match sync::get_sync_status_statement(&sync_cursor, &context, &session) {
+        Ok(statement) => statement,
         Err(_) => panic!("Sync status SQL generation should succeed"),
     };
+    let sync_status_sql = sync_status_statement.sql;
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let db_path = temp_dir.path().join("sync_status_test.db");
@@ -692,7 +693,12 @@ record GameDocument {
         sync_status_sql
     );
 
-    let result = conn.query(&sync_status_sql, ()).await;
+    let result = conn
+        .query(
+            &sync_status_sql,
+            libsql::params_from_iter(vec![libsql::Value::Integer(1)]),
+        )
+        .await;
     assert!(
         result.is_ok(),
         "Expected sync status SQL to execute successfully, got error: {:?}\nSQL: {}",

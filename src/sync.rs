@@ -25,6 +25,19 @@ pub enum SessionValue {
 /// A sync cursor tracks the last seen state for each table
 pub type SyncCursor = HashMap<String, TableCursor>;
 
+pub const DEFAULT_SYNC_PAGE_SIZE: usize = 1000;
+pub const MAX_SYNC_PAGE_SIZE: usize = 5000;
+pub const MAX_SYNC_CURSOR_TABLES: usize = 512;
+pub const MAX_SYNC_CURSOR_PERMISSION_HASH_BYTES: usize = 256;
+
+pub fn normalize_page_size(page_size: usize) -> Result<usize, SyncError> {
+    if page_size == 0 {
+        return Err(SyncError::InvalidPageSize);
+    }
+
+    Ok(page_size.min(MAX_SYNC_PAGE_SIZE))
+}
+
 /// Cursor state for a single table
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TableCursor {
@@ -56,11 +69,18 @@ pub struct TableSyncData {
 }
 
 /// SQL statements for syncing a table
-#[derive(Clone)]
+#[derive(Clone, Debug)]
+pub struct SyncStatement {
+    pub sql: String,
+    pub params: Vec<SessionValue>,
+}
+
+#[derive(Clone, Debug)]
 pub struct TableSyncSql {
     pub table_name: String,
     pub permission_hash: String,
     pub sql: Vec<String>,
+    pub params: Vec<Vec<SessionValue>>,
     /// Column names in the order they appear in the SQL SELECT
     pub headers: Vec<String>,
     /// Column names that should be decoded as JSON values in the runtime
@@ -80,6 +100,47 @@ fn table_sync_enabled(context: &typecheck::Context, table: &typecheck::Table) ->
         .copied()
         .unwrap_or(ast::SyncMode::Synced)
         == ast::SyncMode::Synced
+}
+
+fn synced_table_names(context: &typecheck::Context) -> HashSet<String> {
+    context
+        .tables
+        .values()
+        .filter(|table| table_sync_enabled(context, table))
+        .map(|table| ast::get_tablename(&table.record.name, &table.record.fields))
+        .collect()
+}
+
+pub fn validate_sync_cursor(
+    sync_cursor: &SyncCursor,
+    context: &typecheck::Context,
+) -> Result<(), SyncError> {
+    if sync_cursor.len() > MAX_SYNC_CURSOR_TABLES {
+        return Err(SyncError::InvalidSyncCursor(format!(
+            "sync cursor references {} tables; max is {}",
+            sync_cursor.len(),
+            MAX_SYNC_CURSOR_TABLES
+        )));
+    }
+
+    let known_tables = synced_table_names(context);
+    for (table_name, cursor) in sync_cursor {
+        if !known_tables.contains(table_name) {
+            return Err(SyncError::InvalidSyncCursor(format!(
+                "sync cursor references unknown table '{}'",
+                table_name
+            )));
+        }
+
+        if cursor.permission_hash.len() > MAX_SYNC_CURSOR_PERMISSION_HASH_BYTES {
+            return Err(SyncError::InvalidSyncCursor(format!(
+                "sync cursor permission_hash for '{}' is too large",
+                table_name
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn collect_sync_storage_columns(
@@ -125,6 +186,7 @@ fn collect_sync_storage_columns(
 }
 
 /// Result containing SQL for all tables that need syncing
+#[derive(Debug)]
 pub struct SyncSqlResult {
     pub tables: Vec<TableSyncSql>,
 }
@@ -374,18 +436,28 @@ fn hash_session_value(hasher: &mut Sha256, value: &SessionValue) {
     }
 }
 
-/// Convert session value to AST QueryValue
-fn session_value_to_query_value(value: &SessionValue) -> ast::QueryValue {
-    use crate::ast::empty_range;
+fn render_session_param(value: &SessionValue, params: &mut Vec<SessionValue>) -> String {
+    params.push(value.clone());
+    "?".to_string()
+}
+
+fn render_permission_value(
+    value: &ast::QueryValue,
+    session: &HashMap<String, SessionValue>,
+    params: &mut Vec<SessionValue>,
+) -> String {
     match value {
-        SessionValue::Null => ast::QueryValue::Null(empty_range()),
-        SessionValue::Integer(i) => ast::QueryValue::Int((empty_range(), *i as i32)),
-        SessionValue::Real(f) => ast::QueryValue::Float((empty_range(), *f as f32)),
-        SessionValue::Text(s) => ast::QueryValue::String((empty_range(), s.clone())),
-        SessionValue::Blob(_) => {
-            // Blob not directly supported in QueryValue, use null for now
-            ast::QueryValue::Null(empty_range())
+        ast::QueryValue::Variable((_, var)) => {
+            if let Some(session_key) = &var.session_field {
+                let session_value = session
+                    .get(session_key)
+                    .expect("Session variable should exist after typechecking");
+                render_session_param(session_value, params)
+            } else {
+                crate::generate::sql::to_sql::render_value(value)
+            }
         }
+        _ => crate::generate::sql::to_sql::render_value(value),
     }
 }
 
@@ -396,30 +468,15 @@ fn render_permission_where(
     where_arg: &WhereArg,
     table: &typecheck::Table,
     session: &HashMap<String, SessionValue>,
+    params: &mut Vec<SessionValue>,
 ) -> String {
     match where_arg {
         WhereArg::Column(is_session_var, fieldname, op, value, _field_name_range) => {
-            let final_value = match value {
-                ast::QueryValue::Variable((_, var)) => {
-                    let session_key = var.session_field.as_ref().expect(
-                        "Permission variables should be session variables, not query parameters",
-                    );
-                    session_value_to_query_value(
-                        session
-                            .get(session_key)
-                            .expect("Session variable should exist after typechecking"),
-                    )
-                }
-                _ => value.clone(),
-            };
-
             let qualified_column_name = if *is_session_var {
                 let session_value = session
                     .get(fieldname)
                     .expect("Session variable should exist after typechecking");
-                crate::generate::sql::to_sql::render_value(&session_value_to_query_value(
-                    session_value,
-                ))
+                render_session_param(session_value, params)
             } else {
                 let table_name = crate::ext::string::quote(&ast::get_tablename(
                     &table.record.name,
@@ -428,8 +485,17 @@ fn render_permission_where(
                 format!("{}.{}", table_name, crate::ext::string::quote(fieldname))
             };
 
-            let value_str = crate::generate::sql::to_sql::render_value(&final_value);
-            let operator_str = if matches!(final_value, ast::QueryValue::Null(_)) {
+            let value_str = render_permission_value(value, session, params);
+            let is_null = match value {
+                ast::QueryValue::Variable((_, var)) => var
+                    .session_field
+                    .as_ref()
+                    .and_then(|session_key| session.get(session_key))
+                    .map(|value| matches!(value, SessionValue::Null))
+                    .unwrap_or(false),
+                _ => matches!(value, ast::QueryValue::Null(_)),
+            };
+            let operator_str = if is_null {
                 match op {
                     ast::Operator::Equal => "is".to_string(),
                     ast::Operator::NotEqual => "is not".to_string(),
@@ -443,18 +509,29 @@ fn render_permission_where(
         WhereArg::And(args) => {
             let inner_list: Vec<String> = args
                 .iter()
-                .map(|arg| render_permission_where(arg, table, session))
+                .map(|arg| render_permission_where(arg, table, session, params))
                 .collect();
             format!("({})", inner_list.join(" and "))
         }
         WhereArg::Or(args) => {
             let inner_list: Vec<String> = args
                 .iter()
-                .map(|arg| render_permission_where(arg, table, session))
+                .map(|arg| render_permission_where(arg, table, session, params))
                 .collect();
             format!("({})", inner_list.join(" or "))
         }
     }
+}
+
+pub fn get_sync_status_statement(
+    sync_cursor: &SyncCursor,
+    context: &typecheck::Context,
+    session: &HashMap<String, SessionValue>,
+) -> Result<SyncStatement, SyncError> {
+    validate_sync_cursor(sync_cursor, context)?;
+    let mut params = Vec::new();
+    let sql = get_sync_status_sql_with_params(sync_cursor, context, session, &mut params)?;
+    Ok(SyncStatement { sql, params })
 }
 
 /// Get sync status SQL - generates a single SQL query that checks which tables need syncing
@@ -463,6 +540,22 @@ pub fn get_sync_status_sql(
     sync_cursor: &SyncCursor,
     context: &typecheck::Context,
     session: &HashMap<String, SessionValue>,
+) -> Result<String, SyncError> {
+    let statement = get_sync_status_statement(sync_cursor, context, session)?;
+    if !statement.params.is_empty() {
+        return Err(SyncError::SqlGenerationError(
+            "sync status SQL requires bind params; use get_sync_status_statement".to_string(),
+        ));
+    }
+
+    Ok(statement.sql)
+}
+
+fn get_sync_status_sql_with_params(
+    sync_cursor: &SyncCursor,
+    context: &typecheck::Context,
+    session: &HashMap<String, SessionValue>,
+    params: &mut Vec<SessionValue>,
 ) -> Result<String, SyncError> {
     use crate::ext::string;
 
@@ -488,9 +581,12 @@ pub fn get_sync_status_sql(
         let table_cursor = sync_cursor.get(&actual_table_name);
         let last_seen_updated_at = table_cursor.and_then(|c| c.last_seen_updated_at);
 
-        // Build WHERE clause for permissions (session vars replaced as literals during rendering)
+        // Build WHERE clause for permissions. Session values are emitted as bind parameters.
         let permission_where = if let Some(perm) = &permission {
-            format!(" WHERE {}", render_permission_where(perm, table, session))
+            format!(
+                " WHERE {}",
+                render_permission_where(perm, table, session, params)
+            )
         } else {
             String::new()
         };
@@ -616,7 +712,7 @@ pub fn parse_sync_status(
 }
 
 /// Get sync SQL for all tables that need syncing
-/// Generates SQL directly (most efficient) with permissions baked in as literals
+/// Generates SQL directly with permission filters and bind parameters for session values.
 /// Only syncs tables that need syncing, ordered by sync_layer
 pub fn get_sync_sql(
     sync_status: &SyncStatusResult,
@@ -626,6 +722,8 @@ pub fn get_sync_sql(
     page_size: usize,
 ) -> Result<SyncSqlResult, SyncError> {
     use crate::ext::string;
+    validate_sync_cursor(sync_cursor, context)?;
+    let effective_page_size = normalize_page_size(page_size)?;
 
     let mut result = SyncSqlResult { tables: Vec::new() };
 
@@ -678,25 +776,24 @@ pub fn get_sync_sql(
 
         // Build WHERE clause combining permissions and updatedAt filter
         let mut where_parts = Vec::new();
+        let mut params = Vec::new();
 
-        // Add permission WHERE clause (session vars replaced during rendering)
+        // Add permission WHERE clause. Session values are emitted as bind parameters.
         if let Some(perm) = &permission {
-            where_parts.push(render_permission_where(perm, table, session));
+            where_parts.push(render_permission_where(perm, table, session, &mut params));
         }
 
         // Add updatedAt filter if provided
         if let Some(updated_at) = last_seen_updated_at {
-            use crate::ast::empty_range;
             let table_name = crate::ext::string::quote(&ast::get_tablename(
                 &table.record.name,
                 &table.record.fields,
             ));
-            let updated_at_value = ast::QueryValue::Int((empty_range(), updated_at as i32));
+            params.push(SessionValue::Integer(updated_at));
             let updated_at_where = format!(
-                "{}.{} > {}",
+                "{}.{} > ?",
                 table_name,
-                crate::ext::string::quote("updatedAt"),
-                crate::generate::sql::to_sql::render_value(&updated_at_value)
+                crate::ext::string::quote("updatedAt")
             );
             where_parts.push(updated_at_where);
         }
@@ -752,13 +849,14 @@ pub fn get_sync_sql(
             quoted_table_name,
             where_clause,
             quoted_table_name,
-            page_size + 1 // +1 to check if there's more
+            effective_page_size + 1 // +1 to check if there's more
         );
 
         result.tables.push(TableSyncSql {
             table_name: actual_table_name.clone(),
             permission_hash: current_permission_hash.clone(),
             sql: vec![sql], // Single SQL statement
+            params: vec![params],
             headers,
             json_columns,
         });
@@ -832,6 +930,8 @@ pub enum SyncError {
     DatabaseError(String),
     SqlGenerationError(String),
     PermissionError(String),
+    InvalidPageSize,
+    InvalidSyncCursor(String),
 }
 
 // Display and Error traits removed to avoid formatting infrastructure
