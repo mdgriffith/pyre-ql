@@ -420,6 +420,10 @@ fn validate_type_expr(
                     errors,
                 ),
                 Type::OneOf { variants } => {
+                    if !inside_json {
+                        validate_variant_field_type_collisions(filepath, variants, errors);
+                    }
+
                     for variant in variants {
                         if let Some(fields) = &variant.fields {
                             validate_type_fields(
@@ -439,6 +443,85 @@ fn validate_type_expr(
             }
 
             seen_types.remove(name);
+        }
+    }
+}
+
+fn validate_variant_field_type_collisions(
+    filepath: &str,
+    variants: &Vec<ast::Variant>,
+    errors: &mut Vec<Error>,
+) {
+    let mut field_types: HashMap<String, (String, String, Option<Range>, Option<Range>)> =
+        HashMap::new();
+
+    for variant in variants {
+        if let Some(fields) = &variant.fields {
+            for field in ast::collect_columns(fields) {
+                let field_type_str = field.type_.to_string();
+                let field_range = to_single_range(&field.start_typename, &field.end_typename);
+
+                match field_types.get(&field.name) {
+                    Some((
+                        existing_type,
+                        existing_variant_name,
+                        existing_field_range,
+                        existing_variant_range,
+                    )) => {
+                        if existing_type != &field_type_str {
+                            let mut contexts: Vec<Range> = Vec::new();
+                            if let Some(existing_range) = existing_variant_range.clone() {
+                                contexts.push(Range {
+                                    start: existing_range.start.clone(),
+                                    end: existing_range.start.clone(),
+                                });
+                            }
+                            if let Some(current_range) =
+                                to_single_range(&variant.start, &variant.end)
+                            {
+                                contexts.push(Range {
+                                    start: current_range.start.clone(),
+                                    end: current_range.start.clone(),
+                                });
+                            }
+
+                            let mut primary_ranges: Vec<Range> = Vec::new();
+                            if let Some(existing_range) = existing_field_range.clone() {
+                                primary_ranges.push(existing_range);
+                            }
+                            if let Some(current_range) = field_range.clone() {
+                                primary_ranges.push(current_range);
+                            }
+
+                            errors.push(Error {
+                                filepath: filepath.to_string(),
+                                error_type: ErrorType::VariantFieldTypeCollision {
+                                    field: field.name.clone(),
+                                    type_one: existing_type.clone(),
+                                    type_two: field_type_str.clone(),
+                                    variant_one: existing_variant_name.clone(),
+                                    variant_two: variant.name.clone(),
+                                },
+                                locations: vec![Location {
+                                    contexts: contexts.clone(),
+                                    primary: primary_ranges,
+                                }],
+                            });
+                        }
+                    }
+                    None => {
+                        field_types.insert(
+                            field.name.clone(),
+                            (
+                                field_type_str,
+                                variant.name.clone(),
+                                field_range,
+                                to_single_range(&variant.start, &variant.end),
+                            ),
+                        );
+                    }
+                }
+            }
         }
     }
 }
@@ -1572,21 +1655,9 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                         start,
                         end,
                     } => {
-                        // Track field types across variants
-                        let mut field_types: HashMap<
-                            String,
-                            (String, String, Option<Range>, Option<Range>),
-                        > = HashMap::new();
-
                         for variant in variants {
                             if let Some(fields) = &variant.fields {
                                 for field in ast::collect_columns(&fields) {
-                                    let field_type_str = field.type_.to_string();
-                                    let field_range =
-                                        to_single_range(&field.start_typename, &field.end_typename);
-                                    let variant_range =
-                                        to_single_range(&variant.start, &variant.end);
-
                                     let mut contexts: Vec<Range> = vec![];
 
                                     if let Some(new_range) = to_single_range(&start, &end) {
@@ -1605,85 +1676,10 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                                         contexts,
                                         to_range(&field.start_typename, &field.end_typename),
                                         &field.type_,
-                                        false,
+                                        true,
                                         &mut HashSet::new(),
                                         errors,
                                     );
-
-                                    // Check for type collisions between variants
-                                    match field_types.get(&field.name) {
-                                        Some((
-                                            existing_type,
-                                            existing_variant_name,
-                                            existing_field_range,
-                                            existing_variant_range,
-                                        )) => {
-                                            if existing_type != &field_type_str {
-                                                let mut contexts: Vec<Range> = vec![];
-
-                                                if let Some(type_start) = start {
-                                                    contexts.push(Range {
-                                                        start: type_start.clone(),
-                                                        end: type_start.clone(),
-                                                    });
-                                                }
-
-                                                if let Some(existing_range) =
-                                                    existing_variant_range.clone()
-                                                {
-                                                    contexts.push(Range {
-                                                        start: existing_range.start.clone(),
-                                                        end: existing_range.start.clone(),
-                                                    });
-                                                }
-
-                                                if let Some(current_range) = variant_range.clone() {
-                                                    contexts.push(Range {
-                                                        start: current_range.start.clone(),
-                                                        end: current_range.start.clone(),
-                                                    });
-                                                }
-
-                                                let mut primary_ranges: Vec<Range> = Vec::new();
-                                                if let Some(existing_range) =
-                                                    existing_field_range.clone()
-                                                {
-                                                    primary_ranges.push(existing_range);
-                                                }
-                                                if let Some(current_range) = field_range.clone() {
-                                                    primary_ranges.push(current_range);
-                                                }
-
-                                                errors.push(Error {
-                                                    filepath: file.path.clone(),
-                                                    error_type:
-                                                        ErrorType::VariantFieldTypeCollision {
-                                                            field: field.name.clone(),
-                                                            type_one: existing_type.clone(),
-                                                            type_two: field_type_str.clone(),
-                                                            variant_one: existing_variant_name
-                                                                .clone(),
-                                                            variant_two: variant.name.clone(),
-                                                        },
-                                                    locations: vec![Location {
-                                                        contexts,
-                                                        primary: primary_ranges,
-                                                    }],
-                                                });
-                                            }
-                                        }
-                                        None => {
-                                            field_types.insert(
-                                                field.name.clone(),
-                                                (
-                                                    field_type_str,
-                                                    variant.name.clone(),
-                                                    field_range,
-                                                    variant_range,
-                                                ),
-                                            );
-                                        }
-                                    }
                                 }
                             }
                         }

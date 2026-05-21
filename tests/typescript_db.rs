@@ -85,3 +85,57 @@ insert CreateEvent($payload: Json<Lifecycle>, $tags: Json<List<String>>, $counts
         content
     );
 }
+
+#[test]
+fn typescript_decoders_render_recursive_typed_json_with_lazy_validators() {
+    let schema_source = r#"
+type Attribute
+   = AttributeInt {
+        value Int
+     }
+   | AttributeBool {
+        value Bool
+     }
+   | AttributeCustom {
+        variant String
+        fields  Dict<Attribute>
+     }
+
+type DocumentVisibility
+   = DocumentVisibleToEveryone
+   | DocumentHidden
+   | DocumentVisibleToSelectedUsers { userIds Json<List<String>> }
+
+record Entity {
+    @public
+    id Int @id
+    attrs Json<Dict<Attribute>>
+}
+
+record Document {
+    @public
+    id Int @id
+    visibility DocumentVisibility
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema parses");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let decode_ts = pyre::generate::server::typescript::to_schema_decoders(&database);
+
+    assert!(
+        decode_ts.contains("fields: z.record(z.lazy(() => Attribute)).optional()"),
+        "Expected recursive custom type field to use z.lazy. Generated:\n{}",
+        decode_ts
+    );
+    assert!(
+        decode_ts.contains("userIds: z.array(z.string()).optional()"),
+        "Expected Json<List<String>> variant field to validate as a string array. Generated:\n{}",
+        decode_ts
+    );
+}

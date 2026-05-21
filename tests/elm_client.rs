@@ -191,7 +191,7 @@ insert CreatePost($title: String) {
 }
 
 #[test]
-fn generated_entity_stream_module_encodes_id_filtered_streams() {
+fn generated_schema_scoped_entity_stream_modules_encode_id_filtered_streams() {
     let schema_source = r#"
 record Post {
     @public
@@ -208,65 +208,173 @@ record Comment {
     body   String
 }
 "#;
+    let campaign_schema_source = r#"
+record Post {
+    @public
+
+    id    Id.Int @id
+    title String
+}
+"#;
 
     let mut schema = ast::Schema::default();
     parser::run("schema.pyre", schema_source, &mut schema).expect("schema parses");
+    let mut campaign_schema = ast::Schema {
+        namespace: "campaign".to_string(),
+        ..ast::Schema::default()
+    };
+    parser::run(
+        "campaign.pyre",
+        campaign_schema_source,
+        &mut campaign_schema,
+    )
+    .expect("campaign schema parses");
 
     let database = ast::Database {
-        schemas: vec![schema],
+        schemas: vec![schema, campaign_schema],
     };
 
     let mut files: Vec<GeneratedFile<String>> = Vec::new();
     elm::generate(Path::new("client/elm"), &database, &mut files);
 
+    assert!(
+        files
+            .iter()
+            .all(|f| !f.path.to_string_lossy().ends_with("EntityStream.elm")),
+        "entity streams should be generated per schema, not as one global module"
+    );
+
     let generated = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("EntityStream.elm"))
-        .expect("generated EntityStream.elm file");
+        .find(|f| f.path.to_string_lossy().ends_with("Db/Stream.elm"))
+        .expect("generated default Db.Stream.elm file");
 
     let content = &generated.contents;
 
     assert!(
-        content.contains("module EntityStream exposing (DatabaseId, EntityChange(..), EntityChangeBatch, EntityChangeBatchSource(..), EntitySubscription(..), StreamId, decodeIncomingBatch, register, unregister)"),
-        "EntityStream.elm should expose the slim bridge API. Generated:\n{}",
-        content
-    );
-    assert!(
-        content.contains("type EntitySubscription\n    = Comment (Maybe (List String))\n    | Post (Maybe (List Int))"),
-        "EntityStream.elm should generate table constructors with optional ID filters. Generated:\n{}",
-        content
-    );
-    assert!(
-        content.contains("register : DatabaseId namespace -> StreamId -> List EntitySubscription -> Encode.Value")
-            && content.contains("( \"type\", Encode.string \"register-entity-stream\" )")
-            && content.contains("( \"tables\", Encode.list encodeSubscription subscriptions )"),
-        "EntityStream.elm should encode register-entity-stream payloads. Generated:\n{}",
+        content.contains("module Db.Stream exposing (DatabaseId, Default, EntityChange(..), EntityChangeBatch, EntityChangeBatchSource(..), EntitySubscription, StreamId, decodeIncomingBatch, register, unregister, comment, post)"),
+        "Db.Stream.elm should expose the slim bridge API. Generated:\n{}",
         content
     );
     assert!(
         content.contains(
-            "Comment ids ->\n            tableSubscription \"comments\" ids Encode.string"
-        ) && content
-            .contains("Post ids ->\n            tableSubscription \"posts\" ids Encode.int")
-            && content.contains("[ ( \"$in\", Encode.list encodeId values ) ]"),
-        "EntityStream.elm should encode ID $in filters for each table. Generated:\n{}",
+            "Posts.stream\n                |> Posts.idIn visiblePostIds\n                |> post"
+        ),
+        "Db.Stream.elm should include succinct module docs with example usage. Generated:\n{}",
         content
     );
     assert!(
-        content.contains("type alias CommentEntity =\n    { id : String\n    , postId : Int\n    , body : String\n    }")
-            && content.contains("type alias PostEntity =\n    { id : Int\n    , title : String\n    }"),
-        "EntityStream.elm should generate typed row aliases. Generated:\n{}",
+        content.contains("type EntitySubscription\n    = EntitySubscription StreamInternal.EntitySubscription")
+            && content.contains("comment : StreamInternal.TableSubscription Comments.Stream -> EntitySubscription")
+            && content.contains("post : StreamInternal.TableSubscription Posts.Stream -> EntitySubscription"),
+        "Db.Stream.elm should generate wrapper constructors for phantom table streams. Generated:\n{}",
         content
     );
     assert!(
-        content.contains("type EntityChange\n    = CommentRow CommentEntity\n    | PostRow PostEntity\n    | EntityDecodeFailed String Decode.Value")
-            && content.contains("decodeComment : Decode.Decoder CommentEntity")
-            && content.contains("|> Db.Decode.andField \"id\" Decode.string")
-            && content.contains("|> Db.Decode.andField \"postId\" Decode.int")
-            && content.contains("decodePost : Decode.Decoder PostEntity")
-            && content.contains("\"comments\" ->\n                        decodeRow CommentRow decodeComment row")
-            && content.contains("\"posts\" ->\n                        decodeRow PostRow decodePost row"),
-        "EntityStream.elm should decode batches into typed table row variants. Generated:\n{}",
+        content.contains(
+            "register : DatabaseId Default -> StreamId -> List EntitySubscription -> Encode.Value"
+        ) && content.contains("( \"type\", Encode.string \"register-entity-stream\" )")
+            && content.contains("( \"tables\", Encode.list encodeSubscription subscriptions )"),
+        "Db.Stream.elm should encode register-entity-stream payloads. Generated:\n{}",
         content
+    );
+    assert!(
+        content.contains(
+            "EntitySubscription inner ->\n            StreamInternal.encodeSubscription inner"
+        ),
+        "Db.Stream.elm should delegate subscription encoding to the stream internals. Generated:\n{}",
+        content
+    );
+    assert!(
+        content.contains("import Db.Table.Comments as Comments")
+            && content.contains("import Db.Table.Posts as Posts")
+            && !content.contains("type alias PostEntity"),
+        "Db.Stream.elm should import table modules instead of defining row aliases. Generated:\n{}",
+        content
+    );
+    assert!(
+        content.contains("type EntityChange\n    = CommentRow Comments.Row\n    | PostRow Posts.Row\n    | EntityDecodeFailed String Decode.Value")
+            && content.contains("\"comments\" ->\n                        decodeRow CommentRow Comments.decodeRow row")
+            && content.contains("\"posts\" ->\n                        decodeRow PostRow Posts.decodeRow row"),
+        "Db.Stream.elm should decode batches into typed table row variants. Generated:\n{}",
+        content
+    );
+
+    let post_table = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("Db/Table/Posts.elm"))
+        .expect("generated default posts table module");
+    assert!(
+        post_table
+            .contents
+            .contains("module Db.Table.Posts exposing (Row, Stream, decodeRow, stream, idIn)")
+            && post_table
+                .contents
+                .contains("type alias Row =\n    { id : Int\n    , title : String\n    }")
+            && post_table
+                .contents
+                .contains("stream : StreamInternal.TableSubscription Stream\nstream =\n    StreamInternal.table \"posts\"")
+            && post_table.contents.contains("idIn : List Int -> StreamInternal.TableSubscription Stream -> StreamInternal.TableSubscription Stream")
+            && post_table.contents.contains("StreamInternal.addCondition \"id\" (Encode.object [ ( \"$in\", Encode.list Encode.int values ) ]) subscription")
+            && post_table
+                .contents
+                .contains("decodeRow : Decode.Decoder Row\ndecodeRow =\n    Decode.succeed Row")
+            && post_table
+                .contents
+                .contains("|> Db.Decode.andField \"id\" Decode.int"),
+        "Db.Table.Posts should expose the row type and decoder. Generated:\n{}",
+        post_table.contents
+    );
+
+    let comment_table = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("Db/Table/Comments.elm"))
+        .expect("generated default comments table module");
+    assert!(
+        comment_table
+            .contents
+            .contains("module Db.Table.Comments exposing (Row, Stream, decodeRow, stream, idIn, postIdIn)")
+            && comment_table.contents.contains(
+            "type alias Row =\n    { id : String\n    , postId : Int\n    , body : String\n    }"
+        ) && comment_table
+            .contents
+            .contains("|> Db.Decode.andField \"postId\" Decode.int")
+            && comment_table.contents.contains("postIdIn : List Int -> StreamInternal.TableSubscription Stream -> StreamInternal.TableSubscription Stream"),
+        "Db.Table.Comments should expose the row type and decoder. Generated:\n{}",
+        comment_table.contents
+    );
+
+    let campaign_stream = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("Db/Campaign/Stream.elm"))
+        .expect("generated campaign stream module");
+    assert!(
+        campaign_stream
+            .contents
+            .contains("module Db.Campaign.Stream exposing (DatabaseId, Campaign, EntityChange(..), EntityChangeBatch, EntityChangeBatchSource(..), EntitySubscription, StreamId, decodeIncomingBatch, register, unregister, post)")
+            && campaign_stream
+                .contents
+                .contains("import Db.Campaign.Table.Posts as Posts")
+            && campaign_stream
+                .contents
+                .contains("register : DatabaseId Campaign -> StreamId -> List EntitySubscription -> Encode.Value"),
+        "named schema should generate a schema-scoped stream module. Generated:\n{}",
+        campaign_stream.contents
+    );
+
+    let campaign_post_table = files
+        .iter()
+        .find(|f| {
+            f.path
+                .to_string_lossy()
+                .ends_with("Db/Campaign/Table/Posts.elm")
+        })
+        .expect("generated campaign posts table module");
+    assert!(
+        campaign_post_table.contents.contains(
+            "module Db.Campaign.Table.Posts exposing (Row, Stream, decodeRow, stream, idIn)"
+        ),
+        "named schema should generate schema-scoped table modules. Generated:\n{}",
+        campaign_post_table.contents
     );
 }

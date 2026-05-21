@@ -144,7 +144,7 @@ pub fn column_type_to_zod_validator(type_: &ast::ColumnType) -> String {
         ast::ColumnType::IdInt { .. } => "z.number()".to_string(),
         ast::ColumnType::IdUuid { .. } => "z.string()".to_string(),
         ast::ColumnType::ForeignKey { .. } => "z.number()".to_string(),
-        ast::ColumnType::Custom(name) => name.clone(),
+        ast::ColumnType::Custom(name) => format!("z.lazy(() => {})", name),
     }
 }
 
@@ -388,5 +388,25 @@ mod tests {
 
         assert!(generated.contains("userId: z.number().optional()"));
         assert!(!generated.contains("userId: User.id.optional()"));
+    }
+
+    #[test]
+    fn tagged_union_custom_field_uses_lazy_decoder_for_recursive_types() {
+        let variants = vec![ast::Variant {
+            name: "AttributeCustom".to_string(),
+            fields: Some(vec![column(
+                "fields",
+                ast::ColumnType::Dict(Box::new(ast::ColumnType::Custom("Attribute".to_string()))),
+            )]),
+            start: None,
+            end: None,
+            start_name: None,
+            end_name: None,
+            inline_comment: None,
+        }];
+
+        let generated = generate_tagged_union("Attribute", &variants);
+
+        assert!(generated.contains("fields: z.record(z.lazy(() => Attribute)).optional()"));
     }
 }

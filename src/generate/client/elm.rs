@@ -43,46 +43,80 @@ pub fn generate(
         base_path.join("Db/Updates.elm"),
         ELM_UPDATES_MODULE,
     ));
-    files.push(generate_text_file(
-        base_path.join("EntityStream.elm"),
-        to_entity_stream_module(database),
-    ));
+    for schema in &database.schemas {
+        let records = collect_schema_entity_stream_records(schema);
+
+        for record in &records {
+            files.push(generate_text_file(
+                base_path.join(entity_stream_table_module_path(schema, record)),
+                to_entity_stream_table_module(database, schema, record),
+            ));
+        }
+
+        files.push(generate_text_file(
+            base_path.join(entity_stream_internal_module_path(schema)),
+            to_entity_stream_internal_module(schema),
+        ));
+
+        files.push(generate_text_file(
+            base_path.join(entity_stream_module_path(schema)),
+            to_entity_stream_module(schema, &records),
+        ));
+    }
 }
 
-fn to_entity_stream_module(database: &ast::Database) -> String {
-    let records = collect_entity_stream_records(database);
+fn to_entity_stream_module(schema: &ast::Schema, records: &[EntityStreamRecord]) -> String {
     let mut result = String::new();
 
-    result.push_str("module EntityStream exposing (DatabaseId, EntityChange(..), EntityChangeBatch, EntityChangeBatchSource(..), EntitySubscription(..), StreamId, decodeIncomingBatch, register, unregister)\n\n\n");
-    result.push_str("import Db\n");
+    result.push_str(&format!(
+        "module {} exposing (DatabaseId, {}, EntityChange(..), EntityChangeBatch, EntityChangeBatchSource(..), EntitySubscription, StreamId, decodeIncomingBatch, register, unregister",
+        entity_stream_module_name(schema),
+        elm_database_namespace(&schema.namespace)
+    ));
+    for record in records {
+        result.push_str(&format!(", {}", entity_stream_wrap_function_name(record)));
+    }
+    result.push_str(")\n\n\n");
+    result.push_str("{-| Register and decode entity stream batches.\n\n    pyreStoreOut\n        (register databaseId\n            \"visible-posts\"\n            [ Posts.stream\n                |> Posts.idIn visiblePostIds\n                |> post\n            ]\n        )\n\n    decodeIncomingBatch value\n\n@docs DatabaseId, StreamId, EntitySubscription, EntityChange, EntityChangeBatch, EntityChangeBatchSource, register, unregister, decodeIncomingBatch\n\n-}\n\n");
     result.push_str("import Db.Database\n");
-    result.push_str("import Db.Decode\n");
-    result.push_str("import Db.Id\n");
-    result.push_str("import Dict exposing (Dict)\n");
+    result.push_str(&format!(
+        "import {} as StreamInternal\n",
+        entity_stream_internal_module_name(schema)
+    ));
+    for record in records {
+        result.push_str(&format!(
+            "import {} as {}\n",
+            entity_stream_table_module_name(schema, record),
+            record.table_module_segment
+        ));
+    }
     result.push_str("import Json.Decode as Decode\n");
     result.push_str("import Json.Encode as Encode\n");
-    result.push_str("import Time\n\n\n");
+    result.push_str("\n\n");
 
     result
         .push_str("type alias DatabaseId namespace =\n    Db.Database.DatabaseId namespace\n\n\n");
+    result.push_str(&format!(
+        "type alias {} =\n    Db.Database.{}\n\n\n",
+        elm_database_namespace(&schema.namespace),
+        elm_database_namespace(&schema.namespace)
+    ));
     result.push_str("type alias StreamId =\n    String\n\n\n");
 
-    result.push_str("type EntitySubscription\n");
-    if records.is_empty() {
-        result.push_str("    = EntitySubscriptionUnavailable\n\n\n");
-    } else {
-        for (index, record) in records.iter().enumerate() {
-            let prefix = if index == 0 { "    = " } else { "    | " };
-            result.push_str(&format!(
-                "{}{} (Maybe (List {}))\n",
-                prefix, record.record_name, record.id_type
-            ));
-        }
-        result.push_str("\n\n");
-    }
+    result.push_str(
+        "type EntitySubscription\n    = EntitySubscription StreamInternal.EntitySubscription\n\n\n",
+    );
 
-    for record in &records {
-        result.push_str(&entity_stream_row_alias(database, record));
+    for record in records {
+        result.push_str(&format!(
+            "{} : StreamInternal.TableSubscription {}.Stream -> EntitySubscription\n",
+            entity_stream_wrap_function_name(record),
+            record.table_module_segment
+        ));
+        result.push_str(&format!(
+            "{} tableStream =\n    EntitySubscription (StreamInternal.toEntitySubscription tableStream)\n\n\n",
+            entity_stream_wrap_function_name(record)
+        ));
     }
 
     result.push_str("type EntityChange\n");
@@ -92,8 +126,8 @@ fn to_entity_stream_module(database: &ast::Database) -> String {
         for (index, record) in records.iter().enumerate() {
             let prefix = if index == 0 { "    = " } else { "    | " };
             result.push_str(&format!(
-                "{}{}Row {}\n",
-                prefix, record.record_name, record.row_type
+                "{}{}Row {}.Row\n",
+                prefix, record.record_name, record.table_module_segment
             ));
         }
         result.push_str("    | EntityDecodeFailed String Decode.Value\n\n\n");
@@ -102,9 +136,10 @@ fn to_entity_stream_module(database: &ast::Database) -> String {
     result.push_str("type EntityChangeBatchSource\n    = IndexedDbInitial\n    | Catchup\n    | Live\n    | UnknownSource String\n\n\n");
     result.push_str("type alias EntityChangeBatch =\n    { streamId : StreamId\n    , databaseId : Maybe String\n    , sequence : Int\n    , source : EntityChangeBatchSource\n    , changes : List EntityChange\n    }\n\n\n");
 
-    result.push_str(
-        "register : DatabaseId namespace -> StreamId -> List EntitySubscription -> Encode.Value\n",
-    );
+    result.push_str(&format!(
+        "register : DatabaseId {} -> StreamId -> List EntitySubscription -> Encode.Value\n",
+        elm_database_namespace(&schema.namespace)
+    ));
     result.push_str("register databaseId streamId subscriptions =\n");
     result.push_str("    Encode.object\n");
     result.push_str("        [ ( \"type\", Encode.string \"register-entity-stream\" )\n");
@@ -128,44 +163,8 @@ fn to_entity_stream_module(database: &ast::Database) -> String {
     result.push_str("encodeSubscription : EntitySubscription -> Encode.Value\n");
     result.push_str("encodeSubscription subscription =\n");
     result.push_str("    case subscription of\n");
-    if records.is_empty() {
-        result.push_str("        EntitySubscriptionUnavailable ->\n");
-        result.push_str("            tableSubscription \"\" Nothing Encode.string\n\n\n");
-    } else {
-        for record in &records {
-            result.push_str(&format!("        {} ids ->\n", record.record_name));
-            result.push_str(&format!(
-                "            tableSubscription \"{}\" ids {}\n\n",
-                record.table_name, record.id_encoder
-            ));
-        }
-        result.push_str("\n");
-    }
-
-    result.push_str(
-        "tableSubscription : String -> Maybe (List id) -> (id -> Encode.Value) -> Encode.Value\n",
-    );
-    result.push_str("tableSubscription tableName ids encodeId =\n");
-    result.push_str("    Encode.object\n");
-    result.push_str(
-        "        (( \"tableName\", Encode.string tableName ) :: encodeIdWhere encodeId ids)\n\n\n",
-    );
-
-    result.push_str("encodeIdWhere : (id -> Encode.Value) -> Maybe (List id) -> List ( String, Encode.Value )\n");
-    result.push_str("encodeIdWhere encodeId ids =\n");
-    result.push_str("    case ids of\n");
-    result.push_str("        Nothing ->\n");
-    result.push_str("            []\n\n");
-    result.push_str("        Just values ->\n");
-    result.push_str("            [ ( \"where\"\n");
-    result.push_str("              , Encode.object\n");
-    result.push_str("                    [ ( \"id\"\n");
-    result.push_str("                      , Encode.object\n");
-    result.push_str("                            [ ( \"$in\", Encode.list encodeId values ) ]\n");
-    result.push_str("                      )\n");
-    result.push_str("                    ]\n");
-    result.push_str("              )\n");
-    result.push_str("            ]\n\n\n");
+    result.push_str("        EntitySubscription inner ->\n");
+    result.push_str("            StreamInternal.encodeSubscription inner\n\n\n");
 
     result.push_str("entityChangeBatchDecoder : Decode.Decoder EntityChangeBatch\n");
     result.push_str("entityChangeBatchDecoder =\n");
@@ -175,10 +174,6 @@ fn to_entity_stream_module(database: &ast::Database) -> String {
     result.push_str("        (Decode.field \"sequence\" Decode.int)\n");
     result.push_str("        (Decode.field \"source\" sourceDecoder)\n");
     result.push_str("        (Decode.field \"changes\" (Decode.list entityChangeDecoder))\n\n\n");
-
-    for record in &records {
-        result.push_str(&entity_stream_row_decoder(database, record));
-    }
 
     result.push_str("sourceDecoder : Decode.Decoder EntityChangeBatchSource\n");
     result.push_str("sourceDecoder =\n");
@@ -204,14 +199,14 @@ fn to_entity_stream_module(database: &ast::Database) -> String {
     result.push_str("        |> Decode.map\n");
     result.push_str("            (\\( tableName, row ) ->\n");
     result.push_str("                case tableName of\n");
-    for record in &records {
+    for record in records {
         result.push_str(&format!(
             "                    \"{}\" ->\n",
             record.table_name
         ));
         result.push_str(&format!(
-            "                        decodeRow {}Row {} row\n\n",
-            record.record_name, record.row_decoder
+            "                        decodeRow {}Row {}.decodeRow row\n\n",
+            record.record_name, record.table_module_segment
         ));
     }
     result.push_str("                    other ->\n");
@@ -232,35 +227,204 @@ fn to_entity_stream_module(database: &ast::Database) -> String {
     result
 }
 
+fn to_entity_stream_table_module(
+    database: &ast::Database,
+    schema: &ast::Schema,
+    record: &EntityStreamRecord,
+) -> String {
+    let mut result = String::new();
+
+    result.push_str(&format!(
+        "module {} exposing (Row, Stream, decodeRow, stream",
+        entity_stream_table_module_name(schema, record)
+    ));
+    for field in entity_stream_condition_fields(database, record) {
+        result.push_str(&format!(
+            ", {}",
+            entity_stream_condition_function_name(&field.name)
+        ));
+    }
+    result.push_str(")\n\n\n");
+    result.push_str("import Db\n");
+    result.push_str("import Db.Decode\n");
+    result.push_str("import Db.Id\n");
+    result.push_str(&format!(
+        "import {} as StreamInternal\n",
+        entity_stream_internal_module_name(schema)
+    ));
+    result.push_str("import Dict exposing (Dict)\n");
+    result.push_str("import Json.Decode as Decode\n");
+    result.push_str("import Json.Encode as Encode\n");
+    result.push_str("import Time\n\n\n");
+    result.push_str("type Stream\n    = Stream\n\n\n");
+    result.push_str("stream : StreamInternal.TableSubscription Stream\n");
+    result.push_str(&format!(
+        "stream =\n    StreamInternal.table \"{}\"\n\n\n",
+        record.table_name
+    ));
+    result.push_str(&entity_stream_condition_builders(database, record));
+    result.push_str(&entity_stream_row_alias(database, record));
+    result.push_str(&entity_stream_row_decoder(database, record));
+
+    result
+}
+
+fn to_entity_stream_internal_module(schema: &ast::Schema) -> String {
+    let mut result = String::new();
+
+    result.push_str(&format!(
+        "module {} exposing (EntitySubscription, TableSubscription, addCondition, encodeSubscription, table, toEntitySubscription)\n\n\n",
+        entity_stream_internal_module_name(schema)
+    ));
+    result.push_str("import Dict exposing (Dict)\n");
+    result.push_str("import Json.Encode as Encode\n\n\n");
+    result.push_str("type TableSubscription table\n    = TableSubscription String (Dict String Encode.Value)\n\n\n");
+    result.push_str(
+        "type EntitySubscription\n    = EntitySubscription String (Dict String Encode.Value)\n\n\n",
+    );
+    result.push_str("table : String -> TableSubscription table\n");
+    result.push_str("table tableName =\n    TableSubscription tableName Dict.empty\n\n\n");
+    result.push_str("addCondition : String -> Encode.Value -> TableSubscription table -> TableSubscription table\n");
+    result.push_str("addCondition field condition subscription =\n");
+    result.push_str("    case subscription of\n");
+    result.push_str("        TableSubscription tableName conditions ->\n");
+    result.push_str(
+        "            TableSubscription tableName (Dict.insert field condition conditions)\n\n\n",
+    );
+    result.push_str("toEntitySubscription : TableSubscription table -> EntitySubscription\n");
+    result.push_str("toEntitySubscription subscription =\n");
+    result.push_str("    case subscription of\n");
+    result.push_str("        TableSubscription tableName conditions ->\n");
+    result.push_str("            EntitySubscription tableName conditions\n\n\n");
+    result.push_str("encodeSubscription : EntitySubscription -> Encode.Value\n");
+    result.push_str("encodeSubscription subscription =\n");
+    result.push_str("    case subscription of\n");
+    result.push_str("        EntitySubscription tableName conditions ->\n");
+    result.push_str("            Encode.object\n");
+    result.push_str("                (( \"tableName\", Encode.string tableName ) :: encodeWhere conditions)\n\n\n");
+    result.push_str("encodeWhere : Dict String Encode.Value -> List ( String, Encode.Value )\n");
+    result.push_str("encodeWhere conditions =\n");
+    result.push_str("    if Dict.isEmpty conditions then\n");
+    result.push_str("        []\n\n");
+    result.push_str("    else\n");
+    result.push_str("        [ ( \"where\", Encode.object (Dict.toList conditions) ) ]\n");
+
+    result
+}
+
 #[derive(Debug)]
 struct EntityStreamRecord {
     record_name: String,
     table_name: String,
-    row_type: String,
-    id_type: String,
-    id_encoder: &'static str,
-    row_decoder: String,
+    table_module_segment: String,
     fields: Vec<ast::Field>,
 }
 
-fn collect_entity_stream_records(database: &ast::Database) -> Vec<EntityStreamRecord> {
+fn entity_stream_module_name(schema: &ast::Schema) -> String {
+    format!("{}.Stream", entity_stream_schema_module_prefix(schema))
+}
+
+fn entity_stream_module_path(schema: &ast::Schema) -> String {
+    format!("{}/Stream.elm", entity_stream_schema_path_prefix(schema))
+}
+
+fn entity_stream_internal_module_name(schema: &ast::Schema) -> String {
+    format!(
+        "{}.Stream.Internal",
+        entity_stream_schema_module_prefix(schema)
+    )
+}
+
+fn entity_stream_internal_module_path(schema: &ast::Schema) -> String {
+    format!(
+        "{}/Stream/Internal.elm",
+        entity_stream_schema_path_prefix(schema)
+    )
+}
+
+fn entity_stream_table_module_name(schema: &ast::Schema, record: &EntityStreamRecord) -> String {
+    format!(
+        "{}.Table.{}",
+        entity_stream_schema_module_prefix(schema),
+        record.table_module_segment
+    )
+}
+
+fn entity_stream_table_module_path(schema: &ast::Schema, record: &EntityStreamRecord) -> String {
+    format!(
+        "{}/Table/{}.elm",
+        entity_stream_schema_path_prefix(schema),
+        record.table_module_segment
+    )
+}
+
+fn entity_stream_wrap_function_name(record: &EntityStreamRecord) -> String {
+    string::decapitalize(&record.record_name)
+}
+
+fn entity_stream_condition_function_name(field_name: &str) -> String {
+    format!(
+        "{}In",
+        string::decapitalize(&elm_module_segment(field_name))
+    )
+}
+
+fn entity_stream_schema_module_prefix(schema: &ast::Schema) -> String {
+    if schema.namespace == ast::DEFAULT_SCHEMANAME {
+        "Db".to_string()
+    } else {
+        format!("Db.{}", elm_database_namespace(&schema.namespace))
+    }
+}
+
+fn entity_stream_schema_path_prefix(schema: &ast::Schema) -> String {
+    if schema.namespace == ast::DEFAULT_SCHEMANAME {
+        "Db".to_string()
+    } else {
+        format!("Db/{}", elm_database_namespace(&schema.namespace))
+    }
+}
+
+fn elm_module_segment(name: &str) -> String {
+    let mut result = String::new();
+    let mut capitalize_next = true;
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if result.is_empty() && ch.is_ascii_digit() {
+                result.push('D');
+            }
+            if capitalize_next {
+                result.push(ch.to_ascii_uppercase());
+                capitalize_next = false;
+            } else {
+                result.push(ch);
+            }
+        } else {
+            capitalize_next = true;
+        }
+    }
+
+    if result.is_empty() {
+        "Table".to_string()
+    } else {
+        result
+    }
+}
+
+fn collect_schema_entity_stream_records(schema: &ast::Schema) -> Vec<EntityStreamRecord> {
     let mut records = Vec::new();
 
-    for schema in &database.schemas {
-        for file in &schema.files {
-            for definition in &file.definitions {
-                if let ast::Definition::Record { name, fields, .. } = definition {
-                    if let Some((id_type, id_encoder)) = entity_stream_id_type(fields) {
-                        records.push(EntityStreamRecord {
-                            record_name: name.clone(),
-                            table_name: ast::get_tablename(name, fields),
-                            row_type: format!("{}Entity", name),
-                            id_type,
-                            id_encoder,
-                            row_decoder: format!("decode{}", name),
-                            fields: fields.clone(),
-                        });
-                    }
+    for file in &schema.files {
+        for definition in &file.definitions {
+            if let ast::Definition::Record { name, fields, .. } = definition {
+                if entity_stream_id_type(fields).is_some() {
+                    let table_name = ast::get_tablename(name, fields);
+                    records.push(EntityStreamRecord {
+                        record_name: name.clone(),
+                        table_module_segment: elm_module_segment(&table_name),
+                        table_name,
+                        fields: fields.clone(),
+                    });
                 }
             }
         }
@@ -271,7 +435,7 @@ fn collect_entity_stream_records(database: &ast::Database) -> Vec<EntityStreamRe
 }
 
 fn entity_stream_row_alias(database: &ast::Database, record: &EntityStreamRecord) -> String {
-    let mut result = format!("type alias {} =\n", record.row_type);
+    let mut result = "type alias Row =\n".to_string();
     let mut is_first = true;
 
     for field in &record.fields {
@@ -305,10 +469,8 @@ fn entity_stream_row_alias(database: &ast::Database, record: &EntityStreamRecord
 }
 
 fn entity_stream_row_decoder(database: &ast::Database, record: &EntityStreamRecord) -> String {
-    let mut result = format!(
-        "{} : Decode.Decoder {}\n{} =\n    Decode.succeed {}\n",
-        record.row_decoder, record.row_type, record.row_decoder, record.row_type
-    );
+    let mut result =
+        "decodeRow : Decode.Decoder Row\ndecodeRow =\n    Decode.succeed Row\n".to_string();
 
     for field in &record.fields {
         let ast::Field::Column(column) = field else {
@@ -329,6 +491,79 @@ fn entity_stream_row_decoder(database: &ast::Database, record: &EntityStreamReco
 
     result.push_str("\n\n");
     result
+}
+
+fn entity_stream_condition_builders(
+    database: &ast::Database,
+    record: &EntityStreamRecord,
+) -> String {
+    let mut result = String::new();
+
+    for column in entity_stream_condition_fields(database, record) {
+        let Some(encoder) = entity_stream_encoder(database, &column.type_) else {
+            continue;
+        };
+
+        result.push_str(&format!(
+            "{} : List {} -> StreamInternal.TableSubscription Stream -> StreamInternal.TableSubscription Stream\n",
+            entity_stream_condition_function_name(&column.name),
+            entity_stream_elm_type(database, &column.type_)
+        ));
+        result.push_str(&format!(
+            "{} values subscription =\n",
+            entity_stream_condition_function_name(&column.name)
+        ));
+        result.push_str(&format!(
+            "    StreamInternal.addCondition \"{}\" (Encode.object [ ( \"$in\", Encode.list {} values ) ]) subscription\n\n\n",
+            column.name, encoder
+        ));
+    }
+
+    result
+}
+
+fn entity_stream_condition_fields(
+    database: &ast::Database,
+    record: &EntityStreamRecord,
+) -> Vec<ast::Column> {
+    let mut columns = Vec::new();
+
+    for field in &record.fields {
+        let ast::Field::Column(column) = field else {
+            continue;
+        };
+
+        if entity_stream_encoder(database, &column.type_).is_some()
+            && (entity_stream_column_is_id_like(database, column) || ast::is_primary_key(column))
+        {
+            columns.push(column.clone());
+        }
+    }
+
+    columns
+}
+
+fn entity_stream_column_is_id_like(database: &ast::Database, column: &ast::Column) -> bool {
+    match &column.type_ {
+        ast::ColumnType::IdInt { .. } | ast::ColumnType::IdUuid { .. } => true,
+        ast::ColumnType::ForeignKey { table, field } => {
+            if database_column_type(database, table, field).is_some() {
+                true
+            } else {
+                field == "id"
+            }
+        }
+        ast::ColumnType::JsonTyped(inner) | ast::ColumnType::Nullable(inner) => {
+            entity_stream_column_is_id_like(
+                database,
+                &ast::Column {
+                    type_: *inner.clone(),
+                    ..column.clone()
+                },
+            )
+        }
+        _ => false,
+    }
 }
 
 fn entity_stream_elm_type(database: &ast::Database, type_: &ast::ColumnType) -> String {
@@ -365,6 +600,40 @@ fn entity_stream_elm_type(database: &ast::Database, type_: &ast::ColumnType) -> 
             format!("Maybe {}", entity_stream_elm_type(database, inner))
         }
         _ => elm_type_from_column_type(type_, true),
+    }
+}
+
+fn entity_stream_encoder(database: &ast::Database, type_: &ast::ColumnType) -> Option<String> {
+    match type_ {
+        ast::ColumnType::IdInt { table } => Some(if table.is_empty() {
+            "Encode.int".to_string()
+        } else {
+            "Db.Id.encodeInt".to_string()
+        }),
+        ast::ColumnType::IdUuid { table } => Some(if table.is_empty() {
+            "Encode.string".to_string()
+        } else {
+            "Db.Id.encodeUuid".to_string()
+        }),
+        ast::ColumnType::ForeignKey { table, field } => {
+            if let Some(column_type) = database_column_type(database, table, field) {
+                entity_stream_encoder(database, &column_type)
+            } else if field == "id" {
+                match id_kind_for_brand(database, table) {
+                    Some(IdKind::Int) => Some("Db.Id.encodeInt".to_string()),
+                    Some(IdKind::Uuid) => Some("Db.Id.encodeUuid".to_string()),
+                    None => Some("Encode.string".to_string()),
+                }
+            } else {
+                Some("Encode.string".to_string())
+            }
+        }
+        ast::ColumnType::JsonTyped(inner) | ast::ColumnType::Nullable(inner) => {
+            entity_stream_encoder(database, inner)
+        }
+        ast::ColumnType::Int => Some("Encode.int".to_string()),
+        ast::ColumnType::String => Some("Encode.string".to_string()),
+        _ => None,
     }
 }
 
@@ -1795,13 +2064,13 @@ fn to_elm_decoder_from_column_type(lookup: &ElmLookup, type_: &ast::ColumnType) 
         ast::ColumnType::JsonTyped(inner) => to_elm_decoder_from_column_type(lookup, inner),
         ast::ColumnType::List(inner) => {
             format!(
-                "Decode.list ({})",
+                "(Decode.list {})",
                 to_elm_decoder_from_column_type(lookup, inner)
             )
         }
         ast::ColumnType::Dict(inner) => {
             format!(
-                "Decode.dict ({})",
+                "(Decode.dict {})",
                 to_elm_decoder_from_column_type(lookup, inner)
             )
         }

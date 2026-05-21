@@ -221,9 +221,71 @@ query GetEvents {
     );
 
     assert!(
-        get_events_content.contains("Decode.list (Decode.string)")
-            && get_events_content.contains("Decode.dict (Decode.int)"),
+        get_events_content.contains("(Decode.list Decode.string)")
+            && get_events_content.contains("(Decode.dict Decode.int)"),
         "Expected GetEvents.elm to decode typed Json containers. Generated:\n{}",
         get_events_content
+    );
+}
+
+#[test]
+fn elm_wraps_dict_decoders_for_typed_json_fields() {
+    let schema_source = r#"
+type Attribute
+   = AttributeInt {
+        value Int
+     }
+
+record Entity {
+    @public
+    id    Id.Int @id
+    attrs Json<Dict<Attribute>>
+}
+"#;
+
+    let query_source = r#"
+query GetEntities {
+    entity {
+        id
+        attrs
+    }
+}
+"#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("schema parses");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+    let context = typecheck::check_schema(&database).expect("schema typechecks");
+    let query_list = parser::parse_query("query.pyre", query_source).expect("query parses");
+    let query_info = typecheck::check_queries(&query_list, &context).expect("query typechecks");
+
+    let mut files: Vec<GeneratedFile<String>> = Vec::new();
+    elm::generate_queries(
+        &context,
+        &query_info,
+        &query_list,
+        Path::new("client/elm"),
+        &mut files,
+    );
+
+    let query_module = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("Query/GetEntities.elm"))
+        .expect("generated GetEntities.elm file");
+
+    let content = &query_module.contents;
+
+    assert!(
+        content.contains("|> Db.Decode.andField \"attrs\" (Decode.dict Db.Decode.attribute)"),
+        "Expected generated dict decoder to be fully applied before andField. Generated:\n{}",
+        content
+    );
+    assert!(
+        !content.contains("|> Db.Decode.andField \"attrs\" Decode.dict (Db.Decode.attribute)"),
+        "Generated malformed dict decoder application:\n{}",
+        content
     );
 }

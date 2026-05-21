@@ -98,6 +98,137 @@ record User {
 }
 
 #[test]
+fn test_json_typed_field_accepts_nested_document_only_custom_types() {
+    let schema_source = r#"
+type GameState
+   = GameState {
+        groups List<GroupState>
+     }
+
+type GroupState
+   = GroupState {
+        members List<String>
+     }
+
+record Game {
+    @public
+    id Int @id
+    state Json<GameState>
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    assert!(
+        schema_result.is_ok(),
+        "Json<T> fields should allow nested custom types containing List<T>"
+    );
+}
+
+#[test]
+fn test_json_typed_field_accepts_variant_fields_with_same_name_and_different_types() {
+    let schema_source = r#"
+type Attribute
+   = AttributeInt {
+        value Int
+     }
+   | AttributeBool {
+        value Bool
+     }
+
+record Entity {
+    @public
+    id Int @id
+    attrs Json<Dict<Attribute>>
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    assert!(
+        schema_result.is_ok(),
+        "Json<T> fields should allow tagged JSON variants to reuse field names with different types"
+    );
+}
+
+#[test]
+fn test_json_typed_field_accepts_recursive_custom_type() {
+    let schema_source = r#"
+type Attribute
+   = AttributeInt {
+        value Int
+     }
+   | AttributeBool {
+        value Bool
+     }
+   | AttributeCustom {
+        variant String
+        fields  Dict<Attribute>
+     }
+
+record Entity {
+    @public
+    id Int @id
+    attrs Json<Dict<Attribute>>
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    assert!(
+        schema_result.is_ok(),
+        "Json<T> fields should allow recursive tagged JSON types"
+    );
+}
+
+#[test]
+fn test_tagged_variant_accepts_nested_json_typed_field() {
+    let schema_source = r#"
+type DocumentVisibility
+   = DocumentVisibleToEveryone
+   | DocumentHidden
+   | DocumentVisibleToSelectedUsers { userIds Json<List<String>> }
+
+record Document {
+    @public
+    id Int @id
+    visibility DocumentVisibility
+}
+    "#;
+
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    let schema_result = typecheck::check_schema(&database);
+    assert!(
+        schema_result.is_ok(),
+        "Tagged variants should allow fields typed as Json<T>"
+    );
+}
+
+#[test]
 fn test_json_typed_field_cannot_have_default() {
     let schema_source = r#"
 type Preferences
@@ -241,6 +372,12 @@ type DevMouseKind
 type DevKeyKind
    = Down
    | Up
+
+record Event {
+    @public
+    id Int @id
+    eventType DevEventType
+}
     "#;
 
     let mut schema = ast::Schema::default();
