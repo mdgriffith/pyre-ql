@@ -2015,14 +2015,25 @@ fn to_query_field_spec_json(
                 result.push_str(&format!(
                     "({}, {})",
                     string::quote(&aliased_name),
-                    to_query_field_spec_json(context, nested_field, nested_table, indent_level + 1)
+                    to_query_field_spec_json_with_source(
+                        context,
+                        nested_field,
+                        nested_table,
+                        indent_level + 1,
+                        if aliased_name == field_name {
+                            None
+                        } else {
+                            Some(field_name.as_str())
+                        },
+                    )
                 ));
             }
         } else {
             // Regular field or relationship without nested - just true
-            result.push_str(&format!(
-                "({}, Encode.bool True)",
-                string::quote(&aliased_name)
+            result.push_str(&to_query_shape_leaf_elm(
+                &field_name,
+                &aliased_name,
+                indent_level,
             ));
         }
     }
@@ -2226,6 +2237,47 @@ fn to_query_delta_types(context: &typecheck::Context, query: &ast::Query) -> Str
     result.push_str(&to_apply_delta_function_with_lenses(context, query));
 
     result
+}
+
+fn to_query_field_spec_json_with_source(
+    context: &typecheck::Context,
+    query_field: &ast::QueryField,
+    table: Option<&typecheck::Table>,
+    indent_level: usize,
+    source: Option<&str>,
+) -> String {
+    let mut result = to_query_field_spec_json(context, query_field, table, indent_level);
+    if let Some(source_name) = source {
+        let indent = "    ".repeat(indent_level);
+        let marker = format!("Encode.object\n{}[ ", indent);
+        let replacement = format!(
+            "Encode.object\n{}[ ({}, Encode.string {})\n{}, ",
+            indent,
+            string::quote("@source"),
+            string::quote(source_name),
+            indent,
+        );
+        result = result.replacen(&marker, &replacement, 1);
+    }
+    result
+}
+
+fn to_query_shape_leaf_elm(field_name: &str, aliased_name: &str, indent_level: usize) -> String {
+    if aliased_name == field_name {
+        format!("({}, Encode.bool True)", string::quote(aliased_name))
+    } else {
+        let indent = "    ".repeat(indent_level + 1);
+        format!(
+            "({}, Encode.object\n{}[ ({}, Encode.string {})\n{}, ({}, Encode.bool True)\n{}])",
+            string::quote(aliased_name),
+            indent,
+            string::quote("@source"),
+            string::quote(field_name),
+            indent,
+            string::quote("@select"),
+            indent,
+        )
+    }
 }
 
 /// Generate the applyDelta function using the lens-based approach
@@ -2696,6 +2748,7 @@ fn generate_pyre_module(
     result.push_str("type Effect\n");
     result.push_str("    = NoEffect\n");
     result.push_str("    | Send Encode.Value\n");
+    result.push_str("    | QueryUpdated QueryId\n");
     result.push_str("    | LogError Encode.Value\n\n\n");
 
     // Error type
@@ -2761,7 +2814,7 @@ fn generate_pyre_module(
             "                            ( {{ model | {} = Dict.insert queryId {{ queryModel | result = newResult, revision = newRevision }} model.{} }}\n",
             field_name, field_name
         ));
-        result.push_str("                            , NoEffect\n");
+        result.push_str("                            , QueryUpdated queryId\n");
         result.push_str("                            )\n\n");
         result.push_str("                        Err errMsg ->\n");
         result.push_str("                            ( model\n");

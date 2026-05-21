@@ -30,8 +30,8 @@ type alias FieldQuery =
 
 
 type Selection
-    = SelectField
-    | SelectNested FieldQuery
+    = SelectField (Maybe String)
+    | SelectNested (Maybe String) FieldQuery
 
 
 type alias WhereClause =
@@ -129,6 +129,12 @@ buildFieldQueryFromPairsHelp selections where_ sort limit pairs =
                         Err _ ->
                             Decode.fail "Invalid @limit value"
 
+                "@source" ->
+                    buildFieldQueryFromPairsHelp selections where_ sort limit rest
+
+                "@select" ->
+                    buildFieldQueryFromPairsHelp selections where_ sort limit rest
+
                 _ ->
                     -- Regular field selection (bool or nested)
                     case Decode.decodeValue decodeSelection value of
@@ -147,14 +153,44 @@ decodeSelection =
             |> Decode.andThen
                 (\b ->
                     if b then
-                        Decode.succeed SelectField
+                        Decode.succeed (SelectField Nothing)
 
                     else
                         Decode.fail "false is not a valid selection"
                 )
-        , Decode.lazy (\_ -> decodeFieldQuery)
-            |> Decode.map SelectNested
+        , Decode.keyValuePairs Decode.value
+            |> Decode.andThen decodeObjectSelection
         ]
+
+
+decodeObjectSelection : List ( String, Decode.Value ) -> Decode.Decoder Selection
+decodeObjectSelection pairs =
+    let
+        source =
+            pairs
+                |> List.filterMap
+                    (\( key, value ) ->
+                        if key == "@source" then
+                            Decode.decodeValue Decode.string value |> Result.toMaybe
+
+                        else
+                            Nothing
+                    )
+                |> List.head
+
+        isFieldSelection =
+            pairs
+                |> List.any
+                    (\( key, value ) ->
+                        key == "@select" && Decode.decodeValue Decode.bool value == Ok True
+                    )
+    in
+    if isFieldSelection then
+        Decode.succeed (SelectField source)
+
+    else
+        buildFieldQueryFromPairs pairs
+            |> Decode.map (SelectNested source)
 
 
 decodeSortValue : Decode.Decoder (List SortClause)
@@ -308,4 +344,3 @@ decodeSortDirection =
                     _ ->
                         Decode.succeed Asc
             )
-

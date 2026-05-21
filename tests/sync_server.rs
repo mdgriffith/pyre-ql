@@ -8,8 +8,7 @@ use pyre::server::schema::{
 };
 use pyre::server::sync::{
     calculate_deltas, catchup, ConnectedSessions, DeltaMessage, SyncServer, SyncSession,
-    MAX_LIVE_SYNC_DELTA_PAYLOAD_BYTES, MAX_LIVE_SYNC_DELTA_ROWS,
-    MAX_LIVE_SYNC_FANOUT_RECIPIENTS,
+    MAX_LIVE_SYNC_DELTA_PAYLOAD_BYTES, MAX_LIVE_SYNC_DELTA_ROWS, MAX_LIVE_SYNC_FANOUT_RECIPIENTS,
 };
 use pyre::sync::{SyncCursor, TableCursor, TableSyncData};
 use pyre::sync_deltas::AffectedRowTableGroup;

@@ -472,7 +472,7 @@ shouldReExecuteQueryTests =
                         }
 
                     nestedSelection =
-                        { selections = Dict.fromList [ ( "id", Db.Query.SelectField ) ]
+                        { selections = Dict.fromList [ ( "id", Db.Query.SelectField Nothing ) ]
                         , where_ = Nothing
                         , sort = Nothing
                         , limit = Nothing
@@ -485,9 +485,9 @@ shouldReExecuteQueryTests =
                                 [ ( "game"
                                   , { selections =
                                         Dict.fromList
-                                            [ ( "id", Db.Query.SelectField )
-                                            , ( "name", Db.Query.SelectField )
-                                            , ( "gameMembers", Db.Query.SelectNested nestedSelection )
+                                            [ ( "id", Db.Query.SelectField Nothing )
+                                            , ( "name", Db.Query.SelectField Nothing )
+                                            , ( "gameMembers", Db.Query.SelectNested Nothing nestedSelection )
                                             ]
                                     , where_ = Nothing
                                     , sort = Nothing

@@ -87,6 +87,16 @@ query GetGameWorld($slug: String) {
         content
     );
     assert!(
+        content.contains("type Effect\n    = NoEffect\n    | Send Encode.Value\n    | QueryUpdated QueryId\n    | LogError Encode.Value"),
+        "Pyre.elm should expose query update effects. Generated:\n{}",
+        content
+    );
+    assert!(
+        content.contains(", QueryUpdated queryId\n                            )"),
+        "Pyre.elm should return QueryUpdated after applying query deltas. Generated:\n{}",
+        content
+    );
+    assert!(
         !content.contains("_Registered") && !content.contains("_InputUpdated"),
         "Pyre.elm should not generate separate register/update constructors anymore. Generated:\n{}",
         content

@@ -72,6 +72,9 @@ effectToCmd effect =
         Pyre.Send payload ->
             pyre_sendQueryClientMessage payload
 
+        Pyre.QueryUpdated _ ->
+            Cmd.none
+
         Pyre.LogError payload ->
             pyre_logQueryDeltaError payload
 

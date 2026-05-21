@@ -207,11 +207,11 @@ extractTablesFromFieldQuery schema tableName fieldQuery =
     Dict.foldl
         (\fieldName selection acc ->
             case selection of
-                Db.Query.SelectField ->
+                Db.Query.SelectField _ ->
                     acc
 
-                Db.Query.SelectNested nestedFieldQuery ->
-                    case relatedTableForSelection schema tableName fieldName of
+                Db.Query.SelectNested maybeSourceField nestedFieldQuery ->
+                    case relatedTableForSelection schema tableName (Maybe.withDefault fieldName maybeSourceField) of
                         Just relatedTable ->
                             extractTablesFromFieldQuery schema relatedTable nestedFieldQuery
                                 |> (::) relatedTable

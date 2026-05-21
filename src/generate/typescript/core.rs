@@ -558,7 +558,7 @@ fn to_query_field_spec(
     let mut sort_clauses: Vec<String> = Vec::new();
     let mut limit: Option<i32> = None;
 
-    let mut field_selections: Vec<(String, bool, bool)> = Vec::new();
+    let mut field_selections: Vec<(String, String, bool, bool)> = Vec::new();
     let mut selected_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     let mut explicit_columns: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -612,7 +612,12 @@ fn to_query_field_spec(
                                     continue;
                                 }
                                 if selected_names.insert(column.name.clone()) {
-                                    field_selections.push((column.name.clone(), false, false));
+                                    field_selections.push((
+                                        column.name.clone(),
+                                        column.name.clone(),
+                                        false,
+                                        false,
+                                    ));
                                 }
                             }
                         }
@@ -633,9 +638,11 @@ fn to_query_field_spec(
                         .iter()
                         .any(|f| matches!(f, ast::ArgField::Field(_)));
 
-                if selected_names.insert(nested_field.name.clone()) {
+                let aliased_name = ast::get_aliased_name(nested_field);
+                if selected_names.insert(aliased_name.clone()) {
                     field_selections.push((
                         nested_field.name.clone(),
+                        aliased_name,
                         is_relationship,
                         has_nested_fields,
                     ));
@@ -650,7 +657,7 @@ fn to_query_field_spec(
         is_first = false;
     }
 
-    for (field_name, is_relationship, has_nested_fields) in field_selections {
+    for (field_name, aliased_name, is_relationship, has_nested_fields) in field_selections {
         if !is_first {
             result.push_str(",\n");
         }
@@ -675,14 +682,20 @@ fn to_query_field_spec(
                             _ => None,
                         })
                 });
-                result.push_str(&format!("    {}: {{\n", string::quote(&field_name)));
+                result.push_str(&format!("    {}: {{\n", string::quote(&aliased_name)));
+                if aliased_name != field_name {
+                    result.push_str(&format!(
+                        "      \"@source\": {},\n",
+                        string::quote(&field_name)
+                    ));
+                }
                 result.push_str(&to_query_field_spec(context, nested_field, nested_table));
                 result.push_str("\n    }");
             }
         } else if is_relationship {
-            result.push_str(&format!("    {}: true", string::quote(&field_name)));
+            result.push_str(&to_query_shape_leaf(&field_name, &aliased_name));
         } else {
-            result.push_str(&format!("    {}: true", string::quote(&field_name)));
+            result.push_str(&to_query_shape_leaf(&field_name, &aliased_name));
         }
     }
 
@@ -708,6 +721,18 @@ fn to_query_field_spec(
     }
 
     result
+}
+
+fn to_query_shape_leaf(field_name: &str, aliased_name: &str) -> String {
+    if aliased_name == field_name {
+        format!("    {}: true", string::quote(aliased_name))
+    } else {
+        format!(
+            "    {}: {{ \"@source\": {}, \"@select\": true }}",
+            string::quote(aliased_name),
+            string::quote(field_name)
+        )
+    }
 }
 
 fn to_where_clause_ts(where_arg: &ast::WhereArg) -> String {

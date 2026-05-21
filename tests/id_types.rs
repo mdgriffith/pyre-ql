@@ -522,7 +522,10 @@ record Post {
     );
 
     let result = sync::get_sync_status_statement(&sync_cursor, context, &session);
-    assert!(result.is_ok(), "Sync status SQL statement should be generated");
+    assert!(
+        result.is_ok(),
+        "Sync status SQL statement should be generated"
+    );
 }
 
 #[test]
@@ -666,10 +669,11 @@ record GameDocument {
     let mut session: HashMap<String, sync::SessionValue> = HashMap::new();
     session.insert("isAdmin".to_string(), sync::SessionValue::Integer(1));
 
-    let sync_status_statement = match sync::get_sync_status_statement(&sync_cursor, &context, &session) {
-        Ok(statement) => statement,
-        Err(_) => panic!("Sync status SQL generation should succeed"),
-    };
+    let sync_status_statement =
+        match sync::get_sync_status_statement(&sync_cursor, &context, &session) {
+            Ok(statement) => statement,
+            Err(_) => panic!("Sync status SQL generation should succeed"),
+        };
     let sync_status_sql = sync_status_statement.sql;
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");

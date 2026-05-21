@@ -3,14 +3,14 @@ use crate::filesystem;
 use crate::generate::sql;
 use crate::typecheck;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 #[derive(Serialize)]
 struct Manifest {
     version: u32,
-    session_schema: HashMap<String, FieldSchema>,
-    queries: HashMap<String, QueryManifest>,
+    session_schema: BTreeMap<String, FieldSchema>,
+    queries: BTreeMap<String, QueryManifest>,
 }
 
 #[derive(Serialize)]
@@ -19,7 +19,7 @@ struct QueryManifest {
     operation: String,
     primary_db: String,
     attached_dbs: Vec<String>,
-    input_schema: HashMap<String, FieldSchema>,
+    input_schema: BTreeMap<String, FieldSchema>,
     session_args: Vec<String>,
     optional_input_args: Vec<String>,
     json_input_args: Vec<String>,
@@ -126,7 +126,7 @@ fn sorted_strings(values: &std::collections::HashSet<String>) -> Vec<String> {
     result
 }
 
-fn input_schema(query: &ast::Query) -> HashMap<String, FieldSchema> {
+fn input_schema(query: &ast::Query) -> BTreeMap<String, FieldSchema> {
     query
         .args
         .iter()
@@ -143,7 +143,7 @@ fn input_schema(query: &ast::Query) -> HashMap<String, FieldSchema> {
         .collect()
 }
 
-fn session_schema(context: &typecheck::Context) -> HashMap<String, FieldSchema> {
+fn session_schema(context: &typecheck::Context) -> BTreeMap<String, FieldSchema> {
     context
         .session
         .as_ref()

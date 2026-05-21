@@ -155,7 +155,10 @@ pub fn parse_database_schemas(
         schemas: Vec::new(),
     };
 
-    for (namespace, schema_files) in paths.schema_files.iter() {
+    let mut schema_namespaces: Vec<_> = paths.schema_files.iter().collect();
+    schema_namespaces.sort_by(|a, b| a.0.cmp(b.0));
+
+    for (namespace, schema_files) in schema_namespaces {
         let mut schema = ast::Schema {
             namespace: namespace.clone(),
             sync_mode: ast::SyncMode::Synced,

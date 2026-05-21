@@ -678,31 +678,39 @@ projectRow schema tableName row selections data indices =
     Dict.foldl
         (\fieldName selection acc ->
             case selection of
-                Db.Query.SelectField ->
-                    case Dict.get fieldName row of
+                Db.Query.SelectField maybeSourceField ->
+                    let
+                        sourceFieldName =
+                            Maybe.withDefault fieldName maybeSourceField
+                    in
+                    case Dict.get sourceFieldName row of
                         Just value ->
                             Dict.insert fieldName value acc
 
                         Nothing ->
                             acc
 
-                Db.Query.SelectNested nestedFieldQuery ->
-                    case getLinkType schema tableName fieldName of
+                Db.Query.SelectNested maybeSourceField nestedFieldQuery ->
+                    let
+                        sourceFieldName =
+                            Maybe.withDefault fieldName maybeSourceField
+                    in
+                    case getLinkType schema tableName sourceFieldName of
                         Just Data.Schema.OneToMany ->
                             let
                                 relatedRows =
-                                    resolveRelationship schema tableName fieldName row data indices
+                                    resolveRelationship schema tableName sourceFieldName row data indices
                                         |> Maybe.withDefault []
 
                                 nestedValue =
-                                    projectNestedRows schema tableName fieldName nestedFieldQuery relatedRows data indices
+                                    projectNestedRows schema tableName sourceFieldName nestedFieldQuery relatedRows data indices
                             in
                             Dict.insert fieldName nestedValue acc
 
                         Just _ ->
-                            case resolveRelationship schema tableName fieldName row data indices of
+                            case resolveRelationship schema tableName sourceFieldName row data indices of
                                 Just relatedRows ->
-                                    case projectNestedRows schema tableName fieldName nestedFieldQuery relatedRows data indices of
+                                    case projectNestedRows schema tableName sourceFieldName nestedFieldQuery relatedRows data indices of
                                         Data.Value.ArrayValue (first :: _) ->
                                             Dict.insert fieldName first acc
 
@@ -716,7 +724,7 @@ projectRow schema tableName row selections data indices =
                                     Dict.insert fieldName Data.Value.NullValue acc
 
                         Nothing ->
-                            if isOneToManySelection schema tableName fieldName then
+                            if isOneToManySelection schema tableName sourceFieldName then
                                 Dict.insert fieldName (Data.Value.ArrayValue []) acc
 
                             else

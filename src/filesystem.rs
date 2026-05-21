@@ -172,6 +172,12 @@ pub fn collect_filepaths(dir: &Path) -> io::Result<Found> {
         }
     }
 
+    query_files.sort();
+    namespaces.sort();
+    for files in schema_files.values_mut() {
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+    }
+
     Ok(Found {
         schema_files,
         query_files,

@@ -140,7 +140,11 @@ pub async fn catchup(
         let mut max_updated_at = None;
 
         for (statement_index, statement) in table_sql.sql.iter().enumerate() {
-            let params = table_sql.params.get(statement_index).cloned().unwrap_or_default();
+            let params = table_sql
+                .params
+                .get(statement_index)
+                .cloned()
+                .unwrap_or_default();
             let rows = query_objects(conn, statement, &params).await?;
 
             for mut row in rows {

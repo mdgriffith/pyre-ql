@@ -77,10 +77,12 @@ export interface SortClause {
 }
 
 export interface QueryField {
+  '@source'?: string;
+  '@select'?: boolean;
   '@where'?: WhereClause;
   '@sort'?: SortClause | SortClause[];
   '@limit'?: number;
-  [field: string]: boolean | QueryField | WhereClause | SortClause | SortClause[] | number | undefined;
+  [field: string]: boolean | QueryField | WhereClause | SortClause | SortClause[] | number | string | undefined;
 }
 
 export interface QueryShape {

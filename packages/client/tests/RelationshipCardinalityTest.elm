@@ -62,6 +62,33 @@ suite =
                         ]
                     )
                     result
+        , test "aliased one-to-many resolves by source link and projects alias" <|
+            \_ ->
+                let
+                    result =
+                        Db.executeQuery schema dbWithRelatedRows aliasedListGamesQuery
+                in
+                Expect.equal
+                    (Dict.fromList
+                        [ ( "game"
+                          , [ Dict.fromList
+                                [ ( "id", Data.Value.IntValue 1 )
+                                , ( "members"
+                                  , Data.Value.ArrayValue
+                                        [ Data.Value.ObjectValue
+                                            (Dict.fromList
+                                                [ ( "id", Data.Value.IntValue 10 )
+                                                , ( "userId", Data.Value.IntValue 20 )
+                                                ]
+                                            )
+                                        ]
+                                  )
+                                ]
+                            ]
+                          )
+                        ]
+                    )
+                    result
         ]
 
 
@@ -103,9 +130,9 @@ listGamesQuery =
         [ ( "game"
           , { selections =
                 Dict.fromList
-                    [ ( "id", Db.Query.SelectField )
-                    , ( "name", Db.Query.SelectField )
-                    , ( "gameMembers", Db.Query.SelectNested gameMembersFieldQuery )
+                    [ ( "id", Db.Query.SelectField Nothing )
+                    , ( "name", Db.Query.SelectField Nothing )
+                    , ( "gameMembers", Db.Query.SelectNested Nothing gameMembersFieldQuery )
                     ]
             , where_ = Nothing
             , sort = Nothing
@@ -119,13 +146,30 @@ gameMembersFieldQuery : Db.Query.FieldQuery
 gameMembersFieldQuery =
     { selections =
         Dict.fromList
-            [ ( "id", Db.Query.SelectField )
-            , ( "userId", Db.Query.SelectField )
+            [ ( "id", Db.Query.SelectField Nothing )
+            , ( "userId", Db.Query.SelectField Nothing )
             ]
     , where_ = Nothing
     , sort = Nothing
     , limit = Nothing
     }
+
+
+aliasedListGamesQuery : Db.Query.Query
+aliasedListGamesQuery =
+    Dict.fromList
+        [ ( "game"
+          , { selections =
+                Dict.fromList
+                    [ ( "id", Db.Query.SelectField Nothing )
+                    , ( "members", Db.Query.SelectNested (Just "gameMembers") gameMembersFieldQuery )
+                    ]
+            , where_ = Nothing
+            , sort = Nothing
+            , limit = Nothing
+            }
+          )
+        ]
 
 
 dbWithEmptyRelatedTable : Db.Db
@@ -158,6 +202,36 @@ dbWithoutRelatedTable =
                       , Dict.fromList
                             [ ( "id", Data.Value.IntValue 1 )
                             , ( "name", Data.Value.StringValue "The Broken Tower" )
+                            ]
+                      )
+                    ]
+              )
+            ]
+    , indices = Dict.empty
+    }
+
+
+dbWithRelatedRows : Db.Db
+dbWithRelatedRows =
+    { tables =
+        Dict.fromList
+            [ ( "games"
+              , Dict.fromList
+                    [ ( 1
+                      , Dict.fromList
+                            [ ( "id", Data.Value.IntValue 1 )
+                            , ( "name", Data.Value.StringValue "The Broken Tower" )
+                            ]
+                      )
+                    ]
+              )
+            , ( "game_members"
+              , Dict.fromList
+                    [ ( 10
+                      , Dict.fromList
+                            [ ( "id", Data.Value.IntValue 10 )
+                            , ( "gameId", Data.Value.IntValue 1 )
+                            , ( "userId", Data.Value.IntValue 20 )
                             ]
                       )
                     ]

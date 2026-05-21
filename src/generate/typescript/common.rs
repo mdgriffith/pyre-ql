@@ -1,5 +1,6 @@
 use crate::ast;
-use std::collections::{HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 /// Collect all type definitions and sort them by dependency order
 pub fn sort_types_by_dependency(database: &ast::Database) -> Vec<(String, Vec<ast::Variant>)> {
@@ -49,16 +50,18 @@ pub fn sort_types_by_dependency(database: &ast::Database) -> Vec<(String, Vec<as
         }
     }
 
+    for dependents in graph.values_mut() {
+        dependents.sort();
+    }
+
     // Start with nodes that have no dependencies
-    let mut queue: Vec<String> = in_degree
+    let mut queue: BinaryHeap<Reverse<String>> = in_degree
         .iter()
         .filter(|(_, &deg)| deg == 0)
-        .map(|(name, _)| name.clone())
+        .map(|(name, _)| Reverse(name.clone()))
         .collect();
 
-    queue.sort(); // For deterministic output
-
-    while let Some(name) = queue.pop() {
+    while let Some(Reverse(name)) = queue.pop() {
         if let Some((variants, _)) = types.remove(&name) {
             sorted.push((name.clone(), variants));
         }
@@ -68,7 +71,7 @@ pub fn sort_types_by_dependency(database: &ast::Database) -> Vec<(String, Vec<as
                 if let Some(deg) = in_degree.get_mut(dependent) {
                     *deg -= 1;
                     if *deg == 0 {
-                        queue.push(dependent.clone());
+                        queue.push(Reverse(dependent.clone()));
                     }
                 }
             }
