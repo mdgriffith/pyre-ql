@@ -44,6 +44,7 @@ export class SSEManager {
     this.elmApp = elmApp;
 
     if (elmApp.ports.sseOut) {
+      this.debugLog('[PyreClient] SSE port attached');
       elmApp.ports.sseOut.subscribe((message) => {
         this.debugLog('[PyreClient] port sseOut <-', message);
         const typedMessage = message as { type?: string };
@@ -51,8 +52,12 @@ export class SSEManager {
           this.connect();
         } else if (typedMessage.type === 'disconnectSSE') {
           this.disconnect();
+        } else {
+          this.debugLog('[PyreClient] SSE ignored unknown port message', message);
         }
       });
+    } else {
+      this.debugLog('[PyreClient] SSE port missing: sseOut');
     }
   }
 
@@ -78,6 +83,10 @@ export class SSEManager {
       const sseUrl = buildSSEUrl(this.config);
       this.debugLog('[PyreClient] SSE attempting connection', { sseUrl });
       const eventSource = new EventSource(sseUrl, {
+        withCredentials: shouldIncludeCredentials(this.config),
+      });
+      this.debugLog('[PyreClient] SSE EventSource constructed', {
+        sseUrl,
         withCredentials: shouldIncludeCredentials(this.config),
       });
 

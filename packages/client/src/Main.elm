@@ -1,6 +1,7 @@
 port module Main exposing (main)
 
 import Data.Catchup as Catchup
+import Data.Delta
 import Data.Error
 import Data.IndexedDb as IndexedDb exposing (Incoming(..))
 import Data.LiveSync as LiveSync exposing (Incoming(..))
@@ -50,6 +51,7 @@ type alias Model =
     , liveSyncStarted : Bool
     , liveSyncTransport : LiveSync.Transport
     , syncRequested : Bool
+    , inFlightOptimistic : Dict String Data.Delta.Delta
     }
 
 
@@ -89,6 +91,7 @@ init flags =
       , liveSyncStarted = False
       , liveSyncTransport = flags.liveSync.transport
       , syncRequested = flags.sync.autoStart
+      , inFlightOptimistic = Dict.empty
       }
     , Cmd.batch
         [ if flags.sync.autoStart then
@@ -96,6 +99,10 @@ init flags =
 
           else
             Cmd.none
+        , debugCmd "init"
+            [ ( "autoStart", Encode.bool flags.sync.autoStart )
+            , ( "transport", Encode.string (liveSyncTransportToString flags.liveSync.transport) )
+            ]
         , emitSyncState
             { status = SyncState.NotStarted
             , tables = SyncState.initialTableStatuses flags.schema.tables
@@ -130,7 +137,17 @@ update msg model =
             )
 
         LiveSyncReceived incoming ->
-            handleLiveSyncIncoming incoming model
+            let
+                ( updatedModel, cmd ) =
+                    handleLiveSyncIncoming incoming model
+            in
+            ( updatedModel
+            , Cmd.batch
+                [ debugCmd "live-sync-received"
+                    [ ( "messageType", Encode.string (liveSyncIncomingToString incoming) ) ]
+                , cmd
+                ]
+            )
 
         QueryManagerReceived incoming ->
             let
@@ -156,14 +173,12 @@ update msg model =
         MutationRequest requestId mutationId _ _ result ->
             case result of
                 Ok response ->
-                    ( model
+                    ( { model | inFlightOptimistic = Dict.remove requestId model.inFlightOptimistic }
                     , QueryManager.mutationResult requestId mutationId (Ok response)
                     )
 
                 Err error ->
-                    ( model
-                    , QueryManager.mutationResult requestId mutationId (Err (httpErrorToString error))
-                    )
+                    rollbackOptimisticMutation requestId mutationId (httpErrorToString error) model
 
         Error errorMessage ->
             ( model
@@ -179,7 +194,10 @@ update msg model =
 
             else
                 ( { model | syncRequested = True }
-                , IndexedDb.requestInitialData
+                , Cmd.batch
+                    [ debugCmd "sync-control-start" []
+                    , IndexedDb.requestInitialData
+                    ]
                 )
 
         DbMsg dbMsg ->
@@ -328,9 +346,12 @@ validateLiveSyncDatabaseId model actual eventName =
 handleQueryManagerIncoming : QueryManager.Incoming -> Model -> ( Model, List (Cmd Msg) )
 handleQueryManagerIncoming incoming model =
     case incoming of
-        QueryManager.SendMutation requestId mutationId baseUrl headers credentials withCredentials input ->
+        QueryManager.SendMutation requestId mutationId baseUrl headers credentials withCredentials input optimistic ->
             -- Mutations are handled via HTTP request
             let
+                ( optimisticModel, optimisticCmds ) =
+                    applyOptimisticMutation requestId optimistic input model
+
                 url =
                     buildMutationUrl baseUrl mutationId
 
@@ -368,13 +389,14 @@ handleQueryManagerIncoming incoming model =
                     , tracker = Nothing
                     }
             in
-            ( model
-            , [ if credentials == "include" || withCredentials then
-                    Http.riskyRequest request
+            ( optimisticModel
+            , optimisticCmds
+                ++ [ if credentials == "include" || withCredentials then
+                        Http.riskyRequest request
 
-                else
-                    Http.request request
-              ]
+                     else
+                        Http.request request
+                   ]
             )
 
 
@@ -515,6 +537,144 @@ buildMutationUrl baseUrl id =
             baseUrl ++ "/" ++ id
 
 
+applyOptimisticMutation : String -> Maybe QueryManager.OptimisticMutation -> Encode.Value -> Model -> ( Model, List (Cmd Msg) )
+applyOptimisticMutation requestId maybeOptimistic input model =
+    case maybeOptimistic of
+        Nothing ->
+            ( model, [] )
+
+        Just optimistic ->
+            case Decode.decodeValue (Decode.dict Data.Value.decodeValue) input of
+                Err _ ->
+                    ( model, [] )
+
+                Ok inputValues ->
+                    case Dict.get optimistic.where_.input inputValues of
+                        Nothing ->
+                            ( model, [] )
+
+                        Just whereValue ->
+                            let
+                                tableName =
+                                    Dict.get optimistic.queryField model.schema.queryFieldToTable
+                                        |> Maybe.withDefault optimistic.queryField
+
+                                setValues =
+                                    optimistic.set
+                                        |> List.filterMap
+                                            (\setField ->
+                                                Dict.get setField.input inputValues
+                                                    |> Maybe.map (\value -> ( setField.field, value ))
+                                            )
+
+                                matchingRows =
+                                    Dict.get tableName model.db.tables
+                                        |> Maybe.withDefault Dict.empty
+                                        |> Dict.values
+                                        |> List.filter
+                                            (\row -> Dict.get optimistic.where_.field row == Just whereValue)
+                            in
+                            if List.isEmpty setValues || List.isEmpty matchingRows then
+                                ( model, [] )
+
+                            else
+                                let
+                                    updatedRows =
+                                        List.map (applySetValues setValues) matchingRows
+
+                                    forward =
+                                        deltaFromRows tableName updatedRows
+
+                                    inverse =
+                                        deltaFromRows tableName matchingRows
+
+                                    ( updatedDb, dbCmd ) =
+                                        Db.update (Db.LocalDeltaReceived forward) model.db
+
+                                    ( updatedQueryManager, triggerCmds ) =
+                                        QueryManager.notifyTablesChanged model.schema updatedDb model.queryManager forward
+                                in
+                                ( { model
+                                    | db = updatedDb
+                                    , queryManager = updatedQueryManager
+                                    , inFlightOptimistic = Dict.insert requestId inverse model.inFlightOptimistic
+                                  }
+                                , Cmd.map DbMsg dbCmd :: triggerCmds
+                                )
+
+
+rollbackOptimisticMutation : String -> String -> String -> Model -> ( Model, Cmd Msg )
+rollbackOptimisticMutation requestId mutationId error model =
+    case Dict.get requestId model.inFlightOptimistic of
+        Nothing ->
+            ( { model | inFlightOptimistic = Dict.remove requestId model.inFlightOptimistic }
+            , QueryManager.mutationResult requestId mutationId (Err error)
+            )
+
+        Just inverse ->
+            let
+                ( updatedDb, dbCmd ) =
+                    Db.update (Db.LocalDeltaReceived inverse) model.db
+
+                ( updatedQueryManager, triggerCmds ) =
+                    QueryManager.notifyTablesChanged model.schema updatedDb model.queryManager inverse
+            in
+            ( { model
+                | db = updatedDb
+                , queryManager = updatedQueryManager
+                , inFlightOptimistic = Dict.remove requestId model.inFlightOptimistic
+              }
+            , Cmd.batch
+                (QueryManager.mutationResult requestId mutationId (Err error)
+                    :: Cmd.map DbMsg dbCmd
+                    :: triggerCmds
+                )
+            )
+
+
+applySetValues : List ( String, Data.Value.Value ) -> Dict String Data.Value.Value -> Dict String Data.Value.Value
+applySetValues setValues row =
+    List.foldl
+        (\( field, value ) acc -> Dict.insert field value acc)
+        row
+        setValues
+
+
+deltaFromRows : String -> List (Dict String Data.Value.Value) -> Data.Delta.Delta
+deltaFromRows tableName rows =
+    let
+        headers =
+            rows
+                |> List.concatMap Dict.keys
+                |> uniqueStrings
+
+        rowValues row =
+            List.map (\header -> Dict.get header row |> Maybe.withDefault Data.Value.NullValue) headers
+    in
+    { tableGroups =
+        [ { tableName = tableName
+          , headers = headers
+          , rows = List.map rowValues rows
+          }
+        ]
+    }
+
+
+uniqueStrings : List String -> List String
+uniqueStrings values =
+    values
+        |> List.foldl
+            (\value acc ->
+                if List.member value acc then
+                    acc
+
+                else
+                    value :: acc
+            )
+            []
+        |> List.reverse
+
+
 applyCatchupUpdate : Catchup.UpdateResult -> Model -> ( Model, Cmd Msg )
 applyCatchupUpdate result model =
     let
@@ -580,6 +740,21 @@ applyCatchupUpdate result model =
             , Cmd.batch triggerCmds
             , liveSyncCmd
             , emitSyncState (toSyncState liveSyncModel)
+            , debugCmd "catchup-update"
+                [ ( "status", Encode.string (catchupStatusToString (Catchup.status result.model)) )
+                , ( "touchedTables", Encode.list Encode.string result.touchedTables )
+                , ( "hasDelta"
+                  , Encode.bool
+                        (case result.delta of
+                            Just _ ->
+                                True
+
+                            Nothing ->
+                                False
+                        )
+                  )
+                , ( "dbCmdCount", Encode.int (List.length result.dbCmds) )
+                ]
             ]
                 ++ dbCmds
     in
@@ -619,23 +794,99 @@ emitSyncState syncState =
 port syncStateOut : Encode.Value -> Cmd msg
 
 
+debugCmd : String -> List ( String, Encode.Value ) -> Cmd msg
+debugCmd event fields =
+    debugOut
+        (Encode.object
+            ([ ( "event", Encode.string event ) ] ++ fields)
+        )
+
+
+port debugOut : Encode.Value -> Cmd msg
+
+
 startLiveSyncIfReady : Model -> ( Model, Cmd Msg )
 startLiveSyncIfReady model =
     case ( model.liveSyncStarted, Catchup.status model.catchup ) of
         ( False, Catchup.Synced ) ->
             ( { model | liveSyncStarted = True }
-            , LiveSync.connect
-                { transport = model.liveSyncTransport }
+            , Cmd.batch
+                [ debugCmd "live-sync-connect"
+                    [ ( "reason", Encode.string "catchup-synced" )
+                    , ( "transport", Encode.string (liveSyncTransportToString model.liveSyncTransport) )
+                    ]
+                , LiveSync.connect
+                    { transport = model.liveSyncTransport }
+                ]
             )
 
         ( False, Catchup.Error _ ) ->
             ( { model | liveSyncStarted = True }
-            , LiveSync.connect
-                { transport = model.liveSyncTransport }
+            , Cmd.batch
+                [ debugCmd "live-sync-connect"
+                    [ ( "reason", Encode.string "catchup-error" )
+                    , ( "transport", Encode.string (liveSyncTransportToString model.liveSyncTransport) )
+                    ]
+                , LiveSync.connect
+                    { transport = model.liveSyncTransport }
+                ]
             )
 
         _ ->
-            ( model, Cmd.none )
+            ( model
+            , debugCmd "live-sync-not-ready"
+                [ ( "liveSyncStarted", Encode.bool model.liveSyncStarted )
+                , ( "catchupStatus", Encode.string (catchupStatusToString (Catchup.status model.catchup)) )
+                ]
+            )
+
+
+catchupStatusToString : Catchup.Status -> String
+catchupStatusToString status =
+    case status of
+        Catchup.NotStarted ->
+            "not_started"
+
+        Catchup.Syncing _ ->
+            "syncing"
+
+        Catchup.Synced ->
+            "synced"
+
+        Catchup.Error _ ->
+            "error"
+
+
+liveSyncTransportToString : LiveSync.Transport -> String
+liveSyncTransportToString transport =
+    case transport of
+        LiveSync.Sse ->
+            "sse"
+
+        LiveSync.WebSocket ->
+            "websocket"
+
+
+liveSyncIncomingToString : LiveSync.Incoming -> String
+liveSyncIncomingToString incoming =
+    case incoming of
+        LiveSync.DeltaReceived _ _ ->
+            "delta"
+
+        LiveSync.SyncProgressReceived _ _ ->
+            "syncProgress"
+
+        LiveSync.LiveSyncConnected _ _ ->
+            "connected"
+
+        LiveSync.LiveSyncError _ ->
+            "error"
+
+        LiveSync.SyncCompleteReceived _ ->
+            "syncComplete"
+
+        LiveSync.SyncRequiredReceived _ ->
+            "syncRequired"
 
 
 encodeQueryResult : Dict String (List (Dict String Data.Value.Value)) -> Encode.Value

@@ -351,6 +351,9 @@ fn to_query_metadata_file(
         meta_block.push_str("  queryShape,\n");
         meta_block.push_str("  toQueryShape: (_input: Input) => queryShape,\n");
     }
+    if let Some(optimistic) = to_optimistic_update_metadata(query) {
+        meta_block.push_str(&format!("  optimistic: {},\n", optimistic));
+    }
     meta_block.push_str("};\n");
 
     let result_block = "export type Result = z.infer<typeof ReturnData>;".to_string();
@@ -514,6 +517,91 @@ fn get_session_args(params: &HashMap<String, typecheck::ParamInfo>) -> String {
 
     result.push_str("]");
     result
+}
+
+struct OptimisticUpdateMetadata {
+    query_field: String,
+    where_field: String,
+    where_input: String,
+    set_fields: Vec<(String, String)>,
+}
+
+fn optimistic_update_metadata(query: &ast::Query) -> Option<OptimisticUpdateMetadata> {
+    if query.operation != ast::QueryOperation::Update {
+        return None;
+    }
+
+    let mut top_fields = query.fields.iter().filter_map(|field| match field {
+        ast::TopLevelQueryField::Field(query_field) => Some(query_field),
+        _ => None,
+    });
+
+    let query_field = top_fields.next()?;
+    if top_fields.next().is_some() {
+        return None;
+    }
+
+    let wheres = ast::collect_wheres(&query_field.fields);
+    let where_ = match wheres.as_slice() {
+        [ast::WhereArg::Column(
+            false,
+            field,
+            ast::Operator::Equal,
+            ast::QueryValue::Variable((_, variable)),
+            _,
+        )] => {
+            if variable.session_field.is_some() {
+                return None;
+            }
+            (field.clone(), variable.name.clone())
+        }
+        _ => return None,
+    };
+
+    let set_fields: Vec<(String, String)> = ast::collect_query_fields(&query_field.fields)
+        .into_iter()
+        .filter_map(|field| match &field.set {
+            Some(ast::QueryValue::Variable((_, variable))) if variable.session_field.is_none() => {
+                Some((field.name.clone(), variable.name.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+
+    if set_fields.is_empty() {
+        return None;
+    }
+
+    Some(OptimisticUpdateMetadata {
+        query_field: query_field.name.clone(),
+        where_field: where_.0,
+        where_input: where_.1,
+        set_fields,
+    })
+}
+
+fn to_optimistic_update_metadata(query: &ast::Query) -> Option<String> {
+    let metadata = optimistic_update_metadata(query)?;
+    let set_fields = metadata
+        .set_fields
+        .iter()
+        .map(|(field, input)| {
+            format!(
+                "{{ field: {}, input: {} }}",
+                string::quote(field),
+                string::quote(input)
+            )
+        })
+        .collect::<Vec<String>>()
+        .join(", ");
+
+    Some(format!(
+        "{{ queryField: {}, where: {{ field: {}, input: {} }}, set: [{}] }}",
+        string::quote(&metadata.query_field),
+        string::quote(&metadata.where_field),
+        string::quote(&metadata.where_input),
+        set_fields
+    ))
 }
 
 fn to_query_shape(context: &typecheck::Context, query: &ast::Query) -> String {

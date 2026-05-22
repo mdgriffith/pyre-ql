@@ -32,6 +32,7 @@ type alias TableData =
 type Msg
     = FromIndexedDb SchemaMetadata Data.IndexedDb.Incoming
     | DeltaReceived Delta
+    | LocalDeltaReceived Delta
 
 
 
@@ -66,6 +67,11 @@ update msg db =
             in
             ( updatedDb
             , Data.IndexedDb.writeDelta delta.tableGroups
+            )
+
+        LocalDeltaReceived delta ->
+            ( applyDelta delta db
+            , Cmd.none
             )
 
 

@@ -1,4 +1,4 @@
-port module Data.QueryManager exposing (Incoming(..), Model, Msg(..), QueryClientIncoming(..), QueryDeltaOp(..), QuerySubscription, ReExecuteDecision(..), decodeIncoming, decodeQueryClientIncoming, doesChangeAffectWhereClause, extractChangedRowIds, extractWhereClauseFields, init, mutationResult, notifyTablesChanged, queryClientDelta, queryClientFull, receiveIncoming, receiveQueryClientIncoming, shouldReExecuteQuery, update)
+port module Data.QueryManager exposing (Incoming(..), Model, Msg(..), OptimisticMutation, OptimisticSetField, OptimisticWhere, QueryClientIncoming(..), QueryDeltaOp(..), QuerySubscription, ReExecuteDecision(..), decodeIncoming, decodeQueryClientIncoming, doesChangeAffectWhereClause, extractChangedRowIds, extractWhereClauseFields, init, mutationResult, notifyTablesChanged, queryClientDelta, queryClientFull, receiveIncoming, receiveQueryClientIncoming, shouldReExecuteQuery, update)
 
 import Data.Delta
 import Data.Schema
@@ -40,7 +40,26 @@ type Msg
 
 
 type Incoming
-    = SendMutation String String String (List ( String, String )) String Bool Encode.Value -- requestId, mutationId, baseUrl, headers, credentials, withCredentials, input
+    = SendMutation String String String (List ( String, String )) String Bool Encode.Value (Maybe OptimisticMutation) -- requestId, mutationId, baseUrl, headers, credentials, withCredentials, input, optimistic metadata
+
+
+type alias OptimisticMutation =
+    { queryField : String
+    , where_ : OptimisticWhere
+    , set : List OptimisticSetField
+    }
+
+
+type alias OptimisticWhere =
+    { field : String
+    , input : String
+    }
+
+
+type alias OptimisticSetField =
+    { field : String
+    , input : String
+    }
 
 
 {-| Incoming messages from QueryClient (TypeScript side)
@@ -90,7 +109,7 @@ update msg model =
 handleIncoming : Incoming -> Model -> ( Model, Cmd Msg )
 handleIncoming incoming model =
     case incoming of
-        SendMutation _ _ _ _ _ _ _ ->
+        SendMutation _ _ _ _ _ _ _ _ ->
             -- Mutations are handled by Main, not QueryManager
             ( model, Cmd.none )
 
@@ -1120,7 +1139,7 @@ decodeIncoming =
             (\type_ ->
                 case type_ of
                     "sendMutation" ->
-                        Decode.map7 SendMutation
+                        Decode.map8 SendMutation
                             (Decode.field "requestId" Decode.string)
                             (Decode.field "mutationId" Decode.string)
                             (Decode.field "baseUrl" Decode.string)
@@ -1140,10 +1159,33 @@ decodeIncoming =
                                 ]
                             )
                             (Decode.field "input" Decode.value)
+                            (Decode.maybe (Decode.field "optimistic" decodeOptimisticMutation))
 
                     _ ->
                         Decode.fail ("Unknown QueryManager incoming type: " ++ type_)
             )
+
+
+decodeOptimisticMutation : Decode.Decoder OptimisticMutation
+decodeOptimisticMutation =
+    Decode.map3 OptimisticMutation
+        (Decode.field "queryField" Decode.string)
+        (Decode.field "where" decodeOptimisticWhere)
+        (Decode.field "set" (Decode.list decodeOptimisticSetField))
+
+
+decodeOptimisticWhere : Decode.Decoder OptimisticWhere
+decodeOptimisticWhere =
+    Decode.map2 OptimisticWhere
+        (Decode.field "field" Decode.string)
+        (Decode.field "input" Decode.string)
+
+
+decodeOptimisticSetField : Decode.Decoder OptimisticSetField
+decodeOptimisticSetField =
+    Decode.map2 OptimisticSetField
+        (Decode.field "field" Decode.string)
+        (Decode.field "input" Decode.string)
 
 
 {-| Decoder for QueryClient incoming messages.

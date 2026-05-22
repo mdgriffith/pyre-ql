@@ -70,6 +70,7 @@ export interface QueryModule<Input = unknown> {
   source?: unknown;
   queryShape?: unknown;
   toQueryShape?: (input: Input) => unknown;
+  optimistic?: unknown | ((input: Input) => unknown);
 }
 
 export interface QuerySubscription<Input = unknown> {
@@ -216,6 +217,7 @@ export interface ElmBridgeMutationMessage {
   mutationId: string;
   mutationName?: string;
   mutationInput?: unknown;
+  optimistic?: unknown;
 }
 
 export interface ElmBridgeMutationResultMessage {
@@ -298,7 +300,7 @@ interface SingleDatabasePyreClientCreateConfig {
   elm?: PyreElmConfig;
 }
 
-export type PyreInternalClient = Pick<SingleDatabasePyreClient, 'run' | 'disconnect' | 'getDevtoolsSnapshot' | 'inspectDevtoolsTablePage' | 'startSync' | 'onSyncState' | 'setSession' | 'onEntityChanges'>;
+export type PyreInternalClient = Pick<SingleDatabasePyreClient, 'run' | 'disconnect' | 'getDevtoolsSnapshot' | 'inspectDevtoolsTablePage' | 'startSync' | 'onSyncState' | 'setSession' | 'onEntityChanges' | 'onDevtoolsEvent'>;
 
 type PyreInternalClientFactory = (config: SingleDatabasePyreClientCreateConfig & {
   databaseId: DatabaseId;
@@ -459,6 +461,18 @@ class SingleDatabasePyreClient {
     this.webSocketManager.attachPorts(this.elmApp);
     this.queryManager.attachPorts(this.elmApp);
     this.queryClient.attachPorts(this.elmApp);
+
+    if (this.elmApp.ports.debugOut) {
+      this.elmApp.ports.debugOut.subscribe((message) => {
+        this.logDebug('[PyreClient] port debugOut <-', message);
+        const eventName = debugOutEventName(message);
+        if (eventName) {
+          this.emitDevtoolsEvent(`elm:${eventName}`, message);
+        }
+      });
+    } else {
+      this.logDebug('[PyreClient] port debugOut unavailable');
+    }
 
     if (this.elmApp.ports.errorOut) {
       this.elmApp.ports.errorOut.subscribe((message) => {
@@ -1094,14 +1108,18 @@ class SingleDatabasePyreClient {
     const requestId = `mutation_${this.mutationCounter}_${Date.now()}`;
     this.mutationCounter += 1;
     const payload = input ?? {};
+    const optimistic = typeof queryModule.optimistic === 'function'
+      ? queryModule.optimistic(payload as Input)
+      : queryModule.optimistic;
     const baseUrl = resolveEndpointUrl(this.server.baseUrl, this.endpoints.query, { databaseId });
-    this.emitDevtoolsEvent('mutation:request', { requestId, mutationId, databaseId, input: payload });
+    this.emitDevtoolsEvent('mutation:request', { requestId, mutationId, databaseId, input: payload, optimistic });
     void (async () => {
       this.queryManager.sendMutation(
         requestId,
         mutationId,
         baseUrl,
         payload,
+        optimistic,
         (result) => {
           this.emitDevtoolsEvent('mutation:result', { requestId, mutationId, result });
           callback(result);
@@ -1123,16 +1141,18 @@ class SingleDatabasePyreClient {
     this.emitDevtoolsEvent('mutation:request', {
       requestId: message.requestId,
       mutationId: message.mutationId,
-      mutationName: message.mutationName,
-      databaseId: message.databaseId,
-      input: message.mutationInput ?? {},
-    });
+          mutationName: message.mutationName,
+          databaseId: message.databaseId,
+          input: message.mutationInput ?? {},
+          optimistic: message.optimistic,
+        });
     void (async () => {
       this.queryManager.sendMutation(
         message.requestId,
         message.mutationId,
         baseUrl,
         message.mutationInput ?? {},
+        message.optimistic,
         (result) => {
           this.emitDevtoolsEvent('mutation:result', {
             requestId: message.requestId,
@@ -1185,6 +1205,7 @@ export class PyreClient {
   private completedSyncDatabaseIds: Set<DatabaseId> = new Set();
   private syncStateCallbacks: Set<(state: SyncState) => void> = new Set();
   private latestSyncStates: Map<DatabaseId, SyncState> = new Map();
+  private internalDevtoolsUnsubscribers: Map<DatabaseId, () => void> = new Map();
   private bridgeCleanup: (() => void) | null = null;
   private devtoolsDebugValues: Record<string, unknown> = {};
   private devtoolsEventCounter = 0;
@@ -1218,7 +1239,7 @@ export class PyreClient {
     callback: (result: unknown) => void
   ): Promise<QuerySubscription<Input> | void> {
     this.markKnownDatabase(databaseId);
-    if (queryModule.operation === 'mutation') {
+    if (queryModule.operation !== 'query') {
       return this.runPublicMutation(databaseId, queryModule, input, callback);
     }
     return this.getOrCreateClient(databaseId).then((client) => (
@@ -1525,7 +1546,7 @@ export class PyreClient {
             } else {
               await this.run(
                 message.databaseId,
-                { operation: 'mutation', id: message.mutationId },
+                { operation: 'mutation', id: message.mutationId, optimistic: message.optimistic },
                 message.mutationInput ?? {},
                 (result) => {
                   mutationResultPort?.send?.({
@@ -1650,6 +1671,8 @@ export class PyreClient {
     this.syncingDatabaseId = null;
     this.completedSyncDatabaseIds.clear();
     this.latestSyncStates.clear();
+    this.internalDevtoolsUnsubscribers.forEach((unsubscribe) => unsubscribe());
+    this.internalDevtoolsUnsubscribers.clear();
     this.emitSyncState();
   }
 
@@ -1728,6 +1751,19 @@ export class PyreClient {
 
   private watchInternalClient(databaseId: DatabaseId, generation: number, client: PyreInternalClient): void {
     this.markKnownDatabase(databaseId);
+    this.internalDevtoolsUnsubscribers.get(databaseId)?.();
+    const unsubscribeDevtools = client.onDevtoolsEvent((event) => {
+      if (this.clientGenerations.get(databaseId) !== generation) {
+        return;
+      }
+
+      this.emitDevtoolsEvent(internalDevtoolsEventType(event), {
+        databaseId,
+        event,
+      });
+    });
+    this.internalDevtoolsUnsubscribers.set(databaseId, unsubscribeDevtools);
+
     client.onSyncState((state) => {
       if (this.clientGenerations.get(databaseId) !== generation) {
         return;
@@ -1762,6 +1798,8 @@ export class PyreClient {
     const clientPromise = this.clients.get(databaseId);
     this.clients.delete(databaseId);
     this.latestSyncStates.delete(databaseId);
+    this.internalDevtoolsUnsubscribers.get(databaseId)?.();
+    this.internalDevtoolsUnsubscribers.delete(databaseId);
     this.emitSyncState();
     this.clientGenerations.set(databaseId, (this.clientGenerations.get(databaseId) ?? 0) + 1);
     if (!clientPromise) {
@@ -2091,6 +2129,7 @@ function parseElmBridgeIncomingMessage(message: unknown): ElmBridgeIncomingMessa
       mutationId: asNonEmptyString(raw.mutationId, 'mutate message mutationId'),
       mutationName: typeof raw.mutationName === 'string' && raw.mutationName.trim() !== '' ? raw.mutationName : undefined,
       mutationInput: raw.mutationInput,
+      optimistic: raw.optimistic,
     };
   }
 
@@ -2124,6 +2163,41 @@ function parseElmBridgeIncomingMessage(message: unknown): ElmBridgeIncomingMessa
     querySource: raw.querySource,
     queryInput: raw.queryInput,
   };
+}
+
+function debugOutEventName(message: unknown): string | null {
+  if (!message || typeof message !== 'object' || Array.isArray(message)) {
+    return null;
+  }
+
+  const event = (message as { event?: unknown }).event;
+  return typeof event === 'string' && event.trim() !== ''
+    ? event.trim()
+    : null;
+}
+
+function internalDevtoolsEventType(event: PyreDevtoolsEvent): string {
+  if (event.type !== 'debug') {
+    return `internal.${event.type}`;
+  }
+
+  const args = (event.payload as { args?: unknown[] } | undefined)?.args;
+  const label = Array.isArray(args) && typeof args[0] === 'string'
+    ? args[0]
+    : 'debug';
+
+  return `internal.debug.${slugEventLabel(label)}`;
+}
+
+function slugEventLabel(label: string): string {
+  const withoutPrefix = label.replace(/^\[PyreClient\]\s*/, '');
+  const slug = withoutPrefix
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 80);
+
+  return slug || 'debug';
 }
 
 function asObject(value: unknown, label: string): Record<string, unknown> {

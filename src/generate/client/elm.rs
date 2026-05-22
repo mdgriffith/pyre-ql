@@ -1814,10 +1814,18 @@ fn to_query_file(
                 namespace, namespace
             ));
         }
+        let optimistic_field = if optimistic_update_metadata(query).is_some() {
+            "        , ( \"optimistic\", optimistic input )\n"
+        } else {
+            ""
+        };
         result.push_str(&format!(
-            "mutationRequest : {} -> RequestId -> Input -> Encode.Value\nmutationRequest databaseId requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"databaseId\", Db.Database.encode databaseId )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n        ]\n\n\n",
-            database_type
+            "mutationRequest : {} -> RequestId -> Input -> Encode.Value\nmutationRequest databaseId requestId input =\n    Encode.object\n        [ ( \"type\", Encode.string \"mutate\" )\n        , ( \"databaseId\", Db.Database.encode databaseId )\n        , ( \"requestId\", Encode.string requestId )\n        , ( \"mutationId\", Encode.string id )\n        , ( \"mutationName\", Encode.string name )\n        , ( \"mutationInput\", encode input )\n{}        ]\n\n\n",
+            database_type, optimistic_field
         ));
+        if let Some(optimistic) = to_optimistic_update_elm(query) {
+            result.push_str(&optimistic);
+        }
         result.push_str(
             "decodeMutationResult : Decode.Decoder MutationResult\ndecodeMutationResult =\n    Decode.map4\n        (\\requestId mutationId mutationName mutationResult ->\n            { requestId = requestId\n            , mutationId = mutationId\n            , mutationName = mutationName\n            , result = mutationResult\n            }\n        )\n        (Decode.field \"requestId\" Decode.string)\n        (Decode.field \"mutationId\" Decode.string)\n        (Decode.oneOf\n            [ Decode.field \"mutationName\" (Decode.nullable Decode.string)\n            , Decode.succeed Nothing\n            ]\n        )\n        (Decode.field \"result\" (decodeBridgeMutationResult decodeReturnData))\n\n\n",
         );
@@ -1852,6 +1860,9 @@ fn to_query_file(
         exposing_items.push("id".to_string());
         exposing_items.push("name".to_string());
         exposing_items.push("mutationRequest".to_string());
+        if optimistic_update_metadata(query).is_some() {
+            exposing_items.push("optimistic".to_string());
+        }
         exposing_items.push("decodeMutationResult".to_string());
         exposing_items.push("MutationResult".to_string());
     }
@@ -1879,6 +1890,91 @@ fn to_query_file(
     // Replace the placeholder or prepend the module declaration
     // Since we started with an empty result, we need to prepend
     format!("{}{}", module_decl, result)
+}
+
+struct OptimisticUpdateMetadata {
+    query_field: String,
+    where_field: String,
+    where_input: String,
+    set_fields: Vec<(String, String)>,
+}
+
+fn optimistic_update_metadata(query: &ast::Query) -> Option<OptimisticUpdateMetadata> {
+    if query.operation != ast::QueryOperation::Update {
+        return None;
+    }
+
+    let mut top_fields = query.fields.iter().filter_map(|field| match field {
+        ast::TopLevelQueryField::Field(query_field) => Some(query_field),
+        _ => None,
+    });
+
+    let query_field = top_fields.next()?;
+    if top_fields.next().is_some() {
+        return None;
+    }
+
+    let wheres = ast::collect_wheres(&query_field.fields);
+    let where_ = match wheres.as_slice() {
+        [ast::WhereArg::Column(
+            false,
+            field,
+            ast::Operator::Equal,
+            ast::QueryValue::Variable((_, variable)),
+            _,
+        )] => {
+            if variable.session_field.is_some() {
+                return None;
+            }
+            (field.clone(), variable.name.clone())
+        }
+        _ => return None,
+    };
+
+    let set_fields: Vec<(String, String)> = ast::collect_query_fields(&query_field.fields)
+        .into_iter()
+        .filter_map(|field| match &field.set {
+            Some(ast::QueryValue::Variable((_, variable))) if variable.session_field.is_none() => {
+                Some((field.name.clone(), variable.name.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+
+    if set_fields.is_empty() {
+        return None;
+    }
+
+    Some(OptimisticUpdateMetadata {
+        query_field: query_field.name.clone(),
+        where_field: where_.0,
+        where_input: where_.1,
+        set_fields,
+    })
+}
+
+fn to_optimistic_update_elm(query: &ast::Query) -> Option<String> {
+    let metadata = optimistic_update_metadata(query)?;
+    let set_fields = metadata
+        .set_fields
+        .iter()
+        .map(|(field, input)| {
+            format!(
+                "Encode.object [ ( \"field\", Encode.string {} ), ( \"input\", Encode.string {} ) ]",
+                string::quote(field),
+                string::quote(input)
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n                , ");
+
+    Some(format!(
+        "optimistic : Input -> Encode.Value\noptimistic _ =\n    Encode.object\n        [ ( \"queryField\", Encode.string {} )\n        , ( \"where\"\n          , Encode.object\n                [ ( \"field\", Encode.string {} )\n                , ( \"input\", Encode.string {} )\n                ]\n          )\n        , ( \"set\"\n          , Encode.list identity\n                [ {}\n                ]\n          )\n        ]\n\n\n",
+        string::quote(&metadata.query_field),
+        string::quote(&metadata.where_field),
+        string::quote(&metadata.where_input),
+        set_fields
+    ))
 }
 
 /// Generate an empty ReturnData constructor with the right number of empty lists

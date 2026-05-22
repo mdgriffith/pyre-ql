@@ -72,6 +72,9 @@ export interface ElmPorts {
   syncStateOut?: {
     subscribe: (callback: (message: unknown) => void) => void;
   };
+  debugOut?: {
+    subscribe: (callback: (message: unknown) => void) => void;
+  };
   receiveIndexedDbMessage?: {
     send: (message: unknown) => void;
   };
