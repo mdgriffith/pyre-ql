@@ -49,31 +49,44 @@ mock.module("./query", () => ({
     _args: unknown,
     _executingSession: unknown,
     connectedSessions: Map<string, { session: Record<string, unknown> }>,
-    syncDeltas: (affectedRowGroups: unknown[], connectedSessions: Map<string, { session: Record<string, unknown> }>, sendToSession: (sessionId: string, message: unknown) => void) => Promise<void>,
-  ) => ({
-    kind: "success",
-    response: {},
-    sync: async (sendToSession: (sessionId: string, message: unknown) => void) => {
-      await syncDeltas(
-        [
-          {
-            table_name: "maps",
-            headers: [
-              "id",
-              "name",
-              "tiling",
-              "tiling__tileRootKey",
-              "tiling__tileWidth",
-              "tiling__format",
-            ],
-            rows: [[1, "World", "Tiling", "tiles/root", 256, "Png"]],
-          },
-        ],
-        connectedSessions,
-        sendToSession,
-      );
-    },
-  }),
+    syncDeltas: (affectedRowGroups: unknown[], connectedSessions: Map<string, { session: Record<string, unknown> }>, sendToSession: (sessionId: string, message: unknown) => void) => Promise<{ serverRevision?: number; originMessage?: unknown } | void>,
+    originSessionId?: string,
+  ) => {
+    const queryResult: { kind: "success"; response: unknown; sync: (sendToSession: (sessionId: string, message: unknown) => void) => Promise<unknown> } = {
+      kind: "success",
+      response: {},
+      sync: async (sendToSession: (sessionId: string, message: unknown) => void) => {
+        const syncResult = await syncDeltas(
+          [
+            {
+              table_name: "maps",
+              headers: [
+                "id",
+                "name",
+                "tiling",
+                "tiling__tileRootKey",
+                "tiling__tileWidth",
+                "tiling__format",
+              ],
+              rows: [[1, "World", "Tiling", "tiles/root", 256, "Png"]],
+            },
+          ],
+          connectedSessions,
+          sendToSession,
+          originSessionId,
+        );
+        if (syncResult && typeof syncResult.serverRevision === "number") {
+          queryResult.response = {
+            serverRevision: syncResult.serverRevision,
+            ...(syncResult.originMessage === undefined ? {} : { sync: syncResult.originMessage }),
+            result: queryResult.response,
+          };
+        }
+        return syncResult;
+      },
+    };
+    return queryResult;
+  },
 }));
 
 const { runWithSync } = await import("./query-sync");
@@ -85,6 +98,32 @@ beforeEach(() => {
   sessionIds = ["s1"];
   reshapedRows = [[1, "World", { type: "Tiling", tileRootKey: "tiles/root", tileWidth: 256, format: { type: "Png" } }]];
 });
+
+function withoutServerRevision(message: unknown): unknown {
+  if (typeof message !== "object" || message === null || !("serverRevision" in message)) {
+    return message;
+  }
+
+  const { serverRevision: _serverRevision, ...rest } = message as Record<string, unknown>;
+  return rest;
+}
+
+function syncDb() {
+  let revision = 0;
+  const executedSql: string[] = [];
+  return {
+    execute: mock(async (sql: string) => {
+      executedSql.push(sql);
+      if (sql.includes("returning value")) {
+        revision += 1;
+        return { rows: [{ value: revision }] };
+      }
+
+      return { rows: [] };
+    }),
+    executedSql,
+  };
+}
 
 const schemaDb = {
   execute: mock(async (sql: string) => {
@@ -100,7 +139,7 @@ test("runWithSync sends reshaped sync deltas", async () => {
   await loadSchemaFromDatabase(schemaDb as any);
 
   const result = await runWithSync(
-    {} as any,
+    syncDb() as any,
     {} as any,
     "query-id",
     {},
@@ -111,11 +150,12 @@ test("runWithSync sends reshaped sync deltas", async () => {
   expect(result.kind).toBe("success");
 
   const sent: Array<{ sessionId: string; message: unknown }> = [];
-  await result.sync((sessionId, message) => {
+  const syncResult = await result.sync((sessionId, message) => {
     sent.push({ sessionId, message });
   });
 
-  expect(sent).toEqual([
+  expect(syncResult.serverRevision).toBe(1);
+  expect(sent.map((entry) => ({ ...entry, message: withoutServerRevision(entry.message) }))).toEqual([
     {
       sessionId: "s1",
       message: {
@@ -137,7 +177,7 @@ test("runWithSync stamps sync deltas with databaseId", async () => {
   await loadSchemaFromDatabase("campaign:123", schemaDb as any);
 
   const result = await runWithSync(
-    {} as any,
+    syncDb() as any,
     {} as any,
     "query-id",
     {},
@@ -152,6 +192,98 @@ test("runWithSync stamps sync deltas with databaseId", async () => {
   });
 
   expect(sent[0].message.databaseId).toBe("campaign:123");
+  expect(typeof sent[0].message.serverRevision).toBe("number");
+});
+
+test("runWithSync allocates live sync revisions from _pyre_sync", async () => {
+  await loadSchemaFromDatabase(schemaDb as any);
+  const db = syncDb();
+
+  const result = await runWithSync(
+    db as any,
+    {} as any,
+    "query-id",
+    {},
+    {},
+    new Map([["s1", { session: {} }]]),
+  );
+
+  await result.sync(() => {});
+
+  expect(db.executedSql).toEqual([
+    expect.stringContaining("update _pyre_sync"),
+  ]);
+});
+
+test("runWithSync allocates a revision even with no live recipients", async () => {
+  sessionIds = [];
+  await loadSchemaFromDatabase(schemaDb as any);
+
+  const result = await runWithSync(
+    syncDb() as any,
+    {} as any,
+    "query-id",
+    {},
+    {},
+    new Map(),
+  );
+
+  const sent: Array<{ sessionId: string; message: unknown }> = [];
+  const syncResult = await result.sync((sessionId, message) => {
+    sent.push({ sessionId, message });
+  });
+
+  expect(sent).toHaveLength(0);
+  expect(syncResult.serverRevision).toBe(1);
+});
+
+test("runWithSync skips the origin session when provided", async () => {
+  sessionIds = ["s1", "s2"];
+  await loadSchemaFromDatabase(schemaDb as any);
+
+  const result = await runWithSync(
+    syncDb() as any,
+    {} as any,
+    "query-id",
+    {},
+    {},
+    new Map(sessionIds.map((sessionId) => [sessionId, { session: {} }])),
+    undefined,
+    "s1",
+  );
+
+  const sent: Array<{ sessionId: string; message: unknown }> = [];
+  await result.sync((sessionId, message) => {
+    sent.push({ sessionId, message });
+  });
+
+  expect(sent.map((entry) => entry.sessionId)).toEqual(["s2"]);
+});
+
+test("runWithSync includes origin authoritative sync in mutation response envelope", async () => {
+  sessionIds = ["s1", "s2"];
+  await loadSchemaFromDatabase(schemaDb as any);
+
+  const result = await runWithSync(
+    syncDb() as any,
+    {} as any,
+    "query-id",
+    {},
+    {},
+    new Map(sessionIds.map((sessionId) => [sessionId, { session: {} }])),
+    "campaign:123",
+    "s1",
+  );
+
+  const sent: Array<{ sessionId: string; message: any }> = [];
+  await result.sync((sessionId, message) => {
+    sent.push({ sessionId, message });
+  });
+
+  expect(sent.map((entry) => entry.sessionId)).toEqual(["s2"]);
+  expect((result.response as any).serverRevision).toBe(1);
+  expect((result.response as any).sync).toEqual(sent[0].message);
+  expect((result.response as any).sync.databaseId).toBe("campaign:123");
 });
 
 test("runWithSync sends syncRequired when delta row count exceeds cap", async () => {
@@ -159,7 +291,7 @@ test("runWithSync sends syncRequired when delta row count exceeds cap", async ()
   await loadSchemaFromDatabase(schemaDb as any);
 
   const result = await runWithSync(
-    {} as any,
+    syncDb() as any,
     {} as any,
     "query-id",
     {},
@@ -172,7 +304,10 @@ test("runWithSync sends syncRequired when delta row count exceeds cap", async ()
     sent.push({ sessionId, message });
   });
 
-  expect(sent).toEqual([{ sessionId: "s1", message: { type: "syncRequired" } }]);
+  expect(sent).toHaveLength(1);
+  expect(sent[0].sessionId).toBe("s1");
+  expect(sent[0].message.type).toBe("syncRequired");
+  expect(typeof sent[0].message.serverRevision).toBe("number");
 });
 
 test("runWithSync sends syncRequired when fanout recipient count exceeds cap", async () => {
@@ -180,7 +315,7 @@ test("runWithSync sends syncRequired when fanout recipient count exceeds cap", a
   await loadSchemaFromDatabase(schemaDb as any);
 
   const result = await runWithSync(
-    {} as any,
+    syncDb() as any,
     {} as any,
     "query-id",
     {},
@@ -202,7 +337,7 @@ test("runWithSync sends syncRequired when payload bytes exceed cap", async () =>
   await loadSchemaFromDatabase(schemaDb as any);
 
   const result = await runWithSync(
-    {} as any,
+    syncDb() as any,
     {} as any,
     "query-id",
     {},
@@ -216,5 +351,9 @@ test("runWithSync sends syncRequired when payload bytes exceed cap", async () =>
     sent.push({ sessionId, message });
   });
 
-  expect(sent).toEqual([{ sessionId: "s1", message: { type: "syncRequired", databaseId: "campaign:123" } }]);
+  expect(sent).toHaveLength(1);
+  expect(sent[0].sessionId).toBe("s1");
+  expect(sent[0].message.type).toBe("syncRequired");
+  expect(sent[0].message.databaseId).toBe("campaign:123");
+  expect(typeof sent[0].message.serverRevision).toBe("number");
 });

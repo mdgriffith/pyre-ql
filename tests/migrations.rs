@@ -53,18 +53,7 @@ impl MigrationDatabase {
 
         match introspection.migration_state {
             introspect::MigrationState::NoMigrationTable => {
-                migration_sql.insert(
-                    0,
-                    pyre::generate::sql::to_sql::SqlAndParams::Sql(
-                        pyre::db::migrate::CREATE_MIGRATION_TABLE.to_string(),
-                    ),
-                );
-                migration_sql.insert(
-                    1,
-                    pyre::generate::sql::to_sql::SqlAndParams::Sql(
-                        pyre::db::migrate::CREATE_SCHEMA_TABLE.to_string(),
-                    ),
-                );
+                migration_sql.splice(0..0, pyre::db::migrate::internal_setup_sql());
             }
             introspect::MigrationState::MigrationTable { .. } => {}
         }
@@ -178,6 +167,39 @@ async fn create_migration_diff(
     let db_diff = diff::diff(&new_context, &new_schema, &introspection);
 
     Ok(db_diff)
+}
+
+#[tokio::test]
+async fn migration_creates_single_pyre_sync_revision_row() -> Result<(), TestError> {
+    let db = MigrationDatabase::new(
+        r#"record Note {
+    id Int @id
+    body String
+    @public
+}"#,
+    )
+    .await?;
+    let conn = db.db.connect().map_err(TestError::Database)?;
+    let mut rows = conn
+        .query("select key, value, count(*) over () from _pyre_sync", ())
+        .await
+        .map_err(TestError::Database)?;
+
+    let row = rows
+        .next()
+        .await
+        .map_err(TestError::Database)?
+        .ok_or_else(|| TestError::TypecheckError("_pyre_sync should have one row".to_string()))?;
+
+    let key: String = row.get(0).map_err(TestError::Database)?;
+    let value: i64 = row.get(1).map_err(TestError::Database)?;
+    let count: i64 = row.get(2).map_err(TestError::Database)?;
+
+    assert_eq!(key, "server_revision");
+    assert_eq!(value, 0);
+    assert_eq!(count, 1);
+
+    Ok(())
 }
 
 #[tokio::test]

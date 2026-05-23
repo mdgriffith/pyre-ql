@@ -354,6 +354,7 @@ class SingleDatabasePyreClient {
   private lastSyncProgress: SyncProgress | null = null;
   private pendingLiveState: SyncState | null = null;
   private pendingLiveQueries: Set<string> = new Set();
+  private lastAppliedServerRevision: number | null = null;
   private queryManager: QueryManagerService;
   private queryClient: QueryClientService;
   private entityStream: EntityStreamService;
@@ -519,6 +520,7 @@ class SingleDatabasePyreClient {
 
   async init(): Promise<void> {
     await this.storage.init();
+    this.lastAppliedServerRevision = await this.storage.getServerRevision();
   }
 
   startSync(): void {
@@ -735,6 +737,7 @@ class SingleDatabasePyreClient {
     this.emitDevtoolsEvent(`sync:${message.type}`, message);
 
     if (message.type === 'delta' && this.shouldAcceptLiveDelta(message)) {
+      this.noteAppliedServerRevision(message.serverRevision);
       this.entityStream.handleTableDelta(
         message.data as ServerTableGroup[],
         this.lastSyncState.status === 'live' ? 'live' : 'catchup',
@@ -787,6 +790,10 @@ class SingleDatabasePyreClient {
       return false;
     }
 
+    if (this.isStaleServerRevision(message.serverRevision)) {
+      return false;
+    }
+
     if (!this.databaseId) {
       return true;
     }
@@ -795,11 +802,32 @@ class SingleDatabasePyreClient {
   }
 
   private shouldAcceptLiveControlMessage(message: LiveSyncMessage): boolean {
+    if (this.isStaleServerRevision(message.serverRevision)) {
+      return false;
+    }
+
     if (!this.databaseId) {
       return true;
     }
 
     return message.databaseId === this.databaseId;
+  }
+
+  private isStaleServerRevision(serverRevision: number | undefined): boolean {
+    return typeof serverRevision === 'number'
+      && this.lastAppliedServerRevision !== null
+      && serverRevision <= this.lastAppliedServerRevision;
+  }
+
+  private noteAppliedServerRevision(serverRevision: number | undefined): void {
+    if (typeof serverRevision !== 'number') {
+      return;
+    }
+
+    this.lastAppliedServerRevision = Math.max(this.lastAppliedServerRevision ?? 0, serverRevision);
+    void this.storage.putServerRevision(this.lastAppliedServerRevision).catch((error) => {
+      console.error('[PyreClient] Failed to persist server revision:', error);
+    });
   }
 
   private handleRawSyncState(state: SyncState): void {
@@ -1111,7 +1139,10 @@ class SingleDatabasePyreClient {
     const optimistic = typeof queryModule.optimistic === 'function'
       ? queryModule.optimistic(payload as Input)
       : queryModule.optimistic;
-    const baseUrl = resolveEndpointUrl(this.server.baseUrl, this.endpoints.query, { databaseId });
+    const baseUrl = resolveEndpointUrl(this.server.baseUrl, this.endpoints.query, {
+      databaseId,
+      ...(this.connectionId ? { connectionId: this.connectionId } : {}),
+    });
     this.emitDevtoolsEvent('mutation:request', { requestId, mutationId, databaseId, input: payload, optimistic });
     void (async () => {
       this.queryManager.sendMutation(
@@ -1121,8 +1152,10 @@ class SingleDatabasePyreClient {
         payload,
         optimistic,
         (result) => {
+          this.noteAppliedServerRevision(extractServerRevision(result));
+          const appResult = unwrapMutationResultEnvelope(result);
           this.emitDevtoolsEvent('mutation:result', { requestId, mutationId, result });
-          callback(result);
+          callback(appResult);
         },
         await resolveServerHeaders(this.server),
         getServerCredentials(this.server),
@@ -1137,6 +1170,7 @@ class SingleDatabasePyreClient {
   ): void {
     const baseUrl = resolveEndpointUrl(this.server.baseUrl, this.endpoints.query, {
       databaseId: message.databaseId,
+      ...(this.connectionId ? { connectionId: this.connectionId } : {}),
     });
     this.emitDevtoolsEvent('mutation:request', {
       requestId: message.requestId,
@@ -1154,18 +1188,20 @@ class SingleDatabasePyreClient {
         message.mutationInput ?? {},
         message.optimistic,
         (result) => {
+          this.noteAppliedServerRevision(extractServerRevision(result));
+          const appResult = unwrapMutationResultEnvelope(result);
           this.emitDevtoolsEvent('mutation:result', {
             requestId: message.requestId,
             mutationId: message.mutationId,
             mutationName: message.mutationName,
-            result,
+            result: appResult,
           });
           mutationResultPort?.send?.({
             type: 'mutation-result',
             requestId: message.requestId,
             mutationId: message.mutationId,
             mutationName: message.mutationName ?? null,
-            result,
+            result: appResult as MutationResult,
           } satisfies ElmBridgeMutationResultMessage);
         },
         await resolveServerHeaders(this.server),
@@ -2001,6 +2037,27 @@ function serverHeadersToPairs(headers: Record<string, string>): Array<[string, s
 
 function hasServerHeaders(server: ServerConfig): boolean {
   return Boolean(server.headers);
+}
+
+function extractServerRevision(result: unknown): number | undefined {
+  if (!result || typeof result !== 'object') {
+    return undefined;
+  }
+
+  const serverRevision = (result as { serverRevision?: unknown }).serverRevision;
+  return typeof serverRevision === 'number' ? serverRevision : undefined;
+}
+
+function unwrapMutationResultEnvelope(result: unknown): unknown {
+  if (!result || typeof result !== 'object') {
+    return result;
+  }
+
+  if (!('serverRevision' in result) || !('result' in result)) {
+    return result;
+  }
+
+  return (result as { result?: unknown }).result;
 }
 
 function parseSyncStateMessage(message: unknown): SyncState | null {

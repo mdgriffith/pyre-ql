@@ -51,7 +51,23 @@ type alias Model =
     , liveSyncStarted : Bool
     , liveSyncTransport : LiveSync.Transport
     , syncRequested : Bool
-    , inFlightOptimistic : Dict String Data.Delta.Delta
+    , inFlightOptimistic : Dict String OptimisticInFlight
+    , optimisticOrder : List String
+    , lastAppliedServerRevision : Maybe Int
+    }
+
+
+type alias OptimisticInFlight =
+    { forward : Data.Delta.Delta
+    , inverse : Data.Delta.Delta
+    , acknowledgedServerRevision : Maybe Int
+    }
+
+
+type alias MutationSyncMessage =
+    { serverRevision : Maybe Int
+    , delta : Maybe Data.Delta.Delta
+    , requiresCatchup : Bool
     }
 
 
@@ -92,6 +108,8 @@ init flags =
       , liveSyncTransport = flags.liveSync.transport
       , syncRequested = flags.sync.autoStart
       , inFlightOptimistic = Dict.empty
+      , optimisticOrder = []
+      , lastAppliedServerRevision = Nothing
       }
     , Cmd.batch
         [ if flags.sync.autoStart then
@@ -173,9 +191,7 @@ update msg model =
         MutationRequest requestId mutationId _ _ result ->
             case result of
                 Ok response ->
-                    ( { model | inFlightOptimistic = Dict.remove requestId model.inFlightOptimistic }
-                    , QueryManager.mutationResult requestId mutationId (Ok response)
-                    )
+                    settleSuccessfulMutation requestId mutationId response model
 
                 Err error ->
                     rollbackOptimisticMutation requestId mutationId (httpErrorToString error) model
@@ -219,7 +235,10 @@ handleIndexedDbIncoming incoming model =
                     reExecuteAllQueries model.schema model.db model.queryManager
 
                 baseModel =
-                    { model | queryManager = updatedQueryManager }
+                    { model
+                        | queryManager = updatedQueryManager
+                        , lastAppliedServerRevision = initialData.lastAppliedServerRevision
+                    }
 
                 ( catchupModel, catchupCmd ) =
                     applyCatchupUpdate (Catchup.update (Catchup.InitialDataLoaded initialData.cursor) model.catchup model.db) baseModel
@@ -232,7 +251,7 @@ handleIndexedDbIncoming incoming model =
 handleLiveSyncIncoming : LiveSync.Incoming -> Model -> ( Model, Cmd Msg )
 handleLiveSyncIncoming incoming model =
     case incoming of
-        LiveSync.DeltaReceived messageDatabaseId delta ->
+        LiveSync.DeltaReceived messageDatabaseId serverRevision delta ->
             case validateLiveSyncDatabaseId model messageDatabaseId "delta" of
                 Just message ->
                     ( { model | syncError = Just message }
@@ -243,21 +262,28 @@ handleLiveSyncIncoming incoming model =
                     )
 
                 Nothing ->
-                    -- Update database with delta
-                    let
-                        ( updatedDb, dbCmd ) =
-                            Db.update (Db.DeltaReceived delta) model.db
+                    if isStaleServerRevision serverRevision model.lastAppliedServerRevision then
+                        ( model, Cmd.none )
 
-                        -- Notify query manager with fine-grained reactivity
-                        ( updatedQueryManager, triggerCmds ) =
-                            QueryManager.notifyTablesChanged model.schema updatedDb model.queryManager delta
-                    in
-                    ( { model | db = updatedDb, queryManager = updatedQueryManager }
-                    , Cmd.batch
-                        [ Cmd.map DbMsg dbCmd
-                        , Cmd.batch triggerCmds
-                        ]
-                    )
+                    else
+                        let
+                            ( updatedDb, dbCmds ) =
+                                applyAuthoritativeDelta delta model
+
+                            ( updatedQueryManager, triggerCmds ) =
+                                QueryManager.notifyTablesChanged model.schema updatedDb model.queryManager delta
+                        in
+                        ( { model
+                            | db = updatedDb
+                            , queryManager = updatedQueryManager
+                            , lastAppliedServerRevision = updateLastAppliedServerRevision serverRevision model.lastAppliedServerRevision
+                          }
+                        , Cmd.batch
+                            [ Cmd.batch (List.map (Cmd.map DbMsg) dbCmds)
+                            , Cmd.batch triggerCmds
+                            , writeServerRevisionCmd serverRevision
+                            ]
+                        )
 
         LiveSync.LiveSyncConnected messageDatabaseId _ ->
             case validateLiveSyncDatabaseId model messageDatabaseId "connected" of
@@ -313,7 +339,7 @@ handleLiveSyncIncoming incoming model =
                     , emitSyncState (toSyncState updatedModel)
                     )
 
-        LiveSync.SyncRequiredReceived messageDatabaseId ->
+        LiveSync.SyncRequiredReceived messageDatabaseId serverRevision ->
             case validateLiveSyncDatabaseId model messageDatabaseId "syncRequired" of
                 Just message ->
                     ( { model | syncError = Just message }
@@ -321,7 +347,11 @@ handleLiveSyncIncoming incoming model =
                     )
 
                 Nothing ->
-                    applyCatchupUpdate (Catchup.update Catchup.CatchupRequired model.catchup model.db) model
+                    if isStaleServerRevision serverRevision model.lastAppliedServerRevision then
+                        ( model, Cmd.none )
+
+                    else
+                        applyCatchupUpdate (Catchup.update Catchup.CatchupRequired model.catchup model.db) model
 
 
 validateLiveSyncDatabaseId : Model -> Maybe String -> String -> Maybe String
@@ -597,7 +627,8 @@ applyOptimisticMutation requestId maybeOptimistic input model =
                                 ( { model
                                     | db = updatedDb
                                     , queryManager = updatedQueryManager
-                                    , inFlightOptimistic = Dict.insert requestId inverse model.inFlightOptimistic
+                                    , inFlightOptimistic = Dict.insert requestId { forward = forward, inverse = inverse, acknowledgedServerRevision = Nothing } model.inFlightOptimistic
+                                    , optimisticOrder = appendUnique requestId model.optimisticOrder
                                   }
                                 , Cmd.map DbMsg dbCmd :: triggerCmds
                                 )
@@ -607,22 +638,24 @@ rollbackOptimisticMutation : String -> String -> String -> Model -> ( Model, Cmd
 rollbackOptimisticMutation requestId mutationId error model =
     case Dict.get requestId model.inFlightOptimistic of
         Nothing ->
-            ( { model | inFlightOptimistic = Dict.remove requestId model.inFlightOptimistic }
+            ( removeOptimisticMutation requestId model
             , QueryManager.mutationResult requestId mutationId (Err error)
             )
 
-        Just inverse ->
+        Just optimistic ->
             let
                 ( updatedDb, dbCmd ) =
-                    Db.update (Db.LocalDeltaReceived inverse) model.db
+                    Db.update (Db.LocalDeltaReceived optimistic.inverse) model.db
 
                 ( updatedQueryManager, triggerCmds ) =
-                    QueryManager.notifyTablesChanged model.schema updatedDb model.queryManager inverse
+                    QueryManager.notifyTablesChanged model.schema updatedDb model.queryManager optimistic.inverse
+
+                cleanedModel =
+                    removeOptimisticMutation requestId model
             in
-            ( { model
+            ( { cleanedModel
                 | db = updatedDb
                 , queryManager = updatedQueryManager
-                , inFlightOptimistic = Dict.remove requestId model.inFlightOptimistic
               }
             , Cmd.batch
                 (QueryManager.mutationResult requestId mutationId (Err error)
@@ -630,6 +663,281 @@ rollbackOptimisticMutation requestId mutationId error model =
                     :: triggerCmds
                 )
             )
+
+
+settleSuccessfulMutation : String -> String -> Encode.Value -> Model -> ( Model, Cmd Msg )
+settleSuccessfulMutation requestId mutationId response model =
+    let
+        serverRevision =
+            extractServerRevision response
+
+        maybeSyncMessage =
+            extractMutationSyncMessage response
+    in
+    if Dict.member requestId model.inFlightOptimistic && missingAuthoritativeMutationEnvelope serverRevision maybeSyncMessage then
+        rollbackOptimisticMutation requestId mutationId "Optimistic mutation response missing authoritative sync envelope" model
+
+    else
+        settleSuccessfulMutationWithEnvelope requestId mutationId response serverRevision maybeSyncMessage model
+
+
+missingAuthoritativeMutationEnvelope : Maybe Int -> Maybe MutationSyncMessage -> Bool
+missingAuthoritativeMutationEnvelope serverRevision maybeSyncMessage =
+    case ( serverRevision, maybeSyncMessage ) of
+        ( Just _, Just _ ) ->
+            False
+
+        _ ->
+            True
+
+
+settleSuccessfulMutationWithEnvelope : String -> String -> Encode.Value -> Maybe Int -> Maybe MutationSyncMessage -> Model -> ( Model, Cmd Msg )
+settleSuccessfulMutationWithEnvelope requestId mutationId response serverRevision maybeSyncMessage model =
+    let
+        shouldApplyAuthoritative =
+            not (isStaleServerRevision serverRevision model.lastAppliedServerRevision)
+
+        ( authoritativeModel, authoritativeDbCmds, authoritativeQueryCmds ) =
+            case maybeSyncMessage of
+                Just syncMessage ->
+                    case syncMessage.delta of
+                        Just delta ->
+                            if shouldApplyAuthoritative then
+                                let
+                                    ( updatedDb, dbCmds ) =
+                                        applyAuthoritativeDelta delta model
+
+                                    ( updatedQueryManager, triggerCmds ) =
+                                        QueryManager.notifyTablesChanged model.schema updatedDb model.queryManager delta
+                                in
+                                ( { model | db = updatedDb, queryManager = updatedQueryManager }, dbCmds, triggerCmds )
+
+                            else
+                                ( model, [], [] )
+
+                        Nothing ->
+                            ( model, [], [] )
+
+                Nothing ->
+                    ( model, [], [] )
+
+        updatedModel =
+            case serverRevision of
+                Nothing ->
+                    removeOptimisticMutation requestId authoritativeModel
+
+                Just revision ->
+                    authoritativeModel
+                        |> acknowledgeOptimisticMutation requestId revision
+                        |> updateModelLastAppliedServerRevision serverRevision
+                        |> pruneAcknowledgedOptimisticPrefix
+
+        ( finalModel, catchupCmd ) =
+            case maybeSyncMessage of
+                Just syncMessage ->
+                    if syncMessage.requiresCatchup && shouldApplyAuthoritative then
+                        applyCatchupUpdate (Catchup.update Catchup.CatchupRequired updatedModel.catchup updatedModel.db) updatedModel
+
+                    else
+                        ( updatedModel, Cmd.none )
+
+                Nothing ->
+                    ( updatedModel, Cmd.none )
+    in
+    ( finalModel
+    , Cmd.batch
+        [ QueryManager.mutationResult requestId mutationId (Ok response)
+        , writeServerRevisionCmd serverRevision
+        , Cmd.batch (List.map (Cmd.map DbMsg) authoritativeDbCmds)
+        , Cmd.batch authoritativeQueryCmds
+        , catchupCmd
+        ]
+    )
+
+
+acknowledgeOptimisticMutation : String -> Int -> Model -> Model
+acknowledgeOptimisticMutation requestId serverRevision model =
+    { model
+        | inFlightOptimistic =
+            Dict.update requestId
+                (Maybe.map (\optimistic -> { optimistic | acknowledgedServerRevision = Just serverRevision }))
+                model.inFlightOptimistic
+    }
+
+
+updateModelLastAppliedServerRevision : Maybe Int -> Model -> Model
+updateModelLastAppliedServerRevision serverRevision model =
+    { model | lastAppliedServerRevision = updateLastAppliedServerRevision serverRevision model.lastAppliedServerRevision }
+
+
+pruneAcknowledgedOptimisticPrefix : Model -> Model
+pruneAcknowledgedOptimisticPrefix model =
+    case model.optimisticOrder of
+        [] ->
+            model
+
+        requestId :: rest ->
+            case Dict.get requestId model.inFlightOptimistic of
+                Just optimistic ->
+                    case optimistic.acknowledgedServerRevision of
+                        Just _ ->
+                            pruneAcknowledgedOptimisticPrefix
+                                { model
+                                    | inFlightOptimistic = Dict.remove requestId model.inFlightOptimistic
+                                    , optimisticOrder = rest
+                                }
+
+                        Nothing ->
+                            model
+
+                Nothing ->
+                    pruneAcknowledgedOptimisticPrefix { model | optimisticOrder = rest }
+
+
+applyAuthoritativeDelta : Data.Delta.Delta -> Model -> ( Db.Db, List (Cmd Db.Msg) )
+applyAuthoritativeDelta delta model =
+    let
+        ( authoritativeDb, authoritativeCmd ) =
+            Db.update (Db.DeltaReceived delta) model.db
+
+        ( replayedDb, replayCmds ) =
+            replayOptimisticMutations model authoritativeDb
+    in
+    ( replayedDb, authoritativeCmd :: replayCmds )
+
+
+replayOptimisticMutations : Model -> Db.Db -> ( Db.Db, List (Cmd Db.Msg) )
+replayOptimisticMutations model db =
+    model.optimisticOrder
+        |> List.foldl
+            (\requestId ( currentDb, cmds ) ->
+                case Dict.get requestId model.inFlightOptimistic of
+                    Nothing ->
+                        ( currentDb, cmds )
+
+                    Just optimistic ->
+                        let
+                            ( nextDb, cmd ) =
+                                Db.update (Db.LocalDeltaReceived optimistic.forward) currentDb
+                        in
+                        ( nextDb, cmd :: cmds )
+            )
+            ( db, [] )
+        |> Tuple.mapSecond List.reverse
+
+
+removeOptimisticMutation : String -> Model -> Model
+removeOptimisticMutation requestId model =
+    { model
+        | inFlightOptimistic = Dict.remove requestId model.inFlightOptimistic
+        , optimisticOrder = List.filter ((/=) requestId) model.optimisticOrder
+    }
+
+
+isStaleServerRevision : Maybe Int -> Maybe Int -> Bool
+isStaleServerRevision serverRevision lastAppliedServerRevision =
+    case ( serverRevision, lastAppliedServerRevision ) of
+        ( Just incomingRevision, Just appliedRevision ) ->
+            incomingRevision <= appliedRevision
+
+        _ ->
+            False
+
+
+updateLastAppliedServerRevision : Maybe Int -> Maybe Int -> Maybe Int
+updateLastAppliedServerRevision serverRevision lastAppliedServerRevision =
+    case serverRevision of
+        Nothing ->
+            lastAppliedServerRevision
+
+        Just incomingRevision ->
+            case lastAppliedServerRevision of
+                Nothing ->
+                    Just incomingRevision
+
+                Just appliedRevision ->
+                    Just (max incomingRevision appliedRevision)
+
+
+extractServerRevision : Encode.Value -> Maybe Int
+extractServerRevision value =
+    case Decode.decodeValue (Decode.field "serverRevision" Decode.int) value of
+        Ok revision ->
+            Just revision
+
+        Err _ ->
+            Nothing
+
+
+extractMutationSyncMessage : Encode.Value -> Maybe MutationSyncMessage
+extractMutationSyncMessage value =
+    case Decode.decodeValue (Decode.field "sync" decodeMutationSyncMessage) value of
+        Ok syncMessage ->
+            Just syncMessage
+
+        Err _ ->
+            Nothing
+
+
+decodeMutationSyncMessage : Decode.Decoder MutationSyncMessage
+decodeMutationSyncMessage =
+    Decode.field "type" Decode.string
+        |> Decode.andThen
+            (\type_ ->
+                case type_ of
+                    "delta" ->
+                        Decode.map2
+                            (\serverRevision delta ->
+                                { serverRevision = serverRevision
+                                , delta = Just delta
+                                , requiresCatchup = False
+                                }
+                            )
+                            (Decode.maybe (Decode.field "serverRevision" Decode.int))
+                            (Decode.field "data" Data.Delta.decodeDelta)
+
+                    "syncRequired" ->
+                        Decode.map
+                            (\serverRevision ->
+                                { serverRevision = serverRevision
+                                , delta = Nothing
+                                , requiresCatchup = True
+                                }
+                            )
+                            (Decode.maybe (Decode.field "serverRevision" Decode.int))
+
+                    "catchupRequired" ->
+                        Decode.map
+                            (\serverRevision ->
+                                { serverRevision = serverRevision
+                                , delta = Nothing
+                                , requiresCatchup = True
+                                }
+                            )
+                            (Decode.maybe (Decode.field "serverRevision" Decode.int))
+
+                    _ ->
+                        Decode.fail ("Unknown mutation sync message type: " ++ type_)
+            )
+
+
+writeServerRevisionCmd : Maybe Int -> Cmd msg
+writeServerRevisionCmd serverRevision =
+    case serverRevision of
+        Nothing ->
+            Cmd.none
+
+        Just revision ->
+            IndexedDb.writeServerRevision revision
+
+
+appendUnique : String -> List String -> List String
+appendUnique value values =
+    if List.member value values then
+        values
+
+    else
+        values ++ [ value ]
 
 
 applySetValues : List ( String, Data.Value.Value ) -> Dict String Data.Value.Value -> Dict String Data.Value.Value
@@ -692,12 +1000,21 @@ applyCatchupUpdate result model =
                 SyncState.Live ->
                     SyncState.markAllTablesLive model.tableSyncStatuses
 
+        ( replayedDb, replayDbCmds ) =
+            case result.delta of
+                Just _ ->
+                    replayOptimisticMutations model result.db
+
+                Nothing ->
+                    ( result.db, [] )
+
         updatedModel =
             { model
                 | catchup = result.model
-                , db = result.db
+                , db = replayedDb
                 , syncStatus = nextSyncStatus
                 , tableSyncStatuses = nextTableSyncStatuses
+                , lastAppliedServerRevision = updateLastAppliedServerRevision result.serverRevision model.lastAppliedServerRevision
                 , syncError =
                     case result.error of
                         Just message ->
@@ -717,7 +1034,7 @@ applyCatchupUpdate result model =
         ( updatedQueryManager, triggerCmds ) =
             case result.delta of
                 Just delta ->
-                    QueryManager.notifyTablesChanged model.schema result.db model.queryManager delta
+                    QueryManager.notifyTablesChanged model.schema replayedDb model.queryManager delta
 
                 Nothing ->
                     ( model.queryManager, [] )
@@ -732,6 +1049,7 @@ applyCatchupUpdate result model =
 
         dbCmds =
             result.dbCmds
+                ++ replayDbCmds
                 |> List.map (Cmd.map DbMsg)
 
         cmds =
@@ -739,6 +1057,7 @@ applyCatchupUpdate result model =
             , errorCmd
             , Cmd.batch triggerCmds
             , liveSyncCmd
+            , writeServerRevisionCmd result.serverRevision
             , emitSyncState (toSyncState liveSyncModel)
             , debugCmd "catchup-update"
                 [ ( "status", Encode.string (catchupStatusToString (Catchup.status result.model)) )
@@ -870,7 +1189,7 @@ liveSyncTransportToString transport =
 liveSyncIncomingToString : LiveSync.Incoming -> String
 liveSyncIncomingToString incoming =
     case incoming of
-        LiveSync.DeltaReceived _ _ ->
+        LiveSync.DeltaReceived _ _ _ ->
             "delta"
 
         LiveSync.SyncProgressReceived _ _ ->
@@ -885,7 +1204,7 @@ liveSyncIncomingToString incoming =
         LiveSync.SyncCompleteReceived _ ->
             "syncComplete"
 
-        LiveSync.SyncRequiredReceived _ ->
+        LiveSync.SyncRequiredReceived _ _ ->
             "syncRequired"
 
 

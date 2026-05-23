@@ -370,22 +370,20 @@ pub async fn migrate(
         ));
     }
 
-    // Create migration tables using centralized constants
-    // Format table names with quotes for safety
-    let migration_table_sql = pyre::db::migrate::CREATE_MIGRATION_TABLE.replace(
-        pyre::db::migrate::MIGRATION_TABLE,
-        &pyre::ext::string::quote(pyre::db::migrate::MIGRATION_TABLE),
-    );
-    let schema_table_sql = pyre::db::migrate::CREATE_SCHEMA_TABLE.replace(
-        pyre::db::migrate::SCHEMA_TABLE,
-        &pyre::ext::string::quote(pyre::db::migrate::SCHEMA_TABLE),
-    );
-    conn.execute_batch(&format!(
-        "{};\n\n{};",
-        migration_table_sql, schema_table_sql
-    ))
-    .await
-    .map_err(MigrationError::SqlError)?;
+    for statement in pyre::db::migrate::quoted_internal_setup_sql() {
+        match statement {
+            SqlAndParams::Sql(sql) => {
+                conn.execute_batch(&sql)
+                    .await
+                    .map_err(MigrationError::SqlError)?;
+            }
+            SqlAndParams::SqlWithParams { sql, args } => {
+                conn.execute(&sql, libsql::params_from_iter(args))
+                    .await
+                    .map_err(MigrationError::SqlError)?;
+            }
+        }
+    }
 
     let migration_state = introspect::get_migration_state(&conn)
         .await

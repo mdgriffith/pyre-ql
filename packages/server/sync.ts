@@ -67,6 +67,7 @@ export interface SyncCursor {
  */
 export interface SyncPageResult {
     databaseId?: DatabaseId;
+    serverRevision?: number;
     tables: Record<
         string,
         {
@@ -76,6 +77,21 @@ export interface SyncPageResult {
         }
     >;
     has_more: boolean;
+}
+
+async function currentServerRevision(db: Client): Promise<number | null> {
+    try {
+        const result = await db.execute("select value from _pyre_sync where key = 'server_revision'");
+        const value = result.rows[0]?.value;
+
+        if (typeof value === "number" || typeof value === "bigint") {
+            return Number(value);
+        }
+    } catch {
+        return null;
+    }
+
+    return null;
 }
 
 function tryParseNestedJsonContainer(value: unknown): unknown {
@@ -195,6 +211,10 @@ export async function catchup(
     };
 
     if (!Array.isArray(sqlResult.tables) || sqlResult.tables.length === 0) {
+        const serverRevision = await currentServerRevision(db);
+        if (serverRevision !== null) {
+            result.serverRevision = serverRevision;
+        }
         return result;
     }
 
@@ -284,6 +304,11 @@ export async function catchup(
         if (hasMoreForTable) {
             result.has_more = true;
         }
+    }
+
+    const serverRevision = await currentServerRevision(db);
+    if (serverRevision !== null) {
+        result.serverRevision = serverRevision;
     }
 
     return result;

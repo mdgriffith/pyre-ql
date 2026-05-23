@@ -5,6 +5,7 @@ port module Data.IndexedDb exposing
     , receiveIncoming
     , requestInitialData
     , writeDelta
+    , writeServerRevision
     , writeSyncCursor
     )
 
@@ -22,6 +23,7 @@ import Json.Encode as Encode
 type alias InitialData =
     { tables : Dict String (List (Dict String Value))
     , cursor : SyncCursor
+    , lastAppliedServerRevision : Maybe Int
     }
 
 
@@ -44,6 +46,7 @@ type Message
     = RequestInitialData
     | WriteDelta (List TableGroup)
     | WriteSyncCursor SyncCursor
+    | WriteServerRevision Int
 
 
 type Incoming
@@ -84,6 +87,12 @@ encodeMessage msg =
                 , ( "cursor", encodeSyncCursor cursor )
                 ]
 
+        WriteServerRevision serverRevision ->
+            Encode.object
+                [ ( "type", Encode.string "writeServerRevision" )
+                , ( "serverRevision", Encode.int serverRevision )
+                ]
+
 
 
 -- Decoders
@@ -106,9 +115,10 @@ decodeIncoming =
 
 decodeInitialData : Decode.Decoder InitialData
 decodeInitialData =
-    Decode.map2 InitialData
+    Decode.map3 InitialData
         (Decode.field "tables" (Decode.dict (Decode.list (Decode.dict Data.Value.decodeValue))))
         (Decode.field "cursor" decodeSyncCursor)
+        (Decode.maybe (Decode.field "lastAppliedServerRevision" Decode.int))
 
 
 decodeSyncCursor : Decode.Decoder SyncCursor
@@ -175,6 +185,11 @@ writeDelta tableGroups =
 writeSyncCursor : SyncCursor -> Cmd msg
 writeSyncCursor cursor =
     sendMessage (WriteSyncCursor cursor)
+
+
+writeServerRevision : Int -> Cmd msg
+writeServerRevision serverRevision =
+    sendMessage (WriteServerRevision serverRevision)
 
 
 receiveIncoming : (Result Decode.Error Incoming -> msg) -> Sub msg

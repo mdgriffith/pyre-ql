@@ -14,14 +14,19 @@ test('IndexedDbService restores persisted sync cursor with initial data', async 
   };
 
   const sentMessages: unknown[] = [];
+  let serverRevision: number | null = 7;
   let handleIndexedDbOut: ((message: unknown) => void | Promise<void>) | null = null;
 
   const storage = {
     init: async () => undefined,
     getAllTables: async () => ({ maps: [] }),
     getSyncCursor: async () => persistedCursor,
+    getServerRevision: async () => serverRevision,
     putSyncCursor: async (cursor: SyncCursor) => {
       Object.assign(persistedCursor, cursor);
+    },
+    putServerRevision: async (revision: number) => {
+      serverRevision = revision;
     },
     putRows: async () => undefined,
   };
@@ -63,6 +68,7 @@ test('IndexedDbService restores persisted sync cursor with initial data', async 
       data: {
         tables: { maps: [] },
         cursor: persistedCursor,
+        lastAppliedServerRevision: 7,
       },
     },
   ]);

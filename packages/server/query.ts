@@ -70,14 +70,20 @@ export interface QueryResult {
      * });
      * ```
      */
-    sync(sendToSession: (sessionId: string, message: any) => void): Promise<void>;
+    sync(sendToSession: (sessionId: string, message: any) => void): Promise<SyncResult>;
+}
+
+export interface SyncResult {
+    serverRevision?: number;
+    originMessage?: unknown;
 }
 
 export type SyncDeltasFn = (
     affectedRowGroups: any[],
     connectedSessions: Map<string, { session: Record<string, SessionValue>; [key: string]: any }>,
-    sendToSession: (sessionId: string, message: any) => void
-) => Promise<void>;
+    sendToSession: (sessionId: string, message: any) => void,
+    originSessionId?: string
+) => Promise<SyncResult | void>;
 
 function extractAffectedRowGroups(sql: SqlInfo[], resultSets: any[]): any[] {
     const groups: unknown[] = [];
@@ -153,7 +159,8 @@ export async function run(
     args: any,
     executingSession: Session,
     connectedSessions?: Map<string, { session: Record<string, SessionValue>;[key: string]: any }>,
-    syncDeltas?: SyncDeltasFn
+    syncDeltas?: SyncDeltasFn,
+    originSessionId?: string
 ): Promise<QueryResult> {
     // Look up query metadata
     const query = queryMap[queryId];
@@ -164,7 +171,7 @@ export async function run(
                 errorType: "UnknownQuery",
                 message: `Unknown query ID: ${queryId}`,
             },
-            async sync() { },
+            async sync() { return {}; },
         };
     }
 
@@ -177,7 +184,7 @@ export async function run(
                 errorType: "InvalidInput",
                 message: inputValidation.error || "Invalid input",
             },
-            async sync() { },
+            async sync() { return {}; },
         };
     }
 
@@ -190,7 +197,7 @@ export async function run(
                 errorType: "InvalidSession",
                 message: sessionValidation.error || "Invalid session",
             },
-            async sync() { },
+            async sync() { return {}; },
         };
     }
 
@@ -236,22 +243,33 @@ export async function run(
      * ]
      * ```
      */
-    async function sync(sendToSession: (sessionId: string, message: any) => void): Promise<void> {
+    async function sync(sendToSession: (sessionId: string, message: any) => void): Promise<SyncResult> {
         // Early return if nothing to sync
-        if (affectedRowGroups.length === 0 || !connectedSessions || connectedSessions.size === 0) {
-            return;
+        if (affectedRowGroups.length === 0) {
+            return {};
         }
 
         if (!syncDeltas) {
-            return;
+            return {};
         }
 
-        await syncDeltas(affectedRowGroups, connectedSessions, sendToSession);
+        const syncResult = await syncDeltas(affectedRowGroups, connectedSessions ?? new Map(), sendToSession, originSessionId) ?? {};
+        if (typeof syncResult.serverRevision === "number") {
+            queryResult.response = {
+                serverRevision: syncResult.serverRevision,
+                ...(syncResult.originMessage === undefined ? {} : { sync: syncResult.originMessage }),
+                result: queryResult.response,
+            };
+        }
+
+        return syncResult;
     }
 
-    return {
+    const queryResult: QueryResult = {
         kind: "success",
         response,
         sync,
     };
+
+    return queryResult;
 }

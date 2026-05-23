@@ -11,7 +11,7 @@ const schema = {
       indices: [],
     },
   },
-  queryFieldToTable: {},
+  queryFieldToTable: { maps: 'maps' },
 };
 
 function deltaMessage(databaseId?: string) {
@@ -209,5 +209,193 @@ test('Elm live syncRequired starts catchup from the current cursor', async () =>
     });
   } finally {
     restore();
+  }
+});
+
+test('Elm live syncRequired ignores stale server revisions', async () => {
+  const { app, requests, restore } = await startSyncedElmApp();
+
+  try {
+    app.ports.receiveSSEMessage.send({
+      ...deltaMessage('campaign:123'),
+      serverRevision: 7,
+    });
+    await Bun.sleep(0);
+
+    const requestCountAfterInitialCatchup = requests.length;
+
+    app.ports.receiveSSEMessage.send({
+      type: 'syncRequired',
+      databaseId: 'campaign:123',
+      serverRevision: 7,
+    });
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(requests).toHaveLength(requestCountAfterInitialCatchup);
+  } finally {
+    restore();
+  }
+});
+
+test('Elm mutation response sync preserves newer rapid optimistic state', async () => {
+  const previousXmlHttpRequest = globalThis.XMLHttpRequest;
+  const pendingMutations: Array<{ url: string; complete: (response: unknown) => void }> = [];
+
+  class MockXMLHttpRequest {
+    listeners: Record<string, Array<() => void>> = {};
+    status = 200;
+    statusText = 'OK';
+    responseURL = '';
+    responseType = '';
+    response = '';
+    timeout = 0;
+    withCredentials = false;
+
+    addEventListener(type: string, callback: () => void) {
+      this.listeners[type] = this.listeners[type] ?? [];
+      this.listeners[type].push(callback);
+    }
+
+    open(_method: string, url: string) {
+      this.responseURL = url;
+    }
+
+    setRequestHeader() {}
+
+    send() {
+      if (this.responseURL.endsWith('/sync')) {
+        this.response = JSON.stringify({ databaseId: 'campaign:123', serverRevision: 0, tables: {}, has_more: false });
+        queueMicrotask(() => (this.listeners.load ?? []).forEach((listener) => listener()));
+        return;
+      }
+
+      pendingMutations.push({
+        url: this.responseURL,
+        complete: (response: unknown) => {
+          this.response = JSON.stringify(response);
+          (this.listeners.load ?? []).forEach((listener) => listener());
+        },
+      });
+    }
+
+    abort() {}
+
+    getAllResponseHeaders() {
+      return '';
+    }
+  }
+
+  globalThis.XMLHttpRequest = MockXMLHttpRequest;
+
+  const Elm = loadElm(Object.create(globalThis));
+  const app = Elm.Main.init({
+    flags: {
+      schema,
+      server: {
+        baseUrl: 'http://example.test',
+        catchupPath: '/sync',
+        databaseId: 'campaign:123',
+      },
+      liveSync: { transport: 'sse' },
+    },
+  });
+  const queryResults: unknown[] = [];
+
+  try {
+    app.ports.queryClientOut.subscribe((message) => {
+      if (message?.type === 'full') {
+        queryResults.push(message.result);
+      }
+    });
+    app.ports.indexedDbOut.subscribe((message) => {
+      if (message?.type !== 'requestInitialData') {
+        return;
+      }
+
+      app.ports.receiveIndexedDbMessage.send({
+        type: 'initialData',
+        data: {
+          tables: { maps: [{ id: 1, name: 'Initial', updatedAt: 0 }] },
+          cursor: { tables: {} },
+          lastAppliedServerRevision: null,
+        },
+      });
+    });
+
+    app.ports.receiveIndexedDbMessage.send({
+      type: 'initialData',
+      data: {
+        tables: { maps: [{ id: 1, name: 'Initial', updatedAt: 0 }] },
+        cursor: { tables: {} },
+        lastAppliedServerRevision: null,
+      },
+    });
+
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    const optimistic = {
+      queryField: 'maps',
+      where: { field: 'id', input: 'id' },
+      set: [{ field: 'name', input: 'name' }],
+    };
+
+    app.ports.receiveQueryManagerMessage.send({
+      type: 'sendMutation',
+      requestId: 'a',
+      mutationId: 'move',
+      baseUrl: 'http://example.test/db',
+      input: { id: 1, name: 'A' },
+      optimistic,
+    });
+    app.ports.receiveQueryManagerMessage.send({
+      type: 'sendMutation',
+      requestId: 'b',
+      mutationId: 'move',
+      baseUrl: 'http://example.test/db',
+      input: { id: 1, name: 'B' },
+      optimistic,
+    });
+    await Bun.sleep(0);
+
+    expect(pendingMutations).toHaveLength(2);
+
+    pendingMutations[1].complete({
+      serverRevision: 2,
+      sync: {
+        type: 'delta',
+        serverRevision: 2,
+        databaseId: 'campaign:123',
+        data: [{ table_name: 'maps', headers: ['id', 'name', 'updatedAt'], rows: [[1, 'B', 2]] }],
+      },
+      result: {},
+    });
+    await Bun.sleep(0);
+
+    pendingMutations[0].complete({
+      serverRevision: 1,
+      sync: {
+        type: 'delta',
+        serverRevision: 1,
+        databaseId: 'campaign:123',
+        data: [{ table_name: 'maps', headers: ['id', 'name', 'updatedAt'], rows: [[1, 'A', 1]] }],
+      },
+      result: {},
+    });
+    await Bun.sleep(0);
+
+    app.ports.receiveQueryClientMessage.send({
+      type: 'register',
+      queryId: 'maps-query',
+      querySource: { maps: { id: true, name: true } },
+      queryInput: {},
+    });
+    await Bun.sleep(0);
+
+    const latest = queryResults.at(-1) as { maps?: Array<{ name?: string }> };
+    expect(latest.maps?.[0]?.name).toBe('B');
+  } finally {
+    globalThis.XMLHttpRequest = previousXmlHttpRequest;
   }
 });

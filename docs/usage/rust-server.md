@@ -185,12 +185,15 @@ After running a mutation:
 
 ```rust
 let result = query::run(&conn, &manifest, query_id, input, &session).await?;
+let mut result = result;
 
 let messages = sync_server.calculate_deltas(
-    &result.affected_rows,
+    &conn,
+    &mut result,
     &connected_sessions,
     &database_id,
-)?;
+    Some(origin_session_id),
+).await?;
 ```
 
 Send each message to its session:
@@ -206,6 +209,7 @@ for item in messages {
 ```json
 {
   "type": "delta",
+  "serverRevision": 12,
   "databaseId": "tenant:acme",
   "data": []
 }
@@ -252,7 +256,7 @@ Do not reimplement these in the app server.
 6. Use generated `query_ids` and typed inputs/outputs for server-owned workflows.
 7. Use direct `query::run` with dynamic JSON for generic client-driven queries and mutations.
 8. Return `result.response` to query/mutation callers.
-9. After mutations, pass `result.affected_rows` to `SyncServer::calculate_deltas` and send live messages.
+9. After mutations, pass the database connection, mutable `QueryResult`, connected sessions, database id, and origin session id to `SyncServer::calculate_deltas` and send live messages. This allocates the persisted `_pyre_sync` revision, stamps every live message with `serverRevision`, suppresses fanout to the origin session, and wraps `result.response` as `{ serverRevision, sync, result }` for the origin.
 10. Use `SyncServer::catchup` for `/sync` catchup requests.
 
 ## Current Coverage

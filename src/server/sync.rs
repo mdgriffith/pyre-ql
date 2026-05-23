@@ -1,4 +1,5 @@
 use crate::server::database_id::{self, DatabaseId};
+use crate::server::query::QueryResult;
 use crate::sync::{self, SyncCursor, SyncPageResult, TableSyncData};
 use crate::sync_deltas::{self, AffectedRowTableGroup};
 use crate::sync_shape;
@@ -35,18 +36,27 @@ impl<'a> SyncServer<'a> {
         database_id::with_database_id(database_id, result).map_err(Error::DatabaseId)
     }
 
-    pub fn calculate_deltas(
+    pub async fn calculate_deltas(
         &self,
-        affected_row_groups: &[AffectedRowTableGroup],
+        conn: &libsql::Connection,
+        query_result: &mut QueryResult,
         connected_sessions: &ConnectedSessions,
         database_id: impl AsRef<str>,
+        origin_session_id: Option<&str>,
     ) -> Result<Vec<SessionDeltaMessage>, Error> {
-        calculate_deltas_with_database_id(
+        let messages = build_delta_messages_for_database(
             self.context,
-            affected_row_groups,
+            &query_result.affected_rows,
             connected_sessions,
             database_id,
+        )?;
+        stamp_messages_and_response_with_next_server_revision(
+            conn,
+            messages,
+            query_result,
+            origin_session_id,
         )
+        .await
     }
 }
 
@@ -54,6 +64,8 @@ impl<'a> SyncServer<'a> {
 pub struct DeltaMessage {
     #[serde(rename = "type")]
     pub type_: String,
+    #[serde(rename = "serverRevision", skip_serializing_if = "Option::is_none")]
+    pub server_revision: Option<i64>,
     #[serde(rename = "databaseId", skip_serializing_if = "Option::is_none")]
     pub database_id: Option<DatabaseId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -64,6 +76,7 @@ impl DeltaMessage {
     pub fn delta(data: Vec<AffectedRowTableGroup>) -> Self {
         Self {
             type_: "delta".to_string(),
+            server_revision: None,
             database_id: None,
             data,
         }
@@ -75,6 +88,7 @@ impl DeltaMessage {
     ) -> Result<Self, Error> {
         Ok(Self {
             type_: "delta".to_string(),
+            server_revision: None,
             database_id: Some(
                 database_id::require_database_id(database_id).map_err(Error::DatabaseId)?,
             ),
@@ -85,6 +99,7 @@ impl DeltaMessage {
     pub fn sync_required() -> Self {
         Self {
             type_: "syncRequired".to_string(),
+            server_revision: None,
             database_id: None,
             data: Vec::new(),
         }
@@ -93,6 +108,7 @@ impl DeltaMessage {
     pub fn sync_required_for_database(database_id: impl AsRef<str>) -> Result<Self, Error> {
         Ok(Self {
             type_: "syncRequired".to_string(),
+            server_revision: None,
             database_id: Some(
                 database_id::require_database_id(database_id).map_err(Error::DatabaseId)?,
             ),
@@ -127,6 +143,7 @@ pub async fn catchup(
 
     let mut result = SyncPageResult {
         database_id: None,
+        server_revision: None,
         tables: HashMap::new(),
         has_more: false,
     };
@@ -214,26 +231,97 @@ pub async fn catchup(
         );
     }
 
+    result.server_revision = current_server_revision(conn).await?;
+
     Ok(result)
 }
 
-/// Calculate permission-filtered live delta messages from mutation affected rows.
-pub fn calculate_deltas(
-    context: &typecheck::Context,
-    affected_row_groups: &[AffectedRowTableGroup],
-    connected_sessions: &ConnectedSessions,
-) -> Result<Vec<SessionDeltaMessage>, Error> {
-    calculate_deltas_internal(context, affected_row_groups, connected_sessions, None)
+async fn current_server_revision(conn: &libsql::Connection) -> Result<Option<i64>, Error> {
+    let mut rows = conn
+        .query(
+            "SELECT value FROM _pyre_sync WHERE key = 'server_revision'",
+            (),
+        )
+        .await
+        .map_err(Error::Database)?;
+
+    if let Some(row) = rows.next().await.map_err(Error::Database)? {
+        return row.get::<i64>(0).map(Some).map_err(Error::Database);
+    }
+
+    Ok(None)
 }
 
-pub fn calculate_deltas_with_database_id(
+async fn next_server_revision(conn: &libsql::Connection) -> Result<i64, Error> {
+    let mut rows = conn
+        .query(
+            "UPDATE _pyre_sync SET value = value + 1 WHERE key = 'server_revision' RETURNING value",
+            (),
+        )
+        .await
+        .map_err(Error::Database)?;
+
+    let Some(row) = rows.next().await.map_err(Error::Database)? else {
+        return Err(Error::Sync(sync::SyncError::DatabaseError(
+            "failed to allocate Pyre sync server revision".to_string(),
+        )));
+    };
+
+    row.get::<i64>(0).map_err(Error::Database)
+}
+
+async fn stamp_messages_and_response_with_next_server_revision(
+    conn: &libsql::Connection,
+    mut messages: Vec<SessionDeltaMessage>,
+    query_result: &mut QueryResult,
+    origin_session_id: Option<&str>,
+) -> Result<Vec<SessionDeltaMessage>, Error> {
+    if query_result.affected_rows.is_empty() {
+        return Ok(messages);
+    }
+
+    let server_revision = next_server_revision(conn).await?;
+    for message in &mut messages {
+        message.message.server_revision = Some(server_revision);
+    }
+
+    let mut origin_message = None;
+    if let Some(origin_session_id) = origin_session_id {
+        messages.retain(|message| {
+            if message.session_id == origin_session_id {
+                origin_message = Some(message.message.clone());
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    let mut envelope = serde_json::Map::new();
+    envelope.insert(
+        "serverRevision".to_string(),
+        JsonValue::from(server_revision),
+    );
+    if let Some(origin_message) = origin_message {
+        envelope.insert(
+            "sync".to_string(),
+            serde_json::to_value(origin_message).map_err(Error::Json)?,
+        );
+    }
+    envelope.insert("result".to_string(), query_result.response.clone());
+    query_result.response = JsonValue::Object(envelope);
+
+    Ok(messages)
+}
+
+fn build_delta_messages_for_database(
     context: &typecheck::Context,
     affected_row_groups: &[AffectedRowTableGroup],
     connected_sessions: &ConnectedSessions,
     database_id: impl AsRef<str>,
 ) -> Result<Vec<SessionDeltaMessage>, Error> {
     let database_id = database_id::require_database_id(database_id).map_err(Error::DatabaseId)?;
-    calculate_deltas_internal(
+    build_delta_messages(
         context,
         affected_row_groups,
         connected_sessions,
@@ -241,7 +329,7 @@ pub fn calculate_deltas_with_database_id(
     )
 }
 
-fn calculate_deltas_internal(
+fn build_delta_messages(
     context: &typecheck::Context,
     affected_row_groups: &[AffectedRowTableGroup],
     connected_sessions: &ConnectedSessions,

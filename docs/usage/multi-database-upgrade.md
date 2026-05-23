@@ -141,10 +141,12 @@ For Rust mutation deltas, pass the same `databaseId` to delta calculation:
 
 ```rust
 let messages = sync_server.calculate_deltas(
-    &result.affected_rows,
+    &conn,
+    &mut result,
     connections_for_database(&database_id),
     &database_id,
-)?;
+    Some(origin_session_id),
+).await?;
 ```
 
 The server must never broadcast deltas across database IDs.

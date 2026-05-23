@@ -13,6 +13,7 @@ export interface LiveSyncMessage {
   type: string;
   databaseId?: string;
   connectionId?: string;
+  serverRevision?: number;
   data?: unknown;
   error?: string;
 }

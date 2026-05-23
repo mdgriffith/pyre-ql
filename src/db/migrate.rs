@@ -11,6 +11,8 @@ pub const MIGRATION_TABLE: &str = "_pyre_migrations";
 
 pub const SCHEMA_TABLE: &str = "_pyre_schema";
 
+pub const SYNC_TABLE: &str = "_pyre_sync";
+
 pub const LIST_MIGRATIONS: &str = "select name from _pyre_migrations";
 
 //
@@ -32,6 +34,14 @@ pub const CREATE_SCHEMA_TABLE: &str = "create table if not exists _pyre_schema (
     schema text not null
 )";
 
+pub const CREATE_SYNC_TABLE: &str = "create table if not exists _pyre_sync (
+    key text not null primary key check (key = 'server_revision'),
+    value integer not null
+)";
+
+pub const INSERT_SYNC_REVISION_ROW: &str =
+    "insert into _pyre_sync (key, value) values ('server_revision', 0) on conflict(key) do nothing";
+
 pub const INSERT_MIGRATION_ERROR: &str =
     "insert into _pyre_migrations (name, sql, error) values (?, ?, ?)";
 
@@ -39,6 +49,34 @@ pub const INSERT_MIGRATION_SUCCESS: &str =
     "insert into _pyre_migrations (name, sql, finished_at) values (?, ?, unixepoch())";
 
 pub const INSERT_SCHEMA: &str = "insert into _pyre_schema (schema) values (?)";
+
+pub fn internal_setup_sql() -> Vec<SqlAndParams> {
+    vec![
+        SqlAndParams::Sql(CREATE_MIGRATION_TABLE.to_string()),
+        SqlAndParams::Sql(CREATE_SCHEMA_TABLE.to_string()),
+        SqlAndParams::Sql(CREATE_SYNC_TABLE.to_string()),
+        SqlAndParams::Sql(INSERT_SYNC_REVISION_ROW.to_string()),
+    ]
+}
+
+pub fn quoted_internal_setup_sql() -> Vec<SqlAndParams> {
+    internal_setup_sql()
+        .into_iter()
+        .map(|statement| match statement {
+            SqlAndParams::Sql(sql) => SqlAndParams::Sql(quote_internal_table_names(&sql)),
+            SqlAndParams::SqlWithParams { sql, args } => SqlAndParams::SqlWithParams {
+                sql: quote_internal_table_names(&sql),
+                args,
+            },
+        })
+        .collect()
+}
+
+fn quote_internal_table_names(sql: &str) -> String {
+    sql.replace(MIGRATION_TABLE, &crate::ext::string::quote(MIGRATION_TABLE))
+        .replace(SCHEMA_TABLE, &crate::ext::string::quote(SCHEMA_TABLE))
+        .replace(SYNC_TABLE, &crate::ext::string::quote(SYNC_TABLE))
+}
 
 /// Result type for dynamic migrations (used in WASM)
 /// Contains SQL statements to execute and markers for success/failure
@@ -126,17 +164,7 @@ pub fn migrate_dynamic(
 
     let sql_executed = String::new();
 
-    // Add migration and schema table creation if needed
-    match introspection.migration_state {
-        introspect::MigrationState::NoMigrationTable => {
-            // Create the migration table
-            sql.push(SqlAndParams::Sql(CREATE_MIGRATION_TABLE.to_string()));
-
-            // Create the schema table
-            sql.push(SqlAndParams::Sql(CREATE_SCHEMA_TABLE.to_string()));
-        }
-        introspect::MigrationState::MigrationTable { .. } => {}
-    }
+    sql.splice(0..0, internal_setup_sql());
 
     // Insert the new schema
     sql.push(SqlAndParams::SqlWithParams {

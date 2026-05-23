@@ -57,9 +57,29 @@ flowchart TD
 - Catchup starts immediately after `InitialDataLoaded`.
 - SSE does not connect until catchup finishes.
 - Query re-execution happens:
-  - after IndexedDB bootstraps, and
-  - after each catchup page, and
-  - after each SSE delta.
+   - after IndexedDB bootstraps, and
+   - after each catchup page, and
+   - after each SSE delta.
+- Authoritative catchup/live deltas are applied before local optimistic mutations are replayed.
+- Live sync deltas with `serverRevision <= lastAppliedServerRevision` are stale and are skipped.
+- The client persists `lastAppliedServerRevision` in IndexedDB metadata and restores it at startup.
+- Live `syncRequired` / `catchupRequired` messages with stale `serverRevision` values are ignored.
+- Catchup responses include the current `serverRevision` when the server has allocated one, so reconnect catchup advances the same revision watermark as live sync.
+
+## Mutation Ordering
+
+Pyre treats mutation request order, response order, and live-sync arrival order as separate concerns.
+
+- The client assigns each mutation a stable `requestId`.
+- The server response acknowledges that `requestId` and returns the normal mutation result.
+- The client keeps in-flight optimistic mutations in request order until the server response accepts or rejects them.
+- Authoritative live/catchup data is applied to the local DB first, then unsettled optimistic mutations are replayed over it.
+- Live sync events carry `serverRevision`; clients apply only revisions newer than their last applied revision.
+- The server may avoid echoing live sync events to the origin connection, but clients must not rely on that suppression for correctness.
+
+The protocol authority is the server-assigned monotonic revision on sync events. The server stores that counter in Pyre internal metadata (`_pyre_sync`) so revisions survive process restarts. Mutation responses should also include this revision when authoritative mutation results are added to the response envelope.
+
+Server integrations must await the `result.sync(...)` returned from `runWithSync` after successful mutations. That call allocates the `_pyre_sync` revision, sends live messages with `serverRevision`, and returns `{ serverRevision }` for integrations that want to include protocol metadata in their mutation response envelope.
 
 ## Public sync state
 

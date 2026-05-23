@@ -22,7 +22,7 @@ export interface PutRowsResult {
   skippedOlder: number;
 }
 
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export class IndexedDBStorage {
   private dbName: string;
@@ -67,6 +67,10 @@ export class IndexedDBStorage {
 
         if (!db.objectStoreNames.contains('syncCursor')) {
           db.createObjectStore('syncCursor');
+        }
+
+        if (!db.objectStoreNames.contains('meta')) {
+          db.createObjectStore('meta');
         }
       };
     });
@@ -233,6 +237,41 @@ export class IndexedDBStorage {
     });
   }
 
+  async getServerRevision(): Promise<number | null> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['meta'], 'readonly');
+      const store = tx.objectStore('meta');
+      const request = store.get('lastAppliedServerRevision');
+
+      request.onsuccess = () => {
+        const value = request.result;
+        resolve(typeof value === 'number' ? value : null);
+      };
+
+      request.onerror = () => {
+        reject(new Error(`Failed to read server revision: ${request.error}`));
+      };
+    });
+  }
+
+  async putServerRevision(serverRevision: number): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['meta'], 'readwrite');
+      const store = tx.objectStore('meta');
+      const request = store.put(serverRevision, 'lastAppliedServerRevision');
+
+      request.onsuccess = () => {
+        resolve();
+      };
+
+      request.onerror = () => {
+        reject(new Error(`Failed to write server revision: ${request.error}`));
+      };
+    });
+  }
+
   async putRows(tableName: string, rows: Array<Record<string, unknown>>): Promise<PutRowsResult> {
     if (rows.length === 0) {
       return { tableName, received: 0, written: 0, skippedOlder: 0 };
@@ -356,7 +395,7 @@ export class IndexedDbService {
     }
   }
 
-  private async handleMessage(message: { type?: string; tableGroups?: TableGroup[]; cursor?: SyncCursor }): Promise<void> {
+  private async handleMessage(message: { type?: string; tableGroups?: TableGroup[]; cursor?: SyncCursor; serverRevision?: number }): Promise<void> {
     if (message.type === 'requestInitialData') {
       await this.sendInitialData();
       return;
@@ -369,6 +408,11 @@ export class IndexedDbService {
 
     if (message.type === 'writeSyncCursor' && message.cursor) {
       await this.writeSyncCursor(message.cursor);
+      return;
+    }
+
+    if (message.type === 'writeServerRevision' && typeof message.serverRevision === 'number') {
+      await this.writeServerRevision(message.serverRevision);
     }
   }
 
@@ -381,6 +425,7 @@ export class IndexedDbService {
       await this.storage.init();
       const tables = await this.storage.getAllTables();
       const cursor = await this.storage.getSyncCursor();
+      const lastAppliedServerRevision = await this.storage.getServerRevision();
 
       const tableCounts = Object.fromEntries(
         Object.entries(tables).map(([tableName, rows]) => [tableName, rows.length])
@@ -388,12 +433,12 @@ export class IndexedDbService {
 
       this.elmApp.ports.receiveIndexedDbMessage.send({
         type: 'initialData',
-        data: { tables, cursor },
+        data: { tables, cursor, lastAppliedServerRevision },
       });
       this.debugLog('[PyreClient] IndexedDB initial data loaded', { tableCounts, cursorTables: Object.keys(cursor.tables).length });
     } catch (error) {
       console.error('[PyreClient] Failed to load initial data:', error);
-      const fallbackMessage = { type: 'initialData', data: { tables: {}, cursor: { tables: {} } } };
+      const fallbackMessage = { type: 'initialData', data: { tables: {}, cursor: { tables: {} }, lastAppliedServerRevision: null } };
       this.elmApp.ports.receiveIndexedDbMessage.send(fallbackMessage);
       this.debugLog('[PyreClient] port receiveIndexedDbMessage ->', fallbackMessage);
     }
@@ -446,6 +491,16 @@ export class IndexedDbService {
       this.debugLog('[PyreClient] IndexedDB sync cursor written', { cursorTables: Object.keys(cursor.tables).length });
     } catch (error) {
       console.error('[PyreClient] Failed to write sync cursor:', error);
+    }
+  }
+
+  private async writeServerRevision(serverRevision: number): Promise<void> {
+    try {
+      await this.storage.init();
+      await this.storage.putServerRevision(serverRevision);
+      this.debugLog('[PyreClient] IndexedDB server revision written', { serverRevision });
+    } catch (error) {
+      console.error('[PyreClient] Failed to write server revision:', error);
     }
   }
 }

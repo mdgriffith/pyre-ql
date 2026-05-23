@@ -3,17 +3,25 @@ mod helpers;
 
 use helpers::test_database::TestDatabase;
 use pyre::server::manifest::{FieldSchema, PyreSession};
+use pyre::server::query::QueryResult;
 use pyre::server::schema::{
     load_context_from_database, load_schema_from_database, Error as SchemaError,
 };
 use pyre::server::sync::{
-    calculate_deltas, catchup, ConnectedSessions, DeltaMessage, SyncServer, SyncSession,
+    catchup, ConnectedSessions, DeltaMessage, SyncServer, SyncSession,
     MAX_LIVE_SYNC_DELTA_PAYLOAD_BYTES, MAX_LIVE_SYNC_DELTA_ROWS, MAX_LIVE_SYNC_FANOUT_RECIPIENTS,
 };
 use pyre::sync::{SyncCursor, TableCursor, TableSyncData};
 use pyre::sync_deltas::AffectedRowTableGroup;
 use serde_json::json;
 use std::collections::HashMap;
+
+fn query_result(affected_rows: Vec<AffectedRowTableGroup>) -> QueryResult {
+    QueryResult {
+        response: json!({}),
+        affected_rows,
+    }
+}
 
 async fn extract_affected_rows(
     result_sets: Vec<libsql::Rows>,
@@ -179,6 +187,7 @@ insert into notes (id, ownerId, body, updatedAt) values (3, 1, 'three', 30);
 
     assert_eq!(ids, vec![json!(1), json!(3)]);
     assert_eq!(result.database_id.as_deref(), Some("main"));
+    assert_eq!(result.server_revision, Some(0));
     assert_eq!(notes.last_seen_updated_at, Some(30));
 
     session.insert("userId".to_string(), pyre::sync::SessionValue::Integer(2));
@@ -351,6 +360,7 @@ record Note {
 "#,
     )
     .await?;
+    let conn = db.db.connect()?;
     let affected_rows = vec![AffectedRowTableGroup {
         table_name: "notes".to_string(),
         headers: vec![
@@ -365,7 +375,10 @@ record Note {
         ("b".to_string(), SyncSession::new()),
     ]);
 
-    let messages = calculate_deltas(&db.context, &affected_rows, &connected_sessions)?;
+    let mut result = query_result(affected_rows.clone());
+    let messages = SyncServer::new(&db.context)
+        .calculate_deltas(&conn, &mut result, &connected_sessions, "main", None)
+        .await?;
 
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].session_id, "a");
@@ -376,6 +389,65 @@ record Note {
         vec![json!(1), json!("one"), json!(10)]
     );
     assert_eq!(messages[1].session_id, "b");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn native_sync_revision_persists_in_pyre_sync() -> Result<(), Box<dyn std::error::Error>> {
+    let db = TestDatabase::new(
+        r#"
+record Note {
+    id Int @id
+    body String
+    updatedAt Int
+    @public
+}
+"#,
+    )
+    .await?;
+    let conn = db.db.connect()?;
+    let affected_rows = vec![AffectedRowTableGroup {
+        table_name: "notes".to_string(),
+        headers: vec![
+            "id".to_string(),
+            "body".to_string(),
+            "updatedAt".to_string(),
+        ],
+        rows: vec![vec![json!(1), json!("one"), json!(10)]],
+    }];
+    let connected_sessions = ConnectedSessions::from([
+        ("a".to_string(), SyncSession::new()),
+        ("b".to_string(), SyncSession::new()),
+    ]);
+    let server = SyncServer::new(&db.context);
+
+    let mut first_result = query_result(affected_rows.clone());
+    let mut second_result = query_result(affected_rows);
+    let first = server
+        .calculate_deltas(&conn, &mut first_result, &connected_sessions, "main", None)
+        .await?;
+    let second = server
+        .calculate_deltas(
+            &conn,
+            &mut second_result,
+            &connected_sessions,
+            "main",
+            Some("a"),
+        )
+        .await?;
+
+    assert_eq!(first[0].message.server_revision, Some(1));
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].session_id, "b");
+    assert_eq!(second[0].message.server_revision, Some(2));
+    assert_eq!(second_result.response["serverRevision"], json!(2));
+    assert_eq!(second_result.response["sync"]["serverRevision"], json!(2));
+
+    let catchup_result = server
+        .catchup(&conn, &SyncCursor::new(), &SyncSession::new(), 10, "main")
+        .await?;
+    assert_eq!(catchup_result.server_revision, Some(2));
 
     Ok(())
 }
@@ -399,6 +471,7 @@ record Note {
 "#,
     )
     .await?;
+    let conn = db.db.connect()?;
     let affected_rows = vec![AffectedRowTableGroup {
         table_name: "notes".to_string(),
         headers: vec![
@@ -423,11 +496,10 @@ record Note {
         ),
     ]);
 
-    let messages = SyncServer::new(&db.context).calculate_deltas(
-        &affected_rows,
-        &connected_sessions,
-        "main",
-    )?;
+    let mut result = query_result(affected_rows.clone());
+    let messages = SyncServer::new(&db.context)
+        .calculate_deltas(&conn, &mut result, &connected_sessions, "main", None)
+        .await?;
 
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].session_id, "user-1");
@@ -463,6 +535,7 @@ record Map {
 "#,
     )
     .await?;
+    let conn = db.db.connect()?;
     let affected_rows = vec![AffectedRowTableGroup {
         table_name: "maps".to_string(),
         headers: vec![
@@ -484,7 +557,10 @@ record Map {
     }];
     let connected_sessions = ConnectedSessions::from([("a".to_string(), SyncSession::new())]);
 
-    let messages = calculate_deltas(&db.context, &affected_rows, &connected_sessions)?;
+    let mut result = query_result(affected_rows.clone());
+    let messages = SyncServer::new(&db.context)
+        .calculate_deltas(&conn, &mut result, &connected_sessions, "main", None)
+        .await?;
 
     assert_eq!(messages.len(), 1);
     assert_eq!(
@@ -522,6 +598,7 @@ record Note {
 "#,
     )
     .await?;
+    let conn = db.db.connect()?;
     let affected_rows = vec![AffectedRowTableGroup {
         table_name: "notes".to_string(),
         headers: vec![
@@ -533,8 +610,24 @@ record Note {
     }];
     let connected_sessions = ConnectedSessions::from([("a".to_string(), SyncSession::new())]);
 
-    assert!(calculate_deltas(&db.context, &[], &connected_sessions)?.is_empty());
-    assert!(calculate_deltas(&db.context, &affected_rows, &ConnectedSessions::new())?.is_empty());
+    let server = SyncServer::new(&db.context);
+    let mut empty_result = query_result(Vec::new());
+    let mut no_sessions_result = query_result(affected_rows);
+    assert!(server
+        .calculate_deltas(&conn, &mut empty_result, &connected_sessions, "main", None)
+        .await?
+        .is_empty());
+    assert!(server
+        .calculate_deltas(
+            &conn,
+            &mut no_sessions_result,
+            &ConnectedSessions::new(),
+            "main",
+            None
+        )
+        .await?
+        .is_empty());
+    assert_eq!(no_sessions_result.response["serverRevision"], json!(1));
 
     Ok(())
 }
@@ -553,6 +646,7 @@ record Note {
 "#,
     )
     .await?;
+    let conn = db.db.connect()?;
     let insert_query = r#"
 insert CreateNote($body: String) {
     note {
@@ -574,7 +668,10 @@ insert CreateNote($body: String) {
         ("b".to_string(), SyncSession::new()),
     ]);
 
-    let messages = calculate_deltas(&db.context, &affected_rows, &connected_sessions)?;
+    let mut result = query_result(affected_rows.clone());
+    let messages = SyncServer::new(&db.context)
+        .calculate_deltas(&conn, &mut result, &connected_sessions, "main", None)
+        .await?;
     assert_eq!(affected_rows.len(), 1);
     assert_eq!(affected_rows[0].table_name, "notes");
     assert!(affected_rows[0].headers.contains(&"id".to_string()));
@@ -602,6 +699,7 @@ record Note {
 "#,
     )
     .await?;
+    let conn = db.db.connect()?;
     let affected_rows = vec![AffectedRowTableGroup {
         table_name: "notes".to_string(),
         headers: vec![
@@ -615,7 +713,10 @@ record Note {
     }];
     let connected_sessions = ConnectedSessions::from([("a".to_string(), SyncSession::new())]);
 
-    let messages = calculate_deltas(&db.context, &affected_rows, &connected_sessions)?;
+    let mut result = query_result(affected_rows.clone());
+    let messages = SyncServer::new(&db.context)
+        .calculate_deltas(&conn, &mut result, &connected_sessions, "main", None)
+        .await?;
 
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].message.type_, "syncRequired");
@@ -638,6 +739,7 @@ record Note {
 "#,
     )
     .await?;
+    let conn = db.db.connect()?;
     let affected_rows = vec![AffectedRowTableGroup {
         table_name: "notes".to_string(),
         headers: vec![
@@ -654,7 +756,10 @@ record Note {
     let server = SyncServer::new(&db.context);
     let connected_sessions = ConnectedSessions::from([("a".to_string(), SyncSession::new())]);
 
-    let messages = server.calculate_deltas(&affected_rows, &connected_sessions, "main")?;
+    let mut result = query_result(affected_rows.clone());
+    let messages = server
+        .calculate_deltas(&conn, &mut result, &connected_sessions, "main", None)
+        .await?;
 
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].message.type_, "syncRequired");
@@ -678,6 +783,7 @@ record Note {
 "#,
     )
     .await?;
+    let conn = db.db.connect()?;
     let affected_rows = vec![AffectedRowTableGroup {
         table_name: "notes".to_string(),
         headers: vec![
@@ -691,7 +797,10 @@ record Note {
         .map(|index| (format!("s{}", index), SyncSession::new()))
         .collect::<ConnectedSessions>();
 
-    let messages = calculate_deltas(&db.context, &affected_rows, &connected_sessions)?;
+    let mut result = query_result(affected_rows.clone());
+    let messages = SyncServer::new(&db.context)
+        .calculate_deltas(&conn, &mut result, &connected_sessions, "main", None)
+        .await?;
 
     assert_eq!(messages.len(), MAX_LIVE_SYNC_FANOUT_RECIPIENTS + 1);
     assert!(messages
@@ -753,7 +862,10 @@ update UpdateNote {
         ),
     ]);
 
-    let messages = calculate_deltas(&db.context, &affected_rows, &connected_sessions)?;
+    let mut result = query_result(affected_rows.clone());
+    let messages = SyncServer::new(&db.context)
+        .calculate_deltas(&conn, &mut result, &connected_sessions, "main", None)
+        .await?;
 
     assert_eq!(affected_rows.len(), 1);
     assert_eq!(affected_rows[0].table_name, "notes");
@@ -813,7 +925,10 @@ delete RemoveNote {
         ),
     ]);
 
-    let messages = calculate_deltas(&db.context, &affected_rows, &connected_sessions)?;
+    let mut result = query_result(affected_rows.clone());
+    let messages = SyncServer::new(&db.context)
+        .calculate_deltas(&conn, &mut result, &connected_sessions, "main", None)
+        .await?;
 
     assert_eq!(affected_rows.len(), 1);
     assert_eq!(affected_rows[0].table_name, "notes");

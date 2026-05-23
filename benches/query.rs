@@ -270,14 +270,7 @@ async fn setup_database() -> (Database, typecheck::Context, tempfile::TempDir) {
     let mut migration_sql = diff::to_sql::to_sql(&db_diff);
 
     // Add migration tables
-    migration_sql.insert(
-        0,
-        SqlAndParams::Sql(migrate::CREATE_MIGRATION_TABLE.to_string()),
-    );
-    migration_sql.insert(
-        1,
-        SqlAndParams::Sql(migrate::CREATE_SCHEMA_TABLE.to_string()),
-    );
+    migration_sql.splice(0..0, migrate::internal_setup_sql());
 
     // Add schema insertion
     let schema_string = pyre::generate::to_string::schema_to_string("", &schema);

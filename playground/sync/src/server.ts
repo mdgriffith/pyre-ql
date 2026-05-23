@@ -104,7 +104,8 @@ app.post("/db/:req", async (c) => {
             args,
             request.session,
             connectionsForDatabase(request.databaseId),
-            request.databaseId
+            request.databaseId,
+            request.sessionId
         );
 
         if (result.kind === "error") {
@@ -112,12 +113,11 @@ app.post("/db/:req", async (c) => {
             return c.json({ error: result.error?.message || "Query execution failed" });
         }
 
-        // Broadcast sync deltas in background (fire-and-forget, we're not awaiting it)
-        result.sync(async (sessionId, message) => {
+        // Broadcast sync deltas before responding so mutation responses can observe sync failures.
+        await result.sync(async (sessionId, message) => {
             await sendPyreSyncMessage(request.databaseId, sessionId, message);
-        })
+        });
 
-        // Return response immediately
         return c.json(result.response);
     });
 

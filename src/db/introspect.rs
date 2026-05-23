@@ -38,7 +38,7 @@ WITH RECURSIVE
     SELECT name 
     FROM sqlite_master 
     WHERE type='table' 
-    AND name NOT IN ('sqlite_sequence', '_pyre_migrations', '_pyre_schema')
+    AND name NOT IN ('sqlite_sequence', '_pyre_migrations', '_pyre_schema', '_pyre_sync')
   ),
   -- Get table info for each table
   table_info AS (
@@ -180,7 +180,7 @@ WITH RECURSIVE
     SELECT name 
     FROM sqlite_master 
     WHERE type='table' 
-    AND name NOT IN ('sqlite_sequence', '_pyre_migrations', '_pyre_schema')
+    AND name NOT IN ('sqlite_sequence', '_pyre_migrations', '_pyre_schema', '_pyre_sync')
   ),
   -- Get table info for each table
   table_info AS (

@@ -41,12 +41,12 @@ type Message
 
 
 type Incoming
-    = DeltaReceived (Maybe String) Delta
+    = DeltaReceived (Maybe String) (Maybe Int) Delta
     | SyncProgressReceived (Maybe String) SyncProgress
     | LiveSyncConnected (Maybe String) String
     | LiveSyncError String
     | SyncCompleteReceived (Maybe String)
-    | SyncRequiredReceived (Maybe String)
+    | SyncRequiredReceived (Maybe String) (Maybe Int)
 
 
 port sseOut : Encode.Value -> Cmd msg
@@ -104,8 +104,9 @@ decodeIncoming =
             (\type_ ->
                 case type_ of
                     "delta" ->
-                        Decode.map2 DeltaReceived
+                        Decode.map3 DeltaReceived
                             (Decode.maybe (Decode.field "databaseId" Decode.string))
+                            (Decode.maybe (Decode.field "serverRevision" Decode.int))
                             (Decode.field "data" Data.Delta.decodeDelta)
 
                     "syncProgress" ->
@@ -127,12 +128,14 @@ decodeIncoming =
                             |> Decode.map SyncCompleteReceived
 
                     "syncRequired" ->
-                        Decode.maybe (Decode.field "databaseId" Decode.string)
-                            |> Decode.map SyncRequiredReceived
+                        Decode.map2 SyncRequiredReceived
+                            (Decode.maybe (Decode.field "databaseId" Decode.string))
+                            (Decode.maybe (Decode.field "serverRevision" Decode.int))
 
                     "catchupRequired" ->
-                        Decode.maybe (Decode.field "databaseId" Decode.string)
-                            |> Decode.map SyncRequiredReceived
+                        Decode.map2 SyncRequiredReceived
+                            (Decode.maybe (Decode.field "databaseId" Decode.string))
+                            (Decode.maybe (Decode.field "serverRevision" Decode.int))
 
                     _ ->
                         Decode.fail ("Unknown live sync incoming type: " ++ type_)

@@ -59,14 +59,7 @@ impl SeedDatabase {
 
         match introspection.migration_state {
             introspect::MigrationState::NoMigrationTable => {
-                migration_sql.insert(
-                    0,
-                    SqlAndParams::Sql(migrate::CREATE_MIGRATION_TABLE.to_string()),
-                );
-                migration_sql.insert(
-                    1,
-                    SqlAndParams::Sql(migrate::CREATE_SCHEMA_TABLE.to_string()),
-                );
+                migration_sql.splice(0..0, migrate::internal_setup_sql());
             }
             introspect::MigrationState::MigrationTable { .. } => {}
         }

@@ -4,6 +4,9 @@
   "description": "Server runtime for executing generated Pyre queries",
   "license": "MIT",
   "type": "module",
+  "scripts": {
+    "profile:sync": "bun run ./sync-lifecycle.profile.ts"
+  },
   "main": "./index.ts",
   "module": "./index.ts",
   "types": "./index.ts",

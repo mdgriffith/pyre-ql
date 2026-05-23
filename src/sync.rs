@@ -51,6 +51,9 @@ pub struct SyncPageResult {
     /// The server-selected source database for this sync page.
     #[serde(rename = "databaseId", skip_serializing_if = "Option::is_none")]
     pub database_id: Option<String>,
+    /// The current server-side sync revision for this page.
+    #[serde(rename = "serverRevision", skip_serializing_if = "Option::is_none")]
+    pub server_revision: Option<i64>,
     /// Data organized by table name
     pub tables: HashMap<String, TableSyncData>,
     /// Whether there is more data to fetch
@@ -875,6 +878,7 @@ pub fn get_sync_page_info(
 ) -> SyncPageResult {
     let mut result = SyncPageResult {
         database_id: None,
+        server_revision: None,
         tables: HashMap::new(),
         has_more: false,
     };

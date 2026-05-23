@@ -3,6 +3,7 @@ import * as wasm from "./wasm/pyre_wasm.js";
 import { requireDatabaseId, type DatabaseId } from "./database-id";
 
 const DEFAULT_SCHEMA_KEY = "__default__";
+const INTERNAL_TABLES = new Set(["_pyre_migrations", "_pyre_schema", "_pyre_sync"]);
 const introspectionsByDatabaseId = new Map<string, unknown>();
 
 function schemaKey(databaseId?: DatabaseId): string {
@@ -61,18 +62,29 @@ export async function loadSchemaFromDatabase(
         if (introspectionResult.rows.length === 0) {
             throw new Error("Failed to get introspection result");
         }
-        introspection = JSON.parse(introspectionResult.rows[0].result as string);
+        introspection = filterInternalTables(JSON.parse(introspectionResult.rows[0].result as string));
     } else {
         const uninitializedIntrospect = wasm.sql_introspect_uninitialized();
         const introspectionResult = await db.execute(uninitializedIntrospect);
         if (introspectionResult.rows.length === 0) {
             throw new Error("Failed to get introspection result");
         }
-        introspection = JSON.parse(introspectionResult.rows[0].result as string);
+        introspection = filterInternalTables(JSON.parse(introspectionResult.rows[0].result as string));
     }
 
     introspectionsByDatabaseId.set(schemaKey(databaseId), introspection);
     wasm.set_schema(introspection);
+}
+
+function filterInternalTables(introspection: any): any {
+    if (!introspection || !Array.isArray(introspection.tables)) {
+        return introspection;
+    }
+
+    return {
+        ...introspection,
+        tables: introspection.tables.filter((table: any) => !INTERNAL_TABLES.has(table?.name)),
+    };
 }
 
 /**
@@ -136,14 +148,14 @@ export async function getIntrospectionJson(db: Client): Promise<any> {
         if (introspectionResult.rows.length === 0) {
             throw new Error("Failed to get introspection result");
         }
-        introspection = JSON.parse(introspectionResult.rows[0].result as string);
+        introspection = filterInternalTables(JSON.parse(introspectionResult.rows[0].result as string));
     } else {
         const uninitializedIntrospect = wasm.sql_introspect_uninitialized();
         const introspectionResult = await db.execute(uninitializedIntrospect);
         if (introspectionResult.rows.length === 0) {
             throw new Error("Failed to get introspection result");
         }
-        introspection = JSON.parse(introspectionResult.rows[0].result as string);
+        introspection = filterInternalTables(JSON.parse(introspectionResult.rows[0].result as string));
     }
 
     // Process introspection through WASM to populate links

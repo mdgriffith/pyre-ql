@@ -164,23 +164,7 @@ pub async fn push<'a>(
                                 // Generate sql
                                 let mut sql = pyre::db::diff::to_sql::to_sql(&db_diff);
 
-                                if matches!(
-                                    introspection.migration_state,
-                                    pyre::db::introspect::MigrationState::NoMigrationTable
-                                ) {
-                                    sql.insert(
-                                        0,
-                                        SqlAndParams::Sql(
-                                            pyre::db::migrate::CREATE_MIGRATION_TABLE.to_string(),
-                                        ),
-                                    );
-                                    sql.insert(
-                                        1,
-                                        SqlAndParams::Sql(
-                                            pyre::db::migrate::CREATE_SCHEMA_TABLE.to_string(),
-                                        ),
-                                    );
-                                }
+                                sql.splice(0..0, pyre::db::migrate::internal_setup_sql());
 
                                 let schema_source =
                                     pyre::generate::to_string::schema_to_string("", current_schema);

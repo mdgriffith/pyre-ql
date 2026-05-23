@@ -48,6 +48,7 @@ type alias CatchupTableResult =
 
 type alias CatchupResponse =
     { databaseId : Maybe String
+    , serverRevision : Maybe Int
     , tables : Dict String CatchupTableResult
     , hasMore : Bool
     }
@@ -75,6 +76,7 @@ type alias UpdateResult =
     , cmd : Cmd Msg
     , dbCmds : List (Cmd Db.Msg)
     , delta : Maybe Data.Delta.Delta
+    , serverRevision : Maybe Int
     , touchedTables : List String
     , error : Maybe String
     }
@@ -120,6 +122,7 @@ update msg model db =
             , cmd = cmd
             , dbCmds = [ Data.IndexedDb.writeSyncCursor updatedCursor ]
             , delta = Nothing
+            , serverRevision = Nothing
             , touchedTables = []
             , error = Nothing
             }
@@ -134,6 +137,7 @@ update msg model db =
             , cmd = cmd
             , dbCmds = []
             , delta = Nothing
+            , serverRevision = Nothing
             , touchedTables = []
             , error = Nothing
             }
@@ -174,6 +178,7 @@ handleCatchupResponse result model db =
                     , cmd = Cmd.none
                     , dbCmds = []
                     , delta = Nothing
+                    , serverRevision = response.serverRevision
                     , touchedTables = []
                     , error = Just message
                     }
@@ -224,6 +229,7 @@ handleCatchupResponse result model db =
                     , cmd = cmd
                     , dbCmds = Data.IndexedDb.writeSyncCursor updatedCursor :: dbCmds
                     , delta = maybeDelta
+                    , serverRevision = response.serverRevision
                     , touchedTables = Dict.keys response.tables
                     , error = Nothing
                     }
@@ -238,6 +244,7 @@ handleCatchupResponse result model db =
             , cmd = Cmd.none
             , dbCmds = []
             , delta = Nothing
+            , serverRevision = Nothing
             , touchedTables = []
             , error = Just message
             }
@@ -520,8 +527,9 @@ encodeSyncCursorEntry entry =
 
 decodeCatchupResponse : Decode.Decoder CatchupResponse
 decodeCatchupResponse =
-    Decode.map3 CatchupResponse
+    Decode.map4 CatchupResponse
         (Decode.maybe (Decode.field "databaseId" Decode.string))
+        (Decode.maybe (Decode.field "serverRevision" Decode.int))
         (Decode.field "tables" (Decode.dict decodeCatchupTable))
         (Decode.field "has_more" Decode.bool)
 

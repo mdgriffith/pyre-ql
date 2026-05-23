@@ -25,8 +25,9 @@ type InFlightMutation = {
 2. Store the in-flight mutation.
 3. Build `inverse` deltas from the current local rows.
 4. Apply `forward` locally and update active queries.
-5. Send the existing mutation request to the server.
+5. Send the existing mutation request to the server with a stable client mutation id (`requestId`).
 6. Resolve the in-flight mutation from the server response.
+7. When authoritative live sync or catchup data arrives, apply it first, then replay still-unsettled optimistic mutations in request order.
 
 ## Local-Only Deltas
 
@@ -51,16 +52,32 @@ The HTTP body remains the normal mutation input. No optimistic delta data is sen
 
 ## Server Result
 
-- Success: drop the in-flight mutation. No immediate local change is needed.
+- Success: mark the in-flight mutation acknowledged with the response `serverRevision` and return the normal app result. Acknowledged optimistic layers are pruned only from the front of the request-order queue, so a later drag/update mutation that responds first continues to protect newer local intent until earlier requests settle.
 - Failure: apply `inverse`, drop the in-flight mutation, and surface the error.
 
-The mutation's normal response is still available to app code, but it is not used to update the local table cache.
+The mutation's normal response is available to app code. Protocol-level responses should include the client mutation id and, once supported by the server, a monotonic server revision.
 
 ## Server Confirmation
 
-Server confirmation happens through the existing live sync or catchup path. When the authoritative table delta arrives, the normal sync code applies it to the local cache and updates active queries.
+Server confirmation happens through the mutation response and the existing live sync or catchup path. When authoritative table data arrives, the normal sync code applies it to the local cache, then replays any still in-flight optimistic mutations so stale or out-of-order server events cannot overwrite newer local intent.
 
 This also handles common server amendments, such as `createdAt`, `updatedAt`, derived values, or normalized data, as long as the optimistic row uses the same primary key as the server row.
+
+## Ordering Contract
+
+- Network arrival order is not causal order.
+- `requestId`/client mutation id is for idempotency, dedupe, and acknowledgement.
+- Canonical ordering comes from `serverRevision`, a server-assigned monotonic revision on live sync events backed by Pyre internal metadata.
+- Clients must ignore authoritative sync data at or below the last applied server revision.
+- Clients persist the last applied server revision in local IndexedDB metadata.
+- Mutation response envelopes advance the client's last applied server revision and acknowledge the matching optimistic layer without immediately dropping later acknowledged layers behind older unsettled requests.
+- Clients must tolerate receiving their own mutation through live sync, even if the server normally suppresses it.
+
+Until server revisions are present, the client preserves correctness for in-flight optimistic work by replaying local optimistic deltas after every authoritative live/catchup delta.
+
+## Origin Suppression
+
+Servers may skip sending live sync events to the connection that originated a mutation. This is an optimization, not a correctness guarantee. Clients must still handle duplicates, retries, reconnect catchup, and multi-tab delivery.
 
 ## IDs
 
