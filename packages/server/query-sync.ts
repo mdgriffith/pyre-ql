@@ -53,13 +53,40 @@ function liveSyncRequiresCatchup(message: unknown, rowCount: number, recipientCo
   return new TextEncoder().encode(JSON.stringify(message)).byteLength > MAX_LIVE_SYNC_DELTA_PAYLOAD_BYTES;
 }
 
+function sessionsWithoutOrigin(
+  connectedSessions: Map<string, { session: Record<string, SessionValue>; [key: string]: any }>,
+  originSessionId?: string,
+): Map<string, { session: Record<string, SessionValue>; [key: string]: any }> {
+  if (!originSessionId || !connectedSessions.has(originSessionId)) {
+    return connectedSessions;
+  }
+
+  const recipients = new Map(connectedSessions);
+  recipients.delete(originSessionId);
+  return recipients;
+}
+
+function singleOriginSession(
+  connectedSessions: Map<string, { session: Record<string, SessionValue>; [key: string]: any }>,
+  originSessionId?: string,
+): Map<string, { session: Record<string, SessionValue>; [key: string]: any }> | undefined {
+  if (!originSessionId) {
+    return undefined;
+  }
+
+  const origin = connectedSessions.get(originSessionId);
+  return origin ? new Map([[originSessionId, origin]]) : undefined;
+}
+
 function syncWithWasmForDatabase(db: Client, databaseId?: DatabaseId): SyncDeltasFn {
   const normalizedDatabaseId = databaseId ? requireDatabaseId(databaseId) : undefined;
 
   return async (affectedRowGroups, connectedSessions, sendToSession, originSessionId) => {
     activateSchemaForDatabase(normalizedDatabaseId);
 
-    const deltasResult = wasm.calculate_sync_deltas(affectedRowGroups, connectedSessions);
+    const broadcastSessions = sessionsWithoutOrigin(connectedSessions, originSessionId);
+    const originSession = singleOriginSession(connectedSessions, originSessionId);
+    const deltasResult = wasm.calculate_sync_deltas(affectedRowGroups, broadcastSessions);
 
     if (typeof deltasResult === "string" && deltasResult.startsWith("Error:")) {
       console.error("[SyncDeltas] Failed to calculate sync deltas:", deltasResult);
@@ -69,13 +96,11 @@ function syncWithWasmForDatabase(db: Client, databaseId?: DatabaseId): SyncDelta
     const serverRevision = await nextLiveSyncRevision(db);
     const result = typeof deltasResult === "string" ? JSON.parse(deltasResult) : deltasResult;
 
-    if (!Array.isArray(result.groups) || result.groups.length === 0) {
+    if ((!Array.isArray(result.groups) || result.groups.length === 0) && !originSession) {
       return { serverRevision };
     }
 
-    let originMessage: unknown;
-
-    for (const group of result.groups) {
+    for (const group of Array.isArray(result.groups) ? result.groups : []) {
       const reshapedTableGroupsResult = wasm.reshape_sync_table_groups(normalizeForWasmJson(group.table_groups));
 
       if (typeof reshapedTableGroupsResult === "string" && reshapedTableGroupsResult.startsWith("Error:")) {
@@ -103,11 +128,44 @@ function syncWithWasmForDatabase(db: Client, databaseId?: DatabaseId): SyncDelta
         : deltaMessage;
 
       for (const sessionId of group.session_ids) {
-        if (originSessionId && sessionId === originSessionId) {
-          originMessage = message;
-          continue;
-        }
         sendToSession(sessionId, message);
+      }
+    }
+
+    let originMessage: unknown;
+    if (originSession) {
+      const originDeltasResult = wasm.calculate_sync_deltas(affectedRowGroups, originSession);
+
+      if (typeof originDeltasResult === "string" && originDeltasResult.startsWith("Error:")) {
+        console.error("[SyncDeltas] Failed to calculate origin sync delta:", originDeltasResult);
+      } else {
+        const originResult = typeof originDeltasResult === "string" ? JSON.parse(originDeltasResult) : originDeltasResult;
+        const originGroup = Array.isArray(originResult.groups) ? originResult.groups[0] : undefined;
+
+        if (originGroup) {
+          const reshapedTableGroupsResult = wasm.reshape_sync_table_groups(normalizeForWasmJson(originGroup.table_groups));
+
+          if (typeof reshapedTableGroupsResult === "string" && reshapedTableGroupsResult.startsWith("Error:")) {
+            console.error("[SyncDeltas] Failed to reshape origin sync delta:", reshapedTableGroupsResult);
+          } else {
+            const data = typeof reshapedTableGroupsResult === "string"
+              ? JSON.parse(reshapedTableGroupsResult)
+              : reshapedTableGroupsResult;
+            const deltaMessage = {
+              type: "delta",
+              serverRevision,
+              ...(normalizedDatabaseId ? { databaseId: normalizedDatabaseId } : {}),
+              data,
+            };
+            originMessage = liveSyncRequiresCatchup(deltaMessage, countRows(data), originGroup.session_ids.length)
+              ? {
+                type: "syncRequired",
+                serverRevision,
+                ...(normalizedDatabaseId ? { databaseId: normalizedDatabaseId } : {}),
+              }
+              : deltaMessage;
+          }
+        }
       }
     }
 
@@ -125,5 +183,10 @@ export async function runWithSync(
   databaseId?: DatabaseId,
   originSessionId?: string,
 ): Promise<QueryResult> {
-  return run(db, queryMap, queryId, args, executingSession, connectedSessions, syncWithWasmForDatabase(db, databaseId), originSessionId);
+  const syncSessions = connectedSessions ? new Map(connectedSessions) : new Map();
+  if (originSessionId && !syncSessions.has(originSessionId)) {
+    syncSessions.set(originSessionId, { session: executingSession as Record<string, SessionValue> });
+  }
+
+  return run(db, queryMap, queryId, args, executingSession, syncSessions, syncWithWasmForDatabase(db, databaseId), originSessionId, { mode: "sync" });
 }

@@ -35,6 +35,8 @@ pub struct QueryManifest {
     pub optional_input_args: Vec<String>,
     pub json_input_args: Vec<String>,
     pub sql: Vec<SqlInfo>,
+    #[serde(default, rename = "syncSql")]
+    pub sync_sql: Option<Vec<SqlInfo>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

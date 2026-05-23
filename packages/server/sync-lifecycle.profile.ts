@@ -237,6 +237,146 @@ async function profileMutationLifecycle(db: Client, config: ProfileConfig): Prom
   return totals;
 }
 
+async function profileLiveSyncFanout(db: Client, config: ProfileConfig): Promise<PhaseTotals> {
+  const totals: PhaseTotals = new Map();
+  const fanoutSizes = [1, 10, 100, 1000];
+  const affectedRows = [[1, 1, "mutation-1", { index: 1, tag: "mutation" }, 1]];
+
+  for (const sessionCount of fanoutSizes) {
+    for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+      const originSessionId = "session-1";
+      let recipients: string[] = [];
+      await time(totals, `fanout.${sessionCount}.skip_origin`, () => {
+        recipients = Array.from({ length: sessionCount }, (_, index) => `session-${index + 1}`)
+          .filter((sessionId) => sessionId !== originSessionId);
+      });
+
+      let message: unknown;
+      await time(totals, `fanout.${sessionCount}.shape_once`, () => {
+        message = {
+          type: "delta",
+          serverRevision: iteration + 1,
+          data: [
+            {
+              table_name: TABLE_NAME,
+              headers: ["id", "ownerId", "body", "attrs", "updatedAt"],
+              rows: affectedRows,
+            },
+          ],
+        };
+      });
+
+      await time(totals, `fanout.${sessionCount}.send_object_refs`, () => {
+        const sent: unknown[] = [];
+        for (const sessionId of recipients) {
+          sent.push([sessionId, message]);
+        }
+      });
+
+      await time(totals, `fanout.${sessionCount}.stringify_per_client`, () => {
+        const sent: string[] = [];
+        for (const sessionId of recipients) {
+          sent.push(`${sessionId}:${JSON.stringify(message)}`);
+        }
+      });
+
+      await time(totals, `fanout.${sessionCount}.stringify_once`, () => {
+        const serialized = JSON.stringify(message);
+        const sent: string[] = [];
+        for (const sessionId of recipients) {
+          sent.push(`${sessionId}:${serialized}`);
+        }
+      });
+    }
+  }
+
+  await time(totals, "revision.current_update_returning", async () => {
+    for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+      await db.execute("update _pyre_sync set value = value + 1 where key = 'server_revision' returning value");
+    }
+  });
+  await time(totals, "revision.legacy_lazy_ensure", async () => {
+    for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+      await db.execute("create table if not exists _pyre_sync (key text primary key, value integer not null)");
+      await db.execute("insert into _pyre_sync (key, value) values ('server_revision', 0) on conflict(key) do nothing");
+      await db.execute("update _pyre_sync set value = value + 1 where key = 'server_revision' returning value");
+    }
+  });
+
+  return totals;
+}
+
+async function profileMutationModeComparison(db: Client, config: ProfileConfig): Promise<PhaseTotals> {
+  const totals: PhaseTotals = new Map();
+
+  for (let iteration = 0; iteration < config.iterations; iteration += 1) {
+    const updatedAt = config.rows + 10_000 + iteration;
+    const body = `mode-${iteration}`;
+
+    await time(totals, "current_sync.update_returning", () => db.execute({
+      sql: `update ${TABLE_NAME} set body = ?, attrs = ?, updatedAt = ? where id = 1 returning *`,
+      args: [body, JSON.stringify({ index: 1, tag: "current-sync" }), updatedAt],
+    }));
+    const currentSyncAffected = await time(totals, "current_sync.affected_rows_sql", () => db.execute(affectedRowsSql()));
+    const currentSyncResult = await time(totals, "current_sync.typed_result_sql", () => db.execute(typedResultSql()));
+    await time(totals, "current_sync.format_response", () => {
+      const sync = parseAffectedRows(currentSyncAffected.rows[0]?._affectedRows);
+      const result = parseTypedResult(currentSyncResult.rows[0]?.note);
+      JSON.stringify({ result: { note: result }, serverRevision: iteration + 1, sync });
+    });
+
+    await time(totals, "sync_only.update_returning", () => db.execute({
+      sql: `update ${TABLE_NAME} set body = ?, attrs = ?, updatedAt = ? where id = 1 returning *`,
+      args: [body, JSON.stringify({ index: 1, tag: "sync-only" }), updatedAt],
+    }));
+    const syncOnlyAffected = await time(totals, "sync_only.affected_rows_sql", () => db.execute(affectedRowsSql()));
+    await time(totals, "sync_only.format_response", () => {
+      const sync = parseAffectedRows(syncOnlyAffected.rows[0]?._affectedRows);
+      JSON.stringify({ serverRevision: iteration + 1, sync });
+    });
+
+    await time(totals, "current_normal.update_returning", () => db.execute({
+      sql: `update ${TABLE_NAME} set body = ?, attrs = ?, updatedAt = ? where id = 1 returning *`,
+      args: [body, JSON.stringify({ index: 1, tag: "current-normal" }), updatedAt],
+    }));
+    const currentNormalAffected = await time(totals, "current_normal.affected_rows_sql", () => db.execute(affectedRowsSql()));
+    const currentNormalResult = await time(totals, "current_normal.typed_result_sql", () => db.execute(typedResultSql()));
+    await time(totals, "current_normal.format_response", () => {
+      parseAffectedRows(currentNormalAffected.rows[0]?._affectedRows);
+      const result = parseTypedResult(currentNormalResult.rows[0]?.note);
+      JSON.stringify({ result: { note: result } });
+    });
+
+    await time(totals, "normal_only.update", () => db.execute({
+      sql: `update ${TABLE_NAME} set body = ?, attrs = ?, updatedAt = ? where id = 1`,
+      args: [body, JSON.stringify({ index: 1, tag: "normal-only" }), updatedAt],
+    }));
+    const normalOnlyResult = await time(totals, "normal_only.typed_result_sql", () => db.execute(typedResultSql()));
+    await time(totals, "normal_only.format_response", () => {
+      const result = parseTypedResult(normalOnlyResult.rows[0]?.note);
+      JSON.stringify({ result: { note: result } });
+    });
+  }
+
+  return totals;
+}
+
+function typedResultSql(): string {
+  return `select coalesce(json_group_array(json_object('id', id, 'ownerId', ownerId, 'body', body, 'attrs', json(attrs), 'updatedAt', updatedAt)), json('[]')) as note from ${TABLE_NAME} where id = 1`;
+}
+
+function affectedRowsSql(): string {
+  return `select json_group_array(json(affected_row)) as _affectedRows from (select json_object('table_name', '${TABLE_NAME}', 'headers', json_array('id', 'ownerId', 'body', 'attrs', 'updatedAt'), 'rows', json_group_array(json_array(id, ownerId, body, json(attrs), updatedAt))) as affected_row from ${TABLE_NAME} where id = 1)`;
+}
+
+function parseAffectedRows(raw: unknown): unknown {
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+function parseTypedResult(raw: unknown): unknown {
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
 async function profileDataQueryAnatomy(db: Client, config: ProfileConfig): Promise<PhaseTotals> {
   const totals: PhaseTotals = new Map();
   const iterations = config.iterations;
@@ -365,5 +505,7 @@ printTotals("catch-up row-materialized approach", catchupComparison.rowTotals, c
 printTotals("catch-up sqlite-aggregate-json approach", catchupComparison.aggregateTotals, config.iterations);
 printCatchupApproachComparison(catchupComparison, config);
 printTotals("mutation-to-delta", await profileMutationLifecycle(db, config), config.iterations);
+printTotals("live-sync fanout", await profileLiveSyncFanout(db, config), config.iterations);
+printTotals("mutation mode comparison", await profileMutationModeComparison(db, config), config.iterations);
 
 db.close();

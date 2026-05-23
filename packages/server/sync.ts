@@ -9,6 +9,7 @@ export const DEFAULT_SYNC_PAGE_SIZE = 1000;
 export const MAX_SYNC_PAGE_SIZE = 5000;
 export const MAX_SYNC_CURSOR_TABLES = 512;
 export const MAX_SYNC_CURSOR_PERMISSION_HASH_BYTES = 256;
+const SYNC_ROWS_JSON_COLUMN = "_pyre_rows";
 
 function normalizePageSize(pageSize: number): number {
     if (!Number.isFinite(pageSize) || pageSize <= 0) {
@@ -150,6 +151,25 @@ function coerceUnixSeconds(value: unknown): number {
     return new Date(value as string | Date).getTime() / 1000;
 }
 
+function rowsFromSyncQueryResult(queryResult: any, headers: string[]): Array<Record<string, any>> {
+    if (queryResult.columns?.[0] !== SYNC_ROWS_JSON_COLUMN) {
+        return queryResult.rows || [];
+    }
+
+    const rawRows = queryResult.rows?.[0]?.[SYNC_ROWS_JSON_COLUMN];
+    const rowArrays = typeof rawRows === "string"
+        ? JSON.parse(rawRows)
+        : Array.isArray(rawRows) ? rawRows : [];
+
+    return rowArrays.map((row: unknown[]) => {
+        const rowObject: Record<string, any> = {};
+        for (let index = 0; index < headers.length; index += 1) {
+            rowObject[headers[index]] = row[index] ?? null;
+        }
+        return rowObject;
+    });
+}
+
 /**
  * Session data for sync operations.
  */
@@ -243,8 +263,10 @@ export async function catchup(
 
         for (let sqlIndex = 0; sqlIndex < tableSql.sql.length; sqlIndex += 1) {
             const queryResult = allQueryResults[resultIndex++];
-            const columns = queryResult.columns;
-            const rows = queryResult.rows || [];
+            const columns = queryResult.columns?.[0] === SYNC_ROWS_JSON_COLUMN
+                ? tableSql.headers
+                : queryResult.columns;
+            const rows = rowsFromSyncQueryResult(queryResult, tableSql.headers);
 
             for (const row of rows) {
                 const rowObject: Record<string, any> = {};

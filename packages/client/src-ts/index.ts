@@ -1141,6 +1141,7 @@ class SingleDatabasePyreClient {
       : queryModule.optimistic;
     const baseUrl = resolveEndpointUrl(this.server.baseUrl, this.endpoints.query, {
       databaseId,
+      sync: 'true',
       ...(this.connectionId ? { connectionId: this.connectionId } : {}),
     });
     this.emitDevtoolsEvent('mutation:request', { requestId, mutationId, databaseId, input: payload, optimistic });
@@ -1170,6 +1171,7 @@ class SingleDatabasePyreClient {
   ): void {
     const baseUrl = resolveEndpointUrl(this.server.baseUrl, this.endpoints.query, {
       databaseId: message.databaseId,
+      sync: 'true',
       ...(this.connectionId ? { connectionId: this.connectionId } : {}),
     });
     this.emitDevtoolsEvent('mutation:request', {

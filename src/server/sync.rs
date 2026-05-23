@@ -44,20 +44,67 @@ impl<'a> SyncServer<'a> {
         database_id: impl AsRef<str>,
         origin_session_id: Option<&str>,
     ) -> Result<Vec<SessionDeltaMessage>, Error> {
+        let database_id = database_id.as_ref();
+        let broadcast_sessions = sessions_without_origin(connected_sessions, origin_session_id);
         let messages = build_delta_messages_for_database(
+            self.context,
+            &query_result.affected_rows,
+            &broadcast_sessions,
+            database_id,
+        )?;
+        let origin_message = build_origin_delta_message(
             self.context,
             &query_result.affected_rows,
             connected_sessions,
             database_id,
+            origin_session_id,
         )?;
         stamp_messages_and_response_with_next_server_revision(
             conn,
             messages,
             query_result,
-            origin_session_id,
+            origin_message,
         )
         .await
     }
+}
+
+fn sessions_without_origin(
+    connected_sessions: &ConnectedSessions,
+    origin_session_id: Option<&str>,
+) -> ConnectedSessions {
+    let Some(origin_session_id) = origin_session_id else {
+        return connected_sessions.clone();
+    };
+
+    let mut sessions = connected_sessions.clone();
+    sessions.remove(origin_session_id);
+    sessions
+}
+
+fn build_origin_delta_message(
+    context: &typecheck::Context,
+    affected_row_groups: &[AffectedRowTableGroup],
+    connected_sessions: &ConnectedSessions,
+    database_id: &str,
+    origin_session_id: Option<&str>,
+) -> Result<Option<DeltaMessage>, Error> {
+    let Some(origin_session_id) = origin_session_id else {
+        return Ok(None);
+    };
+    let Some(origin_session) = connected_sessions.get(origin_session_id) else {
+        return Ok(None);
+    };
+
+    let origin_sessions = HashMap::from([(origin_session_id.to_string(), origin_session.clone())]);
+    let mut messages = build_delta_messages_for_database(
+        context,
+        affected_row_groups,
+        &origin_sessions,
+        database_id,
+    )?;
+
+    Ok(messages.pop().map(|message| message.message))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -162,7 +209,10 @@ pub async fn catchup(
                 .get(statement_index)
                 .cloned()
                 .unwrap_or_default();
-            let rows = query_objects(conn, statement, &params).await?;
+            let rows = expand_sync_rows(
+                query_objects(conn, statement, &params).await?,
+                &table_sql.headers,
+            )?;
 
             for mut row in rows {
                 decode_json_columns(&mut row, &table_sql.json_columns)?;
@@ -274,7 +324,7 @@ async fn stamp_messages_and_response_with_next_server_revision(
     conn: &libsql::Connection,
     mut messages: Vec<SessionDeltaMessage>,
     query_result: &mut QueryResult,
-    origin_session_id: Option<&str>,
+    mut origin_message: Option<DeltaMessage>,
 ) -> Result<Vec<SessionDeltaMessage>, Error> {
     if query_result.affected_rows.is_empty() {
         return Ok(messages);
@@ -284,17 +334,8 @@ async fn stamp_messages_and_response_with_next_server_revision(
     for message in &mut messages {
         message.message.server_revision = Some(server_revision);
     }
-
-    let mut origin_message = None;
-    if let Some(origin_session_id) = origin_session_id {
-        messages.retain(|message| {
-            if message.session_id == origin_session_id {
-                origin_message = Some(message.message.clone());
-                false
-            } else {
-                true
-            }
-        });
+    if let Some(origin_message) = &mut origin_message {
+        origin_message.server_revision = Some(server_revision);
     }
 
     let mut envelope = serde_json::Map::new();
@@ -428,6 +469,47 @@ async fn query_objects(
     }
 
     Ok(result)
+}
+
+fn expand_sync_rows(
+    rows: Vec<HashMap<String, JsonValue>>,
+    headers: &[String],
+) -> Result<Vec<HashMap<String, JsonValue>>, Error> {
+    if rows.len() != 1 || !rows[0].contains_key(sync::SYNC_ROWS_JSON_COLUMN) {
+        return Ok(rows);
+    }
+
+    let raw_rows = rows[0]
+        .get(sync::SYNC_ROWS_JSON_COLUMN)
+        .cloned()
+        .unwrap_or(JsonValue::Null);
+    let row_arrays = match raw_rows {
+        JsonValue::String(raw) => serde_json::from_str::<JsonValue>(&raw).map_err(Error::Json)?,
+        value => value,
+    };
+
+    let JsonValue::Array(row_arrays) = row_arrays else {
+        return Ok(Vec::new());
+    };
+
+    Ok(row_arrays
+        .into_iter()
+        .filter_map(|row| match row {
+            JsonValue::Array(values) => Some(
+                headers
+                    .iter()
+                    .enumerate()
+                    .map(|(index, header)| {
+                        (
+                            header.clone(),
+                            values.get(index).cloned().unwrap_or(JsonValue::Null),
+                        )
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect())
 }
 
 fn session_value_to_libsql(value: sync::SessionValue) -> libsql::Value {

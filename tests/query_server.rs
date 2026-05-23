@@ -98,7 +98,8 @@ query GetNotes {
 }
 
 #[tokio::test]
-async fn run_insert_mutation_extracts_affected_rows() -> Result<(), Box<dyn std::error::Error>> {
+async fn run_insert_mutation_extracts_affected_rows_in_sync_mode(
+) -> Result<(), Box<dyn std::error::Error>> {
     let db = TestDatabase::new(
         r#"
 record Note {
@@ -125,7 +126,7 @@ insert CreateNote($body: String) {
         false,
     )?;
     let session = PyreSession::new(json!({}), &manifest.session_schema)?;
-    let result = query::run(
+    let result = query::run_sync(
         &conn,
         &manifest,
         &only_query(&manifest).id,
@@ -134,7 +135,7 @@ insert CreateNote($body: String) {
     )
     .await?;
 
-    assert_eq!(result.response["note"][0]["body"], json!("one"));
+    assert_eq!(result.response, json!({}));
     assert_eq!(result.affected_rows.len(), 1);
     assert_eq!(result.affected_rows[0].table_name, "notes");
     assert_eq!(result.affected_rows[0].rows.len(), 1);
@@ -176,7 +177,7 @@ insert CreateNote($attrs: Json) {
         false,
     )?;
     let session = PyreSession::new(json!({ "userId": 7 }), &manifest.session_schema)?;
-    let result = query::run(
+    let result = query::run_sync(
         &conn,
         &manifest,
         &only_query(&manifest).id,
@@ -411,7 +412,8 @@ query GetNote($id: Int, $id2: Int) {
 }
 
 #[tokio::test]
-async fn run_delete_mutation_extracts_affected_rows() -> Result<(), Box<dyn std::error::Error>> {
+async fn run_delete_mutation_extracts_affected_rows_in_sync_mode(
+) -> Result<(), Box<dyn std::error::Error>> {
     let db = TestDatabase::new(
         r#"
 record Note {
@@ -441,7 +443,7 @@ delete DeleteNote($id: Int) {
         false,
     )?;
     let session = PyreSession::new(json!({}), &manifest.session_schema)?;
-    let result = query::run(
+    let result = query::run_sync(
         &conn,
         &manifest,
         &only_query(&manifest).id,
@@ -500,9 +502,9 @@ query GetNotes {
     )
     .await?;
     assert_eq!(created.response["note"][0]["body"], json!("generated"));
-    assert_eq!(created.affected_rows.len(), 1);
+    assert!(created.affected_rows.is_empty());
 
-    let deleted = query::run(
+    let deleted = query::run_sync(
         &conn,
         &manifest,
         &delete.id,

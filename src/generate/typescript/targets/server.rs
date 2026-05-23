@@ -34,7 +34,8 @@ pub fn generate_queries(
                 crate::ext::string::decapitalize(&query_name)
             ));
             content.push_str(&format!(
-                "import {{ sql as {}Sql }} from './core/queries/sql/{}';\n",
+                "import {{ sql as {}Sql, syncSql as {}SyncSql }} from './core/queries/sql/{}';\n",
+                query_name,
                 query_name,
                 crate::ext::string::decapitalize(&query_name)
             ));
@@ -46,8 +47,8 @@ pub fn generate_queries(
     for operation in &query_list.queries {
         if let ast::QueryDef::Query(q) = operation {
             content.push_str(&format!(
-                "const {}Query: QueryMetadata = {{\n  ...{},\n  sql: {}Sql\n}};\n\n",
-                q.name, q.name, q.name
+                "const {}Query: QueryMetadata = {{\n  ...{},\n  sql: {}Sql,\n  ...(Array.isArray({}SyncSql) ? {{ syncSql: {}SyncSql }} : {{}})\n}};\n\n",
+                q.name, q.name, q.name, q.name, q.name
             ));
         }
     }

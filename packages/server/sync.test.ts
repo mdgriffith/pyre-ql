@@ -262,6 +262,46 @@ test("catchup unwraps double-encoded json objects for json columns", async () =>
   });
 });
 
+test("catchup expands aggregate sync row payloads", async () => {
+  getSyncSqlMock = () => ({
+    tables: [
+      {
+        table_name: "gameEntities",
+        permission_hash: "perm",
+        sql: ["select aggregate rows"],
+        headers: ["id", "attrs", "updatedAt"],
+        json_columns: ["attrs"],
+      },
+    ],
+  });
+  reshapeSyncTableGroupsMock = (groups: any) => groups;
+
+  const db = {
+    execute: mock(async () => ({ rows: [{ table_name: "gameEntities", needs_sync: 1 }] })),
+    batch: mock(async () => ([
+      {
+        columns: ["_pyre_rows"],
+        rows: [
+          {
+            _pyre_rows: JSON.stringify([
+              [1, { position: { x: 11, y: 14 } }, 1700000000],
+            ]),
+          },
+        ],
+      },
+    ])),
+  };
+
+  const result = await catchup(db as any, { tables: {} }, {}, 1000);
+
+  expect(result.tables.gameEntities.rows[0]).toEqual({
+    id: 1,
+    attrs: { position: { x: 11, y: 14 } },
+    updatedAt: 1700000000,
+  });
+  expect(result.tables.gameEntities.last_seen_updated_at).toBe(1700000000);
+});
+
 test("catchup executes status and table sync SQL with bound params", async () => {
   getSyncStatusSqlMock = () => ({ sql: "select ? as status", params: ["tenant' OR 1=1 --"] });
   getSyncSqlMock = () => ({

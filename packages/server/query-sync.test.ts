@@ -11,27 +11,30 @@ mock.module("./wasm/pyre_wasm.js", () => ({
   set_schema: () => undefined,
   get_sync_status_sql: () => "select 1",
   get_sync_sql: () => ({ tables: [] }),
-  calculate_sync_deltas: () => ({
-    groups: [
-      {
-        session_ids: sessionIds,
-        table_groups: [
-          {
-            table_name: "maps",
-            headers: [
-              "id",
-              "name",
-              "tiling",
-              "tiling__tileRootKey",
-              "tiling__tileWidth",
-              "tiling__format",
-            ],
-            rows: [[1, "World", "Tiling", "tiles/root", 256, "Png"]],
-          },
-        ],
-      },
-    ],
-  }),
+  calculate_sync_deltas: (_affectedRows: unknown, connectedSessions: Map<string, unknown>) => {
+    const recipientIds = Array.from(connectedSessions.keys()).filter((sessionId) => sessionIds.includes(sessionId));
+    return {
+      groups: recipientIds.length === 0 ? [] : [
+        {
+          session_ids: recipientIds,
+          table_groups: [
+            {
+              table_name: "maps",
+              headers: [
+                "id",
+                "name",
+                "tiling",
+                "tiling__tileRootKey",
+                "tiling__tileWidth",
+                "tiling__format",
+              ],
+              rows: [[1, "World", "Tiling", "tiles/root", 256, "Png"]],
+            },
+          ],
+        },
+      ],
+    };
+  },
   reshape_sync_table_groups: () => ([
     {
       table_name: "maps",
@@ -51,6 +54,7 @@ mock.module("./query", () => ({
     connectedSessions: Map<string, { session: Record<string, unknown> }>,
     syncDeltas: (affectedRowGroups: unknown[], connectedSessions: Map<string, { session: Record<string, unknown> }>, sendToSession: (sessionId: string, message: unknown) => void) => Promise<{ serverRevision?: number; originMessage?: unknown } | void>,
     originSessionId?: string,
+    options?: { mode?: string },
   ) => {
     const queryResult: { kind: "success"; response: unknown; sync: (sendToSession: (sessionId: string, message: unknown) => void) => Promise<unknown> } = {
       kind: "success",
@@ -79,7 +83,7 @@ mock.module("./query", () => ({
           queryResult.response = {
             serverRevision: syncResult.serverRevision,
             ...(syncResult.originMessage === undefined ? {} : { sync: syncResult.originMessage }),
-            result: queryResult.response,
+            ...(options?.mode === "sync" ? {} : { result: queryResult.response }),
           };
         }
         return syncResult;
@@ -284,6 +288,42 @@ test("runWithSync includes origin authoritative sync in mutation response envelo
   expect((result.response as any).serverRevision).toBe(1);
   expect((result.response as any).sync).toEqual(sent[0].message);
   expect((result.response as any).sync.databaseId).toBe("campaign:123");
+});
+
+test("runWithSync builds origin sync from executing session when origin is not live-connected", async () => {
+  sessionIds = ["s1"];
+  await loadSchemaFromDatabase(schemaDb as any);
+
+  const result = await runWithSync(
+    syncDb() as any,
+    {} as any,
+    "query-id",
+    {},
+    {},
+    new Map(),
+    "campaign:123",
+    "s1",
+  );
+
+  const sent: Array<{ sessionId: string; message: any }> = [];
+  await result.sync((sessionId, message) => {
+    sent.push({ sessionId, message });
+  });
+
+  expect(sent).toHaveLength(0);
+  expect((result.response as any).serverRevision).toBe(1);
+  expect((result.response as any).sync).toEqual({
+    type: "delta",
+    serverRevision: 1,
+    databaseId: "campaign:123",
+    data: [
+      {
+        table_name: "maps",
+        headers: ["id", "name", "tiling"],
+        rows: [[1, "World", { type: "Tiling", tileRootKey: "tiles/root", tileWidth: 256, format: { type: "Png" } }]],
+      },
+    ],
+  });
 });
 
 test("runWithSync sends syncRequired when delta row count exceeds cap", async () => {

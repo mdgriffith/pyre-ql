@@ -24,6 +24,8 @@ struct QueryManifest {
     optional_input_args: Vec<String>,
     json_input_args: Vec<String>,
     sql: Vec<SqlInfo>,
+    #[serde(rename = "syncSql", skip_serializing_if = "Option::is_none")]
+    sync_sql: Option<Vec<SqlInfo>>,
 }
 
 #[derive(Serialize)]
@@ -116,7 +118,12 @@ fn query_manifest(
             })
             .map(|arg| arg.name.clone())
             .collect(),
-        sql: query_sql(context, query, query_info),
+        sql: query_sql(context, query, query_info, false),
+        sync_sql: if query.operation == ast::QueryOperation::Query {
+            None
+        } else {
+            Some(query_sql(context, query, query_info, true))
+        },
     }
 }
 
@@ -171,6 +178,7 @@ fn query_sql(
     context: &typecheck::Context,
     query: &ast::Query,
     query_info: &typecheck::QueryInfo,
+    sync_mode: bool,
 ) -> Vec<SqlInfo> {
     let mut result = Vec::new();
 
@@ -187,7 +195,23 @@ fn query_sql(
             &query_info.variables,
         );
 
-        for prepared in sql::to_string(context, query, query_info, table, query_field) {
+        let prepared = if query.operation == ast::QueryOperation::Query {
+            sql::to_string(context, query, query_info, table, query_field)
+        } else {
+            sql::to_string_with_affected_rows(
+                context,
+                query,
+                query_info,
+                table,
+                query_field,
+                sync_mode,
+            )
+        };
+
+        for prepared in prepared {
+            if sync_mode && prepared.include && !prepared.sql.contains("_affectedRows") {
+                continue;
+            }
             result.push(SqlInfo {
                 include: prepared.include,
                 params: params.clone(),

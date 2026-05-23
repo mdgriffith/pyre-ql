@@ -52,6 +52,14 @@ record GameEntity {
         result.tables[0].sql[0].contains("json(\"gameEntities\".\"attrs\") as \"attrs\""),
         "expected sync SQL to decode JSONB columns via json()"
     );
+    assert!(
+        result.tables[0].sql[0].contains("AS \"_pyre_rows\""),
+        "expected sync SQL to aggregate rows for cheaper runtime materialization"
+    );
+    assert!(
+        result.tables[0].sql[0].contains("json(\"attrs\")"),
+        "expected aggregate row arrays to preserve JSON columns as JSON values"
+    );
 }
 
 #[test]
@@ -124,7 +132,7 @@ record Note {
     )
     .expect("sync sql should generate");
 
-    assert!(result.tables[0].sql[0].ends_with("LIMIT 5001"));
+    assert!(result.tables[0].sql[0].contains("LIMIT 5001"));
 }
 
 #[test]

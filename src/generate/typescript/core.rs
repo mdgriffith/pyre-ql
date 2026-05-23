@@ -383,8 +383,29 @@ fn to_query_sql_file(
     let mut result = String::new();
 
     result.push_str("import type { SqlInfo } from './types';\n\n");
-    result.push_str("export const sql: SqlInfo[] = [");
+    result.push_str("export const sql: SqlInfo[] = ");
+    result.push_str(&format_sql_entries(context, query_info, query, false));
+    result.push_str(";\n");
 
+    if query.operation == ast::QueryOperation::Query {
+        result.push_str("export const syncSql: SqlInfo[] | undefined = undefined;\n");
+    } else {
+        result.push_str("export const syncSql: SqlInfo[] = ");
+        result.push_str(&format_sql_entries(context, query_info, query, true));
+        result.push_str(";\n");
+    }
+
+    result
+}
+
+fn format_sql_entries(
+    context: &typecheck::Context,
+    query_info: &typecheck::QueryInfo,
+    query: &ast::Query,
+    sync_mode: bool,
+) -> String {
+    let mut result = String::new();
+    result.push('[');
     let mut written_field = false;
     for field in &query.fields {
         match field {
@@ -396,10 +417,26 @@ fn to_query_sql_file(
                             &ast::get_aliased_name(query_field),
                             &query_info.variables,
                         );
-                        let prepared =
-                            sql::to_string(context, query, query_info, table, query_field);
+                        let prepared = if query.operation == ast::QueryOperation::Query {
+                            sql::to_string(context, query, query_info, table, query_field)
+                        } else {
+                            sql::to_string_with_affected_rows(
+                                context,
+                                query,
+                                query_info,
+                                table,
+                                query_field,
+                                sync_mode,
+                            )
+                        };
 
                         for prepped in prepared {
+                            if sync_mode
+                                && prepped.include
+                                && !prepped.sql.contains("_affectedRows")
+                            {
+                                continue;
+                            }
                             if written_field {
                                 result.push_str(",\n");
                             }
@@ -421,7 +458,7 @@ fn to_query_sql_file(
         }
     }
 
-    result.push_str("\n];\n");
+    result.push_str("\n]");
     result
 }
 

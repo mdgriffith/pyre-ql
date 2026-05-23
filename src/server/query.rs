@@ -26,14 +26,40 @@ pub async fn run(
     input: JsonValue,
     session: &PyreSession,
 ) -> Result<QueryResult, Error> {
+    run_inner(conn, manifest, query_id, input, session, false).await
+}
+
+pub async fn run_sync(
+    conn: &libsql::Connection,
+    manifest: &Manifest,
+    query_id: &str,
+    input: JsonValue,
+    session: &PyreSession,
+) -> Result<QueryResult, Error> {
+    run_inner(conn, manifest, query_id, input, session, true).await
+}
+
+async fn run_inner(
+    conn: &libsql::Connection,
+    manifest: &Manifest,
+    query_id: &str,
+    input: JsonValue,
+    session: &PyreSession,
+    sync_mode: bool,
+) -> Result<QueryResult, Error> {
     let query = manifest
         .queries
         .get(query_id)
         .ok_or_else(|| Error::UnknownQuery(query_id.to_string()))?;
     let args = build_args(query, input, session)?;
+    let sql = if sync_mode {
+        query.sync_sql.as_ref().unwrap_or(&query.sql)
+    } else {
+        &query.sql
+    };
     let mut included_result_sets = Vec::new();
 
-    for statement in &query.sql {
+    for statement in sql {
         let (sql, values) = statement_args(statement, &args)?;
 
         if statement.include {
@@ -47,7 +73,11 @@ pub async fn run(
     }
 
     Ok(QueryResult {
-        response: format_response(&included_result_sets)?,
+        response: if sync_mode {
+            JsonValue::Object(serde_json::Map::new())
+        } else {
+            format_response(&included_result_sets)?
+        },
         affected_rows: extract_affected_rows(&included_result_sets)?,
     })
 }

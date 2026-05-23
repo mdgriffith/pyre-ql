@@ -11,9 +11,11 @@ type Validator<T> = ZodType<T>;
  */
 export interface QueryMetadata {
     id: string;
+    operation?: "query" | "insert" | "update" | "delete" | string;
     primary_db?: string;
     attached_dbs?: string[];
     sql: SqlInfo[];
+    syncSql?: SqlInfo[];
     session_args: string[];
     optional_input_args: string[];
     json_input_args: string[];
@@ -84,6 +86,10 @@ export type SyncDeltasFn = (
     sendToSession: (sessionId: string, message: any) => void,
     originSessionId?: string
 ) => Promise<SyncResult | void>;
+
+export interface RunOptions {
+    mode?: "normal" | "sync";
+}
 
 function extractAffectedRowGroups(sql: SqlInfo[], resultSets: any[]): any[] {
     const groups: unknown[] = [];
@@ -160,7 +166,8 @@ export async function run(
     executingSession: Session,
     connectedSessions?: Map<string, { session: Record<string, SessionValue>;[key: string]: any }>,
     syncDeltas?: SyncDeltasFn,
-    originSessionId?: string
+    originSessionId?: string,
+    options: RunOptions = {},
 ): Promise<QueryResult> {
     // Look up query metadata
     const query = queryMap[queryId];
@@ -213,12 +220,15 @@ export async function run(
     );
 
     // Prepare SQL statements
-    const sqlStatements: InStatement[] = toSqlStatements(query.sql, validArgs);
+    const useSyncMode = options.mode === "sync";
+    const activeSql = useSyncMode ? query.syncSql ?? query.sql : query.sql;
+    const includeResult = !useSyncMode;
+    const sqlStatements: InStatement[] = toSqlStatements(activeSql, validArgs);
 
     // Execute query
     const resultSets = await db.batch(sqlStatements);
-    const affectedRowGroups: unknown[] = extractAffectedRowGroups(query.sql, resultSets);
-    const response = formatResultData(query.sql, resultSets);
+    const affectedRowGroups: unknown[] = extractAffectedRowGroups(activeSql, resultSets);
+    const response = includeResult ? formatResultData(activeSql, resultSets) : {};
 
     // Always create sync function - it will be a no-op if there's nothing to send
     /**
@@ -258,7 +268,7 @@ export async function run(
             queryResult.response = {
                 serverRevision: syncResult.serverRevision,
                 ...(syncResult.originMessage === undefined ? {} : { sync: syncResult.originMessage }),
-                result: queryResult.response,
+                ...(includeResult ? { result: queryResult.response } : {}),
             };
         }
 

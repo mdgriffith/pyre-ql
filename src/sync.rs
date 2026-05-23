@@ -29,6 +29,7 @@ pub const DEFAULT_SYNC_PAGE_SIZE: usize = 1000;
 pub const MAX_SYNC_PAGE_SIZE: usize = 5000;
 pub const MAX_SYNC_CURSOR_TABLES: usize = 512;
 pub const MAX_SYNC_CURSOR_PERMISSION_HASH_BYTES: usize = 256;
+pub const SYNC_ROWS_JSON_COLUMN: &str = "_pyre_rows";
 
 pub fn normalize_page_size(page_size: usize) -> Result<usize, SyncError> {
     if page_size == 0 {
@@ -845,9 +846,22 @@ pub fn get_sync_sql(
             )));
         }
 
-        // Build SQL query directly
+        let row_values = headers
+            .iter()
+            .map(|header| {
+                let quoted_header = string::quote(header);
+                if json_column_set.contains(header) {
+                    format!("json({})", quoted_header)
+                } else {
+                    quoted_header
+                }
+            })
+            .collect::<Vec<_>>();
+
         let sql = format!(
-            "SELECT {} FROM {}{} ORDER BY {}.updatedAt ASC LIMIT {}",
+            "SELECT coalesce(json_group_array(json_array({})), json('[]')) AS {} FROM (SELECT {} FROM {}{} ORDER BY {}.updatedAt ASC LIMIT {})",
+            row_values.join(", "),
+            string::quote(SYNC_ROWS_JSON_COLUMN),
             columns.join(", "),
             quoted_table_name,
             where_clause,
