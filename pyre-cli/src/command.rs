@@ -5,6 +5,7 @@ mod generate_migration;
 mod init;
 mod introspect;
 mod migrate;
+mod serve;
 mod shared;
 
 pub use check::check;
@@ -15,4 +16,5 @@ pub use init::init;
 pub use introspect::introspect;
 pub use migrate::migrate;
 pub use migrate::push;
+pub use serve::{serve, ServeOptions};
 pub use shared::Options;

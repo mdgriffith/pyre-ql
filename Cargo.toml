@@ -5,16 +5,25 @@ edition = "2021"
 
 
 [features]
-default = ["filesystem", "database", "json"]
+default = ["filesystem", "database", "json", "serve"]
 filesystem = ["walkdir"]
 database = ["libsql", "tokio"]
+serve = [
+    "async-stream",
+    "axum",
+    "base64",
+    "hmac",
+    "tokio/macros",
+    "tokio/net",
+    "tokio/sync",
+]
 wasm = ["getrandom/js"]
 json = ["serde_json"]
 
 [[bin]]
 name = "pyre"
 path = "pyre-cli/src/main.rs"
-required-features = ["filesystem", "database", "json"]
+required-features = ["filesystem", "database", "json", "serve"]
 
 [lib]
 path = "src/lib.rs"
@@ -22,8 +31,12 @@ path = "src/lib.rs"
 
 [dependencies]
 atty = "0.2.14"
+async-stream = { version = "0.3.5", optional = true }
+axum = { version = "0.6.20", optional = true, features = ["headers", "json"] }
+base64 = { version = "0.21.7", optional = true }
 chrono = "0.4.38"
 clap = { version = "4.5.7", features = ["derive"] }
+hmac = { version = "0.12.1", optional = true }
 libsql = { version = "0.9.11", optional = true }
 nom = "7.1.3"
 nom_locate = "4.2.0"

@@ -1,8 +1,11 @@
 use assert_cmd::Command;
 use libsql;
 use predicates::prelude::*;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::process::Command as StdCommand;
+use std::process::{Child, Command as StdCommand, Stdio};
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 #[cfg(unix)]
@@ -49,6 +52,68 @@ record User {
         "#,
     )
     .unwrap();
+}
+
+struct ServerGuard {
+    child: Child,
+}
+
+impl Drop for ServerGuard {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn free_loopback_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+fn http_request(port: u16, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
+    let body = body.unwrap_or("");
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.as_bytes().len()
+    );
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let mut parts = response.splitn(2, "\r\n\r\n");
+    let headers = parts.next().unwrap_or("");
+    let body = parts.next().unwrap_or("").to_string();
+    let status = headers
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|status| status.parse::<u16>().ok())
+        .unwrap_or(0);
+
+    (status, body)
+}
+
+fn wait_for_health(port: u16) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
+            let request = format!(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            );
+            let _ = stream.write_all(request.as_bytes());
+            let mut response = String::new();
+            if stream.read_to_string(&mut response).is_ok() && response.starts_with("HTTP/1.1 200")
+            {
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    panic!("pyre serve did not become healthy on port {}", port);
 }
 
 fn write_multi_namespace_schemas(ctx: &TestContext) {
@@ -743,6 +808,71 @@ record User {
                 .iter()
                 .any(|param| param == "settings__is_set")
         }));
+}
+
+#[test]
+fn test_serve_starts_http_server_and_runs_query() {
+    let ctx = TestContext::new();
+    write_basic_schema(&ctx);
+    std::fs::write(
+        ctx.workspace_path.join("pyre/query.pyre"),
+        r#"
+query GetUsers {
+    user {
+        id
+        name
+    }
+}
+        "#,
+    )
+    .unwrap();
+
+    let db_path = ctx.workspace_path.join("db/app.db");
+    ctx.run_command("migrate")
+        .arg(db_path.to_str().unwrap())
+        .arg("--push")
+        .assert()
+        .success();
+    ctx.run_command("generate").assert().success();
+
+    let manifest_path = ctx.workspace_path.join("pyre/generated/manifest.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(manifest_path).unwrap()).unwrap();
+    let query_id = manifest["queries"]
+        .as_object()
+        .unwrap()
+        .values()
+        .find(|query| query["operation"] == "query")
+        .and_then(|query| query["id"].as_str())
+        .expect("generated query id")
+        .to_string();
+
+    let port = free_loopback_port();
+    let mut command = StdCommand::new(assert_cmd::cargo::cargo_bin("pyre"));
+    command
+        .current_dir(&ctx.workspace_path)
+        .arg("serve")
+        .arg(db_path.to_str().unwrap())
+        .arg("--port")
+        .arg(port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let child = command.spawn().unwrap();
+    let _server = ServerGuard { child };
+
+    wait_for_health(port);
+
+    let (health_status, health_body) = http_request(port, "GET", "/health", None);
+    assert_eq!(health_status, 200);
+    let health: serde_json::Value = serde_json::from_str(&health_body).unwrap();
+    assert_eq!(health["ok"], serde_json::json!(true));
+    assert_eq!(health["databaseId"], serde_json::json!("default"));
+
+    let (query_status, query_body) =
+        http_request(port, "POST", &format!("/db/{}", query_id), Some("{}"));
+    assert_eq!(query_status, 200, "query body: {}", query_body);
+    let result: serde_json::Value = serde_json::from_str(&query_body).unwrap();
+    assert_eq!(result["user"], serde_json::json!([]));
 }
 
 #[test]

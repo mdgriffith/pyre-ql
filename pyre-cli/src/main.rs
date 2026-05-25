@@ -109,6 +109,60 @@ enum Commands {
         #[arg(long, default_value = "pyre/migrations")]
         migration_dir: String,
     },
+
+    /// Start the built-in single-database Pyre server.
+    Serve {
+        /// A local filename, or a url, or an environment variable if prefixed with a $.
+        database: String,
+
+        /// Database auth token for remote libSQL/Turso databases.
+        #[arg(long)]
+        auth: Option<String>,
+
+        /// Address to bind. Defaults to loopback for safety.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Port to bind.
+        #[arg(long, default_value_t = 3000)]
+        port: u16,
+
+        /// Directory containing generated Pyre artifacts.
+        #[arg(long, default_value = "pyre/generated")]
+        generated: String,
+
+        /// Fixed database id exposed to clients.
+        #[arg(long, default_value = "default")]
+        database_id: String,
+
+        /// Trusted session header name.
+        #[arg(long)]
+        session_header: Option<String>,
+
+        /// HMAC secret for signed session headers.
+        #[arg(long)]
+        session_secret: Option<String>,
+
+        /// Static JSON session used for local development.
+        #[arg(long)]
+        dev_session: Option<String>,
+
+        /// Allowed CORS origin. May be passed multiple times.
+        #[arg(long)]
+        cors_origin: Vec<String>,
+
+        /// Sync catchup page size.
+        #[arg(long, default_value_t = pyre::sync::DEFAULT_SYNC_PAGE_SIZE)]
+        page_size: usize,
+
+        /// Allow --dev-session on non-loopback bind addresses.
+        #[arg(long, default_value_t = false)]
+        allow_unsafe_dev_session: bool,
+
+        /// Allow unsigned trusted session headers on non-loopback bind addresses.
+        #[arg(long, default_value_t = false)]
+        allow_unsafe_unsigned_session: bool,
+    },
 }
 
 #[tokio::main]
@@ -171,6 +225,41 @@ async fn main() -> io::Result<()> {
                 auth,
                 Path::new(migration_dir),
                 namespace,
+            )
+            .await?;
+        }
+        Commands::Serve {
+            database,
+            auth,
+            host,
+            port,
+            generated,
+            database_id,
+            session_header,
+            session_secret,
+            dev_session,
+            cors_origin,
+            page_size,
+            allow_unsafe_dev_session,
+            allow_unsafe_unsigned_session,
+        } => {
+            command::serve(
+                &options,
+                command::ServeOptions {
+                    database,
+                    auth,
+                    host,
+                    port: *port,
+                    generated,
+                    database_id,
+                    session_header,
+                    session_secret,
+                    dev_session,
+                    cors_origins: cors_origin,
+                    page_size: *page_size,
+                    allow_unsafe_dev_session: *allow_unsafe_dev_session,
+                    allow_unsafe_unsigned_session: *allow_unsafe_unsigned_session,
+                },
             )
             .await?;
         }
