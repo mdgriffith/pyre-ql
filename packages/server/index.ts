@@ -5,7 +5,7 @@
  * mutation handling, and permission-aware syncing.
  */
 
-export { run } from "./query";
+export { run, seed } from "./query";
 export { databaseIdFromUrl, requireDatabaseId, withDatabaseId } from "./database-id";
 
 export type { DatabaseId } from "./database-id";
@@ -15,6 +15,8 @@ export type {
     QueryResult,
     QueryMap,
     QueryMetadata,
+    SeedInput,
+    SeedResult,
     Session,
     SessionValue,
 } from "./query";

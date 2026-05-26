@@ -312,10 +312,10 @@ insert into maps (
     assert_eq!(
         maps.rows[0]["tiling"],
         json!({
-            "type": "Tiling",
+            "_type": "Tiling",
             "tileRootKey": "tiles/root",
             "tileWidth": 256,
-            "format": { "type": "Png" }
+            "format": { "_type": "Png" }
         })
     );
 
@@ -572,10 +572,10 @@ record Map {
         vec![
             json!(1),
             json!({
-                "type": "Tiling",
+                "_type": "Tiling",
                 "tileRootKey": "tiles/root",
                 "tileWidth": 256,
-                "format": { "type": "Png" }
+                "format": { "_type": "Png" }
             }),
             json!(10),
         ]

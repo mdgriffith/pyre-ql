@@ -703,8 +703,8 @@ fn build_payload_union_verify_script(seed_calls: &[&str], expected_rows: &[&str]
     script.push_str("  if (!row.lifecycle || typeof row.lifecycle !== \"object\") {\n");
     script.push_str("    throw new Error(`Expected row ${id} lifecycle object, got: ${JSON.stringify(row.lifecycle)}`);\n");
     script.push_str("  }\n\n");
-    script.push_str("  if (row.lifecycle.type_ !== shape.lifecycleType) {\n");
-    script.push_str("    throw new Error(`Expected row ${id} lifecycle.type_ ${shape.lifecycleType}, got: ${JSON.stringify(row.lifecycle.type_)}`);\n");
+    script.push_str("  if (row.lifecycle._type !== shape.lifecycleType) {\n");
+    script.push_str("    throw new Error(`Expected row ${id} lifecycle._type ${shape.lifecycleType}, got: ${JSON.stringify(row.lifecycle._type)}`);\n");
     script.push_str("  }\n\n");
     script.push_str("  if (shape.reason !== undefined) {\n");
     script.push_str(
@@ -748,6 +748,64 @@ fn test_generate_command() {
         .unwrap()
         .next()
         .is_some());
+}
+
+#[test]
+fn test_generated_typescript_server_includes_typed_seed_input() {
+    let ctx = TestContext::new();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+record User {
+    id Id.Int @id
+    name String
+    posts @link(Post.authorId)
+    @public
+}
+
+record Post {
+    id Int @id
+    authorId User.id
+    title String
+    status Status
+    attrs Json<PostAttrs>
+    author @link(authorId, User.id)
+    @public
+}
+
+type Status
+   = Draft
+   | Published { publishedAt DateTime }
+
+type PostAttrs
+   = PostAttrs { tags List<String> }
+        "#,
+    )
+    .unwrap();
+
+    ctx.run_command("generate").assert().success();
+
+    let server_ts = std::fs::read_to_string(
+        ctx.workspace_path
+            .join("pyre/generated/typescript/server.ts"),
+    )
+    .unwrap();
+
+    assert!(server_ts.contains("import * as Db from './core/decode';"));
+    assert!(server_ts.contains("const seedValidators: SeedValidators ="));
+    assert!(server_ts.contains("type SeedConstructed<T>"));
+    assert!(server_ts.contains("export type SeedUsersRow = {"));
+    assert!(server_ts.contains("\"posts\"?: SeedPostsRow[];"));
+    assert!(server_ts.contains("export type SeedPostsRow = {"));
+    assert!(server_ts.contains("\"status\"?: SeedConstructed<Db.Status>;"));
+    assert!(server_ts.contains("\"attrs\"?: SeedConstructed<Db.PostAttrs>;"));
+    assert!(server_ts.contains("\"users\"?: SeedUsersRow[];"));
+    assert!(server_ts.contains("\"posts\"?: SeedPostsRow[];"));
+    assert!(server_ts.contains("export const seed = (db: Client, input: SeedInput): Promise<SeedResult>"));
+    assert!(server_ts.contains("{ _type: K }"));
+    assert!(!server_ts.contains("type?:"));
+    assert!(!server_ts.contains("$?:"));
 }
 
 #[test]
@@ -1144,7 +1202,7 @@ fn test_migrate_reports_up_to_date_when_no_work_is_needed() {
 }
 
 #[test]
-fn test_migrate_reports_plus_push_when_reconciliation_is_needed() {
+fn test_migrate_validates_instead_of_reconciling_missing_migration_sql() {
     let ctx = TestContext::new();
     write_basic_schema(&ctx);
 
@@ -1161,8 +1219,75 @@ fn test_migrate_reports_plus_push_when_reconciliation_is_needed() {
     ctx.run_command("migrate")
         .arg(".yak/yak.db")
         .assert()
-        .success()
-        .stdout(predicate::str::contains("1 migration applied + push."));
+        .failure()
+        .stdout(predicate::str::contains("Migration Validation Failed"))
+        .stdout(predicate::str::contains("missing table users"));
+}
+
+#[test]
+fn test_migrate_refuses_automatic_destructive_reconciliation() {
+    let ctx = TestContext::new();
+    write_basic_schema(&ctx);
+
+    ctx.run_command("migration")
+        .arg("--db")
+        .arg(".yak/yak.db")
+        .arg("init")
+        .assert()
+        .success();
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .assert()
+        .success();
+
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+record User {
+    id Int @id
+    @public
+}
+        "#,
+    )
+    .unwrap();
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("Migration Validation Failed"))
+        .stdout(predicate::str::contains("unexpected column users.name"));
+}
+
+#[test]
+fn test_migrate_refuses_changed_applied_migration_sql() {
+    let ctx = TestContext::new();
+    write_basic_schema(&ctx);
+
+    ctx.run_command("migration")
+        .arg("--db")
+        .arg(".yak/yak.db")
+        .arg("init")
+        .assert()
+        .success();
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .assert()
+        .success();
+
+    let migration_sql = first_migration_sql_path(&ctx);
+    let mut contents = std::fs::read_to_string(&migration_sql).unwrap();
+    contents.push_str("\n-- edited after apply\n");
+    std::fs::write(migration_sql, contents).unwrap();
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("Applied Migration Changed"))
+        .stdout(predicate::str::contains("Create a new migration"));
 }
 
 #[tokio::test]
@@ -1500,8 +1625,8 @@ import { SeedEvent, SeedInlineEvent, GetEvents } from "./pyre/generated/typescri
 
 const db = createClient({ url: "file:.yak/yak.db" });
 
-await SeedEvent(db, { payload: { type_: "Running" } });
-await SeedEvent(db, { payload: { type_: "Finished", reason: "done" } });
+await SeedEvent(db, { payload: { _type: "Running" } });
+await SeedEvent(db, { payload: { _type: "Finished", reason: "done" } });
 await SeedInlineEvent(db, {});
 
 const result = await GetEvents(db, {});
@@ -1511,9 +1636,9 @@ if (!result || !Array.isArray(result.event)) {
 
 const rows = [...result.event].sort((a, b) => a.id - b.id);
 const expected = [
-  { type_: "Running" },
-  { type_: "Finished", reason: "done" },
-  { type_: "Finished", reason: "inline" },
+  { _type: "Running" },
+  { _type: "Finished", reason: "done" },
+  { _type: "Finished", reason: "inline" },
 ];
 
 if (rows.length !== expected.length) {
@@ -1537,5 +1662,118 @@ console.log("typed-json-roundtrip-check-passed");
         verify_script,
         "typed-json-roundtrip-check-passed",
         "bun typed json runtime verification",
+    );
+}
+
+#[tokio::test]
+async fn test_generated_seed_data_decodes_through_generated_query() {
+    if !bun_is_available() {
+        eprintln!("Skipping bun-based seed decode test: bun not available");
+        return;
+    }
+
+    let ctx = TestContext::new();
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+record Token {
+    id Id.Int @id
+    name String
+    payload Json<TokenPayload>
+    placement Placement
+    createdAt DateTime @default(now)
+    @public
+}
+
+type TokenPayload
+   = TokenPayload {
+        labels List<String>
+        marker Marker
+     }
+
+type Marker
+   = Start
+   | End { reason String }
+
+type Placement
+   = Grid { x Int, y Int }
+   | World { x Int, y Int, scale Int }
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        ctx.workspace_path.join("pyre/query.pyre"),
+        r#"
+query GetTokens {
+    token {
+        id
+        name
+        payload
+        placement
+    }
+}
+        "#,
+    )
+    .unwrap();
+
+    generate_runtime(&ctx);
+
+    let verify_script = r#"
+import { createClient } from "@libsql/client";
+import { seed } from "./pyre/generated/typescript/server.ts";
+import { GetTokens } from "./pyre/generated/typescript/run.ts";
+
+const db = createClient({ url: "file:.yak/yak.db" });
+
+const seeded = await seed(db, {
+  tokens: [
+    {
+      id: 1,
+      name: "seeded token",
+      payload: {
+        _type: "TokenPayload",
+        labels: ["alpha", "beta"],
+        marker: { _type: "End", reason: "finished" },
+      },
+      placement: { _type: "World", x: 10, y: 20, scale: 100 },
+    },
+  ],
+});
+
+if (seeded.kind !== "success") {
+  throw new Error(`Seed failed: ${JSON.stringify(seeded)}`);
+}
+
+const result = await GetTokens(db, {});
+if (!result || !Array.isArray(result.token) || result.token.length !== 1) {
+  throw new Error(`Expected one token row, got: ${JSON.stringify(result)}`);
+}
+
+const token = result.token[0];
+if (token.name !== "seeded token") {
+  throw new Error(`Unexpected token name: ${JSON.stringify(token)}`);
+}
+if (token.payload?._type !== "TokenPayload") {
+  throw new Error(`Expected decoded payload _type, got: ${JSON.stringify(token.payload)}`);
+}
+if (JSON.stringify(token.payload.labels) !== JSON.stringify(["alpha", "beta"])) {
+  throw new Error(`Expected decoded labels, got: ${JSON.stringify(token.payload)}`);
+}
+if (token.payload.marker?._type !== "End" || token.payload.marker?.reason !== "finished") {
+  throw new Error(`Expected decoded nested marker, got: ${JSON.stringify(token.payload)}`);
+}
+if (token.placement?._type !== "World" || token.placement?.x !== 10 || token.placement?.y !== 20 || token.placement?.scale !== 100) {
+  throw new Error(`Expected decoded placement, got: ${JSON.stringify(token.placement)}`);
+}
+
+console.log("generated-seed-decode-check-passed");
+"#;
+
+    run_bun_verification_script(
+        &ctx,
+        "verify-generated-seed-decode.ts",
+        verify_script,
+        "generated-seed-decode-check-passed",
+        "bun generated seed decode verification",
     );
 }

@@ -1290,7 +1290,7 @@ fn to_decoder_definition(
                 name
             ));
             result.push_str(&format!("{} =\n", crate::ext::string::decapitalize(name)));
-            result.push_str("    Decode.oneOf [ Decode.field \"type_\" Decode.string, Decode.field \"type\" Decode.string ]\n");
+            result.push_str("    Decode.field \"_type\" Decode.string\n");
             result.push_str("        |> Decode.andThen\n");
             result.push_str("            (\\variant_name ->\n");
             result.push_str("               case variant_name of\n");
@@ -1503,7 +1503,7 @@ fn to_encoder_variant(
     match &variant.fields {
         Some(fields) => {
             let mut result = format!(
-                "{}Db.{} inner_details__ ->\n{}Encode.object\n{}[ ( \"type_\", Encode.string \"{}\" )\n",
+                "{}Db.{} inner_details__ ->\n{}Encode.object\n{}[ ( \"_type\", Encode.string \"{}\" )\n",
                 outer_indent, variant.name, indent, inner_indent, variant.name
             );
 
@@ -1515,7 +1515,7 @@ fn to_encoder_variant(
             result
         }
         None => format!(
-            "{}Db.{} ->\n{}Encode.object [ ( \"type_\", Encode.string \"{}\" ) ]\n\n",
+            "{}Db.{} ->\n{}Encode.object [ ( \"_type\", Encode.string \"{}\" ) ]\n\n",
             outer_indent, variant.name, indent, variant.name
         ),
     }

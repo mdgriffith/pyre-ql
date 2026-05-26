@@ -173,14 +173,18 @@ query GetEvents {
     );
 
     assert!(
-        decode_module.contains("Decode.oneOf [ Decode.field \"type_\" Decode.string, Decode.field \"type\" Decode.string ]"),
-        "Expected Db.Decode.elm to decode type_ unions. Generated:\n{}",
+        decode_module.contains("Decode.field \"_type\" Decode.string")
+            && !decode_module.contains("Decode.field \"type_\"")
+            && !decode_module.contains("Decode.field \"type\" Decode.string"),
+        "Expected Db.Decode.elm to decode only _type unions. Generated:\n{}",
         decode_module
     );
 
     assert!(
-        encode_module.contains("( \"type_\", Encode.string \"Finished\" )"),
-        "Expected Db.Encode.elm to encode typed Json containers and type_ unions. Generated:\n{}",
+        encode_module.contains("( \"_type\", Encode.string \"Finished\" )")
+            && !encode_module.contains("( \"type_\", Encode.string")
+            && !encode_module.contains("( \"type\", Encode.string"),
+        "Expected Db.Encode.elm to encode typed Json containers and _type unions. Generated:\n{}",
         encode_module
     );
 

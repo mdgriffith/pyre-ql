@@ -3,7 +3,7 @@ import { beforeEach, expect, mock, test } from "bun:test";
 
 let introspectionResult = { schema_source: "test schema" };
 let sessionIds = ["s1"];
-let reshapedRows = [[1, "World", { type: "Tiling", tileRootKey: "tiles/root", tileWidth: 256, format: { type: "Png" } }]];
+let reshapedRows = [[1, "World", { _type: "Tiling", tileRootKey: "tiles/root", tileWidth: 256, format: { _type: "Png" } }]];
 
 mock.module("./wasm/pyre_wasm.js", () => ({
   sql_is_initialized: () => "select 1 as is_initialized",
@@ -100,7 +100,7 @@ const { loadSchemaFromDatabase } = await import("./schema");
 beforeEach(() => {
   introspectionResult = { schema_source: "test schema" };
   sessionIds = ["s1"];
-  reshapedRows = [[1, "World", { type: "Tiling", tileRootKey: "tiles/root", tileWidth: 256, format: { type: "Png" } }]];
+  reshapedRows = [[1, "World", { _type: "Tiling", tileRootKey: "tiles/root", tileWidth: 256, format: { _type: "Png" } }]];
 });
 
 function withoutServerRevision(message: unknown): unknown {
@@ -168,7 +168,7 @@ test("runWithSync sends reshaped sync deltas", async () => {
           {
             table_name: "maps",
             headers: ["id", "name", "tiling"],
-            rows: [[1, "World", { type: "Tiling", tileRootKey: "tiles/root", tileWidth: 256, format: { type: "Png" } }]],
+            rows: [[1, "World", { _type: "Tiling", tileRootKey: "tiles/root", tileWidth: 256, format: { _type: "Png" } }]],
           },
         ],
       },
@@ -320,7 +320,7 @@ test("runWithSync builds origin sync from executing session when origin is not l
       {
         table_name: "maps",
         headers: ["id", "name", "tiling"],
-        rows: [[1, "World", { type: "Tiling", tileRootKey: "tiles/root", tileWidth: 256, format: { type: "Png" } }]],
+        rows: [[1, "World", { _type: "Tiling", tileRootKey: "tiles/root", tileWidth: 256, format: { _type: "Png" } }]],
       },
     ],
   });

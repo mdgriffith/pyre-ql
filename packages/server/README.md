@@ -6,7 +6,37 @@ Typical usage:
 
 - import generated `queries` map from `pyre/generated/typescript/server`
 - execute with `run` from `@pyre/server/query`
+- seed fixture data with the generated `seed` helper from `pyre/generated/typescript/server`
 - use sync helpers from `@pyre/server/sync` and `@pyre/server/query-sync`
+
+## Seed Data
+
+Generated server output includes a schema-bound `seed` helper for server-side fixtures and imports:
+
+```ts
+import { createClient } from "@libsql/client";
+import { seed } from "./pyre/generated/typescript/server";
+
+const db = createClient({ url: "file:test.db" });
+
+const result = await seed(db, {
+  users: [
+    {
+      name: "Fred",
+      posts: [
+        { title: "example post", content: "My content!" },
+        { title: "example post2", content: "My content!" },
+      ],
+    },
+  ],
+});
+```
+
+Top-level keys are table names. Nested keys must be links declared on the parent table; Pyre derives foreign keys from the link metadata. You can also seed flattened layers by setting foreign key columns directly.
+
+The seed call is atomic: if any row fails validation or insertion, Pyre rolls back the transaction. The returned data contains the full inserted rows, including nested rows.
+
+Seed currently bypasses Pyre query permissions and does not update Pyre sync metadata. Use it for setup/import workflows before synced clients rely on live deltas.
 
 ## Install
 

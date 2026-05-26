@@ -1,5 +1,6 @@
 use crate::ast;
 use crate::ext::string;
+use crate::generate::sql::json::select as json_select;
 use crate::generate::sql::select;
 use crate::generate::sql::to_sql;
 use crate::typecheck;
@@ -156,6 +157,18 @@ pub fn insert_to_string(
                                 final_statement.push_str(&format!(
                                     "json(case when t.{} = 1 then 'true' else 'false' end)",
                                     string::quote(&query_field.name)
+                                ));
+                            } else if matches!(
+                                column.type_.to_serialization_type(),
+                                ast::SerializationType::FromType(_)
+                            ) {
+                                final_statement.push_str(&json_select::select_type_expression(
+                                    6,
+                                    context,
+                                    column,
+                                    "t",
+                                    &query_field.name,
+                                    false,
                                 ));
                             } else {
                                 final_statement
@@ -330,21 +343,12 @@ fn insert_linked(
         ));
     }
 
-    for query_field in &all_query_fields {
-        let table_field = table
-            .record
-            .fields
-            .iter()
-            .find(|&f| ast::has_field_or_linkname(&f, &query_field.name));
-
-        match (&query_field.set, table_field) {
-            (Some(val), Some(ast::Field::Column(column))) => {
-                let str = to_sql::render_column_value(column, &val);
-                insert_values.push(str);
-            }
-            _ => (),
-        }
-    }
+    insert_values.append(&mut to_field_insert_values(
+        context,
+        query,
+        table,
+        &all_query_fields,
+    ));
 
     if has_updated_at_field && !updated_at_explicitly_set {
         insert_values.push("unixepoch()".to_string());
@@ -484,64 +488,10 @@ fn generate_affected_rows_query_for_inserts(
 
 // Collect all column names including union type variant columns
 fn collect_all_column_names(context: &typecheck::Context, fields: &Vec<ast::Field>) -> Vec<String> {
-    let mut column_names = Vec::new();
-    collect_column_names_recursive(context, fields, None, &mut column_names);
-    column_names
-}
-
-fn collect_column_names_recursive(
-    context: &typecheck::Context,
-    fields: &Vec<ast::Field>,
-    parent_name: Option<&str>,
-    column_names: &mut Vec<String>,
-) {
-    for field in fields {
-        match field {
-            ast::Field::Column(column) => {
-                match column.type_.to_serialization_type() {
-                    ast::SerializationType::Concrete(_) => {
-                        // Regular column
-                        // If parent_name is Some, it already includes trailing __ (e.g., "status__")
-                        // So we just concatenate, not add another __
-                        let column_name = match parent_name {
-                            None => column.name.clone(),
-                            Some(parent) => format!("{}{}", parent, column.name),
-                        };
-                        column_names.push(column_name);
-                    }
-                    ast::SerializationType::FromType(typename) => {
-                        // Union type column
-                        let base_name = match parent_name {
-                            None => column.name.clone(),
-                            Some(parent) => format!("{}__{}", parent, column.name),
-                        };
-                        // Add the discriminator column
-                        column_names.push(base_name.clone());
-
-                        // Add variant field columns
-                        if let Some((_, type_)) = context.types.get(&typename) {
-                            if let typecheck::Type::OneOf { variants } = type_ {
-                                // Variant fields are stored as {columnName}__{fieldName}
-                                // So if base_name is "status", variant fields become "status__reason"
-                                let variant_base_name = format!("{}__", base_name);
-                                for variant in variants {
-                                    if let Some(var_fields) = &variant.fields {
-                                        collect_column_names_recursive(
-                                            context,
-                                            var_fields,
-                                            Some(&variant_base_name),
-                                            column_names,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
+    typecheck::to_sql_column_info(context, fields)
+        .into_iter()
+        .map(|column| column.name)
+        .collect()
 }
 
 // Field names
@@ -593,6 +543,10 @@ fn to_table_fieldname(
             // Check if this is a union type column
             match col.type_.to_serialization_type() {
                 ast::SerializationType::FromType(typename) => {
+                    if matches!(query_field.set, Some(ast::QueryValue::Variable(_))) {
+                        return collect_all_column_names(context, &vec![table_field.clone()]);
+                    }
+
                     // Union type column - need discriminator + variant-specific columns
                     let mut result = vec![query_field.name.clone()]; // discriminator column
 
@@ -668,6 +622,24 @@ fn to_field_insert_values(
         match &field.set {
             None => (),
             Some(val) => {
+                if let Some(ast::Field::Column(col)) = table_field {
+                    if let ast::SerializationType::FromType(typename) =
+                        col.type_.to_serialization_type()
+                    {
+                        if let ast::QueryValue::Variable((_, var)) = val {
+                            result.append(&mut render_type_variable_insert_values(
+                                context,
+                                query,
+                                col,
+                                &field.name,
+                                &var.name,
+                                &typename,
+                            ));
+                            continue;
+                        }
+                    }
+                }
+
                 // Check if this is a union type value
                 if let ast::QueryValue::LiteralTypeValue((_, details)) = val {
                     // Find the table field to check if it's a union type
@@ -934,4 +906,173 @@ fn render_column_insert_fallback(column: &ast::Column) -> String {
     }
 
     "null".to_string()
+}
+
+fn render_type_variable_insert_values(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    column: &ast::Column,
+    field_name: &str,
+    variable_name: &str,
+    typename: &str,
+) -> Vec<String> {
+    if is_enum_type(context, typename) {
+        return vec![render_omittable_insert_value(
+            query,
+            field_name,
+            &format!("${}", variable_name),
+            &render_column_insert_fallback(column),
+        )];
+    }
+
+    let mut result = vec![render_insert_type_json_extract(
+        query,
+        field_name,
+        variable_name,
+        "",
+    )];
+
+    if let Some((_, typecheck::Type::OneOf { variants })) = context.types.get(typename) {
+        for variant in variants {
+            if let Some(fields) = &variant.fields {
+                for variant_field in fields {
+                    append_type_field_variable_insert_values(
+                        context,
+                        query,
+                        field_name,
+                        variable_name,
+                        "",
+                        variant_field,
+                        &mut result,
+                    );
+                }
+            }
+        }
+    }
+
+    result
+}
+
+fn is_enum_type(context: &typecheck::Context, typename: &str) -> bool {
+    matches!(
+        context.types.get(typename),
+        Some((_, typecheck::Type::OneOf { variants }))
+            if variants.iter().all(|variant| variant.fields.is_none())
+    )
+}
+
+fn append_type_field_variable_insert_values(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    field_name: &str,
+    variable_name: &str,
+    json_prefix: &str,
+    field: &ast::Field,
+    result: &mut Vec<String>,
+) {
+    let ast::Field::Column(inner_column) = field else {
+        return;
+    };
+
+    let json_path = if json_prefix.is_empty() {
+        inner_column.name.clone()
+    } else {
+        format!("{}.{}", json_prefix, inner_column.name)
+    };
+
+    match inner_column.type_.to_serialization_type() {
+        ast::SerializationType::Concrete(_) => {
+            result.push(render_insert_json_extract(
+                query,
+                field_name,
+                variable_name,
+                &json_path,
+            ));
+        }
+        ast::SerializationType::FromType(typename) => {
+            result.push(render_insert_type_json_extract(
+                query,
+                field_name,
+                variable_name,
+                &json_path,
+            ));
+
+            if let Some((_, typecheck::Type::OneOf { variants })) = context.types.get(&typename) {
+                for variant in variants {
+                    if let Some(fields) = &variant.fields {
+                        for variant_field in fields {
+                            append_type_field_variable_insert_values(
+                                context,
+                                query,
+                                field_name,
+                                variable_name,
+                                &json_path,
+                                variant_field,
+                                result,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn render_insert_type_json_extract(
+    query: &ast::Query,
+    field_name: &str,
+    variable_name: &str,
+    json_path: &str,
+) -> String {
+    let type_path = if json_path.is_empty() {
+        "$._type".to_string()
+    } else {
+        format!("$.{}._type", json_path)
+    };
+    let fallback = if json_path.is_empty() {
+        format!("${variable_name}")
+    } else {
+        "null".to_string()
+    };
+    let rendered = format!(
+        "case when json_valid(${variable_name}) then json_extract(${variable_name}, '{type_path}') else {fallback} end"
+    );
+    render_omittable_insert_value(query, field_name, &rendered, "null")
+}
+
+fn render_insert_json_extract(
+    query: &ast::Query,
+    field_name: &str,
+    variable_name: &str,
+    json_path: &str,
+) -> String {
+    let rendered = format!(
+        "case when json_valid(${variable_name}) then json_extract(${variable_name}, '$.{json_path}') else null end"
+    );
+    render_omittable_insert_value(query, field_name, &rendered, "null")
+}
+
+fn render_omittable_insert_value(
+    query: &ast::Query,
+    field_name: &str,
+    rendered: &str,
+    fallback: &str,
+) -> String {
+    let is_omittable = query
+        .args
+        .iter()
+        .find(|arg| arg.name == field_name)
+        .map(|arg| arg.omittable)
+        .unwrap_or(false);
+
+    if is_omittable {
+        format!(
+            "case when ${field_name}__is_set then {rendered} else {fallback} end",
+            field_name = field_name,
+            rendered = rendered,
+            fallback = fallback,
+        )
+    } else {
+        rendered.to_string()
+    }
 }

@@ -30,10 +30,10 @@ const defaultReshapeSyncTableGroups = () => ([
         1,
         "World",
         {
-          type: "Tiling",
+          _type: "Tiling",
           tileRootKey: "tiles/root",
           tileWidth: 256,
-          format: { type: "Png" },
+          format: { _type: "Png" },
         },
         1700000000,
       ],
@@ -135,10 +135,10 @@ test("catchup reshapes flattened custom types before returning sync rows", async
             id: 1,
             name: "World",
             tiling: {
-              type: "Tiling",
+              _type: "Tiling",
               tileRootKey: "tiles/root",
               tileWidth: 256,
-              format: { type: "Png" },
+              format: { _type: "Png" },
             },
             updatedAt: 1700000000,
           },
@@ -208,10 +208,10 @@ test("catchup normalizes bigint row values before reshaping", async () => {
     id: 1,
     name: "World",
     tiling: {
-      type: "Tiling",
+      _type: "Tiling",
       tileRootKey: "tiles/root",
       tileWidth: 256,
-      format: { type: "Png" },
+      format: { _type: "Png" },
     },
     updatedAt: 1700000000,
   });

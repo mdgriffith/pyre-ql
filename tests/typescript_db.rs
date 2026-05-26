@@ -71,7 +71,7 @@ insert CreateEvent($payload: Json<Lifecycle>, $tags: Json<List<String>>, $counts
         schema_ts.contains("\"payload\": Lifecycle;")
             && schema_ts.contains("\"tags\": Array<string>;")
             && schema_ts.contains("\"counts\": Record<string, number>;")
-            && schema_ts.contains("\"type_\": \"Finished\";"),
+            && schema_ts.contains("\"_type\": \"Finished\";"),
         "Expected typed Json fields to surface as rich TypeScript types. Generated schema:\n{}",
         schema_ts
     );

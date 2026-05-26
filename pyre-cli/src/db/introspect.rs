@@ -132,3 +132,41 @@ pub async fn introspect(db: &libsql::Database) -> Result<Introspection, libsql::
         }
     }
 }
+
+pub async fn introspect_connection(
+    conn: &libsql::Connection,
+) -> Result<Introspection, libsql::Error> {
+    let args: Vec<String> = vec![];
+    let mut is_initialized_rows = conn
+        .query(pyre::db::introspect::IS_INITIALIZED, args)
+        .await?;
+
+    if let Some(row) = is_initialized_rows.next().await? {
+        let is_initialized = libsql::de::from_row::<IsInitialized>(&row).unwrap();
+        if is_initialized.is_initialized {
+            let args: Vec<String> = vec![];
+            let mut introspection_rows = conn
+                .query(pyre::db::introspect::INTROSPECT_SQL, args)
+                .await?;
+
+            if let Some(row) = introspection_rows.next().await? {
+                let introspection = libsql::de::from_row::<IntrospectionRow>(&row).unwrap();
+                let introspection_raw: Result<pyre::db::introspect::IntrospectionRaw, _> =
+                    serde_json::from_str(&introspection.result);
+
+                if let Ok(introspection_raw) = introspection_raw {
+                    return Ok(pyre::db::introspect::from_raw(introspection_raw));
+                }
+            }
+        }
+    }
+
+    Ok(Introspection {
+        tables: vec![],
+        migration_state: MigrationState::NoMigrationTable,
+        schema: pyre::db::introspect::SchemaResult::Success {
+            schema: pyre::ast::Schema::default(),
+            context: pyre::typecheck::empty_context(),
+        },
+    })
+}

@@ -1,5 +1,6 @@
 use crate::ast;
 use crate::ext::string;
+use crate::generate::sql::json::select as json_select;
 use crate::generate::sql::to_sql;
 use crate::typecheck;
 
@@ -62,13 +63,13 @@ pub fn update_to_string(
     // Always generate the typed response query - mutations must return typed data
     // Use the same table_name as the UPDATE statement for consistency
     let typed_response_sql =
-        generate_typed_response_query(table, query_field, &table_name, &where_clause);
+        generate_typed_response_query(context, table, query_field, &table_name, &where_clause);
     statements.push(to_sql::include(typed_response_sql));
 
     // Generate affected rows query if requested
     // Execute this BEFORE the final selection to avoid lock conflicts
     if include_affected_rows {
-        let affected_rows_sql = generate_affected_rows_query(table, &where_clause);
+        let affected_rows_sql = generate_affected_rows_query(context, table, &where_clause);
         // Insert before the final selection (which now always exists)
         let final_idx = statements.len() - 1;
         statements.insert(final_idx, to_sql::include(affected_rows_sql));
@@ -78,6 +79,7 @@ pub fn update_to_string(
 }
 
 fn generate_typed_response_query(
+    context: &typecheck::Context,
     table: &typecheck::Table,
     query_field: &ast::QueryField,
     table_name: &str,
@@ -131,6 +133,18 @@ fn generate_typed_response_query(
                                     "json(t.{})",
                                     string::quote(&query_field.name)
                                 ));
+                            } else if matches!(
+                                column.type_.to_serialization_type(),
+                                ast::SerializationType::FromType(_)
+                            ) {
+                                sql.push_str(&json_select::select_type_expression(
+                                    6,
+                                    context,
+                                    column,
+                                    "t",
+                                    &query_field.name,
+                                    false,
+                                ));
                             } else {
                                 sql.push_str(&format!("t.{}", string::quote(&query_field.name)));
                             }
@@ -158,12 +172,16 @@ fn generate_typed_response_query(
     sql
 }
 
-fn generate_affected_rows_query(table: &typecheck::Table, where_clause: &str) -> String {
+fn generate_affected_rows_query(
+    context: &typecheck::Context,
+    table: &typecheck::Table,
+    where_clause: &str,
+) -> String {
     let table_name = ast::get_tablename(&table.record.name, &table.record.fields);
-    let columns = ast::collect_columns(&table.record.fields);
-
-    // Generate column names
-    let column_names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+    let column_names: Vec<String> = typecheck::to_sql_column_info(context, &table.record.fields)
+        .into_iter()
+        .map(|column| column.name)
+        .collect();
 
     // Build json_array call for each row - values in same order as headers
     let mut row_value_parts = Vec::new();
@@ -227,6 +245,22 @@ fn to_field_set_values(
             None => (),
             Some(val) => match table_field {
                 ast::Field::Column(column) => {
+                    if let ast::SerializationType::FromType(typename) =
+                        column.type_.to_serialization_type()
+                    {
+                        if let ast::QueryValue::Variable((_, var)) = val {
+                            result.append(&mut render_type_variable_update_values(
+                                context,
+                                query,
+                                column,
+                                &field.name,
+                                &var.name,
+                                &typename,
+                            ));
+                            continue;
+                        }
+                    }
+
                     if let ast::QueryValue::LiteralTypeValue((_, details)) = val {
                         if let ast::SerializationType::FromType(typename) =
                             column.type_.to_serialization_type()
@@ -311,6 +345,194 @@ fn to_field_set_values(
     }
 
     result
+}
+
+fn render_type_variable_update_values(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    column: &ast::Column,
+    field_name: &str,
+    variable_name: &str,
+    typename: &str,
+) -> Vec<String> {
+    if is_enum_type(context, typename) {
+        return vec![format!(
+            "{} = {}",
+            column.name,
+            render_omittable_update_value(
+                query,
+                field_name,
+                &format!("${}", variable_name),
+                &column.name,
+            )
+        )];
+    }
+
+    let mut result = vec![format!(
+        "{} = {}",
+        column.name,
+        render_update_type_json_extract(query, field_name, variable_name, "", &column.name)
+    )];
+
+    if let Some((_, typecheck::Type::OneOf { variants })) = context.types.get(typename) {
+        for variant in variants {
+            if let Some(fields) = &variant.fields {
+                for variant_field in fields {
+                    append_type_field_variable_update_values(
+                        context,
+                        query,
+                        &column.name,
+                        field_name,
+                        variable_name,
+                        "",
+                        variant_field,
+                        &mut result,
+                    );
+                }
+            }
+        }
+    }
+
+    result
+}
+
+fn is_enum_type(context: &typecheck::Context, typename: &str) -> bool {
+    matches!(
+        context.types.get(typename),
+        Some((_, typecheck::Type::OneOf { variants }))
+            if variants.iter().all(|variant| variant.fields.is_none())
+    )
+}
+
+fn append_type_field_variable_update_values(
+    context: &typecheck::Context,
+    query: &ast::Query,
+    column_prefix: &str,
+    field_name: &str,
+    variable_name: &str,
+    json_prefix: &str,
+    field: &ast::Field,
+    result: &mut Vec<String>,
+) {
+    let ast::Field::Column(inner_column) = field else {
+        return;
+    };
+
+    let column_name = format!("{}__{}", column_prefix, inner_column.name);
+    let json_path = if json_prefix.is_empty() {
+        inner_column.name.clone()
+    } else {
+        format!("{}.{}", json_prefix, inner_column.name)
+    };
+
+    match inner_column.type_.to_serialization_type() {
+        ast::SerializationType::Concrete(_) => {
+            result.push(format!(
+                "{} = {}",
+                column_name,
+                render_update_json_extract(
+                    query,
+                    field_name,
+                    variable_name,
+                    &json_path,
+                    &column_name
+                )
+            ));
+        }
+        ast::SerializationType::FromType(typename) => {
+            result.push(format!(
+                "{} = {}",
+                column_name,
+                render_update_type_json_extract(
+                    query,
+                    field_name,
+                    variable_name,
+                    &json_path,
+                    &column_name
+                )
+            ));
+
+            if let Some((_, typecheck::Type::OneOf { variants })) = context.types.get(&typename) {
+                for variant in variants {
+                    if let Some(fields) = &variant.fields {
+                        for variant_field in fields {
+                            append_type_field_variable_update_values(
+                                context,
+                                query,
+                                &column_name,
+                                field_name,
+                                variable_name,
+                                &json_path,
+                                variant_field,
+                                result,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn render_update_type_json_extract(
+    query: &ast::Query,
+    field_name: &str,
+    variable_name: &str,
+    json_path: &str,
+    column_name: &str,
+) -> String {
+    let type_path = if json_path.is_empty() {
+        "$._type".to_string()
+    } else {
+        format!("$.{}._type", json_path)
+    };
+    let fallback = if json_path.is_empty() {
+        format!("${variable_name}")
+    } else {
+        "null".to_string()
+    };
+    let rendered = format!(
+        "case when json_valid(${variable_name}) then json_extract(${variable_name}, '{type_path}') else {fallback} end"
+    );
+    render_omittable_update_value(query, field_name, &rendered, column_name)
+}
+
+fn render_update_json_extract(
+    query: &ast::Query,
+    field_name: &str,
+    variable_name: &str,
+    json_path: &str,
+    column_name: &str,
+) -> String {
+    let rendered = format!(
+        "case when json_valid(${variable_name}) then json_extract(${variable_name}, '$.{json_path}') else null end"
+    );
+    render_omittable_update_value(query, field_name, &rendered, column_name)
+}
+
+fn render_omittable_update_value(
+    query: &ast::Query,
+    field_name: &str,
+    rendered: &str,
+    column_name: &str,
+) -> String {
+    let is_omittable = query
+        .args
+        .iter()
+        .find(|arg| arg.name == field_name)
+        .map(|arg| arg.omittable)
+        .unwrap_or(false);
+
+    if is_omittable {
+        format!(
+            "case when ${field_name}__is_set then {rendered} else {column_name} end",
+            field_name = field_name,
+            rendered = rendered,
+            column_name = column_name
+        )
+    } else {
+        rendered.to_string()
+    }
 }
 
 fn render_update_column_value(

@@ -52,7 +52,7 @@ async fn test_union_type_in_schema() -> Result<(), TestError> {
         .iter()
         .filter_map(|u| {
             u.get("status")
-                .and_then(|s| s.get("type"))
+                .and_then(|s| s.get("_type"))
                 .and_then(|s| s.as_str())
         })
         .collect();
@@ -142,14 +142,14 @@ async fn test_union_column_reuse() -> Result<(), TestError> {
         records.iter().filter_map(|r| r.get("result")).collect();
     assert!(
         result_values.iter().any(|result| {
-            result.get("type").and_then(|s| s.as_str()) == Some("Success")
+            result.get("_type").and_then(|s| s.as_str()) == Some("Success")
                 && result.get("message").and_then(|m| m.as_str()) == Some("Success!")
         }),
         "Should contain 'Success' variant"
     );
     assert!(
         result_values.iter().any(|result| {
-            result.get("type").and_then(|s| s.as_str()) == Some("Warning")
+            result.get("_type").and_then(|s| s.as_str()) == Some("Warning")
                 && result.get("message").and_then(|m| m.as_str()) == Some("Warning!")
         }),
         "Should contain 'Warning' variant"

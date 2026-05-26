@@ -247,8 +247,6 @@ impl TestDatabase {
                 SqlAndParams::Sql(sql) => {
                     // Build parameter values in the order they appear in THIS SQL statement
                     let mut param_values_for_stmt = Vec::new();
-                    let mut seen_params = std::collections::HashSet::new();
-
                     // Find parameters in the order they appear in SQL
                     let mut chars = sql.chars().peekable();
                     while let Some(ch) = chars.next() {
@@ -261,10 +259,7 @@ impl TestDatabase {
                                     break;
                                 }
                             }
-                            if param_names.contains(&param_name)
-                                && !seen_params.contains(&param_name)
-                            {
-                                seen_params.insert(param_name.clone());
+                            if param_names.contains(&param_name) {
                                 param_values_for_stmt.push(
                                     params
                                         .get(&param_name)
@@ -346,8 +341,6 @@ impl TestDatabase {
                 SqlAndParams::SqlWithParams { sql, args } => {
                     // Build parameter values in the order they appear in THIS SQL statement
                     let mut param_values_for_stmt = Vec::new();
-                    let mut seen_params = std::collections::HashSet::new();
-
                     // Find parameters in the order they appear in SQL
                     let mut chars = sql.chars().peekable();
                     while let Some(ch) = chars.next() {
@@ -360,10 +353,7 @@ impl TestDatabase {
                                     break;
                                 }
                             }
-                            if param_names.contains(&param_name)
-                                && !seen_params.contains(&param_name)
-                            {
-                                seen_params.insert(param_name.clone());
+                            if param_names.contains(&param_name) {
                                 param_values_for_stmt.push(
                                     params
                                         .get(&param_name)

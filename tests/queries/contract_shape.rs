@@ -55,7 +55,7 @@ record GameMap {
         maps[0]
             .get("tileFormat")
             .expect("Map should include tileFormat"),
-        &json!({ "type": "Png" })
+        &json!({ "_type": "Png" })
     );
 
     Ok(())
@@ -374,7 +374,7 @@ record RulebookVersionRules {
         maps[0]
             .get("tileFormat")
             .expect("Map should include tileFormat"),
-        &json!({ "type": "Png" })
+        &json!({ "_type": "Png" })
     );
 
     Ok(())

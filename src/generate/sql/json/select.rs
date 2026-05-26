@@ -926,6 +926,27 @@ fn select_type_final(
     );
 }
 
+pub fn select_type_expression(
+    indent: usize,
+    context: &typecheck::Context,
+    column: &ast::Column,
+    base_table_name: &str,
+    query_field_name: &str,
+    use_jsonb: bool,
+) -> String {
+    let mut sql = String::new();
+    select_type_with_json_mode(
+        indent,
+        context,
+        column,
+        base_table_name,
+        query_field_name,
+        use_jsonb,
+        &mut sql,
+    );
+    sql
+}
+
 fn select_type_with_json_mode(
     indent: usize,
     context: &typecheck::Context,
@@ -989,11 +1010,14 @@ fn select_type_with_json_mode(
                     ));
 
                     match &var.fields {
-                        None => sql.push_str(&format!(" {}('type', '{}')\n", object_fn, var.name)),
+                        None => sql.push_str(&format!(" {}('_type', '{}')\n", object_fn, var.name)),
                         Some(fields) => {
                             sql.push_str(&format!("\n{}{}(", obj_indent, object_fn));
 
-                            sql.push_str(&format!("\n{}'type', '{}',", obj_field_indent, var.name));
+                            sql.push_str(&format!(
+                                "\n{}'_type', '{}',",
+                                obj_field_indent, var.name
+                            ));
 
                             let mut first_field = true;
                             for field in fields {

@@ -158,7 +158,7 @@ fn query_value_to_json_literal(value: &ast::QueryValue) -> Option<JsonValue> {
         ast::QueryValue::Null(_) => Some(JsonValue::Null),
         ast::QueryValue::LiteralTypeValue((_, details)) => {
             let mut object = serde_json::Map::new();
-            object.insert("type_".to_string(), JsonValue::String(details.name.clone()));
+            object.insert("_type".to_string(), JsonValue::String(details.name.clone()));
 
             if let Some(fields) = &details.fields {
                 for (name, value) in fields {

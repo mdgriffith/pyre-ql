@@ -54,7 +54,10 @@ fn field_to_sql_column(
                         Type::OneOf { variants } => {
                             // We need a column for the discriminator
                             gathered.push(SqlColumnInfo {
-                                name: column.name.clone(),
+                                name: match &parent_name {
+                                    None => column.name.clone(),
+                                    Some(prefix) => format!("{}{}", prefix, column.name),
+                                },
                                 nullable: column.nullable,
                                 type_: ast::ConcreteSerializationType::Text,
                                 directives: column.directives.clone(),
@@ -62,7 +65,7 @@ fn field_to_sql_column(
 
                             let base_name = match parent_name {
                                 None => &format!("{}__", column.name),
-                                Some(parent) => &format!("{}__{}__", parent, column.name),
+                                Some(parent) => &format!("{}{}__", parent, column.name),
                             };
                             //
                             for var in variants {

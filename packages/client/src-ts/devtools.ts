@@ -270,7 +270,7 @@ class PyreDevtoolsElement extends HTMLElement {
           </div>
           <div class="meta-grid">
             <div><strong>Columns</strong>${schema?.columns?.length ? schema.columns.map((column) => `<code>${escapeHtml(column.name)}: ${escapeHtml(column.type)}${column.nullable ? '?' : ''}</code>`).join('') : '<span>Unknown</span>'}</div>
-            <div><strong>Union Variants</strong>${variantGroups.length ? variantGroups.map(([name, count]) => `<code>${escapeHtml(name)} ${count}</code>`).join('') : '<span>No type_ grouping found</span>'}</div>
+            <div><strong>Union Variants</strong>${variantGroups.length ? variantGroups.map(([name, count]) => `<code>${escapeHtml(name)} ${count}</code>`).join('') : '<span>No _type grouping found</span>'}</div>
             <div><strong>Indices</strong>${indices.length ? indices.map((index) => `<code>${escapeHtml(index.field)}${index.primary ? ' primary' : ''}${index.unique ? ' unique' : ''}</code>`).join('') : '<span>None</span>'}</div>
             <div><strong>Links</strong>${Object.entries(links).length ? Object.entries(links).map(([name, link]) => `<code>${escapeHtml(name)} -> ${escapeHtml(link.to.table)}.${escapeHtml(link.to.column)}</code>`).join('') : '<span>None</span>'}</div>
           </div>
@@ -473,7 +473,7 @@ function groupByVariant(rows: unknown[]): Array<[string, number]> {
     if (!row || typeof row !== 'object' || Array.isArray(row)) {
       return;
     }
-    const variant = (row as Record<string, unknown>).type_;
+    const variant = (row as Record<string, unknown>)._type;
     if (typeof variant !== 'string' || variant.trim() === '') {
       return;
     }

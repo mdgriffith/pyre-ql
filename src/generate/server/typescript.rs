@@ -180,7 +180,7 @@ fn to_string_variant(indent_size: usize, variant: &ast::Variant) -> String {
             let indent = " ".repeat(indent_size + 4);
 
             let mut result = format!(
-                " {}{{\n{}\"type_\": {};\n{}",
+                " {}{{\n{}\"_type\": {};\n{}",
                 prefix,
                 indent,
                 crate::ext::string::quote(&variant.name),
@@ -196,7 +196,7 @@ fn to_string_variant(indent_size: usize, variant: &ast::Variant) -> String {
             result
         }
         None => format!(
-            " {}{{ \"type_\": {} }}",
+            " {}{{ \"_type\": {} }}",
             prefix,
             crate::ext::string::quote(&variant.name)
         ),

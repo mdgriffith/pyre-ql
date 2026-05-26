@@ -41,7 +41,7 @@ pub fn to_sql(diff: &Diff) -> Vec<SqlAndParams> {
 
         // Legacy support for column-level @index directives.
         for column in &table.columns {
-            if column.indexed {
+            if column.indexed && !has_column_index(table.indexes.iter(), &column.name) {
                 sql_statements.push(SqlAndParams::Sql(format!(
                     "create index if not exists \"idx_{}_{}\" on \"{}\" (\"{}\")",
                     table.name, column.name, table.name, column.name
@@ -52,6 +52,15 @@ pub fn to_sql(diff: &Diff) -> Vec<SqlAndParams> {
 
     // Handle modified tables
     for record_diff in &diff.modified_records {
+        let added_indexes: Vec<&crate::db::introspect::IndexInfo> = record_diff
+            .changes
+            .iter()
+            .filter_map(|change| match change {
+                RecordChange::AddedIndex(index) => Some(index),
+                _ => None,
+            })
+            .collect();
+
         for change in &record_diff.changes {
             match change {
                 RecordChange::AddedField(column) => {
@@ -61,7 +70,9 @@ pub fn to_sql(diff: &Diff) -> Vec<SqlAndParams> {
                         column_definition(column)
                     )));
 
-                    if column.indexed {
+                    if column.indexed
+                        && !has_column_index(added_indexes.iter().copied(), &column.name)
+                    {
                         sql_statements.push(SqlAndParams::Sql(format!(
                             "create index if not exists \"idx_{}_{}\" on \"{}\" (\"{}\")",
                             record_diff.name, column.name, record_diff.name, column.name
@@ -155,6 +166,19 @@ fn render_index_sql(table_name: &str, index: &crate::db::introspect::IndexInfo) 
     sql
 }
 
+fn has_column_index<'a, I>(indexes: I, column_name: &str) -> bool
+where
+    I: IntoIterator<Item = &'a crate::db::introspect::IndexInfo>,
+{
+    indexes.into_iter().any(|index| {
+        !index.unique
+            && index.where_clause.is_none()
+            && index.columns.len() == 1
+            && index.columns[0].name == column_name
+            && !index.columns[0].desc
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,5 +214,89 @@ mod tests {
         let sql = column_definition(&col);
         assert!(sql.contains("primary key"));
         assert!(!sql.contains("autoincrement"));
+    }
+
+    #[test]
+    fn added_table_does_not_duplicate_column_level_index() {
+        let diff = Diff {
+            added: vec![crate::db::introspect::Table {
+                name: "events".to_string(),
+                columns: vec![crate::db::introspect::ColumnInfo {
+                    cid: 0,
+                    name: "updatedAt".to_string(),
+                    column_type: "INTEGER".to_string(),
+                    notnull: true,
+                    default_value: None,
+                    pk: false,
+                    indexed: true,
+                }],
+                foreign_keys: vec![],
+                indexes: vec![crate::db::introspect::IndexInfo {
+                    name: "idx_events_updatedAt".to_string(),
+                    unique: false,
+                    columns: vec![crate::db::introspect::IndexedColumnInfo {
+                        name: "updatedAt".to_string(),
+                        desc: false,
+                    }],
+                    where_clause: None,
+                }],
+            }],
+            removed: vec![],
+            modified_records: vec![],
+        };
+
+        let sql = to_sql(&diff);
+        let index_count = sql
+            .iter()
+            .filter(|statement| match statement {
+                SqlAndParams::Sql(sql) => sql.contains("idx_events_updatedAt"),
+                SqlAndParams::SqlWithParams { sql, .. } => sql.contains("idx_events_updatedAt"),
+            })
+            .count();
+
+        assert_eq!(index_count, 1);
+    }
+
+    #[test]
+    fn added_field_does_not_duplicate_column_level_index() {
+        let index = crate::db::introspect::IndexInfo {
+            name: "idx_events_updatedAt".to_string(),
+            unique: false,
+            columns: vec![crate::db::introspect::IndexedColumnInfo {
+                name: "updatedAt".to_string(),
+                desc: false,
+            }],
+            where_clause: None,
+        };
+        let diff = Diff {
+            added: vec![],
+            removed: vec![],
+            modified_records: vec![DetailedRecordDiff {
+                name: "events".to_string(),
+                changes: vec![
+                    RecordChange::AddedField(crate::db::introspect::ColumnInfo {
+                        cid: 0,
+                        name: "updatedAt".to_string(),
+                        column_type: "INTEGER".to_string(),
+                        notnull: true,
+                        default_value: None,
+                        pk: false,
+                        indexed: true,
+                    }),
+                    RecordChange::AddedIndex(index),
+                ],
+            }],
+        };
+
+        let sql = to_sql(&diff);
+        let index_count = sql
+            .iter()
+            .filter(|statement| match statement {
+                SqlAndParams::Sql(sql) => sql.contains("idx_events_updatedAt"),
+                SqlAndParams::SqlWithParams { sql, .. } => sql.contains("idx_events_updatedAt"),
+            })
+            .count();
+
+        assert_eq!(index_count, 1);
     }
 }

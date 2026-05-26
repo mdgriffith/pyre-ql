@@ -110,7 +110,7 @@ fn reshape_column_value(
             };
 
             let mut object = Map::new();
-            object.insert("type".to_string(), JsonValue::String(variant_name));
+            object.insert("_type".to_string(), JsonValue::String(variant_name));
 
             if let Some(fields) = &variant.fields {
                 for field in fields {

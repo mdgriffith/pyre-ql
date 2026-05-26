@@ -163,6 +163,9 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         allow_unsafe_unsigned_session: bool,
     },
+
+    /// Start the Pyre MCP server over stdio.
+    Mcp,
 }
 
 #[tokio::main]
@@ -262,6 +265,9 @@ async fn main() -> io::Result<()> {
                 },
             )
             .await?;
+        }
+        Commands::Mcp => {
+            command::mcp(&options).await?;
         }
     }
     Ok(())

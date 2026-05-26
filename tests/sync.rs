@@ -445,10 +445,10 @@ record Map {
             json!(1),
             json!("World"),
             json!({
-                "type": "Tiling",
+                "_type": "Tiling",
                 "tileRootKey": "tiles/root",
                 "tileWidth": 256,
-                "format": { "type": "Png" }
+                "format": { "_type": "Png" }
             }),
             json!(1700000000),
         ]

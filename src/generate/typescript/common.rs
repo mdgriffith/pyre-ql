@@ -217,14 +217,8 @@ pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
             "  if (value != null && typeof value === 'object' && !Array.isArray(value)) {\n",
         );
         result.push_str("    const record = value as Record<string, unknown>;\n");
-        result.push_str("    if (typeof record.type === 'string') {\n");
-        result.push_str("      return record.type;\n");
-        result.push_str("    }\n");
-        result.push_str("    if (typeof record.type_ === 'string') {\n");
-        result.push_str("      return record.type_;\n");
-        result.push_str("    }\n");
-        result.push_str("    if (typeof record.$ === 'string') {\n");
-        result.push_str("      return record.$;\n");
+        result.push_str("    if (typeof record._type === 'string') {\n");
+        result.push_str("      return record._type;\n");
         result.push_str("    }\n");
         result.push_str("  }\n\n");
         result.push_str("  return value;\n");
@@ -255,12 +249,12 @@ pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
         .join(", ");
 
     result.push_str(&format!(
-        "const {0}Discriminated = z.discriminatedUnion(\"type_\", [\n",
+        "const {0}Discriminated = z.discriminatedUnion(\"_type\", [\n",
         name
     ));
     for variant in variants {
         result.push_str("  z.object({\n");
-        result.push_str(&format!("    type_: z.literal(\"{}\"),\n", variant.name));
+        result.push_str(&format!("    _type: z.literal(\"{}\"),\n", variant.name));
 
         if let Some(fields) = &variant.fields {
             for field in fields {
@@ -283,9 +277,6 @@ pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
         "export const {0} = z.preprocess((value) => {{\n",
         name
     ));
-    result.push_str("  if (typeof value === 'string') {\n");
-    result.push_str("    return { type_: value };\n");
-    result.push_str("  }\n\n");
     result
         .push_str("  if (value != null && typeof value === 'object' && !Array.isArray(value)) {\n");
     result.push_str("    const record = value as Record<string, unknown>;\n");
@@ -300,20 +291,6 @@ pub fn generate_tagged_union(name: &str, variants: &[ast::Variant]) -> String {
     );
     result.push_str("      if (prefixedKey) {\n");
     result.push_str("        normalized[fieldName] = normalized[prefixedKey];\n");
-    result.push_str("      }\n");
-    result.push_str("    }\n\n");
-    result.push_str("    if (!('type_' in normalized)) {\n");
-    result.push_str("      if ('type' in normalized && typeof normalized.type === 'string') {\n");
-    result.push_str(
-        "        const { type: type_, ...rest } = normalized as Record<string, unknown> & { type: string };\n",
-    );
-    result.push_str("        return { type_, ...rest };\n");
-    result.push_str("      }\n");
-    result.push_str("      if ('$' in normalized && typeof normalized.$ === 'string') {\n");
-    result.push_str(
-        "        const { $: type_, ...rest } = normalized as Record<string, unknown> & { $: string };\n",
-    );
-    result.push_str("        return { type_, ...rest };\n");
     result.push_str("      }\n");
     result.push_str("    }\n\n");
     result.push_str("    return normalized;\n");
@@ -388,6 +365,7 @@ mod tests {
 
         assert!(generated.contains("userId: z.number().optional()"));
         assert!(!generated.contains("userId: User.id.optional()"));
+        assert!(!generated.contains("return { _type: value };"));
     }
 
     #[test]

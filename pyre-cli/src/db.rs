@@ -4,6 +4,7 @@ use pyre::generate::sql::to_sql::SqlAndParams;
 use pyre::typecheck;
 
 use libsql;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -126,6 +127,12 @@ pub enum MigrationError {
         found_namespaces: Vec<String>,
         db_path: String,
     },
+    AppliedMigrationChanged {
+        name: String,
+    },
+    MigrationValidationFailed {
+        changes: Vec<String>,
+    },
     SchemaTypecheckFailed,
 }
 
@@ -183,12 +190,111 @@ impl MigrationError {
                     db_path
                 ),
             ),
+            MigrationError::AppliedMigrationChanged { name } => pyre::error::format_custom_error(
+                "Applied Migration Changed",
+                &format!(
+                    "Migration {} has already been applied, but its migration.sql no longer matches the SQL recorded in the database.\n\nCreate a new migration instead of editing an applied migration.",
+                    pyre::error::yellow_if(true, name)
+                ),
+            ),
+            MigrationError::MigrationValidationFailed { changes } => pyre::error::format_custom_error(
+                "Migration Validation Failed",
+                &format!(
+                    "After applying pending migration files, the database still does not match the current schema:\n\n{}\n\nGenerate or edit a migration.sql file so the migration explicitly performs these changes.",
+                    changes
+                        .iter()
+                        .map(|change| format!("  - {}", change))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+            ),
             MigrationError::SchemaTypecheckFailed => pyre::error::format_custom_error(
                 "Schema Typecheck Failed",
-                "The schema could not be typechecked while preparing migration reconciliation.",
+                "The schema could not be typechecked while validating migrations.",
             ),
         }
     }
+}
+
+async fn get_applied_migration_sql(
+    conn: &libsql::Connection,
+) -> Result<HashMap<String, String>, MigrationError> {
+    let mut rows = conn
+        .query(
+            &format!(
+                "select name, sql from {}",
+                pyre::ext::string::quote(pyre::db::migrate::MIGRATION_TABLE)
+            ),
+            (),
+        )
+        .await
+        .map_err(MigrationError::SqlError)?;
+
+    let mut applied = HashMap::new();
+    while let Some(row) = rows.next().await.map_err(MigrationError::SqlError)? {
+        let name: String = row.get(0).map_err(MigrationError::SqlError)?;
+        let sql: String = row.get(1).map_err(MigrationError::SqlError)?;
+        applied.insert(name, sql);
+    }
+
+    Ok(applied)
+}
+
+fn verify_applied_migration_sql_unchanged(
+    migration_files: &[(String, String)],
+    applied_sql: &HashMap<String, String>,
+) -> Result<(), MigrationError> {
+    for (name, sql) in migration_files {
+        if let Some(recorded_sql) = applied_sql.get(name) {
+            if recorded_sql != sql {
+                return Err(MigrationError::AppliedMigrationChanged { name: name.clone() });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn migration_validation_changes(db_diff: &diff::Diff) -> Vec<String> {
+    let mut changes = Vec::new();
+
+    for table in &db_diff.added {
+        changes.push(format!("missing table {}", table.name));
+    }
+
+    for table in &db_diff.removed {
+        changes.push(format!("unexpected table {}", table.name));
+    }
+
+    for record_diff in &db_diff.modified_records {
+        for change in &record_diff.changes {
+            match change {
+                diff::RecordChange::AddedField(column) => {
+                    changes.push(format!(
+                        "missing column {}.{}",
+                        record_diff.name, column.name
+                    ));
+                }
+                diff::RecordChange::RemovedField(column) => {
+                    changes.push(format!(
+                        "unexpected column {}.{}",
+                        record_diff.name, column.name
+                    ));
+                }
+                diff::RecordChange::ModifiedField { name, .. } => {
+                    changes.push(format!("modified column {}.{}", record_diff.name, name));
+                }
+                diff::RecordChange::AddedIndex(index) => {
+                    changes.push(format!("missing index {}", index.name));
+                }
+                diff::RecordChange::RemovedIndex(index) => {
+                    changes.push(format!("unexpected index {}", index.name));
+                }
+            }
+        }
+    }
+
+    changes
 }
 
 #[derive(Debug)]
@@ -389,6 +495,9 @@ pub async fn migrate(
         .await
         .map_err(MigrationError::SqlError)?;
 
+    let applied_sql = get_applied_migration_sql(&conn).await?;
+    verify_applied_migration_sql_unchanged(&migration_files.file_contents, &applied_sql)?;
+
     // Use centralized migration planning logic
     let migration_plan = pyre::db::migrate::plan_file_based_migrations(
         &migration_files.file_contents,
@@ -398,7 +507,12 @@ pub async fn migrate(
 
     let migrations_applied = migration_plan.migrations_to_run.len();
 
-    // Run migration
+    let schema_database = ast::Database {
+        schemas: vec![schema.clone()],
+    };
+    let schema_context = typecheck::check_schema(&schema_database)
+        .map_err(|_| MigrationError::SchemaTypecheckFailed)?;
+
     let tx = conn
         .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
         .await
@@ -425,60 +539,30 @@ pub async fn migrate(
         .map_err(MigrationError::SqlError)?;
     }
 
-    tx.commit().await.map_err(MigrationError::SqlError)?;
-
-    let introspection = introspect::introspect(db)
+    let introspection = introspect::introspect_connection(&tx)
         .await
         .map_err(MigrationError::SqlError)?;
+    let validation_diff = diff::diff(&schema_context, schema, &introspection);
+    if !diff::is_empty(&validation_diff) {
+        let changes = migration_validation_changes(&validation_diff);
+        tx.rollback().await.map_err(MigrationError::SqlError)?;
+        return Err(MigrationError::MigrationValidationFailed { changes });
+    }
 
-    let schema_database = ast::Database {
-        schemas: vec![schema.clone()],
-    };
-    let schema_context = typecheck::check_schema(&schema_database)
-        .map_err(|_| MigrationError::SchemaTypecheckFailed)?;
-
-    let reconciliation_diff = diff::diff(&schema_context, schema, &introspection);
-    let mut reconciliation_sql = if diff::is_empty(&reconciliation_diff) {
-        vec![]
-    } else {
-        pyre::db::diff::to_sql::to_sql(&reconciliation_diff)
-    };
-    let push_applied = !reconciliation_sql.is_empty();
-
-    if migrations_applied > 0 || push_applied {
-        let tx = conn
-            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
-            .await
-            .map_err(MigrationError::SqlError)?;
-
-        for statement in reconciliation_sql.drain(..) {
-            match statement {
-                SqlAndParams::Sql(sql) => {
-                    tx.execute_batch(&sql)
-                        .await
-                        .map_err(MigrationError::SqlError)?;
-                }
-                SqlAndParams::SqlWithParams { sql, args } => {
-                    tx.execute(&sql, libsql::params_from_iter(args))
-                        .await
-                        .map_err(MigrationError::SqlError)?;
-                }
-            }
-        }
-
+    if migrations_applied > 0 {
         tx.execute(
             &migration_plan.insert_schema_sql,
             libsql::params![migration_plan.schema_string],
         )
         .await
         .map_err(MigrationError::SqlError)?;
-
-        tx.commit().await.map_err(MigrationError::SqlError)?;
     }
+
+    tx.commit().await.map_err(MigrationError::SqlError)?;
 
     Ok(MigrateOutcome {
         migrations_applied,
-        push_applied,
+        push_applied: false,
     })
 }
 
@@ -496,6 +580,8 @@ pub fn read_migration_items(migration_folder: &Path) -> Result<Vec<String>, std:
         }
     }
 
+    migration_items.sort();
+
     Ok(migration_items)
 }
 
@@ -504,7 +590,7 @@ pub struct Migrations {
 }
 
 pub fn read_migration_folder(migration_folder: &Path) -> Result<Migrations, std::io::Error> {
-    let mut file_contents: Vec<(String, String)> = Vec::new();
+    let mut migration_dirs: Vec<(String, PathBuf)> = Vec::new();
 
     for entry in fs::read_dir(migration_folder)? {
         let entry = entry?;
@@ -514,17 +600,60 @@ pub fn read_migration_folder(migration_folder: &Path) -> Result<Migrations, std:
             let migrate_file_path = path.join("migration.sql");
             if migrate_file_path.is_file() {
                 if let Some(folder_name) = path.file_name().and_then(|name| name.to_str()) {
-                    // Read the file contents
-                    let mut file = fs::File::open(&migrate_file_path)?;
-                    let mut contents = String::new();
-                    file.read_to_string(&mut contents)?;
-
-                    // Store the folder name and contents in the Vec
-                    file_contents.push((folder_name.to_string(), contents));
+                    migration_dirs.push((folder_name.to_string(), migrate_file_path));
                 }
             }
         }
     }
 
+    migration_dirs.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    let mut file_contents: Vec<(String, String)> = Vec::new();
+    for (folder_name, migrate_file_path) in migration_dirs {
+        let mut file = fs::File::open(&migrate_file_path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+
+        file_contents.push((folder_name, contents));
+    }
+
     Ok(Migrations { file_contents })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_migration_folder_returns_migrations_in_name_order() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        for (name, sql) in [
+            ("202601020000_second", "select 2;"),
+            ("202601010000_first", "select 1;"),
+        ] {
+            let migration_dir = root.join(name);
+            std::fs::create_dir(&migration_dir).unwrap();
+            std::fs::write(migration_dir.join("migration.sql"), sql).unwrap();
+        }
+
+        let migrations = read_migration_folder(root).unwrap();
+
+        assert_eq!(migrations.file_contents[0].0, "202601010000_first");
+        assert_eq!(migrations.file_contents[1].0, "202601020000_second");
+    }
+
+    #[test]
+    fn read_migration_items_returns_names_in_order() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        std::fs::create_dir(root.join("202601020000_second")).unwrap();
+        std::fs::create_dir(root.join("202601010000_first")).unwrap();
+
+        let names = read_migration_items(root).unwrap();
+
+        assert_eq!(names, vec!["202601010000_first", "202601020000_second"]);
+    }
 }

@@ -292,14 +292,15 @@ fn select_type_columns(
                                 None => {
                                     // Simple variant - just the tag
                                     case_sql.push_str(&format!(
-                                        " json_object('$', '{}')",
+                                        " json_object('_type', '{}')",
                                         variant.name
                                     ));
                                 }
                                 Some(fields) => {
                                     // Variant with fields - include them in the JSON object
                                     case_sql.push_str(&format!("\n    json_object("));
-                                    case_sql.push_str(&format!("\n      '$', '{}',", variant.name));
+                                    case_sql
+                                        .push_str(&format!("\n      '_type', '{}',", variant.name));
 
                                     let mut first_field = true;
                                     for field in fields {
