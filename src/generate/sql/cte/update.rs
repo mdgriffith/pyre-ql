@@ -29,12 +29,12 @@ pub fn update_to_string(
     let new_values = &to_field_set_values(context, query, table, &all_query_fields);
     values.append(&mut new_values.clone());
 
-    // Check if updatedAt field exists in table and is not explicitly set
-    let has_updated_at_field = table
-        .record
-        .fields
-        .iter()
-        .any(|f| ast::has_fieldname(f, "updatedAt"));
+    // @updatedAt fields are managed by Pyre. Keep legacy name-based behavior for
+    // the sync-added updatedAt field, but allow explicit non-managed overrides.
+    let has_updated_at_field = table.record.fields.iter().any(|f| {
+        matches!(f, ast::Field::Column(col) if ast::is_updated_at(col))
+            || ast::has_fieldname(f, "updatedAt")
+    });
     let updated_at_explicitly_set = all_query_fields.iter().any(|f| f.name == "updatedAt");
 
     if has_updated_at_field && !updated_at_explicitly_set {

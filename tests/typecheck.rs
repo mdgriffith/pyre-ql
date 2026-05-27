@@ -24,6 +24,149 @@ fn check_schema_and_get_layers(schema_source: &str) -> std::collections::HashMap
     layers
 }
 
+fn checked_context(schema_source: &str) -> typecheck::Context {
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", schema_source, &mut schema).expect("Failed to parse schema");
+
+    let database = ast::Database {
+        schemas: vec![schema],
+    };
+
+    typecheck::check_schema(&database).expect("Schema should typecheck")
+}
+
+#[test]
+fn timestamps_add_managed_timestamp_fields() {
+    let context = checked_context(
+        r#"
+record Note {
+    @public
+    id Int @id
+    body String
+    @timestamps
+}
+    "#,
+    );
+
+    let note = context.tables.get("note").expect("note table exists");
+    let fields = ast::collect_columns(&note.record.fields);
+
+    assert!(fields
+        .iter()
+        .any(|column| { column.name == "createdAt" && ast::is_created_at(column) }));
+    assert!(fields
+        .iter()
+        .any(|column| { column.name == "updatedAt" && ast::is_updated_at(column) }));
+}
+
+#[test]
+fn managed_fields_and_integer_ids_cannot_be_set_in_insert_mutations() {
+    let context = checked_context(
+        r#"
+record Note {
+    @public
+    id Int @id
+    body String
+    createdAt DateTime @createdAt
+    updatedAt DateTime @updatedAt
+}
+    "#,
+    );
+
+    let query_list = parser::parse_query(
+        "query.pyre",
+        r#"
+insert CreateNote($id: Int, $body: String, $createdAt: DateTime, $updatedAt: DateTime) {
+    note {
+        id = $id
+        body = $body
+        createdAt = $createdAt
+        updatedAt = $updatedAt
+    }
+}
+    "#,
+    )
+    .expect("query parses");
+
+    let errors = match typecheck::check_queries(&query_list, &context) {
+        Ok(_) => panic!("managed writes should fail"),
+        Err(errors) => errors,
+    };
+    let managed_fields = errors
+        .iter()
+        .filter_map(|error| match &error.error_type {
+            ErrorType::ManagedColumnCannotBeSet { field, .. } => Some(field.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(managed_fields.contains(&"id"));
+    assert!(managed_fields.contains(&"createdAt"));
+    assert!(managed_fields.contains(&"updatedAt"));
+}
+
+#[test]
+fn generated_create_excludes_integer_ids_and_managed_timestamps() {
+    let context = checked_context(
+        r#"
+record Note {
+    @public
+    id Int @id
+    body String
+    createdAt DateTime @createdAt
+    updatedAt DateTime @updatedAt
+}
+    "#,
+    );
+    let mut query_list = ast::QueryList { queries: vec![] };
+
+    pyre::generated_queries::append_generated_crud_queries(&mut query_list, &context);
+
+    let create = query_list
+        .queries
+        .iter()
+        .find_map(|query| match query {
+            ast::QueryDef::Query(query) if query.name == "NoteCreate" => Some(query),
+            _ => None,
+        })
+        .expect("generated create exists");
+    let arg_names = create
+        .args
+        .iter()
+        .map(|arg| arg.name.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(arg_names, vec!["body"]);
+}
+
+#[test]
+fn uuid_primary_ids_remain_settable_on_insert() {
+    let context = checked_context(
+        r#"
+record Note {
+    @public
+    id Id.Uuid @id
+    body String
+}
+    "#,
+    );
+
+    let query_list = parser::parse_query(
+        "query.pyre",
+        r#"
+insert CreateNote($id: Note.id, $body: String) {
+    note {
+        id = $id
+        body = $body
+    }
+}
+    "#,
+    )
+    .expect("query parses");
+
+    typecheck::check_queries(&query_list, &context).expect("UUID id should be caller-settable");
+}
+
 #[test]
 fn test_tablename_rejects_unsafe_sql_identifier() {
     let schema_source = r#"

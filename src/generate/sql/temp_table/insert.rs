@@ -262,15 +262,19 @@ pub fn initial_select(
 
     let all_query_fields = ast::collect_query_fields(&query_table_field.fields);
 
-    // Check if updatedAt field exists in table and is not explicitly set
-    let has_updated_at_field = table
-        .record
-        .fields
-        .iter()
-        .any(|f| ast::has_fieldname(f, "updatedAt"));
+    let managed_insert_timestamps = managed_insert_timestamp_columns(table);
+    for column in &managed_insert_timestamps {
+        field_names.push(column.name.clone());
+    }
+
+    // Preserve legacy auto-updatedAt behavior for the sync-added field.
+    let has_legacy_updated_at_field = table.record.fields.iter().any(|f| {
+        ast::has_fieldname(f, "updatedAt")
+            && !matches!(f, ast::Field::Column(col) if ast::is_updated_at(col))
+    });
     let updated_at_explicitly_set = has_explicit_insert_field(&all_query_fields, "updatedAt");
 
-    if has_updated_at_field && !updated_at_explicitly_set {
+    if has_legacy_updated_at_field && !updated_at_explicitly_set {
         field_names.push("updatedAt".to_string());
     }
 
@@ -284,7 +288,11 @@ pub fn initial_select(
     let values = &to_field_insert_values(context, query, table, &all_query_fields);
 
     let mut final_values = values.clone();
-    if has_updated_at_field && !updated_at_explicitly_set {
+    for _ in &managed_insert_timestamps {
+        final_values.push("unixepoch()".to_string());
+    }
+
+    if has_legacy_updated_at_field && !updated_at_explicitly_set {
         final_values.push("unixepoch()".to_string());
     }
 
@@ -322,15 +330,19 @@ fn insert_linked(
 
     let all_query_fields = ast::collect_query_fields(&query_table_field.fields);
 
-    // Check if updatedAt field exists in table and is not explicitly set
-    let has_updated_at_field = table
-        .record
-        .fields
-        .iter()
-        .any(|f| ast::has_fieldname(f, "updatedAt"));
+    let managed_insert_timestamps = managed_insert_timestamp_columns(table);
+    for column in &managed_insert_timestamps {
+        field_names.push(column.name.clone());
+    }
+
+    // Preserve legacy auto-updatedAt behavior for the sync-added field.
+    let has_legacy_updated_at_field = table.record.fields.iter().any(|f| {
+        ast::has_fieldname(f, "updatedAt")
+            && !matches!(f, ast::Field::Column(col) if ast::is_updated_at(col))
+    });
     let updated_at_explicitly_set = has_explicit_insert_field(&all_query_fields, "updatedAt");
 
-    if has_updated_at_field && !updated_at_explicitly_set {
+    if has_legacy_updated_at_field && !updated_at_explicitly_set {
         field_names.push("updatedAt".to_string());
     }
 
@@ -350,7 +362,11 @@ fn insert_linked(
         &all_query_fields,
     ));
 
-    if has_updated_at_field && !updated_at_explicitly_set {
+    for _ in &managed_insert_timestamps {
+        insert_values.push("unixepoch()".to_string());
+    }
+
+    if has_legacy_updated_at_field && !updated_at_explicitly_set {
         insert_values.push("unixepoch()".to_string());
     }
 
@@ -527,6 +543,22 @@ fn has_explicit_insert_field(query_fields: &Vec<&ast::QueryField>, name: &str) -
         .any(|field| field.name == name && field.set.is_some())
 }
 
+fn managed_insert_timestamp_columns(table: &typecheck::Table) -> Vec<&ast::Column> {
+    table
+        .record
+        .fields
+        .iter()
+        .filter_map(|field| match field {
+            ast::Field::Column(column)
+                if ast::is_created_at(column) || ast::is_updated_at(column) =>
+            {
+                Some(column)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn to_table_fieldname(
     _indent: usize,
     context: &typecheck::Context,
@@ -535,8 +567,8 @@ fn to_table_fieldname(
 ) -> Vec<String> {
     match table_field {
         ast::Field::Column(col) => {
-            // Skip @id fields - they're auto-generated and shouldn't be in INSERT
-            if ast::is_primary_key(col) {
+            // Integer @id fields are auto-generated and shouldn't be in INSERT.
+            if ast::is_integer_primary_key(col) {
                 return vec![];
             }
 
@@ -612,9 +644,9 @@ fn to_field_insert_values(
             .iter()
             .find(|&f| ast::has_field_or_linkname(&f, &field.name));
 
-        // Skip primary keys - they're auto-generated and shouldn't be in INSERT values
+        // Skip integer primary keys - they're auto-generated and shouldn't be in INSERT values
         if let Some(ast::Field::Column(col)) = table_field {
-            if ast::is_primary_key(col) {
+            if ast::is_integer_primary_key(col) {
                 continue;
             }
         }

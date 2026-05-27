@@ -337,6 +337,7 @@ pub enum FieldDirective {
     Index(IndexDirective),
     Unique(IndexDirective),
     Permissions(PermissionDetails),
+    Timestamps,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -555,6 +556,42 @@ pub fn collect_indexes(fields: &Vec<Field>) -> Vec<MaterializedIndex> {
     }
 
     indexes
+}
+
+pub fn with_timestamps_fields(fields: &Vec<Field>) -> Vec<Field> {
+    let mut result = fields.clone();
+    if !fields
+        .iter()
+        .any(|field| matches!(field, Field::FieldDirective(FieldDirective::Timestamps)))
+    {
+        return result;
+    }
+
+    result.push(Field::Column(managed_timestamp_column(
+        "createdAt",
+        ColumnDirective::CreatedAt,
+    )));
+    result.push(Field::Column(managed_timestamp_column(
+        "updatedAt",
+        ColumnDirective::UpdatedAt,
+    )));
+    result
+}
+
+fn managed_timestamp_column(name: &str, directive: ColumnDirective) -> Column {
+    Column {
+        name: name.to_string(),
+        type_: ColumnType::DateTime,
+        nullable: false,
+        directives: vec![directive],
+        start: None,
+        end: None,
+        start_name: None,
+        end_name: None,
+        start_typename: None,
+        end_typename: None,
+        inline_comment: None,
+    }
 }
 
 /// Represents the type of a column in a schema
@@ -919,6 +956,8 @@ pub enum ColumnDirective {
     PrimaryKey,
     Unique,
     Index,
+    CreatedAt,
+    UpdatedAt,
     Default {
         id: String,
         value: DefaultValue,
@@ -926,6 +965,30 @@ pub enum ColumnDirective {
         end: Option<Location>,
     },
     // Check(String),
+}
+
+pub fn is_created_at(col: &Column) -> bool {
+    col.directives
+        .iter()
+        .any(|directive| matches!(directive, ColumnDirective::CreatedAt))
+}
+
+pub fn is_updated_at(col: &Column) -> bool {
+    col.directives
+        .iter()
+        .any(|directive| matches!(directive, ColumnDirective::UpdatedAt))
+}
+
+pub fn is_managed_timestamp(col: &Column) -> bool {
+    is_created_at(col) || is_updated_at(col)
+}
+
+pub fn is_integer_primary_key(col: &Column) -> bool {
+    is_primary_key(col)
+        && matches!(
+            col.type_,
+            ColumnType::Int | ColumnType::IdInt { .. } | ColumnType::ForeignKey { .. }
+        )
 }
 
 // CURRENT_TIME, CURRENT_DATE or CURRENT_TIMESTAMP
@@ -1036,6 +1099,17 @@ pub enum QueryOperation {
     Insert,
     Update,
     Delete,
+}
+
+impl QueryOperation {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            QueryOperation::Query => "query",
+            QueryOperation::Insert => "insert",
+            QueryOperation::Update => "update",
+            QueryOperation::Delete => "delete",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

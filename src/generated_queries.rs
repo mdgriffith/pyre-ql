@@ -344,8 +344,8 @@ fn variable_value(name: &str) -> ast::QueryValue {
 fn writable_create_columns(table: &typecheck::Table) -> Vec<&ast::Column> {
     scalar_columns(table)
         .into_iter()
-        .filter(|column| !ast::is_primary_key(column))
-        .filter(|column| !is_managed_updated_at(column))
+        .filter(|column| !ast::is_integer_primary_key(column))
+        .filter(|column| !ast::is_managed_timestamp(column))
         .collect()
 }
 
@@ -353,7 +353,7 @@ fn writable_update_columns(table: &typecheck::Table) -> Vec<&ast::Column> {
     scalar_columns(table)
         .into_iter()
         .filter(|column| !ast::is_primary_key(column))
-        .filter(|column| !is_managed_updated_at(column))
+        .filter(|column| !ast::is_managed_timestamp(column))
         .collect()
 }
 
@@ -377,15 +377,4 @@ fn primary_key_column(table: &typecheck::Table) -> Option<&ast::Column> {
     scalar_columns(table)
         .into_iter()
         .find(|column| ast::is_primary_key(column))
-}
-
-fn is_managed_updated_at(column: &ast::Column) -> bool {
-    column.name == "updatedAt"
-        && column.directives.iter().any(|directive| match directive {
-            ast::ColumnDirective::Default {
-                value: ast::DefaultValue::Now,
-                ..
-            } => true,
-            _ => false,
-        })
 }

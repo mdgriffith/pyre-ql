@@ -428,6 +428,7 @@ fn to_string_field_directive(
         ast::FieldDirective::Permissions(info) => {
             to_string_permissions_details(namespace, indent, info)
         }
+        ast::FieldDirective::Timestamps => format!("{}@timestamps\n", spaces),
     }
 }
 
@@ -705,6 +706,8 @@ fn to_string_directive(directive: &ast::ColumnDirective) -> String {
         ast::ColumnDirective::PrimaryKey => "@id".to_string(),
         ast::ColumnDirective::Unique => "@unique".to_string(),
         ast::ColumnDirective::Index => "@index".to_string(),
+        ast::ColumnDirective::CreatedAt => "@createdAt".to_string(),
+        ast::ColumnDirective::UpdatedAt => "@updatedAt".to_string(),
         ast::ColumnDirective::Default { id: _, value, .. } => match value {
             ast::DefaultValue::Now => "@default(now)".to_string(),
             ast::DefaultValue::Value(value) => {

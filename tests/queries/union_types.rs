@@ -85,7 +85,6 @@ async fn test_union_column_reuse() -> Result<(), TestError> {
     let insert_success = r#"
         insert CreateTestRecord($message: String) {
             testRecord {
-                id = 1
                 result = Success { message = $message }
             }
         }
@@ -102,7 +101,6 @@ async fn test_union_column_reuse() -> Result<(), TestError> {
     let insert_warning = r#"
         insert CreateTestRecord($message: String) {
             testRecord {
-                id = 2
                 result = Warning { message = $message }
             }
         }
@@ -227,7 +225,6 @@ async fn test_union_required_fields_validation() -> Result<(), TestError> {
     let insert_simple = r#"
         insert CreateTestRecord {
             testRecord {
-                id = 1
                 action = Simple
             }
         }
@@ -240,7 +237,6 @@ async fn test_union_required_fields_validation() -> Result<(), TestError> {
     let insert_create = r#"
         insert CreateTestRecord($name: String, $description: String) {
             testRecord {
-                id = 2
                 action = Create { name = $name, description = $description }
             }
         }
@@ -259,7 +255,6 @@ async fn test_union_required_fields_validation() -> Result<(), TestError> {
     let insert_create_incomplete = r#"
         insert CreateTestRecord($name: String) {
             testRecord {
-                id = 3
                 action = Create { name = $name }
                 // Missing description field - should fail
             }
@@ -282,7 +277,6 @@ async fn test_union_required_fields_validation() -> Result<(), TestError> {
     let insert_update = r#"
         insert CreateTestRecord($id: Int, $changes: String) {
             testRecord {
-                id = 4
                 action = Update { id = $id, changes = $changes }
             }
         }
@@ -300,7 +294,6 @@ async fn test_union_required_fields_validation() -> Result<(), TestError> {
     let insert_delete_incomplete = r#"
         insert CreateTestRecord($id: Int) {
             testRecord {
-                id = 5
                 action = Delete { id = $id }
                 // Missing reason field - should fail
             }

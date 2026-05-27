@@ -221,6 +221,10 @@ pub enum ErrorType {
     InsertNestedValueAutomaticallySet {
         field: String,
     },
+    ManagedColumnCannotBeSet {
+        field: String,
+        operation: ast::QueryOperation,
+    },
     MultipleSchemaWrites {
         field_table: String,
         field_schema: String,
@@ -1337,6 +1341,17 @@ fn to_error_description(error: &Error, in_color: bool) -> String {
 
             result
         }
+        ErrorType::ManagedColumnCannotBeSet { field, operation } => {
+            let mut result = "".to_string();
+
+            result.push_str(&format!(
+                "{} is managed by Pyre and can't be set in a {} mutation.",
+                yellow_if(in_color, field),
+                cyan_if(in_color, operation.as_str())
+            ));
+
+            result
+        }
         ErrorType::MultipleSchemaWrites {
             field_table,
             field_schema,
@@ -1617,6 +1632,7 @@ fn to_error_title(error_type: &ErrorType) -> String {
         ErrorType::InsertColumnIsNotSet { .. } => "Insert Column Not Set",
         ErrorType::InsertMissingColumn { .. } => "Insert Missing Column",
         ErrorType::InsertNestedValueAutomaticallySet { .. } => "Can't set automatic field",
+        ErrorType::ManagedColumnCannotBeSet { .. } => "Managed Column Cannot Be Set",
         ErrorType::MultipleSchemaWrites { .. } => "Multiple Schema Writes",
         ErrorType::LimitOffsetOnlyInFlatRecord => "Limit Only In Flat Record",
         ErrorType::VariantFieldTypeCollision { .. } => "Variant Field Type Collision",

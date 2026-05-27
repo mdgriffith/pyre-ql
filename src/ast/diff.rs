@@ -314,6 +314,8 @@ fn diff_column(old: &crate::ast::Column, new: &crate::ast::Column) -> Option<Col
             crate::ast::ColumnDirective::PrimaryKey => "_key".to_string(),
             crate::ast::ColumnDirective::Unique => "_uniq".to_string(),
             crate::ast::ColumnDirective::Index => "_idx".to_string(),
+            crate::ast::ColumnDirective::CreatedAt => "_createdAt".to_string(),
+            crate::ast::ColumnDirective::UpdatedAt => "_updatedAt".to_string(),
             crate::ast::ColumnDirective::Default { id, .. } => id.clone(),
         }
     };

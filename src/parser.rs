@@ -536,10 +536,20 @@ fn parse_table_directive(input: Text) -> ParseResult<ast::Field> {
         parse_table_index_directive(true),
         parse_table_permission,
         parse_public,
+        parse_timestamps,
         parse_watch(),
     )))(input)?;
     let input = expecting(input, crate::error::Expecting::SchemaColumn);
     Ok((input, field_directive))
+}
+
+fn parse_timestamps(input: Text) -> ParseResult<ast::Field> {
+    let (input, _) = tag("timestamps")(input)?;
+    let (input, _) = multispace0(input)?;
+    Ok((
+        input,
+        ast::Field::FieldDirective(ast::FieldDirective::Timestamps),
+    ))
 }
 
 fn parse_table_permission(input: Text) -> ParseResult<ast::Field> {
@@ -892,6 +902,8 @@ fn parse_column_directive(input: Text) -> ParseResult<ast::ColumnDirective> {
         parse_directive_named("id", ast::ColumnDirective::PrimaryKey),
         parse_directive_named("unique", ast::ColumnDirective::Unique),
         parse_directive_named("index", ast::ColumnDirective::Index),
+        parse_directive_named("createdAt", ast::ColumnDirective::CreatedAt),
+        parse_directive_named("updatedAt", ast::ColumnDirective::UpdatedAt),
         parse_default_directive,
     )))(input)?;
     let (input, end_pos) = position(input)?;

@@ -31,6 +31,8 @@ record TestRecord {{
             ast::ColumnDirective::PrimaryKey => "@id",
             ast::ColumnDirective::Unique => "@unique",
             ast::ColumnDirective::Index => "@index",
+            ast::ColumnDirective::CreatedAt => "@createdAt",
+            ast::ColumnDirective::UpdatedAt => "@updatedAt",
             ast::ColumnDirective::Default { .. } => "",
         }
     );

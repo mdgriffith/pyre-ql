@@ -894,8 +894,8 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                                 });
                             }
                         }
+                        let mut fields_with_updated_at = ast::with_timestamps_fields(fields);
                         // Ensure updatedAt field exists
-                        let mut fields_with_updated_at = fields.clone();
                         ast::ensure_updated_at_field(&mut fields_with_updated_at);
 
                         let record_details = ast::RecordDetails {
@@ -1033,7 +1033,8 @@ pub fn populate_context(database: &ast::Database) -> Result<Context, Vec<Error>>
                         let mut permission_directives: Vec<(ast::PermissionDetails, Range)> =
                             Vec::new();
 
-                        for field in fields {
+                        let fields = ast::with_timestamps_fields(fields);
+                        for field in &fields {
                             match field {
                                 ast::Field::Column(column) => {
                                     if field_names.contains(&column.name) {
@@ -1555,7 +1556,8 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                         end_name: _end_name,
                     } => {
                         let mut field_names: HashMap<String, Option<Range>> = HashMap::new();
-                        for column in ast::collect_columns(fields) {
+                        let fields = ast::with_timestamps_fields(fields);
+                        for column in ast::collect_columns(&fields) {
                             validate_type_expr(
                                 context,
                                 &file.path,
@@ -1568,6 +1570,31 @@ fn check_schema_definitions(context: &Context, database: &ast::Database, errors:
                             );
 
                             for directive in &column.directives {
+                                if matches!(
+                                    directive,
+                                    ast::ColumnDirective::CreatedAt
+                                        | ast::ColumnDirective::UpdatedAt
+                                ) && !matches!(column.type_, ast::ColumnType::DateTime)
+                                {
+                                    errors.push(Error {
+                                        filepath: file.path.clone(),
+                                        error_type: ErrorType::InvalidTypeUsage {
+                                            message: format!(
+                                                "{} must be a DateTime field",
+                                                match directive {
+                                                    ast::ColumnDirective::CreatedAt => "@createdAt",
+                                                    ast::ColumnDirective::UpdatedAt => "@updatedAt",
+                                                    _ => unreachable!(),
+                                                }
+                                            ),
+                                        },
+                                        locations: vec![Location {
+                                            contexts: to_range(start, end),
+                                            primary: to_range(&column.start, &column.end),
+                                        }],
+                                    });
+                                }
+
                                 if let ast::ColumnDirective::Default {
                                     value,
                                     start: default_start,
@@ -3376,13 +3403,13 @@ fn check_table_query(
             }
 
             for col in ast::collect_columns(&table.record.fields) {
-                if ast::is_primary_key(&col)
+                if ast::is_integer_primary_key(&col)
                     || ast::has_default_value(&col)
+                    || ast::is_managed_timestamp(&col)
                     || through_link.map_or(false, |link| link.foreign.fields.contains(&col.name))
                 {
-                    // Primary keys, fields with defaults, and  aren't required
-                    // (for the moment, we should differentiate between auto-incrementing
-                    // and non-auto-incrementing primary keys)
+                    // Integer primary keys, fields with defaults, managed timestamps, and nested
+                    // foreign keys are set automatically.
                     continue;
                 }
 
@@ -3439,6 +3466,42 @@ fn check_field(
     let column_type_str = query_param_type_for_column(table, column);
     match &field.set {
         Some(set) => {
+            if matches!(
+                operation,
+                ast::QueryOperation::Insert | ast::QueryOperation::Update
+            ) && ast::is_managed_timestamp(column)
+            {
+                errors.push(Error {
+                    filepath: context.current_filepath.clone(),
+                    error_type: ErrorType::ManagedColumnCannotBeSet {
+                        field: column.name.clone(),
+                        operation: operation.clone(),
+                    },
+                    locations: vec![Location {
+                        contexts: vec![],
+                        primary: to_range(&field.start_fieldname, &field.end_fieldname),
+                    }],
+                });
+                return;
+            }
+
+            if matches!(operation, ast::QueryOperation::Insert)
+                && ast::is_integer_primary_key(column)
+            {
+                errors.push(Error {
+                    filepath: context.current_filepath.clone(),
+                    error_type: ErrorType::ManagedColumnCannotBeSet {
+                        field: column.name.clone(),
+                        operation: operation.clone(),
+                    },
+                    locations: vec![Location {
+                        contexts: vec![],
+                        primary: to_range(&field.start_fieldname, &field.end_fieldname),
+                    }],
+                });
+                return;
+            }
+
             check_value(
                 context,
                 &query_context,

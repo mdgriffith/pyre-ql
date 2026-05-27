@@ -151,12 +151,16 @@ fn add_fields(
             }
             seen_fields.insert(column_name.clone());
 
-            let default_value = col.directives.iter().find_map(|d| match d {
-                crate::ast::ColumnDirective::Default { value, .. } => {
-                    return default_value_to_sql(value).map(|sql| format!("({})", sql));
-                }
-                _ => None,
-            });
+            let default_value = if crate::ast::is_managed_timestamp(col) {
+                Some("(unixepoch())".to_string())
+            } else {
+                col.directives.iter().find_map(|d| match d {
+                    crate::ast::ColumnDirective::Default { value, .. } => {
+                        return default_value_to_sql(value).map(|sql| format!("({})", sql));
+                    }
+                    _ => None,
+                })
+            };
 
             match col.type_.to_serialization_type() {
                 crate::ast::SerializationType::Concrete(concrete) => {

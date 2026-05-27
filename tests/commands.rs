@@ -802,7 +802,8 @@ type PostAttrs
     assert!(server_ts.contains("\"attrs\"?: SeedConstructed<Db.PostAttrs>;"));
     assert!(server_ts.contains("\"users\"?: SeedUsersRow[];"));
     assert!(server_ts.contains("\"posts\"?: SeedPostsRow[];"));
-    assert!(server_ts.contains("export const seed = (db: Client, input: SeedInput): Promise<SeedResult>"));
+    assert!(server_ts
+        .contains("export const seed = (db: Client, input: SeedInput): Promise<SeedResult>"));
     assert!(server_ts.contains("{ _type: K }"));
     assert!(!server_ts.contains("type?:"));
     assert!(!server_ts.contains("$?:"));
