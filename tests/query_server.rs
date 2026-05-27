@@ -527,6 +527,61 @@ query GetNotes {
 }
 
 #[tokio::test]
+async fn run_insert_mutation_binds_repeated_json_union_parameter(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = TestDatabase::new(
+        r#"
+type Visibility
+   = Hidden
+   | Everyone
+   | Users {
+        userId Int
+     }
+
+record Scene {
+    id Int @id
+    visibility Visibility
+    updatedAt Int
+    @public
+}
+"#,
+    )
+    .await?;
+    let conn = db.db.connect()?;
+    let manifest = manifest_for(
+        &db.context,
+        r#"
+insert CreateScene($visibility: Visibility) {
+    scene {
+        visibility = $visibility
+        updatedAt = 10
+        id
+    }
+}
+"#,
+        false,
+    )?;
+    let session = PyreSession::new(json!({}), &manifest.session_schema)?;
+
+    let result = query::run(
+        &conn,
+        &manifest,
+        &only_query(&manifest).id,
+        json!({ "visibility": { "_type": "Hidden" } }),
+        &session,
+    )
+    .await?;
+
+    assert_eq!(result.response["scene"][0]["id"], json!(1));
+
+    let mut rows = conn.query("select visibility from scenes", ()).await?;
+    let row = rows.next().await?.expect("scene row should exist");
+    assert_eq!(row.get::<String>(0)?, "Hidden");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn run_multi_top_level_query_formats_all_response_keys(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let db = TestDatabase::new(

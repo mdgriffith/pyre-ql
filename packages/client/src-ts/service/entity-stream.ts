@@ -32,7 +32,7 @@ export interface EntityChange {
   row: Record<string, unknown>;
 }
 
-export type EntityChangeBatchSource = 'indexeddb-initial' | 'catchup' | 'live';
+export type EntityChangeBatchSource = 'indexeddb-initial' | 'catchup' | 'live' | 'optimistic' | 'mutation-response';
 
 export interface EntityChangeBatch {
   type: 'entity-change-batch';

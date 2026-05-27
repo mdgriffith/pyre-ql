@@ -206,7 +206,6 @@ fn statement_args(
 ) -> Result<(String, Vec<libsql::Value>), Error> {
     let mut sql = String::with_capacity(statement.sql.len());
     let mut values = Vec::new();
-    let mut seen = HashSet::new();
     let params = statement.params.iter().cloned().collect::<HashSet<_>>();
     let mut chars = statement.sql.chars().peekable();
 
@@ -232,10 +231,8 @@ fn statement_args(
 
         if params.contains(&param) {
             sql.push('?');
-            if seen.insert(param.clone()) {
-                let value = args.get(&param).cloned().unwrap_or(JsonValue::Null);
-                values.push(json_to_libsql(value)?);
-            }
+            let value = args.get(&param).cloned().unwrap_or(JsonValue::Null);
+            values.push(json_to_libsql(value)?);
         } else {
             sql.push('$');
             sql.push_str(&param);

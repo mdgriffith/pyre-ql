@@ -785,6 +785,75 @@ class SingleDatabasePyreClient {
     }
   };
 
+  private async notifyEntityStreamFromOptimisticMutation(optimistic: unknown, input: unknown): Promise<void> {
+    const metadata = parseOptimisticMutation(optimistic);
+    if (!metadata) {
+      return;
+    }
+
+    try {
+      const tableGroups = await this.buildOptimisticTableGroups(metadata, input);
+      this.entityStream.handleTableDelta(tableGroups, 'optimistic', this.databaseId);
+    } catch (error) {
+      console.error('[PyreClient] Failed to notify optimistic entity stream:', error);
+    }
+  }
+
+  private async buildOptimisticTableGroups(
+    optimistic: OptimisticMutationMetadata,
+    input: unknown
+  ): Promise<ServerTableGroup[]> {
+    if (!isRecord(input)) {
+      return [];
+    }
+
+    const whereValue = input[optimistic.where.input];
+    if (whereValue === undefined) {
+      return [];
+    }
+
+    const tableName = this.schema.queryFieldToTable?.[optimistic.queryField] ?? optimistic.queryField;
+    const setValues = Object.fromEntries(
+      optimistic.set
+        .filter((field) => input[field.input] !== undefined)
+        .map((field) => [field.field, input[field.input]])
+    );
+
+    if (Object.keys(setValues).length === 0) {
+      return [];
+    }
+
+    const rows = await this.storage.getAllRows(tableName);
+    const matchingRows = rows
+      .filter(isRecord)
+      .filter((row) => row[optimistic.where.field] === whereValue)
+      .map((row) => ({ ...row, ...setValues }));
+    const optimisticRows = matchingRows.length > 0
+      ? matchingRows
+      : [{ [optimistic.where.field]: whereValue, ...setValues }];
+
+    return tableGroupsFromRows(tableName, optimisticRows);
+  }
+
+  private notifyEntityStreamFromMutationResult(result: unknown): void {
+    const envelope = mutationResultEnvelope(result);
+    const serverRevision = extractServerRevision(envelope);
+    if (this.isStaleServerRevision(serverRevision)) {
+      return;
+    }
+
+    const syncDelta = extractMutationSyncDelta(envelope);
+    if (!syncDelta) {
+      return;
+    }
+
+    if (this.databaseId && syncDelta.databaseId !== undefined && syncDelta.databaseId !== this.databaseId) {
+      return;
+    }
+
+    this.entityStream.handleTableDelta(syncDelta.data, 'mutation-response', this.databaseId);
+  }
+
   private shouldAcceptLiveDelta(message: LiveSyncMessage): boolean {
     if (!Array.isArray(message.data)) {
       return false;
@@ -1146,6 +1215,7 @@ class SingleDatabasePyreClient {
     });
     this.emitDevtoolsEvent('mutation:request', { requestId, mutationId, databaseId, input: payload, optimistic });
     void (async () => {
+      await this.notifyEntityStreamFromOptimisticMutation(optimistic, payload);
       this.queryManager.sendMutation(
         requestId,
         mutationId,
@@ -1153,7 +1223,8 @@ class SingleDatabasePyreClient {
         payload,
         optimistic,
         (result) => {
-          this.noteAppliedServerRevision(extractServerRevision(result));
+          this.notifyEntityStreamFromMutationResult(result);
+          this.noteAppliedServerRevision(extractServerRevision(mutationResultEnvelope(result)));
           const appResult = unwrapMutationResultEnvelope(result);
           this.emitDevtoolsEvent('mutation:result', { requestId, mutationId, result });
           callback(appResult);
@@ -1177,12 +1248,13 @@ class SingleDatabasePyreClient {
     this.emitDevtoolsEvent('mutation:request', {
       requestId: message.requestId,
       mutationId: message.mutationId,
-          mutationName: message.mutationName,
-          databaseId: message.databaseId,
-          input: message.mutationInput ?? {},
-          optimistic: message.optimistic,
-        });
+      mutationName: message.mutationName,
+      databaseId: message.databaseId,
+      input: message.mutationInput ?? {},
+      optimistic: message.optimistic,
+    });
     void (async () => {
+      await this.notifyEntityStreamFromOptimisticMutation(message.optimistic, message.mutationInput ?? {});
       this.queryManager.sendMutation(
         message.requestId,
         message.mutationId,
@@ -1190,7 +1262,8 @@ class SingleDatabasePyreClient {
         message.mutationInput ?? {},
         message.optimistic,
         (result) => {
-          this.noteAppliedServerRevision(extractServerRevision(result));
+          this.notifyEntityStreamFromMutationResult(result);
+          this.noteAppliedServerRevision(extractServerRevision(mutationResultEnvelope(result)));
           const appResult = unwrapMutationResultEnvelope(result);
           this.emitDevtoolsEvent('mutation:result', {
             requestId: message.requestId,
@@ -2041,6 +2114,73 @@ function hasServerHeaders(server: ServerConfig): boolean {
   return Boolean(server.headers);
 }
 
+interface OptimisticMutationMetadata {
+  queryField: string;
+  where: {
+    field: string;
+    input: string;
+  };
+  set: Array<{
+    field: string;
+    input: string;
+  }>;
+}
+
+function parseOptimisticMutation(value: unknown): OptimisticMutationMetadata | null {
+  if (!isRecord(value) || typeof value.queryField !== 'string' || !isRecord(value.where) || !Array.isArray(value.set)) {
+    return null;
+  }
+
+  if (typeof value.where.field !== 'string' || typeof value.where.input !== 'string') {
+    return null;
+  }
+
+  const set = value.set.filter((field): field is { field: string; input: string } => (
+    isRecord(field) && typeof field.field === 'string' && typeof field.input === 'string'
+  ));
+  if (set.length === 0) {
+    return null;
+  }
+
+  return {
+    queryField: value.queryField,
+    where: {
+      field: value.where.field,
+      input: value.where.input,
+    },
+    set,
+  };
+}
+
+function tableGroupsFromRows(tableName: string, rows: Array<Record<string, unknown>>): ServerTableGroup[] {
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const headers = rows.reduce<string[]>((acc, row) => {
+    Object.keys(row).forEach((field) => {
+      if (!acc.includes(field)) {
+        acc.push(field);
+      }
+    });
+    return acc;
+  }, []);
+
+  return [{
+    table_name: tableName,
+    headers,
+    rows: rows.map((row) => headers.map((header) => row[header] ?? null)),
+  }];
+}
+
+function mutationResultEnvelope(result: unknown): unknown {
+  if (!isRecord(result) || result.ok !== true || !('value' in result)) {
+    return result;
+  }
+
+  return result.value;
+}
+
 function extractServerRevision(result: unknown): number | undefined {
   if (!result || typeof result !== 'object') {
     return undefined;
@@ -2048,6 +2188,29 @@ function extractServerRevision(result: unknown): number | undefined {
 
   const serverRevision = (result as { serverRevision?: unknown }).serverRevision;
   return typeof serverRevision === 'number' ? serverRevision : undefined;
+}
+
+function extractMutationSyncDelta(result: unknown): { databaseId?: string; data: ServerTableGroup[] } | null {
+  if (!isRecord(result) || !isRecord(result.sync) || result.sync.type !== 'delta' || !Array.isArray(result.sync.data)) {
+    return null;
+  }
+
+  const databaseId = typeof result.sync.databaseId === 'string'
+    ? result.sync.databaseId
+    : undefined;
+
+  return {
+    databaseId,
+    data: result.sync.data.filter(isServerTableGroup),
+  };
+}
+
+function isServerTableGroup(value: unknown): value is ServerTableGroup {
+  return isRecord(value)
+    && typeof value.table_name === 'string'
+    && Array.isArray(value.headers)
+    && value.headers.every((header) => typeof header === 'string')
+    && Array.isArray(value.rows);
 }
 
 function unwrapMutationResultEnvelope(result: unknown): unknown {

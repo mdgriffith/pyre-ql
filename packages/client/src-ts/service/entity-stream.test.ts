@@ -117,6 +117,20 @@ test('entity stream preserves reserved initial sequence before live batches', ()
   expect(batches[0].source).toBe('live');
 });
 
+test('entity stream emits optimistic and mutation response sources', () => {
+  const service = new EntityStreamService();
+  const batches: unknown[] = [];
+
+  service.subscribe({ tables: [{ tableName: 'posts' }] }, (batch) => {
+    batches.push(batch);
+  });
+
+  service.handleTableDelta(delta, 'optimistic', 'main');
+  service.handleTableDelta(delta, 'mutation-response', 'main');
+
+  expect(batches.map((batch) => batch.source)).toEqual(['optimistic', 'mutation-response']);
+});
+
 test('entity stream supports negative filters and unsubscribe', () => {
   const service = new EntityStreamService();
   const batches: unknown[] = [];

@@ -62,6 +62,7 @@ pub fn return_data_aliases(
                             &table.record,
                             "",
                             query_field,
+                            query.operation.clone(),
                             formatter,
                             result,
                         );
@@ -130,6 +131,7 @@ fn to_query_type_alias(
     table: &ast::RecordDetails,
     alias_stack: &str,
     query_field: &ast::QueryField,
+    operation: ast::QueryOperation,
     formatter: &TypeFormatter,
     //
     result: &mut String,
@@ -138,6 +140,10 @@ fn to_query_type_alias(
     // Children first
     let fields = &ast::collect_query_fields(&query_field.fields);
     for field in fields {
+        if operation == ast::QueryOperation::Insert {
+            continue;
+        }
+
         if field.fields.is_empty() {
             continue;
         }
@@ -155,6 +161,7 @@ fn to_query_type_alias(
                         &link_table.record,
                         &child_alias_stack,
                         field,
+                        operation.clone(),
                         formatter,
                         result,
                     );
@@ -234,6 +241,10 @@ fn to_query_type_alias(
                     ));
                 }
                 ast::Field::FieldDirective(ast::FieldDirective::Link(link)) => {
+                    if operation == ast::QueryOperation::Insert {
+                        continue;
+                    }
+
                     let primary_key_name = ast::get_primary_id_field_name(&table.fields);
                     let is_one_to_many = link.local_ids.iter().all(|id| {
                         primary_key_name
