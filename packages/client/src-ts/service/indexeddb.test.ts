@@ -73,3 +73,46 @@ test('IndexedDbService restores persisted sync cursor with initial data', async 
     },
   ]);
 });
+
+test('IndexedDbService forwards catchup entity deltas after cache writes', async () => {
+  let handleIndexedDbOut: ((message: unknown) => void | Promise<void>) | null = null;
+  const entityDeltas: unknown[] = [];
+  const operations: string[] = [];
+  const storage = {
+    init: async () => undefined,
+    getAllTables: async () => ({}),
+    getSyncCursor: async () => ({ tables: {} }),
+    getServerRevision: async () => null,
+    putSyncCursor: async () => undefined,
+    putServerRevision: async () => undefined,
+    putRows: async () => {
+      operations.push('write');
+    },
+  };
+
+  const service = new IndexedDbService(storage as never, undefined, (tableGroups, source) => {
+    operations.push('notify');
+    entityDeltas.push({ tableGroups, source });
+  });
+  service.attachPorts({
+    ports: {
+      indexedDbOut: {
+        subscribe: (callback) => {
+          handleIndexedDbOut = callback;
+        },
+      },
+    },
+  });
+
+  if (!handleIndexedDbOut) {
+    throw new Error('indexedDbOut handler was not attached');
+  }
+
+  const tableGroups = [{ table_name: 'maps', headers: ['id'], rows: [[1]] }];
+  handleIndexedDbOut({ type: 'writeDelta', entityStreamSource: 'live', tableGroups });
+  handleIndexedDbOut({ type: 'writeDelta', entityStreamSource: 'catchup', tableGroups });
+  await Bun.sleep(0);
+
+  expect(entityDeltas).toEqual([{ tableGroups, source: 'catchup' }]);
+  expect(operations).toEqual(['write', 'write', 'notify']);
+});

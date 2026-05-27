@@ -42,6 +42,9 @@ function fakeInternalClient(disconnects: string[], databaseId: string, starts: s
         disconnects.push(`entity:${databaseId}`);
       };
     },
+    onDevtoolsEvent() {
+      return () => {};
+    },
     emitLive() {
       syncStateCallbacks.forEach((callback) => callback({ status: 'live', tables: {} }));
     },
@@ -583,7 +586,48 @@ test('Elm bridge routes entity stream registrations and batches by streamId', as
   expect(unsubscribed).toEqual(['campaign:123']);
 });
 
-test('Elm bridge replaces an existing entity stream registration with the same streamId', async () => {
+test('Elm bridge treats exact duplicate entity stream registrations as a no-op', async () => {
+  const receivedSubscriptions: unknown[] = [];
+  const unsubscribed: string[] = [];
+  const outbound = fakePort();
+  await PyreClient.create({
+    schema,
+    server,
+    cacheNamespace: 'user_42',
+    createInternalClient: async (config) => ({
+      ...fakeInternalClient([], config.databaseId),
+      onEntityChanges(subscription: unknown) {
+        receivedSubscriptions.push(subscription);
+        return () => {
+          unsubscribed.push(config.databaseId);
+        };
+      },
+    }),
+    elm: {
+      app: {
+        ports: {
+          pyreStoreOut: outbound.port,
+        },
+      },
+    },
+  });
+
+  const registration = {
+    type: 'register-entity-stream',
+    databaseId: 'campaign:123',
+    streamId: 'visible-posts',
+    tables: [{ tableName: 'posts' }],
+  };
+  outbound.emit(registration);
+  await Bun.sleep(0);
+  outbound.emit(registration);
+  await Bun.sleep(0);
+
+  expect(receivedSubscriptions).toEqual([{ tables: [{ tableName: 'posts' }] }]);
+  expect(unsubscribed).toEqual([]);
+});
+
+test('Elm bridge replaces a changed entity stream registration with the same streamId', async () => {
   const unsubscribed: string[] = [];
   const outbound = fakePort();
   await PyreClient.create({

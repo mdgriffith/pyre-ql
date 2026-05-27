@@ -244,6 +244,12 @@ export interface ElmBridgeEntityChangeBatchMessage extends EntityChangeBatch {
   streamId: string;
 }
 
+interface EntityBridgeRegistration {
+  databaseId?: DatabaseId;
+  tables: EntitySubscription['tables'];
+  unsubscribePromise: Promise<() => void>;
+}
+
 export type ElmBridgeIncomingMessage = ElmBridgeQueryMessage | ElmBridgeMutationMessage | ElmBridgeEntityStreamRegisterMessage | ElmBridgeEntityStreamUnregisterMessage;
 
 export interface ElmBridgeConfig {
@@ -430,7 +436,10 @@ class SingleDatabasePyreClient {
     }
 
     this.storage = new IndexedDBStorage(dbName);
-    this.indexedDbService = new IndexedDbService(this.storage, this.logDebug);
+    this.entityStream = new EntityStreamService();
+    this.indexedDbService = new IndexedDbService(this.storage, this.logDebug, (tableGroups, source) => {
+      this.entityStream.handleTableDelta(tableGroups, source, this.databaseId);
+    });
     this.sseManager = new SSEManager({
       baseUrl: config.server.baseUrl,
       eventsPath: this.endpoints.events,
@@ -444,7 +453,6 @@ class SingleDatabasePyreClient {
       databaseId: config.databaseId,
     }, undefined, this.logDebug);
     this.queryManager = new QueryManagerService(this.logDebug);
-    this.entityStream = new EntityStreamService();
     this.queryClient = new QueryClientService(() => this.session, (payload) => {
       if (config.onError) {
         config.onError(new Error(payload.message));
@@ -1015,7 +1023,7 @@ class SingleDatabasePyreClient {
   attachElmBridge(config: ElmBridgeConfig): () => void {
     this.bridgeCleanup?.();
     const registrations = new Map<string, QuerySubscription<unknown>>();
-    const entityRegistrations = new Map<string, Promise<() => void>>();
+    const entityRegistrations = new Map<string, EntityBridgeRegistration>();
     const receivePort = getElmBridgePort(config.app, config.receivePort ?? 'pyreStoreOut');
     const queryResultPort = getElmBridgePort(config.app, config.queryResultPort ?? 'pyre_receiveQueryDelta');
     const entityChangesPort = getElmBridgePort(config.app, config.entityChangesPort ?? 'pyre_receiveEntityChanges');
@@ -1043,8 +1051,8 @@ class SingleDatabasePyreClient {
         subscription.unsubscribe();
       });
       registrations.clear();
-      entityRegistrations.forEach((unsubscribePromise) => {
-        void unsubscribePromise.then((unsubscribe) => unsubscribe());
+      entityRegistrations.forEach((registration) => {
+        void registration.unsubscribePromise.then((unsubscribe) => unsubscribe());
       });
       entityRegistrations.clear();
       onSyncStateUnsubscribe();
@@ -1074,20 +1082,34 @@ class SingleDatabasePyreClient {
 
           if (message.type === 'register-entity-stream') {
             const existingRegistration = entityRegistrations.get(message.streamId);
-            if (existingRegistration) {
-              void existingRegistration.then((unsubscribe) => unsubscribe());
+            if (existingRegistration && entityBridgeRegistrationMatches(existingRegistration, message)) {
+              return;
             }
 
+            if (existingRegistration) {
+              void existingRegistration.unsubscribePromise.then((unsubscribe) => unsubscribe());
+            }
+
+            const registration: EntityBridgeRegistration = {
+              databaseId: message.databaseId,
+              tables: message.tables,
+              unsubscribePromise: Promise.resolve(() => {}),
+            };
+            entityRegistrations.set(message.streamId, registration);
             const unsubscribePromise = this.onEntityChanges(
               { tables: message.tables },
               (batch) => {
+                if (entityRegistrations.get(message.streamId) !== registration) {
+                  return;
+                }
+
                 entityChangesPort?.send?.({
                   ...batch,
                   streamId: message.streamId,
                 } satisfies ElmBridgeEntityChangeBatchMessage);
               }
             );
-            entityRegistrations.set(message.streamId, unsubscribePromise);
+            registration.unsubscribePromise = unsubscribePromise;
             return;
           }
 
@@ -1097,9 +1119,11 @@ class SingleDatabasePyreClient {
               return;
             }
 
-            const unsubscribe = await registration;
+            const unsubscribe = await registration.unsubscribePromise;
             unsubscribe();
-            entityRegistrations.delete(message.streamId);
+            if (entityRegistrations.get(message.streamId) === registration) {
+              entityRegistrations.delete(message.streamId);
+            }
             return;
           }
 
@@ -1593,7 +1617,7 @@ export class PyreClient {
   attachElmBridge(config: ElmBridgeConfig): () => void {
     this.bridgeCleanup?.();
     const registrations = new Map<string, Promise<QuerySubscription<unknown> | void>>();
-    const entityRegistrations = new Map<string, Promise<() => void>>();
+    const entityRegistrations = new Map<string, EntityBridgeRegistration>();
     const receivePort = getElmBridgePort(config.app, config.receivePort ?? 'pyreStoreOut');
     const queryResultPort = getElmBridgePort(config.app, config.queryResultPort ?? 'pyre_receiveQueryDelta');
     const entityChangesPort = getElmBridgePort(config.app, config.entityChangesPort ?? 'pyre_receiveEntityChanges');
@@ -1623,8 +1647,8 @@ export class PyreClient {
         });
       });
       registrations.clear();
-      entityRegistrations.forEach((unsubscribePromise) => {
-        void unsubscribePromise.then((unsubscribe) => unsubscribe());
+      entityRegistrations.forEach((registration) => {
+        void registration.unsubscribePromise.then((unsubscribe) => unsubscribe());
       });
       entityRegistrations.clear();
       onSyncStateUnsubscribe();
@@ -1675,21 +1699,35 @@ export class PyreClient {
 
           if (message.type === 'register-entity-stream') {
             const existingRegistration = entityRegistrations.get(message.streamId);
-            if (existingRegistration) {
-              void existingRegistration.then((unsubscribe) => unsubscribe());
+            if (existingRegistration && entityBridgeRegistrationMatches(existingRegistration, message)) {
+              return;
             }
 
+            if (existingRegistration) {
+              void existingRegistration.unsubscribePromise.then((unsubscribe) => unsubscribe());
+            }
+
+            const registration: EntityBridgeRegistration = {
+              databaseId: message.databaseId,
+              tables: message.tables,
+              unsubscribePromise: Promise.resolve(() => {}),
+            };
+            entityRegistrations.set(message.streamId, registration);
             const unsubscribePromise = this.onEntityChanges(
               message.databaseId,
               { tables: message.tables },
               (batch) => {
+                if (entityRegistrations.get(message.streamId) !== registration) {
+                  return;
+                }
+
                 entityChangesPort?.send?.({
                   ...batch,
                   streamId: message.streamId,
                 } satisfies ElmBridgeEntityChangeBatchMessage);
               }
             );
-            entityRegistrations.set(message.streamId, unsubscribePromise);
+            registration.unsubscribePromise = unsubscribePromise;
             return;
           }
 
@@ -1699,9 +1737,11 @@ export class PyreClient {
               return;
             }
 
-            const unsubscribe = await registration;
+            const unsubscribe = await registration.unsubscribePromise;
             unsubscribe();
-            entityRegistrations.delete(message.streamId);
+            if (entityRegistrations.get(message.streamId) === registration) {
+              entityRegistrations.delete(message.streamId);
+            }
             return;
           }
 
@@ -2337,6 +2377,52 @@ function reportElmBridgeError(
   }
 
   console.error('[PyreClient] Elm bridge error', phase, normalized);
+}
+
+function entityBridgeRegistrationMatches(
+  registration: EntityBridgeRegistration,
+  message: ElmBridgeEntityStreamRegisterMessage
+): boolean {
+  return registration.databaseId === message.databaseId
+    && entitySubscriptionTablesEqual(registration.tables, message.tables);
+}
+
+function entitySubscriptionTablesEqual(
+  left: EntitySubscription['tables'],
+  right: EntitySubscription['tables']
+): boolean {
+  return left.length === right.length
+    && left.every((leftTable, index) => {
+      const rightTable = right[index];
+      return leftTable.tableName === rightTable.tableName
+        && entityValuesEqual(leftTable.where ?? null, rightTable.where ?? null);
+    });
+}
+
+function entityValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) {
+    return true;
+  }
+
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => entityValuesEqual(value, right[index]));
+  }
+
+  if (isRecord(left) || isRecord(right)) {
+    if (!isRecord(left) || !isRecord(right)) {
+      return false;
+    }
+
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    return leftKeys.length === rightKeys.length
+      && leftKeys.every((key, index) => key === rightKeys[index] && entityValuesEqual(left[key], right[key]));
+  }
+
+  return false;
 }
 
 function parseElmBridgeIncomingMessage(message: unknown): ElmBridgeIncomingMessage {

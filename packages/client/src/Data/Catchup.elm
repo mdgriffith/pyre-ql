@@ -328,10 +328,10 @@ applyCatchupDelta response db =
             delta =
                 { tableGroups = tableGroups }
 
-            ( updatedDb, dbCmd ) =
-                Db.update (Db.DeltaReceived delta) dbWithKnownTables
+            ( updatedDb, _ ) =
+                Db.update (Db.LocalDeltaReceived delta) dbWithKnownTables
         in
-        ( Just delta, updatedDb, [ dbCmd ] )
+        ( Just delta, updatedDb, [ Data.IndexedDb.writeDeltaWithEntityNotification "catchup" delta.tableGroups ] )
 
 
 ensureTablesExist : List String -> Db.Db -> Db.Db

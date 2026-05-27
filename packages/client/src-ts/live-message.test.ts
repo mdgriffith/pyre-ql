@@ -238,6 +238,108 @@ test('Elm live syncRequired ignores stale server revisions', async () => {
   }
 });
 
+test('Elm catchup emits entity stream catchup notifications', async () => {
+  const previousXmlHttpRequest = globalThis.XMLHttpRequest;
+
+  class MockXMLHttpRequest {
+    listeners: Record<string, Array<() => void>> = {};
+    status = 200;
+    statusText = 'OK';
+    responseURL = '';
+    responseType = '';
+    response = '';
+    timeout = 0;
+    withCredentials = false;
+
+    addEventListener(type: string, callback: () => void) {
+      this.listeners[type] = this.listeners[type] ?? [];
+      this.listeners[type].push(callback);
+    }
+
+    open(_method: string, url: string) {
+      this.responseURL = url;
+    }
+
+    setRequestHeader() {}
+
+    send() {
+      this.response = JSON.stringify({
+        databaseId: 'campaign:123',
+        serverRevision: 1,
+        tables: {
+          maps: {
+            rows: [{ id: 1, name: 'Catchup Map', updatedAt: 1 }],
+            permission_hash: 'allowed',
+            last_seen_updated_at: 1,
+          },
+        },
+        has_more: false,
+      });
+      queueMicrotask(() => (this.listeners.load ?? []).forEach((listener) => listener()));
+    }
+
+    abort() {}
+
+    getAllResponseHeaders() {
+      return '';
+    }
+  }
+
+  globalThis.XMLHttpRequest = MockXMLHttpRequest;
+
+  const Elm = loadElm(Object.create(globalThis));
+  const app = Elm.Main.init({
+    flags: {
+      schema,
+      server: {
+        baseUrl: 'http://example.test',
+        catchupPath: '/sync',
+        databaseId: 'campaign:123',
+      },
+      liveSync: { transport: 'sse' },
+    },
+  });
+  const notifications: unknown[] = [];
+
+  try {
+    app.ports.indexedDbOut.subscribe((message) => {
+      if (message?.type === 'requestInitialData') {
+        app.ports.receiveIndexedDbMessage.send({
+          type: 'initialData',
+          data: {
+            tables: {},
+            cursor: { tables: {} },
+            lastAppliedServerRevision: null,
+          },
+        });
+      }
+
+      if (message?.type === 'writeDelta' && message?.entityStreamSource === 'catchup') {
+        notifications.push(message);
+      }
+    });
+
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(notifications).toEqual([
+      {
+        type: 'writeDelta',
+        entityStreamSource: 'catchup',
+        tableGroups: [
+          {
+            table_name: 'maps',
+            headers: ['id', 'name', 'updatedAt'],
+            rows: [[1, 'Catchup Map', 1]],
+          },
+        ],
+      },
+    ]);
+  } finally {
+    globalThis.XMLHttpRequest = previousXmlHttpRequest;
+  }
+});
+
 test('Elm mutation response sync preserves newer rapid optimistic state', async () => {
   const previousXmlHttpRequest = globalThis.XMLHttpRequest;
   const pendingMutations: Array<{ url: string; complete: (response: unknown) => void }> = [];

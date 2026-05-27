@@ -1,4 +1,5 @@
 import type { ElmApp } from '../types';
+import type { EntityChangeBatchSource, ServerTableGroup } from './entity-stream';
 
 export interface TableGroup {
   table_name: string;
@@ -376,10 +377,16 @@ export class IndexedDbService {
   private storage: IndexedDBStorage;
   private elmApp: ElmApp | null = null;
   private debugLog: (...args: unknown[]) => void;
+  private onEntityDelta: ((tableGroups: ServerTableGroup[], source: EntityChangeBatchSource) => void) | null;
 
-  constructor(storage: IndexedDBStorage, debugLog?: (...args: unknown[]) => void) {
+  constructor(
+    storage: IndexedDBStorage,
+    debugLog?: (...args: unknown[]) => void,
+    onEntityDelta?: (tableGroups: ServerTableGroup[], source: EntityChangeBatchSource) => void
+  ) {
     this.storage = storage;
     this.debugLog = debugLog ?? (() => {});
+    this.onEntityDelta = onEntityDelta ?? null;
   }
 
   attachPorts(elmApp: ElmApp): void {
@@ -395,14 +402,14 @@ export class IndexedDbService {
     }
   }
 
-  private async handleMessage(message: { type?: string; tableGroups?: TableGroup[]; cursor?: SyncCursor; serverRevision?: number }): Promise<void> {
+  private async handleMessage(message: { type?: string; tableGroups?: TableGroup[]; cursor?: SyncCursor; serverRevision?: number; entityStreamSource?: string }): Promise<void> {
     if (message.type === 'requestInitialData') {
       await this.sendInitialData();
       return;
     }
 
     if (message.type === 'writeDelta') {
-      await this.writeDelta(message.tableGroups || []);
+      await this.writeDelta(message.tableGroups || [], message.entityStreamSource);
       return;
     }
 
@@ -444,7 +451,7 @@ export class IndexedDbService {
     }
   }
 
-  private async writeDelta(tableGroups: TableGroup[]): Promise<void> {
+  private async writeDelta(tableGroups: TableGroup[], entityStreamSource?: string): Promise<void> {
     try {
       await this.storage.init();
 
@@ -479,6 +486,8 @@ export class IndexedDbService {
           });
         }
       }
+
+      this.notifyEntityDelta(tableGroups, entityStreamSource);
     } catch (error) {
       console.error('[PyreClient] Failed to write delta:', error);
     }
@@ -502,5 +511,17 @@ export class IndexedDbService {
     } catch (error) {
       console.error('[PyreClient] Failed to write server revision:', error);
     }
+  }
+
+  private notifyEntityDelta(tableGroups: TableGroup[], source: string | undefined): void {
+    if (!this.onEntityDelta || tableGroups.length === 0) {
+      return;
+    }
+
+    if (source !== 'catchup') {
+      return;
+    }
+
+    this.onEntityDelta(tableGroups, source);
   }
 }

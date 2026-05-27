@@ -5,6 +5,7 @@ port module Data.IndexedDb exposing
     , receiveIncoming
     , requestInitialData
     , writeDelta
+    , writeDeltaWithEntityNotification
     , writeServerRevision
     , writeSyncCursor
     )
@@ -45,6 +46,7 @@ type alias SyncCursorEntry =
 type Message
     = RequestInitialData
     | WriteDelta (List TableGroup)
+    | WriteDeltaWithEntityNotification String (List TableGroup)
     | WriteSyncCursor SyncCursor
     | WriteServerRevision Int
 
@@ -78,6 +80,13 @@ encodeMessage msg =
         WriteDelta tableGroups ->
             Encode.object
                 [ ( "type", Encode.string "writeDelta" )
+                , ( "tableGroups", Encode.list Data.Delta.encodeTableGroup tableGroups )
+                ]
+
+        WriteDeltaWithEntityNotification source tableGroups ->
+            Encode.object
+                [ ( "type", Encode.string "writeDelta" )
+                , ( "entityStreamSource", Encode.string source )
                 , ( "tableGroups", Encode.list Data.Delta.encodeTableGroup tableGroups )
                 ]
 
@@ -180,6 +189,11 @@ requestInitialData =
 writeDelta : List TableGroup -> Cmd msg
 writeDelta tableGroups =
     sendMessage (WriteDelta tableGroups)
+
+
+writeDeltaWithEntityNotification : String -> List TableGroup -> Cmd msg
+writeDeltaWithEntityNotification source tableGroups =
+    sendMessage (WriteDeltaWithEntityNotification source tableGroups)
 
 
 writeSyncCursor : SyncCursor -> Cmd msg
