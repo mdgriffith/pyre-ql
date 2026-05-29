@@ -11,25 +11,8 @@ pub fn database(database: &mut ast::Database) {
 }
 
 pub fn schema(schem: &mut ast::Schema) {
-    // Insert some lines before each definition if needed
-    let mut i = 0;
-    let mut prev_was_lines = false;
-
-    // Insert some blank lines if needed
     for file in schem.files.iter_mut() {
-        while i < file.definitions.len() {
-            if let ast::Definition::Lines { .. } = file.definitions[i] {
-                prev_was_lines = true;
-            } else if !prev_was_lines {
-                file.definitions
-                    .insert(i, ast::Definition::Lines { count: 1 });
-                // Move to the next element after insertion
-                i += 1;
-            } else {
-                prev_was_lines = false;
-            }
-            i += 1;
-        }
+        format_top_level_spacing(&mut file.definitions);
     }
 
     let mut links: HashMap<String, Vec<(bool, ast::LinkDetails)>> = HashMap::new();
@@ -57,6 +40,37 @@ pub fn schema(schem: &mut ast::Schema) {
             format_definition(definition, &links);
         }
     }
+}
+
+fn format_top_level_spacing(definitions: &mut Vec<ast::Definition>) {
+    let mut formatted = Vec::new();
+    let mut pending_lines = 0;
+
+    for definition in std::mem::take(definitions) {
+        match definition {
+            ast::Definition::Lines { count } => {
+                pending_lines += count;
+            }
+            definition => {
+                if let Some(previous) = formatted.last() {
+                    let lines = if matches!(previous, ast::Definition::Comment { .. }) {
+                        pending_lines.min(1)
+                    } else {
+                        std::cmp::max(1, pending_lines).min(2)
+                    };
+
+                    if lines > 0 {
+                        formatted.push(ast::Definition::Lines { count: lines });
+                    }
+                }
+
+                formatted.push(definition);
+                pending_lines = 0;
+            }
+        }
+    }
+
+    *definitions = formatted;
 }
 
 fn add_link(
@@ -108,8 +122,10 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
     // Separate fields into categories
     let mut tablename: Option<ast::Field> = None;
     let mut watch: Option<ast::Field> = None;
+    let mut unique_directives: Vec<ast::Field> = Vec::new();
     let mut index_directives: Vec<ast::Field> = Vec::new();
     let mut permissions: Vec<ast::Field> = Vec::new();
+    let mut timestamps: Vec<ast::Field> = Vec::new();
     let mut non_directive_fields: Vec<ast::Field> = Vec::new();
     let mut links: Vec<ast::Field> = Vec::new();
 
@@ -122,12 +138,17 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
             ast::Field::FieldDirective(ast::FieldDirective::Watched(_)) => {
                 watch = Some(field);
             }
-            ast::Field::FieldDirective(ast::FieldDirective::Index(_))
-            | ast::Field::FieldDirective(ast::FieldDirective::Unique(_)) => {
+            ast::Field::FieldDirective(ast::FieldDirective::Unique(_)) => {
+                unique_directives.push(field);
+            }
+            ast::Field::FieldDirective(ast::FieldDirective::Index(_)) => {
                 index_directives.push(field);
             }
             ast::Field::FieldDirective(ast::FieldDirective::Permissions(_)) => {
                 permissions.push(field);
+            }
+            ast::Field::FieldDirective(ast::FieldDirective::Timestamps) => {
+                timestamps.push(field);
             }
             ast::Field::FieldDirective(ast::FieldDirective::Link(_)) => {
                 links.push(field);
@@ -152,7 +173,9 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
     let has_directives = tablename.is_some()
         || watch.is_some()
         || !permissions.is_empty()
-        || !index_directives.is_empty();
+        || !unique_directives.is_empty()
+        || !index_directives.is_empty()
+        || !timestamps.is_empty();
     let has_content = !non_directive_fields.is_empty() || !links.is_empty();
 
     // 1. @tablename
@@ -160,18 +183,24 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
         fields.push(tn);
     }
 
-    // 2. @index / @unique
-    fields.extend(index_directives);
-
-    // 3. @allowed (or @public)
-    fields.extend(permissions);
-
-    // 4. @watch
+    // 2. @watch
     if let Some(w) = watch {
         fields.push(w);
     }
 
-    // 5. Empty line (if we have directives and non-directive fields/links)
+    // 3. @allowed (or @public)
+    fields.extend(permissions);
+
+    // 4. @timestamps
+    fields.extend(timestamps);
+
+    // 5. @unique
+    fields.extend(unique_directives);
+
+    // 6. @index
+    fields.extend(index_directives);
+
+    // 7. Empty line (if we have directives and non-directive fields/links)
     if has_directives && has_content {
         // Check if there's already a ColumnLines at the start of non_directive_fields
         let needs_separator = match non_directive_fields.first() {
@@ -183,10 +212,10 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
         }
     }
 
-    // 6. Non-directive fields (columns, comments, column_lines) - preserve order
+    // 8. Non-directive fields (columns, comments, column_lines) - preserve order
     fields.extend(non_directive_fields);
 
-    // 7. Empty line (if links exist and we have other fields)
+    // 9. Empty line (if links exist and we have other fields)
     if !links.is_empty() && !fields.is_empty() {
         // Check if the last field is already a ColumnLines
         let needs_separator = match fields.last() {
@@ -198,7 +227,7 @@ fn reorder_record_fields(fields: &mut Vec<ast::Field>) {
         }
     }
 
-    // 8. Links
+    // 10. Links
     fields.extend(links);
 }
 
@@ -347,10 +376,13 @@ fn format_definition(
             // 1. @tablename
             // 2. @watch
             // 3. @allowed (or @public) - ordered: query, update, insert, delete
-            // 4. Empty line
-            // 5. Columns (in order)
-            // 6. Empty line (if links exist)
-            // 7. Links
+            // 4. @timestamps
+            // 5. @unique
+            // 6. @index
+            // 7. Empty line
+            // 8. Columns (in order)
+            // 9. Empty line (if links exist)
+            // 10. Links
             reorder_record_fields(fields);
         }
     }

@@ -1,17 +1,57 @@
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
+use std::fs;
 use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use super::shared::Options;
 use crate::db;
-use pyre::ast;
 use pyre::server::manifest::{FieldSchema, Manifest, PyreSession, QueryManifest, SqlInfo};
+use pyre::{ast, format, generate, parser, typecheck};
 
 const SERVER_NAME: &str = "pyre";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[DEFAULT_PROTOCOL_VERSION];
+const DOC_RESOURCES: &[(&str, &str, &str, &str)] = &[
+    (
+        "pyre://guides/getting-started",
+        "Pyre Getting Started",
+        "Project setup and first schema/query workflow.",
+        include_str!("../../../docs/usage/getting-started.md"),
+    ),
+    (
+        "pyre://guides/schema",
+        "Schema Guide",
+        "How to write Pyre schemas: records, fields, links, directives, types, sessions.",
+        include_str!("../../../docs/usage/schema.md"),
+    ),
+    (
+        "pyre://guides/query",
+        "Query Guide",
+        "How to write Pyre queries and mutations: selects, inserts, updates, deletes, params.",
+        include_str!("../../../docs/usage/query.md"),
+    ),
+    (
+        "pyre://guides/namespacing",
+        "Pyre Namespacing",
+        "Multi-schema namespace layout and reference rules.",
+        include_str!("../../../docs/usage/namespacing.md"),
+    ),
+    (
+        "pyre://guides/sync",
+        "Pyre Sync Setup",
+        "Client/server sync workflow guide.",
+        include_str!("../../../docs/usage/sync.md"),
+    ),
+    (
+        "pyre://guides/migrations",
+        "Pyre Migrations",
+        "SQL generation and migration-relevant behavior.",
+        include_str!("../../../docs/usage/migrations.md"),
+    ),
+];
 
 pub async fn mcp(options: &Options<'_>) -> io::Result<()> {
     let stdin = io::stdin();
@@ -44,11 +84,22 @@ async fn handle_message(options: &Options<'_>, request: JsonValue) -> Option<Jso
         Some("initialize") => success_response(id, initialize_result(&request)),
         Some("ping") => success_response(id, json!({})),
         Some("tools/list") => success_response(id, json!({ "tools": tools() })),
-        Some("resources/list") => success_response(id, json!({ "resources": [] })),
+        Some("resources/list") => success_response(id, json!({ "resources": resources() })),
+        Some("resources/read") => match read_resource(options, request.get("params")) {
+            Ok(result) => success_response(id, result),
+            Err(message) => error_response(id, -32602, &message),
+        },
         Some("prompts/list") => success_response(id, json!({ "prompts": [] })),
         Some("tools/call") => match call_tool(options, request.get("params")).await {
             Ok(result) => success_response(id, result),
-            Err(message) => error_response(id, -32603, &message),
+            Err(message) => error_response_data(
+                id,
+                -32603,
+                &message,
+                json!({
+                    "message": message
+                }),
+            ),
         },
         Some(method) => error_response(id, -32601, &format!("Unknown method: {method}")),
         None => error_response(id, -32600, "Request is missing method"),
@@ -56,15 +107,23 @@ async fn handle_message(options: &Options<'_>, request: JsonValue) -> Option<Jso
 }
 
 fn initialize_result(request: &JsonValue) -> JsonValue {
-    let protocol_version = request
+    let requested_protocol_version = request
         .get("params")
         .and_then(|params| params.get("protocolVersion"))
         .and_then(JsonValue::as_str)
         .unwrap_or(DEFAULT_PROTOCOL_VERSION);
+    let protocol_version = if SUPPORTED_PROTOCOL_VERSIONS.contains(&requested_protocol_version) {
+        requested_protocol_version
+    } else {
+        DEFAULT_PROTOCOL_VERSION
+    };
 
     json!({
         "protocolVersion": protocol_version,
         "capabilities": {
+            "resources": {
+                "listChanged": false
+            },
             "tools": {
                 "listChanged": false
             }
@@ -85,10 +144,11 @@ async fn call_tool(options: &Options<'_>, params: Option<&JsonValue>) -> Result<
     let arguments = params.get("arguments").unwrap_or(&JsonValue::Null);
 
     let value = match name {
+        "pyre_init" => init_project(options, arguments).await?,
         "pyre_project_info" => project_info(options, arguments)?,
         "pyre_docs" => docs(arguments)?,
         "pyre_schema" => schema(arguments)?,
-        "pyre_check" => run_cli(options, arguments, &["check", "--json"]),
+        "pyre_check" => run_cli(options, arguments, &["check", "--json"])?,
         "pyre_format" => run_format(options, arguments)?,
         "pyre_generate" => run_generate(options, arguments)?,
         "pyre_generate_migration" => run_generate_migration(options, arguments)?,
@@ -106,13 +166,136 @@ async fn call_tool(options: &Options<'_>, params: Option<&JsonValue>) -> Result<
     }))
 }
 
+async fn init_project(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValue, String> {
+    let dir = string_arg(arguments, "dir").unwrap_or_else(|| "pyre".to_string());
+    let schema_source = required_string_arg(arguments, "schema")?;
+    let namespace = string_arg(arguments, "namespace");
+    let database = string_arg(arguments, "database");
+    validate_safe_path("dir", &dir)?;
+    if let Some(database) = database.as_ref() {
+        validate_safe_path("database", database)?;
+    }
+
+    if let Some(namespace) = namespace.as_ref() {
+        if namespace.is_empty() || namespace.contains('/') || namespace.contains('\\') {
+            return Err("namespace must be a non-empty path segment".to_string());
+        }
+        if !namespace
+            .chars()
+            .next()
+            .map(|char| char.is_uppercase())
+            .unwrap_or(false)
+        {
+            return Err("namespace must be capitalized".to_string());
+        }
+    }
+
+    let dir_path = PathBuf::from(&dir);
+    if dir_path.exists() {
+        return Err(format!("Directory already exists: {dir}"));
+    }
+    if let Some(database) = database.as_ref() {
+        if Path::new(database).exists() {
+            return Err(format!("Database already exists: {database}"));
+        }
+    }
+
+    let schema_path = match namespace.as_ref() {
+        Some(namespace) => dir_path.join("schema").join(namespace).join("schema.pyre"),
+        None => dir_path.join("schema.pyre"),
+    };
+    let schema_path_string = schema_path.to_string_lossy().to_string();
+    let real_namespace = namespace
+        .clone()
+        .unwrap_or_else(|| ast::DEFAULT_SCHEMANAME.to_string());
+    let mut schema = ast::Schema {
+        namespace: real_namespace.clone(),
+        sync_mode: ast::SyncMode::Synced,
+        session: None,
+        files: vec![],
+    };
+
+    if let Err(error) = parser::run(&schema_path_string, &schema_source, &mut schema) {
+        return Err(parser::render_error(
+            &schema_source,
+            error,
+            options.enable_color,
+        ));
+    }
+
+    let mut database_schema = ast::Database {
+        schemas: vec![schema],
+    };
+    ast::resolve_id_brands(&mut database_schema);
+    if let Err(errors) = typecheck::check_schema(&database_schema) {
+        let errors = errors
+            .iter()
+            .map(pyre::error::format_json)
+            .collect::<Vec<_>>();
+        return Err(serde_json::to_string_pretty(&errors).map_err(|error| error.to_string())?);
+    }
+
+    format::database(&mut database_schema);
+    let schema = database_schema
+        .schemas
+        .first()
+        .ok_or_else(|| "No schema was parsed".to_string())?;
+    let schema_file = schema
+        .files
+        .first()
+        .ok_or_else(|| "No schema file was parsed".to_string())?;
+    let formatted = generate::to_string::schemafile_to_string(&schema.namespace, schema_file);
+
+    if let Some(parent) = schema_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(&schema_path, formatted).map_err(|error| error.to_string())?;
+
+    let mut result = json!({
+        "ok": true,
+        "dir": dir,
+        "namespace": real_namespace,
+        "createdFiles": [schema_path_string]
+    });
+
+    if let Some(database) = database {
+        let mut migrate_args = vec![
+            "migrate".to_string(),
+            database.clone(),
+            "--push".to_string(),
+        ];
+        if let Some(namespace) = namespace.as_ref() {
+            migrate_args.push("--namespace".to_string());
+            migrate_args.push(namespace.clone());
+        }
+        let migrate_result = run_cli(
+            options,
+            &json!({ "dir": dir }),
+            &migrate_args.iter().map(String::as_str).collect::<Vec<_>>(),
+        )?;
+
+        result["database"] = json!({
+            "path": database,
+            "migrated": migrate_result["ok"].as_bool().unwrap_or(false),
+            "result": migrate_result
+        });
+        if result["database"]["migrated"] != json!(true) {
+            result["ok"] = json!(false);
+        }
+    }
+
+    Ok(result)
+}
+
 fn project_info(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValue, String> {
-    let in_dir = input_dir(options, arguments);
+    let in_dir = input_dir(options, arguments)?;
     let found = crate::filesystem::collect_filepaths(&in_dir).map_err(|error| error.to_string())?;
     let generated_dir =
         string_arg(arguments, "generated").unwrap_or_else(|| "pyre/generated".to_string());
     let migration_dir =
         string_arg(arguments, "migration_dir").unwrap_or_else(|| "pyre/migrations".to_string());
+    validate_safe_path("migration_dir", &migration_dir)?;
+    validate_safe_path("generated", &generated_dir)?;
 
     Ok(json!({
         "inputDir": in_dir,
@@ -129,20 +312,44 @@ fn project_info(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValu
 
 fn docs(arguments: &JsonValue) -> Result<JsonValue, String> {
     let topic = string_arg(arguments, "topic").unwrap_or_else(|| "overview".to_string());
-    let content = match topic.as_str() {
-        "overview" => include_str!("../../../README.md"),
-        "docs" => include_str!("../../../docs/README.md"),
-        "usage" => include_str!("../../../docs/usage/README.md"),
-        "dev" => include_str!("../../../docs/dev/README.md"),
-        "cli" => include_str!("../../../packages/cli/README.md"),
-        _ => return Err(format!("Unknown docs topic: {topic}")),
-    };
+    let uri = format!("pyre://guides/{topic}");
+    let content =
+        doc_resource_content(&uri).ok_or_else(|| format!("Unknown docs topic: {topic}"))?;
 
     Ok(json!({ "topic": topic, "content": content }))
 }
 
+fn read_resource(options: &Options<'_>, params: Option<&JsonValue>) -> Result<JsonValue, String> {
+    let params = params.ok_or_else(|| "resources/read params are required".to_string())?;
+    let uri = params
+        .get("uri")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| "resources/read params.uri is required".to_string())?;
+    if uri == "pyre://project/schema" {
+        let arguments = json!({ "dir": options.in_dir.to_string_lossy() });
+        return Ok(json!({
+            "contents": [{
+                "uri": uri,
+                "mimeType": "application/json",
+                "text": serde_json::to_string_pretty(&schema(&arguments)?).map_err(|error| error.to_string())?
+            }]
+        }));
+    }
+
+    let text = doc_resource_content(uri).ok_or_else(|| format!("Unknown Pyre resource: {uri}"))?;
+
+    Ok(json!({
+        "contents": [{
+            "uri": uri,
+            "mimeType": "text/markdown",
+            "text": text
+        }]
+    }))
+}
+
 fn schema(arguments: &JsonValue) -> Result<JsonValue, String> {
-    let in_dir = string_arg(arguments, "in").unwrap_or_else(|| "pyre".to_string());
+    let in_dir = string_arg(arguments, "dir").unwrap_or_else(|| "pyre".to_string());
+    validate_safe_path("dir", &in_dir)?;
     let found = crate::filesystem::collect_filepaths(Path::new(&in_dir))
         .map_err(|error| error.to_string())?;
     let mut schemas = Vec::new();
@@ -167,17 +374,22 @@ fn run_format(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValue,
     if bool_arg(arguments, "to_stdout").unwrap_or(false) {
         args.push("--to-stdout".to_string());
     }
-    args.extend(string_array_arg(arguments, "files")?);
-    Ok(run_cli(
+    let files = string_array_arg(arguments, "files")?;
+    for file in &files {
+        validate_safe_path("files", file)?;
+    }
+    args.extend(files);
+    run_cli(
         options,
         arguments,
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
-    ))
+    )
 }
 
 fn run_generate(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValue, String> {
     let out = string_arg(arguments, "out").unwrap_or_else(|| "pyre/generated".to_string());
-    Ok(run_cli(options, arguments, &["generate", "--out", &out]))
+    validate_safe_path("out", &out)?;
+    run_cli(options, arguments, &["generate", "--out", &out])
 }
 
 fn run_generate_migration(
@@ -186,8 +398,10 @@ fn run_generate_migration(
 ) -> Result<JsonValue, String> {
     let name = required_string_arg(arguments, "name")?;
     let db = required_string_arg(arguments, "database")?;
+    validate_database_ref("database", &db)?;
     let migration_dir =
         string_arg(arguments, "migration_dir").unwrap_or_else(|| "pyre/migrations".to_string());
+    validate_safe_path("migration_dir", &migration_dir)?;
     let mut args = vec![
         "migration".to_string(),
         name,
@@ -198,17 +412,19 @@ fn run_generate_migration(
     ];
     push_optional_arg(arguments, &mut args, "auth", "--auth");
     push_optional_arg(arguments, &mut args, "namespace", "--namespace");
-    Ok(run_cli(
+    run_cli(
         options,
         arguments,
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
-    ))
+    )
 }
 
 fn run_migrate(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValue, String> {
     let database = required_string_arg(arguments, "database")?;
+    validate_database_ref("database", &database)?;
     let migration_dir =
         string_arg(arguments, "migration_dir").unwrap_or_else(|| "pyre/migrations".to_string());
+    validate_safe_path("migration_dir", &migration_dir)?;
     let mut args = vec![
         "migrate".to_string(),
         database,
@@ -220,15 +436,19 @@ fn run_migrate(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValue
     if bool_arg(arguments, "push").unwrap_or(false) {
         args.push("--push".to_string());
     }
-    Ok(run_cli(
+    run_cli(
         options,
         arguments,
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
-    ))
+    )
 }
 
-fn run_cli(options: &Options<'_>, arguments: &JsonValue, command_args: &[&str]) -> JsonValue {
-    let in_dir = input_dir(options, arguments);
+fn run_cli(
+    options: &Options<'_>,
+    arguments: &JsonValue,
+    command_args: &[&str],
+) -> Result<JsonValue, String> {
+    let in_dir = input_dir(options, arguments)?;
     let output = Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("pyre")))
         .arg("--in")
         .arg(in_dir)
@@ -236,18 +456,19 @@ fn run_cli(options: &Options<'_>, arguments: &JsonValue, command_args: &[&str]) 
         .output();
 
     match output {
-        Ok(output) => json!({
+        Ok(output) => Ok(json!({
             "ok": output.status.success(),
             "status": output.status.code(),
             "stdout": String::from_utf8_lossy(&output.stdout),
             "stderr": String::from_utf8_lossy(&output.stderr)
-        }),
-        Err(error) => json!({ "ok": false, "error": error.to_string() }),
+        })),
+        Err(error) => Ok(json!({ "ok": false, "error": error.to_string() })),
     }
 }
 
 async fn db_status(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValue, String> {
     let database = required_string_arg(arguments, "database")?;
+    validate_database_ref("database", &database)?;
     let auth = string_arg(arguments, "auth");
     let namespace =
         string_arg(arguments, "namespace").unwrap_or_else(|| ast::DEFAULT_SCHEMANAME.to_string());
@@ -334,6 +555,7 @@ async fn db_status(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonV
 
 async fn dynamic_query(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValue, String> {
     let database = required_string_arg(arguments, "database")?;
+    validate_database_ref("database", &database)?;
     let auth = string_arg(arguments, "auth");
     let query_source = required_string_arg(arguments, "query")?;
     let input = arguments
@@ -394,7 +616,7 @@ fn current_schema_context(
     ),
     String,
 > {
-    let in_dir = input_dir(options, arguments);
+    let in_dir = input_dir(options, arguments)?;
     let paths = crate::filesystem::collect_filepaths(&in_dir).map_err(|error| error.to_string())?;
     let database_schema =
         super::shared::parse_database_schemas(&paths, false).map_err(|error| error.to_string())?;
@@ -563,10 +785,70 @@ fn session_args(query_info: &pyre::typecheck::QueryInfo) -> Vec<String> {
     args
 }
 
-fn input_dir(options: &Options<'_>, arguments: &JsonValue) -> PathBuf {
-    string_arg(arguments, "in")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| options.in_dir.to_path_buf())
+fn input_dir(options: &Options<'_>, arguments: &JsonValue) -> Result<PathBuf, String> {
+    match string_arg(arguments, "dir") {
+        Some(path) => {
+            validate_safe_path("dir", &path)?;
+            Ok(PathBuf::from(path))
+        }
+        None => Ok(options.in_dir.to_path_buf()),
+    }
+}
+
+fn validate_safe_path(name: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{name} must not be empty"));
+    }
+
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return Err(format!("{name} must be relative to the workspace"));
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err(format!("{name} must not contain '..' or root components"));
+    }
+
+    Ok(())
+}
+
+fn validate_database_ref(name: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{name} must not be empty"));
+    }
+
+    if value == ":memory:" {
+        return Ok(());
+    }
+
+    if let Some(env_var_name) = value.strip_prefix('$') {
+        if env_var_name.is_empty()
+            || !env_var_name
+                .chars()
+                .all(|char| char.is_ascii_alphanumeric() || char == '_')
+        {
+            return Err(format!(
+                "{name} environment reference must be like $PYRE_DB"
+            ));
+        }
+        return Ok(());
+    }
+
+    if value.starts_with("http://")
+        || value.starts_with("https://")
+        || value.starts_with("libsql://")
+    {
+        if value.chars().any(char::is_whitespace) {
+            return Err(format!("{name} URL must not contain whitespace"));
+        }
+        return Ok(());
+    }
+
+    validate_safe_path(name, value)
 }
 
 fn required_string_arg(arguments: &JsonValue, name: &str) -> Result<String, String> {
@@ -614,17 +896,48 @@ fn sorted_keys<T>(map: &HashMap<String, T>) -> Vec<String> {
 
 fn tools() -> Vec<JsonValue> {
     vec![
-        tool("pyre_project_info", "Report basic information about the current Pyre project.", json!({"type":"object","properties":{"in":{"type":"string"},"generated":{"type":"string"},"migration_dir":{"type":"string"}}})),
-        tool("pyre_docs", "Return bundled Pyre documentation by topic.", json!({"type":"object","properties":{"topic":{"type":"string","enum":["overview","docs","usage","dev","cli"]}}})),
-        tool("pyre_schema", "Return all Pyre schema files and their contents.", json!({"type":"object","properties":{"in":{"type":"string"}}})),
-        tool("pyre_check", "Typecheck the current Pyre schema and query files.", json!({"type":"object","properties":{"in":{"type":"string"}}})),
-        tool("pyre_format", "Format Pyre files. This may write files unless to_stdout is true.", json!({"type":"object","properties":{"in":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"to_stdout":{"type":"boolean"}}})),
-        tool("pyre_generate", "Generate Pyre artifacts.", json!({"type":"object","properties":{"in":{"type":"string"},"out":{"type":"string"}}})),
-        tool("pyre_generate_migration", "Generate a Pyre migration against a database.", json!({"type":"object","required":["name","database"],"properties":{"in":{"type":"string"},"name":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"namespace":{"type":"string"},"migration_dir":{"type":"string"}}})),
-        tool("pyre_migrate", "Apply Pyre migrations to a database. This can modify the database.", json!({"type":"object","required":["database"],"properties":{"in":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"namespace":{"type":"string"},"migration_dir":{"type":"string"},"push":{"type":"boolean"}}})),
-        tool("pyre_db_status", "Check database connectivity and current schema/migration status.", json!({"type":"object","required":["database"],"properties":{"in":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"namespace":{"type":"string"},"migration_dir":{"type":"string"}}})),
-        tool("pyre_query", "Typecheck and execute raw dynamic Pyre query text against a database. Supports reads and mutations.", json!({"type":"object","required":["database","query"],"properties":{"in":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"query":{"type":"string"},"params":{"type":"object"},"session":{"type":"object"}}})),
+        tool("pyre_init", "Initialize a new Pyre schema directory from provided schema source. Fails if the target directory already exists or the schema is invalid.", json!({"type":"object","required":["schema"],"properties":{"dir":{"type":"string","description":"Directory to initialize. Defaults to pyre."},"schema":{"type":"string","description":"Initial Pyre schema source to write."},"namespace":{"type":"string","description":"Optional schema namespace. If omitted, uses the default namespace."},"database":{"type":"string","description":"Optional local database path to create and migrate, for example pyre.db."}}})),
+        tool("pyre_project_info", "Report basic information about the current Pyre project.", json!({"type":"object","properties":{"dir":{"type":"string"},"generated":{"type":"string"},"migration_dir":{"type":"string"}}})),
+        tool("pyre_docs", "Return bundled Pyre documentation by topic.", json!({"type":"object","properties":{"topic":{"type":"string","enum":["getting-started","schema","query","namespacing","sync","migrations"]}}})),
+        tool("pyre_schema", "Return all Pyre schema files and their contents.", json!({"type":"object","properties":{"dir":{"type":"string"}}})),
+        tool("pyre_check", "Typecheck the current Pyre schema and query files.", json!({"type":"object","properties":{"dir":{"type":"string"}}})),
+        tool("pyre_format", "Format Pyre files. This may write files unless to_stdout is true.", json!({"type":"object","properties":{"dir":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"to_stdout":{"type":"boolean"}}})),
+        tool("pyre_generate", "Generate Pyre artifacts.", json!({"type":"object","properties":{"dir":{"type":"string"},"out":{"type":"string"}}})),
+        tool("pyre_generate_migration", "Generate a Pyre migration against a database.", json!({"type":"object","required":["name","database"],"properties":{"dir":{"type":"string"},"name":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"namespace":{"type":"string"},"migration_dir":{"type":"string"}}})),
+        tool("pyre_migrate", "Apply Pyre migrations to a database. This can modify the database.", json!({"type":"object","required":["database"],"properties":{"dir":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"namespace":{"type":"string"},"migration_dir":{"type":"string"},"push":{"type":"boolean"}}})),
+        tool("pyre_db_status", "Check database connectivity and current schema/migration status.", json!({"type":"object","required":["database"],"properties":{"dir":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"namespace":{"type":"string"},"migration_dir":{"type":"string"}}})),
+        tool("pyre_query", "Typecheck and execute raw dynamic Pyre query text against a database. Supports reads and mutations.", json!({"type":"object","required":["database","query"],"properties":{"dir":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"query":{"type":"string"},"params":{"type":"object"},"session":{"type":"object"}}})),
     ]
+}
+
+fn resources() -> Vec<JsonValue> {
+    let mut resources = vec![json!({
+        "uri": "pyre://project/schema",
+        "name": "Project Schema",
+        "description": "Current project schema files and source content.",
+        "mimeType": "application/json"
+    })];
+    resources.extend(
+        DOC_RESOURCES
+            .iter()
+            .map(|(uri, name, description, _content)| {
+                json!({
+                    "uri": uri,
+                    "name": name,
+                    "description": description,
+                    "mimeType": "text/markdown"
+                })
+            }),
+    );
+    resources
+}
+
+fn doc_resource_content(uri: &str) -> Option<&'static str> {
+    DOC_RESOURCES
+        .iter()
+        .find_map(|(resource_uri, _name, _description, content)| {
+            (*resource_uri == uri).then_some(*content)
+        })
 }
 
 fn tool(name: &str, description: &str, input_schema: JsonValue) -> JsonValue {
@@ -654,6 +967,18 @@ fn error_response(id: JsonValue, code: i64, message: &str) -> JsonValue {
     })
 }
 
+fn error_response_data(id: JsonValue, code: i64, message: &str, data: JsonValue) -> JsonValue {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": code,
+            "message": message,
+            "data": data
+        }
+    })
+}
+
 fn parse_error(message: String) -> JsonValue {
     json!({
         "jsonrpc": "2.0",
@@ -666,43 +991,19 @@ fn parse_error(message: String) -> JsonValue {
 }
 
 fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
-    let mut content_length = None;
-
-    loop {
-        let mut line = String::new();
-        let bytes_read = reader.read_line(&mut line)?;
-        if bytes_read == 0 {
-            return Ok(None);
-        }
-
-        let header = line.trim_end_matches(['\r', '\n']);
-        if header.is_empty() {
-            break;
-        }
-
-        if let Some((name, value)) = header.split_once(':') {
-            if name.eq_ignore_ascii_case("Content-Length") {
-                let length = value.trim().parse::<usize>().map_err(|error| {
-                    io::Error::new(io::ErrorKind::InvalidData, error.to_string())
-                })?;
-                content_length = Some(length);
-            }
-        }
+    let mut line = Vec::new();
+    let bytes_read = reader.read_until(b'\n', &mut line)?;
+    if bytes_read == 0 {
+        return Ok(None);
     }
 
-    let length = content_length.ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "missing Content-Length header")
-    })?;
-
-    let mut message = vec![0; length];
-    reader.read_exact(&mut message)?;
-    Ok(Some(message))
+    Ok(Some(line))
 }
 
 fn write_message<W: Write>(writer: &mut W, message: &JsonValue) -> io::Result<()> {
     let body = serde_json::to_vec(message)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
-    write!(writer, "Content-Length: {}\r\n\r\n", body.len())?;
     writer.write_all(&body)?;
+    writer.write_all(b"\n")?;
     writer.flush()
 }

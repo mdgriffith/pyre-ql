@@ -213,12 +213,12 @@ fn add_session(schema: &mut ast::Schema, definitions: &Vec<ast::Definition>) {
 
 fn parse_definition(input: Text) -> ParseResult<ast::Definition> {
     alt((
-        parse_tagged,
         parse_comment,
+        parse_lines,
+        parse_tagged,
         parse_syncable_directive,
         parse_record,
         parse_session,
-        parse_lines,
     ))(input)
 }
 

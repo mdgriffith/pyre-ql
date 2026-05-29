@@ -780,6 +780,91 @@ fn round_trip_schema(source: &str) {
     );
 }
 
+fn format_schema_string(source: &str) -> String {
+    let mut schema = ast::Schema::default();
+    parser::run("schema.pyre", source, &mut schema).expect("schema should parse");
+    format::schema(&mut schema);
+    generate::to_string::schema_to_string(&schema.namespace, &schema)
+}
+
+#[test]
+fn test_top_level_comment_stays_attached_to_declaration() {
+    let formatted = format_schema_string(
+        r#"// I want to be able to leave a comment here
+type Annotation
+  = ShapeAnnotation { shape Shape }
+  | LineAnnotation { line Line }
+"#,
+    );
+
+    assert!(
+        formatted.starts_with("// I want to be able to leave a comment here\ntype Annotation\n"),
+        "comment should not be separated from its declaration:\n{}",
+        formatted
+    );
+}
+
+#[test]
+fn test_top_level_comment_allows_one_blank_before_declaration() {
+    let formatted = format_schema_string(
+        r#"// This comment is intentionally separated
+
+
+record User {
+    id Int @id
+}
+"#,
+    );
+
+    assert!(
+        formatted.starts_with("// This comment is intentionally separated\n\nrecord User {\n"),
+        "comment should allow at most one blank line before declaration:\n{}",
+        formatted
+    );
+}
+
+#[test]
+fn test_declaration_always_has_blank_line_after_it() {
+    let formatted = format_schema_string(
+        r#"record User {
+    id Int @id
+}
+// Comment about posts
+record Post {
+    id Int @id
+}
+"#,
+    );
+
+    assert!(
+        formatted.contains("}\n\n// Comment about posts\nrecord Post"),
+        "declaration should be separated from following comment:\n{}",
+        formatted
+    );
+}
+
+#[test]
+fn test_timestamps_grouped_with_table_directives() {
+    let formatted = format_schema_string(
+        r#"record Note {
+    id Int @id
+    body String
+    @index(body)
+    @public
+    @timestamps
+    @watch
+    @unique(body)
+    @tablename("notes")
+}
+"#,
+    );
+
+    assert_eq!(
+        formatted,
+        "record Note {\n    @tablename(\"notes\")\n    @watch\n    @public\n    @timestamps\n    @unique(body asc)\n    @index(body asc)\n\n    id   Int    @id\n    body String\n}\n"
+    );
+}
+
 /// Round trip test helper for queries
 fn round_trip_query(source: &str, database: &ast::Database) {
     // Parse original

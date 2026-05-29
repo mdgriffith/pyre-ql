@@ -46,16 +46,13 @@ record User {
     .unwrap();
 }
 
-fn framed_json(value: &serde_json::Value) -> String {
-    let body = value.to_string();
-    format!("Content-Length: {}\r\n\r\n{}", body.as_bytes().len(), body)
+fn message_json(value: &serde_json::Value) -> String {
+    format!("{}\n", value)
 }
 
-fn parse_framed_json(output: &[u8]) -> serde_json::Value {
+fn parse_message_json(output: &[u8]) -> serde_json::Value {
     let raw = String::from_utf8_lossy(output);
-    let (_headers, body) = raw
-        .split_once("\r\n\r\n")
-        .expect("expected MCP framed response");
+    let body = raw.lines().next().expect("expected MCP response");
     serde_json::from_str(body).expect("expected JSON response body")
 }
 
@@ -72,7 +69,7 @@ fn call_mcp(ctx: &TestContext, request: serde_json::Value) -> serde_json::Value 
     {
         let stdin = child.stdin.as_mut().expect("expected child stdin");
         stdin
-            .write_all(framed_json(&request).as_bytes())
+            .write_all(message_json(&request).as_bytes())
             .expect("failed to write MCP request");
     }
     drop(child.stdin.take());
@@ -87,7 +84,7 @@ fn call_mcp(ctx: &TestContext, request: serde_json::Value) -> serde_json::Value 
         String::from_utf8_lossy(&output.stderr)
     );
 
-    parse_framed_json(&output.stdout)
+    parse_message_json(&output.stdout)
 }
 
 fn call_mcp_tool(ctx: &TestContext, name: &str, arguments: serde_json::Value) -> serde_json::Value {
@@ -129,6 +126,42 @@ fn call_mcp_tool_error(
     )
 }
 
+fn call_mcp_session(ctx: &TestContext, requests: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let mut child = StdCommand::new(assert_cmd::cargo::cargo_bin("pyre"))
+        .arg("mcp")
+        .current_dir(&ctx.workspace_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn pyre mcp");
+
+    {
+        let stdin = child.stdin.as_mut().expect("expected child stdin");
+        for request in requests {
+            stdin
+                .write_all(message_json(&request).as_bytes())
+                .expect("failed to write MCP request");
+        }
+    }
+    drop(child.stdin.take());
+
+    let output = child
+        .wait_with_output()
+        .expect("failed to wait for pyre mcp");
+    assert!(
+        output.status.success(),
+        "pyre mcp failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("expected JSON response body"))
+        .collect()
+}
+
 #[test]
 fn initialize_ping_and_tools_list() {
     let ctx = TestContext::new();
@@ -148,6 +181,7 @@ fn initialize_ping_and_tools_list() {
     );
     assert_eq!(initialize["result"]["serverInfo"]["name"], "pyre");
     assert!(initialize["result"]["capabilities"]["tools"].is_object());
+    assert!(initialize["result"]["capabilities"]["resources"].is_object());
 
     let ping = call_mcp(
         &ctx,
@@ -180,6 +214,402 @@ fn initialize_ping_and_tools_list() {
 }
 
 #[test]
+fn initialize_negotiates_supported_protocol_version() {
+    let ctx = TestContext::new();
+
+    let initialize = call_mcp(
+        &ctx,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2099-01-01",
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "0" }
+            }
+        }),
+    );
+
+    assert_eq!(initialize["result"]["protocolVersion"], "2024-11-05");
+}
+
+#[test]
+fn one_mcp_session_handles_lifecycle_and_tool_call() {
+    let ctx = TestContext::new();
+
+    let responses = call_mcp_session(
+        &ctx,
+        vec![
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": { "name": "test", "version": "0" }
+                }
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list"
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "pyre_docs",
+                    "arguments": { "topic": "schema" }
+                }
+            }),
+        ],
+    );
+
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[0]["result"]["serverInfo"]["name"], "pyre");
+    assert!(responses[1]["result"]["tools"].is_array());
+    assert!(responses[2]["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Pyre Schema Guide"));
+}
+
+#[test]
+fn docs_are_exposed_as_resources() {
+    let ctx = TestContext::new();
+
+    let resources = call_mcp(
+        &ctx,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "resources/list"
+        }),
+    );
+    let resource_uris = resources["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|resource| resource["uri"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(resource_uris.contains(&"pyre://project/schema"));
+    assert!(resource_uris.contains(&"pyre://guides/getting-started"));
+    assert!(resource_uris.contains(&"pyre://guides/schema"));
+    assert!(resource_uris.contains(&"pyre://guides/query"));
+    assert!(resource_uris.contains(&"pyre://guides/namespacing"));
+    assert!(!resource_uris.contains(&"pyre://guides/simple"));
+    assert!(!resource_uris.contains(&"pyre://guides/generated-crud"));
+    assert!(!resource_uris.contains(&"pyre://guides/serve"));
+
+    let read = call_mcp(
+        &ctx,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "resources/read",
+            "params": {
+                "uri": "pyre://guides/getting-started"
+            }
+        }),
+    );
+    assert_eq!(read["result"]["contents"][0]["mimeType"], "text/markdown");
+    assert!(read["result"]["contents"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Pyre"));
+
+    let schema_docs = call_mcp(
+        &ctx,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "resources/read",
+            "params": {
+                "uri": "pyre://guides/schema"
+            }
+        }),
+    );
+    assert!(schema_docs["result"]["contents"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Pyre Schema Guide"));
+
+    let query_docs = call_mcp_tool(&ctx, "pyre_docs", json!({ "topic": "query" }));
+    assert!(query_docs["content"]
+        .as_str()
+        .unwrap()
+        .contains("Pyre Query Guide"));
+}
+
+#[test]
+fn schema_is_exposed_as_resource() {
+    let ctx = TestContext::new();
+    write_schema(&ctx);
+
+    let read = call_mcp(
+        &ctx,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "resources/read",
+            "params": {
+                "uri": "pyre://project/schema"
+            }
+        }),
+    );
+    assert_eq!(
+        read["result"]["contents"][0]["mimeType"],
+        "application/json"
+    );
+    assert!(read["result"]["contents"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("record User"));
+}
+
+#[test]
+fn init_creates_single_database_schema_from_required_source() {
+    let ctx = TestContext::new();
+
+    let result = call_mcp_tool(
+        &ctx,
+        "pyre_init",
+        json!({
+            "dir": "app-pyre",
+            "schema": "record User {\n    id Int @id\n    name String\n    @public\n}\n"
+        }),
+    );
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["dir"], "app-pyre");
+    assert_eq!(result["namespace"], "_default");
+    assert_eq!(result["createdFiles"], json!(["app-pyre/schema.pyre"]));
+
+    let schema_path = ctx.workspace_path.join("app-pyre/schema.pyre");
+    let schema = std::fs::read_to_string(schema_path).unwrap();
+    assert!(schema.contains("record User"));
+    assert!(schema.contains("name String"));
+}
+
+#[test]
+fn init_creates_namespaced_schema() {
+    let ctx = TestContext::new();
+
+    let result = call_mcp_tool(
+        &ctx,
+        "pyre_init",
+        json!({
+            "dir": "multi-pyre",
+            "namespace": "Billing",
+            "schema": "record Invoice {\n    id Int @id\n    amount Int\n    @public\n}\n"
+        }),
+    );
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["namespace"], "Billing");
+    assert_eq!(
+        result["createdFiles"],
+        json!(["multi-pyre/schema/Billing/schema.pyre"])
+    );
+    assert!(ctx
+        .workspace_path
+        .join("multi-pyre/schema/Billing/schema.pyre")
+        .exists());
+}
+
+#[test]
+fn init_rejects_invalid_schema_without_creating_directory() {
+    let ctx = TestContext::new();
+
+    let response = call_mcp_tool_error(
+        &ctx,
+        "pyre_init",
+        json!({
+            "dir": "bad-pyre",
+            "schema": "record Broken {\n    id Nope\n}\n"
+        }),
+    );
+
+    assert_eq!(response["error"]["code"], -32603);
+    assert_eq!(
+        response["error"]["data"]["message"],
+        response["error"]["message"]
+    );
+    assert!(!ctx.workspace_path.join("bad-pyre").exists());
+}
+
+#[test]
+fn init_rejects_unsafe_paths() {
+    let ctx = TestContext::new();
+
+    let response = call_mcp_tool_error(
+        &ctx,
+        "pyre_init",
+        json!({
+            "dir": "../outside",
+            "schema": "record User {\n    id Int @id\n}\n"
+        }),
+    );
+
+    assert_eq!(response["error"]["code"], -32603);
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("must not contain"));
+}
+
+#[test]
+fn database_tools_reject_unsafe_local_database_paths() {
+    let ctx = TestContext::new();
+    write_schema(&ctx);
+
+    for (tool, arguments) in [
+        (
+            "pyre_generate_migration",
+            json!({
+                "name": "bad",
+                "database": "../outside.db"
+            }),
+        ),
+        (
+            "pyre_migrate",
+            json!({
+                "database": "../outside.db",
+                "push": true
+            }),
+        ),
+        (
+            "pyre_db_status",
+            json!({
+                "database": "../outside.db"
+            }),
+        ),
+        (
+            "pyre_query",
+            json!({
+                "database": "../outside.db",
+                "query": "query GetUsers { user { id } }"
+            }),
+        ),
+    ] {
+        let response = call_mcp_tool_error(&ctx, tool, arguments);
+        assert_eq!(response["error"]["code"], -32603, "tool: {tool}");
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("must not contain"),
+            "tool: {tool}, response: {response}"
+        );
+    }
+}
+
+#[test]
+fn database_tools_allow_remote_and_env_database_refs() {
+    let ctx = TestContext::new();
+
+    for arguments in [
+        json!({ "database": "libsql://example.turso.io", "auth": "token" }),
+        json!({ "database": "$PYRE_TEST_DB" }),
+    ] {
+        let response = call_mcp_tool_error(&ctx, "pyre_db_status", arguments);
+        assert!(!response.to_string().contains("must not contain"));
+    }
+}
+
+#[test]
+fn init_rejects_lowercase_namespace_without_exiting() {
+    let ctx = TestContext::new();
+
+    let response = call_mcp_tool_error(
+        &ctx,
+        "pyre_init",
+        json!({
+            "dir": "lowercase-pyre",
+            "namespace": "billing",
+            "schema": "record Invoice {\n    id Int @id\n}\n"
+        }),
+    );
+
+    assert_eq!(response["error"]["code"], -32603);
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("namespace must be capitalized"));
+    assert!(!ctx.workspace_path.join("lowercase-pyre").exists());
+}
+
+#[test]
+fn init_refuses_existing_directory() {
+    let ctx = TestContext::new();
+
+    let response = call_mcp_tool_error(
+        &ctx,
+        "pyre_init",
+        json!({
+            "dir": "pyre",
+            "schema": "record User {\n    id Int @id\n}\n"
+        }),
+    );
+
+    assert_eq!(response["error"]["code"], -32603);
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Directory already exists"));
+}
+
+#[test]
+fn init_can_create_and_migrate_local_database() {
+    let ctx = TestContext::new();
+
+    let result = call_mcp_tool(
+        &ctx,
+        "pyre_init",
+        json!({
+            "dir": "db-pyre",
+            "schema": "record User {\n    id Int @id\n    name String\n    @public\n}\n",
+            "database": "pyre.db"
+        }),
+    );
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["database"]["path"], "pyre.db");
+    assert_eq!(result["database"]["migrated"], true);
+    assert!(ctx.workspace_path.join("pyre.db").exists());
+}
+
+#[test]
+fn init_refuses_existing_database_without_creating_schema_directory() {
+    let ctx = TestContext::new();
+    std::fs::write(ctx.workspace_path.join("pyre.db"), "already here").unwrap();
+
+    let response = call_mcp_tool_error(
+        &ctx,
+        "pyre_init",
+        json!({
+            "dir": "db-conflict-pyre",
+            "schema": "record User {\n    id Int @id\n}\n",
+            "database": "pyre.db"
+        }),
+    );
+
+    assert_eq!(response["error"]["code"], -32603);
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Database already exists"));
+    assert!(!ctx.workspace_path.join("db-conflict-pyre").exists());
+}
+
+#[test]
 fn parse_error_and_notification_no_response() {
     let ctx = TestContext::new();
 
@@ -195,11 +625,11 @@ fn parse_error_and_notification_no_response() {
         .stdin
         .as_mut()
         .unwrap()
-        .write_all(b"Content-Length: 1\r\n\r\n{")
+        .write_all(b"{\n")
         .unwrap();
     drop(parse_error_child.stdin.take());
     let parse_error_output = parse_error_child.wait_with_output().unwrap();
-    let parse_error = parse_framed_json(&parse_error_output.stdout);
+    let parse_error = parse_message_json(&parse_error_output.stdout);
     assert_eq!(parse_error["error"]["code"], -32700);
 
     let mut notification_child = StdCommand::new(assert_cmd::cargo::cargo_bin("pyre"))
@@ -218,7 +648,7 @@ fn parse_error_and_notification_no_response() {
         .stdin
         .as_mut()
         .unwrap()
-        .write_all(framed_json(&notification).as_bytes())
+        .write_all(message_json(&notification).as_bytes())
         .unwrap();
     drop(notification_child.stdin.take());
     let notification_output = notification_child.wait_with_output().unwrap();
