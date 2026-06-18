@@ -1,68 +1,142 @@
 # Migration Guide
 
-Pyre migrations apply schema changes to a SQLite-compatible database. In MCP workflows, migrations are usually handled with `pyre_generate_migration`, `pyre_migrate`, `pyre_db_status`, or the optional `database` argument to `pyre_init`.
+Pyre supports three related but different schema-to-database workflows:
 
-## New Local Database
+- `pyre migrate <database> --push` updates the database directly from your current schema.
+- `pyre migration <name> --db <database>` generates SQL migration files.
+- `pyre migrate <database>` applies migration files that already exist on disk.
 
-For a new project, `pyre_init` can create and migrate a local database when you provide a `database` path.
+## Rule Of Thumb
 
-```json
-{
-  "dir": "pyre",
-  "schema": "record User {\n    id Int @id\n}\n",
-  "database": "pyre.db"
-}
+```text
+Local iteration, prototypes, throwaway databases:
+  pyre migrate <database> --push
+
+Checked-in SQL migrations for teams and deployments:
+  pyre migration <name> --db <database>
+  pyre migrate <database>
 ```
 
-Pyre refuses to overwrite an existing database path during init.
+## Direct Push Workflow
 
-## Existing Project
+`--push` is the fastest way to get a local database in sync with the current schema:
 
-For an existing schema, first check the project:
-
-```json
-{
-  "name": "pyre_check",
-  "arguments": { "dir": "pyre" }
-}
+```bash
+pyre migrate db/app.db --push
 ```
 
-Then inspect database status:
+What it does:
+
+- typechecks your schema
+- introspects the target database
+- computes the schema diff
+- applies the resulting SQL directly
+- stores the latest Pyre schema metadata in the database
+
+Use this when you want the shortest local development loop and do not need checked-in SQL migration files.
+
+## Checked-In Migration Workflow
+
+Use this when you want explicit SQL migration files under `pyre/migrations/`.
+
+### 1. Generate A Migration
+
+```bash
+pyre migration add_users --db db/app.db
+```
+
+This creates a timestamped folder containing:
+
+- `migration.sql`
+- `schema.diff`
+
+Pyre refuses to generate a new migration if older migration folders have not been applied to the target database yet.
+
+### 2. Apply Existing Migrations
+
+```bash
+pyre migrate db/app.db
+```
+
+This applies migration folders that already exist on disk.
+
+## New Project Examples
+
+For a brand new local project, the simplest path is:
+
+```bash
+pyre migrate db/app.db --push
+```
+
+If you want a migration-file-first project from day one, use:
+
+```bash
+pyre migration initial --db db/app.db
+pyre migrate db/app.db
+```
+
+## MCP Equivalents
+
+### Direct push
 
 ```json
 {
-  "name": "pyre_db_status",
+  "name": "pyre_migrate",
   "arguments": {
-    "database": "pyre.db",
-    "migration_dir": "pyre/migrations"
+    "database": "db/app.db",
+    "push": true
   }
 }
 ```
 
-Generate and apply migrations when needed:
+### Generate migration files
 
 ```json
 {
   "name": "pyre_generate_migration",
   "arguments": {
     "name": "add_users",
-    "database": "pyre.db",
-    "migration_dir": "pyre/migrations"
+    "database": "db/app.db"
   }
 }
 ```
+
+### Apply migration files
 
 ```json
 {
   "name": "pyre_migrate",
   "arguments": {
-    "database": "pyre.db",
-    "migration_dir": "pyre/migrations",
-    "push": true
+    "database": "db/app.db"
+  }
+}
+```
+
+### Inspect database status
+
+```json
+{
+  "name": "pyre_db_status",
+  "arguments": {
+    "database": "db/app.db"
   }
 }
 ```
 
 ## Namespaces
 
-For namespaced schemas, pass `namespace` to migration-related tools so Pyre applies the intended schema partition.
+For namespaced schemas, pass `--namespace` in the CLI or `namespace` in MCP arguments so Pyre operates on the intended schema partition.
+
+```bash
+pyre migration add_billing_tables --db db/app.db --namespace Billing
+pyre migrate db/app.db --namespace Billing
+pyre migrate db/app.db --namespace Billing --push
+```
+
+## Common Mistakes
+
+- Generating a migration and then running `pyre migrate --push`.
+  `--push` skips migration files entirely.
+- Expecting `pyre migrate <database>` to create migration folders.
+  It only applies folders that already exist.
+- Forgetting `--namespace` for multi-namespace projects.

@@ -30,6 +30,26 @@ devbox shell
 cargo run
 ```
 
+Useful CLI docs commands:
+
+```bash
+pyre docs
+pyre docs schema
+pyre docs query
+pyre docs serve
+pyre docs mcp
+```
+
+Built-in docs are also available under `docs/usage/`.
+
+Recommended reading order:
+
+1. `docs/usage/getting-started.md`
+2. `docs/usage/schema.md`
+3. `docs/usage/query.md`
+4. `docs/usage/migrations.md`
+5. `docs/usage/pyre-serve.md` or `docs/usage/sync.md`
+
 ## Examples
 
 - `playground/simple/`

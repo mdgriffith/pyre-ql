@@ -54,11 +54,25 @@ pub const DOC_RESOURCES: &[DocResource] = &[
         content: include_str!("../../../docs/usage/migrations.md"),
     },
     DocResource {
+        topic: "project-structure",
+        uri: "pyre://guides/project-structure",
+        name: "Pyre Project Structure",
+        description: "Common filesystem layouts for Pyre projects.",
+        content: include_str!("../../../docs/usage/project-structure.md"),
+    },
+    DocResource {
         topic: "serve",
         uri: "pyre://guides/serve",
         name: "Pyre Serve",
         description: "Built-in HTTP server usage and behavior.",
         content: include_str!("../../../docs/usage/pyre-serve.md"),
+    },
+    DocResource {
+        topic: "troubleshooting",
+        uri: "pyre://guides/troubleshooting",
+        name: "Pyre Troubleshooting",
+        description: "Common setup and local-development issues.",
+        content: include_str!("../../../docs/usage/troubleshooting.md"),
     },
     DocResource {
         topic: "mcp",

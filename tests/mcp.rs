@@ -342,9 +342,11 @@ fn docs_are_exposed_as_resources() {
     assert!(resource_uris.contains(&"pyre://guides/query"));
     assert!(resource_uris.contains(&"pyre://guides/namespacing"));
     assert!(resource_uris.contains(&"pyre://guides/mcp"));
+    assert!(resource_uris.contains(&"pyre://guides/project-structure"));
     assert!(!resource_uris.contains(&"pyre://guides/simple"));
     assert!(!resource_uris.contains(&"pyre://guides/generated-crud"));
     assert!(resource_uris.contains(&"pyre://guides/serve"));
+    assert!(resource_uris.contains(&"pyre://guides/troubleshooting"));
 
     let read = call_mcp(
         &ctx,
@@ -396,6 +398,13 @@ fn docs_are_exposed_as_resources() {
         .as_str()
         .unwrap()
         .contains("CLI To MCP Mapping"));
+
+    let troubleshooting_docs =
+        call_mcp_tool(&ctx, "pyre_docs", json!({ "topic": "troubleshooting" }));
+    assert!(troubleshooting_docs["content"]
+        .as_str()
+        .unwrap()
+        .contains("`Schema Not Found`"));
 }
 
 #[test]

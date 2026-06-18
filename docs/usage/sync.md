@@ -1,20 +1,31 @@
 # Sync Setup
 
-This setup is for applications that:
+This guide assumes you already know the basic Pyre workflow from [Getting Started](./getting-started.md): schema, database, queries, `pyre check`, and `pyre generate`.
 
-- run a Pyre-backed server
-- want live sync on the client
-- want generated Elm query code to work with `@pyre/client`
+Use this guide when you want:
 
-Pyre generates:
+- a Pyre-backed server
+- live sync on the client
+- generated Elm query modules that work with `@pyre/client`
 
-- server-side TypeScript for executing queries and mutations
-- generated Elm query modules for client consumption
-- shared TypeScript metadata and query shapes
+If your main goal is Elm port wiring, also see [Elm + Sync Runtime Setup](./elm-sync.md).
 
-## 1. Define schema and queries
+## Quick Start
 
-Create `pyre/schema.pyre` and `pyre/query.pyre`:
+The shortest sync path looks like this:
+
+1. Add a `session { ... }` block and at least one session-aware query.
+2. Apply the schema to a database with `pyre migrate db/app.db --push`.
+3. Run `pyre generate`.
+4. Start a Pyre-backed server that exposes `/sync`, `/sync/events`, and `/db`.
+5. Create a `PyreClient` in your browser app.
+6. Register queries and keep session state current.
+
+The rest of this guide walks through those steps.
+
+## 1. Define Session-Aware Schema And Queries
+
+Create `pyre/schema.pyre` and a query file such as `pyre/query.pyre`:
 
 ```pyre
 session {
@@ -39,14 +50,23 @@ query GetUser($id: Int) {
 }
 ```
 
-## 2. Migrate the database
+Why the session matters:
+
+- Pyre validates session values against the schema
+- session values can participate in query filters
+- sync visibility and query results can depend on session data
+
+## 2. Apply The Schema To A Database
+
+For a local sync prototype, use direct push:
 
 ```bash
-touch db/app.db
-pyre migrate db/app.db
+pyre migrate db/app.db --push
 ```
 
-## 3. Generate code
+For checked-in migration files instead of direct push, see [Migration Guide](./migrations.md).
+
+## 3. Generate Artifacts
 
 ```bash
 pyre generate
@@ -60,15 +80,43 @@ pyre/generated/
 │   └── elm/
 │       ├── Pyre.elm
 │       └── Query/
-├── typescript/
-│   ├── core/
-│   ├── server.ts
-│   └── run.ts
+└── typescript/
+    ├── core/
+    ├── server.ts
+    └── run.ts
 ```
 
-## 4. Server usage
+The important pieces for sync are:
 
-Use the generated server target to run queries against your database:
+- `typescript/core/`: schema metadata and query metadata
+- `client/elm/`: generated Elm sync/query surface
+- `typescript/server.ts`: server-oriented generated helpers
+
+## 4. Run A Pyre-Backed Server
+
+You need a server that exposes the standard Pyre endpoints:
+
+```text
+POST /sync
+GET  /sync/events
+POST /db/:queryId
+```
+
+You have two common options:
+
+### Option A: Use `pyre serve`
+
+This is the fastest way to get a working server:
+
+```bash
+pyre serve db/app.db --dev-session '{"userId":1}'
+```
+
+See [pyre-serve.md](./pyre-serve.md) for operational details.
+
+### Option B: Use Your Own Server
+
+Use the generated server target to run queries against your database inside your own app server:
 
 ```typescript
 import * as Query from './pyre/generated/typescript/server';
@@ -89,11 +137,134 @@ if (result.kind === 'success') {
 }
 ```
 
-## 5. `PyreClient` setup
+If you are building your own sync server, it must authenticate requests normally, construct the Pyre session object, and keep live-sync connections partitioned by database.
 
-`PyreClient` boots the internal Elm sync engine, manages IndexedDB, and keeps live queries up to date.
+## 5. Create A `PyreClient`
 
-## Sync data flow
+`PyreClient` manages:
+
+- IndexedDB-backed local cache
+- catchup sync
+- live sync transport
+- query registration and refresh
+- session-aware query re-evaluation
+
+Typical setup:
+
+```typescript
+import { PyreClient } from '@pyre/client';
+import { schemaMetadata } from './pyre/generated/typescript/core/schema';
+
+const bootstrap = await fetch('/bootstrap').then((response) => response.json());
+
+const client = await PyreClient.create({
+  schema: schemaMetadata,
+  server: {
+    baseUrl: 'http://localhost:3000',
+    endpoints: {
+      catchup: '/sync',
+      events: '/sync/events',
+      query: '/db',
+    },
+  },
+  session: {
+    userId: bootstrap.userId,
+  },
+  cacheNamespace: bootstrap.userId,
+});
+
+await client.setSyncedDatabases([bootstrap.mainDatabaseId]);
+```
+
+If session values change later, refresh them so active queries are re-evaluated correctly:
+
+```typescript
+client.setSession({ userId: 2 });
+```
+
+### Optional Devtools
+
+The browser devtools UI is exposed from a separate entry point so production bundles can avoid including it:
+
+```typescript
+if (import.meta.env.DEV) {
+  const { mountPyreDevtools } = await import('@pyre/client/devtools');
+  mountPyreDevtools(client);
+}
+```
+
+## 6. Connect Elm
+
+Your Elm app owns the generated `Pyre.Model` and routes generated effects through ports.
+
+Typical model shape:
+
+```elm
+type alias Model =
+    { pyre : Pyre.Model
+    }
+```
+
+Initialize it with:
+
+```elm
+init : flags -> ( Model, Cmd Msg )
+init _ =
+    ( { pyre = Pyre.init }
+    , Cmd.none
+    )
+```
+
+Use generated queries through `Pyre.QueryUpdate`:
+
+```elm
+type Msg
+    = PyreMsg Pyre.Msg
+    | PyreEffectHandled Encode.Value
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        PyreMsg pyreMsg ->
+            let
+                ( newPyre, effect ) =
+                    Pyre.update pyreMsg model.pyre
+            in
+            ( { model | pyre = newPyre }
+            , handlePyreEffect effect
+            )
+
+        PyreEffectHandled _ ->
+            ( model, Cmd.none )
+```
+
+Register or update a query with:
+
+```elm
+PyreMsg
+    (Pyre.QueryUpdate
+        (Pyre.GetUser databaseId "user-1" { id = 1 })
+    )
+```
+
+Read the current result with:
+
+```elm
+Pyre.getResult "user-1" model.pyre.getUser
+```
+
+For the full Elm bridge model, typed database IDs, and port wiring details, continue with [Elm + Sync Runtime Setup](./elm-sync.md).
+
+## 7. Mental Model
+
+Information moves through the system in three main paths:
+
+- Startup: `PyreClient` restores cached state from IndexedDB, then performs server catchup.
+- Live sync: the server pushes deltas over `/sync/events`, and `PyreClient` applies and persists them.
+- Query and mutation flow: the app registers queries or sends mutations, the server responds, and sync updates the local read model.
+
+## 8. Sync Data Flow
 
 ```mermaid
 flowchart TD
@@ -144,206 +315,11 @@ flowchart TD
     Bridge -->|ports into Elm| Elm
 ```
 
-Information moves through the system in three main paths:
+## 9. Notes
 
-- Startup: `PyreClient` restores cached state from IndexedDB, then performs server catchup.
-- Live sync: the server pushes deltas over `/sync/events`, and `PyreClient` applies and persists them. If a live delta is too large, the server can send `syncRequired`; the client then performs POST catchup from its current cursor.
-- Query/mutation flow: Elm emits generated payloads, the TS host forwards them to `PyreClient`, mutations go to the server, and results come back into Elm through ports.
-
-```typescript
-import { PyreClient } from '@pyre/client';
-import { schemaMetadata } from './pyre/generated/typescript/core/schema';
-
-const bootstrap = await fetch('/bootstrap').then((response) => response.json());
-
-const client = await PyreClient.create({
-  schema: schemaMetadata,
-  server: {
-    baseUrl: 'http://localhost:3000',
-    endpoints: {
-      catchup: '/sync',
-      events: '/sync/events',
-      query: '/db',
-    },
-  },
-  session: {
-    userId: 1,
-  },
-  cacheNamespace: bootstrap.userId,
-});
-
-await client.setSyncedDatabases([bootstrap.mainDatabaseId]);
-```
-
-### Optional devtools
-
-The browser devtools UI is exposed from a separate entry point so production bundles can avoid including it:
-
-```typescript
-if (import.meta.env.DEV) {
-  const { mountPyreDevtools } = await import('@pyre/client/devtools');
-  mountPyreDevtools(client);
-}
-```
-
-This mounts a small fixed Pyre icon. Clicking it opens a read-only inspector with table counts, cached IndexedDB rows, sync cursor/status, captured sync/query/mutation events, and runtime debug state.
-
-You can publish additional values into the Debug page without importing the UI module elsewhere:
-
-```typescript
-client.setDevtoolsDebugValue('currentRoute', router.currentRoute);
-client.setDevtoolsDebugValue('currentRoute', undefined); // remove it
-```
-
-If your session values change later, update them and refresh active queries:
-
-```typescript
-client.setSession({ userId: 2 });
-```
-
-## 6. Elm app setup
-
-Your app owns the generated `Pyre.Model` and routes generated effects through ports.
-
-Typical model shape:
-
-```elm
-type alias Model =
-    { pyre : Pyre.Model
-    }
-```
-
-Initialize it with:
-
-```elm
-init : flags -> ( Model, Cmd Msg )
-init _ =
-    ( { pyre = Pyre.init }
-    , Cmd.none
-    )
-```
-
-Use generated queries through `Pyre.QueryUpdate`:
-
-```elm
-type Msg
-    = PyreMsg Pyre.Msg
-    | PyreEffectHandled Encode.Value
-
-
-update : Msg -> Model -> ( Model, Cmd Msg )
-update msg model =
-    case msg of
-        PyreMsg pyreMsg ->
-            let
-                ( newPyre, effect ) =
-                    Pyre.update pyreMsg model.pyre
-            in
-            ( { model | pyre = newPyre }
-            , handlePyreEffect effect
-            )
-
-        PyreEffectHandled _ ->
-            ( model, Cmd.none )
-
-
-handlePyreEffect : Pyre.Effect -> Cmd Msg
-handlePyreEffect effect =
-    case effect of
-        Pyre.NoEffect ->
-            Cmd.none
-
-        Pyre.Send payload ->
-            sendPyreMessage payload
-
-        Pyre.LogError payload ->
-            logPyreError payload
-```
-
-Register or update a query with:
-
-```elm
-PyreMsg
-    (Pyre.QueryUpdate
-        (Pyre.GetUser databaseId "user-1" { id = 1 })
-    )
-```
-
-`databaseId` is a typed generated value, not a raw string. Pyre generates `Db.Database.DatabaseId namespace` plus namespace markers from schema namespaces. Apps should centralize their concrete ID format in one module:
-
-```elm
-module App.Database exposing (main, campaign)
-
-import Db.Database
-import Pyre
-
-
-main : Pyre.DatabaseId Pyre.Main
-main =
-    Db.Database.fromString "main"
-
-
-campaign : Int -> Pyre.DatabaseId Pyre.Campaign
-campaign campaignId =
-    Db.Database.fromString ("campaign:" ++ String.fromInt campaignId)
-```
-
-Generated constructors use the query's `primary_db` metadata, so a `Campaign` query requires `Pyre.DatabaseId Pyre.Campaign` and a `Main` query requires `Pyre.DatabaseId Pyre.Main`.
-
-Read the current result with:
-
-```elm
-Pyre.getResult "user-1" model.pyre.getUser
-```
-
-## 7. Port wiring between Elm and `PyreClient`
-
-The generated `Pyre.elm` module sends JSON payloads that include:
-
-- `databaseId`
-- `queryName`
-- `querySource`
-- `queryInput`
-- `queryId`
-
-Generated Elm mutation modules send JSON payloads that include:
-
-- `databaseId`
-- `requestId`
-- `mutationId`
-- `mutationName`
-- `mutationInput`
-
-`querySource` is the generated query shape. It includes selected fields and query directives, including `@where`.
-
-For `@where`, generated query shapes preserve placeholders:
-
-- query input placeholders: `{"$var":"id"}`
-- session placeholders: `{"$session":"userId"}`
-
-`PyreClient` resolves those placeholders before registering or re-running the query internally.
-
-The intended flow is:
-
-1. Elm emits `Pyre.Send payload`
-2. Your JS/TS host forwards that payload to `PyreClient`
-3. `PyreClient` executes or updates the query
-4. Results are sent back into Elm with `queryName` for decoder routing
-5. Elm decodes them with `Pyre.decodeIncomingDelta`
-
-For mutations, the flow is:
-
-1. Elm sends a generated `Query.SomeMutation.mutationRequest databaseId requestId input` payload, where `databaseId` is typed by the mutation's database namespace
-2. Your JS/TS host forwards that payload to `PyreClient`
-3. `PyreClient` POSTs the mutation to the server using `mutationId`
-4. `PyreClient` forwards the immediate mutation result back into Elm with the same `requestId`
-5. The actual read model change arrives later through sync
-
-## 8. Notes
-
-- The generated Elm query modules now expose `queryShape`.
+- Generated Elm query modules expose `queryShape`.
 - Generated Elm mutation modules expose `id`, `name`, `mutationRequest`, and `decodeMutationResult`.
 - Generated Elm query and mutation constructors require typed database IDs by schema namespace.
-- `Pyre.elm` uses those generated `queryShape` values automatically.
+- `Pyre.elm` uses generated `queryShape` values automatically.
 - `@where`, `@sort`, and `@limit` are preserved in generated query shapes.
 - Session-aware filters require keeping `PyreClient` session state current via `setSession`.

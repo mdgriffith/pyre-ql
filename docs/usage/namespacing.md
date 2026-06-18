@@ -15,7 +15,7 @@ Single-schema project:
 ```text
 pyre/
   schema.pyre
-  queries.pyre
+  query.pyre
 ```
 
 Multi-namespace project:
@@ -27,8 +27,10 @@ pyre/
       schema.pyre
     Auth/
       schema.pyre
-  queries.pyre
+  query.pyre
 ```
+
+You can also split queries across multiple non-schema `.pyre` files if that fits your project better.
 
 ## CLI behavior
 

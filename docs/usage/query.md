@@ -1,6 +1,6 @@
 # Pyre Query Guide
 
-Pyre query files define typed database operations against a Pyre schema. Query files usually live in the same `pyre/` tree as schema files and are validated with `pyre_check`.
+Pyre query files define typed database operations against a Pyre schema. Query files usually live in the same `pyre/` tree as schema files. Any non-schema `.pyre` file under that tree is treated as a query file. A common convention is `pyre/query.pyre`.
 
 ## Select Queries
 
@@ -74,10 +74,34 @@ query SearchUsers($name: String) {
 }
 ```
 
+Session values can also participate in query conditions:
+
+```pyre
+query MyNotes {
+    note {
+        @where { ownerId == Session.userId }
+        id
+        body
+    }
+}
+```
+
 ## Generated CRUD
 
 Pyre can expose schema-derived CRUD mutations for writable tables. Use handwritten queries when you need custom filters, nested writes, business rules, or a response shape that differs from the default generated operation.
 
 ## Validation Flow
 
-Use `pyre_check` after editing query files. To test an ad hoc query through MCP without creating a query file, use `pyre_query` with `database`, `query`, and optional `params`.
+Use:
+
+```bash
+pyre check
+```
+
+after editing query files.
+
+MCP note:
+
+- use `pyre_preview_query` to typecheck dynamic query text and inspect generated SQL
+- use `pyre_explain_query` to validate params/session and inspect a real query plan
+- use `pyre_query` to validate and execute dynamic query text without creating a query file
