@@ -166,6 +166,12 @@ enum Commands {
 
     /// Start the Pyre MCP server over stdio.
     Mcp,
+
+    /// Print bundled documentation by topic, or list topics.
+    Docs {
+        /// Documentation topic name.
+        topic: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -268,6 +274,9 @@ async fn main() -> io::Result<()> {
         }
         Commands::Mcp => {
             command::mcp(&options).await?;
+        }
+        Commands::Docs { topic } => {
+            command::docs(topic)?;
         }
     }
     Ok(())

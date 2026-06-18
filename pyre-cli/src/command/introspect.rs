@@ -42,8 +42,9 @@ pub async fn introspect<'a>(
                         if introspection.tables.is_empty() {
                             println!("I was able to successfully connect to the database, but I couldn't find any tables or views!");
                         } else {
-                            let schema_file =
+                            let mut schema_file =
                                 pyre::db::introspect::to_schema::to_schema(&introspection);
+                            schema_file.path = path.to_string_lossy().to_string();
 
                             let schema = ast::Schema {
                                 namespace: full_namespace,

@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use libsql;
 use serde_json::json;
 use std::io::Write;
 use std::path::PathBuf;
@@ -39,6 +40,39 @@ fn write_schema(ctx: &TestContext) {
 record User {
     id   Int    @id
     name String
+    @public
+}
+        "#,
+    )
+    .unwrap();
+}
+
+fn write_session_schema(ctx: &TestContext) {
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+session {
+    userId Int
+}
+
+record Note {
+    id      Int    @id
+    ownerId Int
+    body    String
+    @public
+}
+        "#,
+    )
+    .unwrap();
+}
+
+fn write_nullable_schema(ctx: &TestContext) {
+    std::fs::write(
+        ctx.workspace_path.join("pyre/schema.pyre"),
+        r#"
+record User {
+    id       Int     @id
+    nickname String?
     @public
 }
         "#,
@@ -103,7 +137,7 @@ fn call_mcp_tool(ctx: &TestContext, name: &str, arguments: serde_json::Value) ->
 
     let text = response["result"]["content"][0]["text"]
         .as_str()
-        .expect("expected MCP text content");
+        .unwrap_or_else(|| panic!("expected MCP text content, got response: {response}"));
     serde_json::from_str(text).expect("expected JSON tool result text")
 }
 
@@ -209,7 +243,10 @@ fn initialize_ping_and_tools_list() {
         .collect::<Vec<_>>();
 
     assert!(tool_names.contains(&"pyre_query"));
+    assert!(tool_names.contains(&"pyre_preview_query"));
+    assert!(tool_names.contains(&"pyre_explain_query"));
     assert!(tool_names.contains(&"pyre_db_status"));
+    assert!(tool_names.contains(&"pyre_introspect"));
     assert!(tool_names.contains(&"pyre_schema"));
 }
 
@@ -304,9 +341,10 @@ fn docs_are_exposed_as_resources() {
     assert!(resource_uris.contains(&"pyre://guides/schema"));
     assert!(resource_uris.contains(&"pyre://guides/query"));
     assert!(resource_uris.contains(&"pyre://guides/namespacing"));
+    assert!(resource_uris.contains(&"pyre://guides/mcp"));
     assert!(!resource_uris.contains(&"pyre://guides/simple"));
     assert!(!resource_uris.contains(&"pyre://guides/generated-crud"));
-    assert!(!resource_uris.contains(&"pyre://guides/serve"));
+    assert!(resource_uris.contains(&"pyre://guides/serve"));
 
     let read = call_mcp(
         &ctx,
@@ -346,6 +384,53 @@ fn docs_are_exposed_as_resources() {
         .as_str()
         .unwrap()
         .contains("Pyre Query Guide"));
+
+    let serve_docs = call_mcp_tool(&ctx, "pyre_docs", json!({ "topic": "serve" }));
+    assert!(serve_docs["content"]
+        .as_str()
+        .unwrap()
+        .contains("`pyre serve`"));
+
+    let mcp_docs = call_mcp_tool(&ctx, "pyre_docs", json!({ "topic": "mcp" }));
+    assert!(mcp_docs["content"]
+        .as_str()
+        .unwrap()
+        .contains("CLI To MCP Mapping"));
+}
+
+#[test]
+fn introspect_tool_runs_cli_introspect() {
+    let ctx = TestContext::new();
+    let db_path = ctx.workspace_path.join("sample.db");
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let db = libsql::Builder::new_local(db_path.to_string_lossy().as_ref())
+            .build()
+            .await
+            .unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            (),
+        )
+        .await
+        .unwrap();
+    });
+
+    let result = call_mcp_tool(
+        &ctx,
+        "pyre_introspect",
+        json!({
+            "database": "sample.db"
+        }),
+    );
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["command"][3], "introspect");
+    assert!(result["stdout"]
+        .as_str()
+        .unwrap()
+        .contains("Schema written to"));
 }
 
 #[test]
@@ -727,6 +812,260 @@ fn pyre_query_executes_selection_and_mutation() {
     assert_eq!(select["ok"], true);
     assert_eq!(select["results"][0]["operation"], "query");
     assert_eq!(select["results"][0]["response"]["user"][0]["name"], "Ada");
+}
+
+#[test]
+fn pyre_preview_query_returns_generated_sql_without_database() {
+    let ctx = TestContext::new();
+    write_schema(&ctx);
+
+    let preview = call_mcp_tool(
+        &ctx,
+        "pyre_preview_query",
+        json!({
+            "query": "query UserByName($name: String) {\n    user {\n        @where { name == $name }\n        id\n        name\n    }\n}"
+        }),
+    );
+
+    assert_eq!(preview["ok"], true);
+    assert_eq!(preview["results"][0]["name"], "UserByName");
+    assert_eq!(preview["results"][0]["operation"], "query");
+    assert_eq!(
+        preview["results"][0]["inputSchema"]["name"]["type"],
+        "String"
+    );
+    assert!(preview["results"][0]["sql"][0]["sql"]
+        .as_str()
+        .unwrap()
+        .contains("$name"));
+}
+
+#[test]
+fn pyre_explain_query_uses_real_params_and_database_plan() {
+    let ctx = TestContext::new();
+    write_schema(&ctx);
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .arg("--push")
+        .assert()
+        .success();
+
+    let explain = call_mcp_tool(
+        &ctx,
+        "pyre_explain_query",
+        json!({
+            "database": ".yak/yak.db",
+            "query": "query UserByName($name: String) {\n    user {\n        @where { name == $name }\n        id\n        name\n    }\n}",
+            "params": { "name": "Ada" }
+        }),
+    );
+
+    assert_eq!(explain["ok"], true);
+    assert_eq!(explain["results"][0]["name"], "UserByName");
+    assert_eq!(explain["results"][0]["operation"], "query");
+    assert_eq!(
+        explain["results"][0]["statements"][0]["values"],
+        json!(["Ada"])
+    );
+    assert!(explain["results"][0]["statements"][0]["sql"]
+        .as_str()
+        .unwrap()
+        .contains('?'));
+    assert!(!explain["results"][0]["statements"][0]["plan"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn pyre_explain_query_does_not_execute_insert_update_or_delete() {
+    let ctx = TestContext::new();
+    write_schema(&ctx);
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .arg("--push")
+        .assert()
+        .success();
+
+    let explain_insert = call_mcp_tool(
+        &ctx,
+        "pyre_explain_query",
+        json!({
+            "database": ".yak/yak.db",
+            "query": "insert CreateUser($name: String) { user { name = $name } }",
+            "params": { "name": "Ada" }
+        }),
+    );
+    assert_eq!(explain_insert["ok"], true);
+
+    let empty_after_explain_insert = call_mcp_tool(
+        &ctx,
+        "pyre_query",
+        json!({
+            "database": ".yak/yak.db",
+            "query": "query GetUsers { user { id name } }",
+            "params": {}
+        }),
+    );
+    assert_eq!(
+        empty_after_explain_insert["results"][0]["response"]["user"],
+        json!([])
+    );
+
+    let insert = call_mcp_tool(
+        &ctx,
+        "pyre_query",
+        json!({
+            "database": ".yak/yak.db",
+            "query": "insert CreateUser($name: String) { user { name = $name } }",
+            "params": { "name": "Ada" }
+        }),
+    );
+    assert_eq!(insert["ok"], true);
+
+    let explain_update = call_mcp_tool(
+        &ctx,
+        "pyre_explain_query",
+        json!({
+            "database": ".yak/yak.db",
+            "query": "update RenameUser($id: Int, $name: String) { user { @where { id == $id } name = $name } }",
+            "params": { "id": 1, "name": "Grace" }
+        }),
+    );
+    assert_eq!(explain_update["ok"], true);
+
+    let explain_delete = call_mcp_tool(
+        &ctx,
+        "pyre_explain_query",
+        json!({
+            "database": ".yak/yak.db",
+            "query": "delete DeleteUser($id: Int) { user { @where { id == $id } } }",
+            "params": { "id": 1 }
+        }),
+    );
+    assert_eq!(explain_delete["ok"], true);
+
+    let unchanged = call_mcp_tool(
+        &ctx,
+        "pyre_query",
+        json!({
+            "database": ".yak/yak.db",
+            "query": "query GetUsers { user { id name } }",
+            "params": {}
+        }),
+    );
+    assert_eq!(
+        unchanged["results"][0]["response"]["user"][0]["name"],
+        "Ada"
+    );
+    assert_eq!(
+        unchanged["results"][0]["response"]["user"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn pyre_explain_query_uses_session_values_without_executing_query() {
+    let ctx = TestContext::new();
+    write_session_schema(&ctx);
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .arg("--push")
+        .assert()
+        .success();
+
+    let explain = call_mcp_tool(
+        &ctx,
+        "pyre_explain_query",
+        json!({
+            "database": ".yak/yak.db",
+            "query": "query MyNotes { note { @where { ownerId == Session.userId } id body } }",
+            "params": {},
+            "session": { "userId": 7 }
+        }),
+    );
+
+    assert_eq!(explain["ok"], true);
+    assert_eq!(explain["results"][0]["statements"][0]["values"], json!([7]));
+
+    let missing_session = call_mcp_tool_error(
+        &ctx,
+        "pyre_explain_query",
+        json!({
+            "database": ".yak/yak.db",
+            "query": "query MyNotes { note { @where { ownerId == Session.userId } id body } }",
+            "params": {}
+        }),
+    );
+    assert_eq!(missing_session["error"]["code"], -32603);
+    assert!(missing_session["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("session"));
+}
+
+#[test]
+fn pyre_explain_query_accepts_nullable_params() {
+    let ctx = TestContext::new();
+    write_nullable_schema(&ctx);
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .arg("--push")
+        .assert()
+        .success();
+
+    let explain = call_mcp_tool(
+        &ctx,
+        "pyre_explain_query",
+        json!({
+            "database": ".yak/yak.db",
+            "query": "query UserByNickname($nickname: String?) { user { @where { nickname == $nickname } id nickname } }",
+            "params": { "nickname": null }
+        }),
+    );
+
+    assert_eq!(explain["ok"], true);
+    assert_eq!(
+        explain["results"][0]["statements"][0]["values"],
+        json!([null])
+    );
+}
+
+#[test]
+fn pyre_explain_query_reports_invalid_parameters_like_query() {
+    let ctx = TestContext::new();
+    write_schema(&ctx);
+
+    ctx.run_command("migrate")
+        .arg(".yak/yak.db")
+        .arg("--push")
+        .assert()
+        .success();
+
+    let response = call_mcp_tool_error(
+        &ctx,
+        "pyre_explain_query",
+        json!({
+            "database": ".yak/yak.db",
+            "query": "query UserByName($name: String) {\n    user {\n        @where { name == $name }\n        id\n        name\n    }\n}",
+            "params": { "name": 42 }
+        }),
+    );
+
+    assert_eq!(response["error"]["code"], -32603);
+    let message = response["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("invalid input") || message.contains("expected"),
+        "unexpected error message: {}",
+        message
+    );
 }
 
 #[test]

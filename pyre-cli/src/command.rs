@@ -1,4 +1,5 @@
 mod check;
+mod docs;
 mod format;
 mod generate;
 mod generate_migration;
@@ -10,6 +11,7 @@ mod serve;
 mod shared;
 
 pub use check::check;
+pub use docs::docs;
 pub use format::format;
 pub use generate::generate;
 pub use generate_migration::generate_migration;

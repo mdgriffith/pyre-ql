@@ -54,6 +54,39 @@ record User {
     .unwrap();
 }
 
+#[test]
+fn docs_lists_topics() {
+    let ctx = TestContext::new();
+
+    ctx.run_command("docs")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("getting-started"))
+        .stdout(predicate::str::contains("serve"));
+}
+
+#[test]
+fn docs_prints_requested_topic() {
+    let ctx = TestContext::new();
+
+    ctx.run_command("docs")
+        .arg("schema")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pyre Schema Guide"));
+}
+
+#[test]
+fn docs_rejects_unknown_topic() {
+    let ctx = TestContext::new();
+
+    ctx.run_command("docs")
+        .arg("unknown-topic")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown doc topic"));
+}
+
 struct ServerGuard {
     child: Child,
 }

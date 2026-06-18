@@ -9,6 +9,16 @@ pub struct QueryResult {
     pub affected_rows: Vec<AffectedRowTableGroup>,
 }
 
+#[derive(Debug)]
+pub struct ExplainStatement {
+    pub include: bool,
+    pub sql: String,
+    pub params: Vec<String>,
+    pub values: Vec<JsonValue>,
+    pub plan: Vec<HashMap<String, JsonValue>>,
+    pub error: Option<String>,
+}
+
 struct ResultSet {
     columns: Vec<String>,
     rows: Vec<HashMap<String, JsonValue>>,
@@ -37,6 +47,41 @@ pub async fn run_sync(
     session: &PyreSession,
 ) -> Result<QueryResult, Error> {
     run_inner(conn, manifest, query_id, input, session, true).await
+}
+
+pub async fn explain(
+    conn: &libsql::Connection,
+    manifest: &Manifest,
+    query_id: &str,
+    input: JsonValue,
+    session: &PyreSession,
+) -> Result<Vec<ExplainStatement>, Error> {
+    let query = manifest
+        .queries
+        .get(query_id)
+        .ok_or_else(|| Error::UnknownQuery(query_id.to_string()))?;
+    let args = build_args(query, input, session)?;
+    let mut statements = Vec::new();
+
+    for statement in &query.sql {
+        let (sql, values) = statement_args(statement, &args)?;
+        let json_values = values
+            .iter()
+            .cloned()
+            .map(libsql_to_json)
+            .collect::<Vec<_>>();
+        let (plan, error) = explain_statement(conn, &sql, values).await?;
+        statements.push(ExplainStatement {
+            include: statement.include,
+            sql,
+            params: statement.params.clone(),
+            values: json_values,
+            plan,
+            error,
+        });
+    }
+
+    Ok(statements)
 }
 
 async fn run_inner(
@@ -297,6 +342,28 @@ async fn query_result_set(
         columns,
         rows: result_rows,
     })
+}
+
+async fn explain_statement(
+    conn: &libsql::Connection,
+    sql: &str,
+    values: Vec<libsql::Value>,
+) -> Result<(Vec<HashMap<String, JsonValue>>, Option<String>), Error> {
+    let result_set =
+        match query_result_set(conn, &format!("EXPLAIN QUERY PLAN {sql}"), values.clone()).await {
+            Ok(result_set) => result_set,
+            Err(Error::Database(_)) => {
+                match query_result_set(conn, &format!("EXPLAIN {sql}"), values).await {
+                    Ok(result_set) => result_set,
+                    Err(Error::Database(error)) => {
+                        return Ok((Vec::new(), Some(error.to_string())))
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+    Ok((result_set.rows, None))
 }
 
 fn format_response(result_sets: &[ResultSet]) -> Result<JsonValue, Error> {

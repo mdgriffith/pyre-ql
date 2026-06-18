@@ -5,6 +5,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+use super::docs::{find_doc, DocResource, DOC_RESOURCES};
 use super::shared::Options;
 use crate::db;
 use pyre::server::manifest::{FieldSchema, Manifest, PyreSession, QueryManifest, SqlInfo};
@@ -14,45 +15,6 @@ const SERVER_NAME: &str = "pyre";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[DEFAULT_PROTOCOL_VERSION];
-const DOC_RESOURCES: &[(&str, &str, &str, &str)] = &[
-    (
-        "pyre://guides/getting-started",
-        "Pyre Getting Started",
-        "Project setup and first schema/query workflow.",
-        include_str!("../../../docs/usage/getting-started.md"),
-    ),
-    (
-        "pyre://guides/schema",
-        "Schema Guide",
-        "How to write Pyre schemas: records, fields, links, directives, types, sessions.",
-        include_str!("../../../docs/usage/schema.md"),
-    ),
-    (
-        "pyre://guides/query",
-        "Query Guide",
-        "How to write Pyre queries and mutations: selects, inserts, updates, deletes, params.",
-        include_str!("../../../docs/usage/query.md"),
-    ),
-    (
-        "pyre://guides/namespacing",
-        "Pyre Namespacing",
-        "Multi-schema namespace layout and reference rules.",
-        include_str!("../../../docs/usage/namespacing.md"),
-    ),
-    (
-        "pyre://guides/sync",
-        "Pyre Sync Setup",
-        "Client/server sync workflow guide.",
-        include_str!("../../../docs/usage/sync.md"),
-    ),
-    (
-        "pyre://guides/migrations",
-        "Pyre Migrations",
-        "SQL generation and migration-relevant behavior.",
-        include_str!("../../../docs/usage/migrations.md"),
-    ),
-];
-
 pub async fn mcp(options: &Options<'_>) -> io::Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -153,7 +115,10 @@ async fn call_tool(options: &Options<'_>, params: Option<&JsonValue>) -> Result<
         "pyre_generate" => run_generate(options, arguments)?,
         "pyre_generate_migration" => run_generate_migration(options, arguments)?,
         "pyre_migrate" => run_migrate(options, arguments)?,
+        "pyre_introspect" => run_introspect(options, arguments)?,
         "pyre_db_status" => db_status(options, arguments).await?,
+        "pyre_preview_query" => preview_dynamic_query(options, arguments)?,
+        "pyre_explain_query" => explain_dynamic_query(options, arguments).await?,
         "pyre_query" => dynamic_query(options, arguments).await?,
         _ => return Err(format!("Unknown Pyre MCP tool: {name}")),
     };
@@ -311,10 +276,10 @@ fn project_info(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValu
 }
 
 fn docs(arguments: &JsonValue) -> Result<JsonValue, String> {
-    let topic = string_arg(arguments, "topic").unwrap_or_else(|| "overview".to_string());
-    let uri = format!("pyre://guides/{topic}");
-    let content =
-        doc_resource_content(&uri).ok_or_else(|| format!("Unknown docs topic: {topic}"))?;
+    let topic = string_arg(arguments, "topic").unwrap_or_else(|| "getting-started".to_string());
+    let content = find_doc(&topic)
+        .map(|doc| doc.content)
+        .ok_or_else(|| format!("Unknown docs topic: {topic}"))?;
 
     Ok(json!({ "topic": topic, "content": content }))
 }
@@ -326,12 +291,11 @@ fn read_resource(options: &Options<'_>, params: Option<&JsonValue>) -> Result<Js
         .and_then(JsonValue::as_str)
         .ok_or_else(|| "resources/read params.uri is required".to_string())?;
     if uri == "pyre://project/schema" {
-        let arguments = json!({ "dir": options.in_dir.to_string_lossy() });
         return Ok(json!({
             "contents": [{
                 "uri": uri,
                 "mimeType": "application/json",
-                "text": serde_json::to_string_pretty(&schema(&arguments)?).map_err(|error| error.to_string())?
+                "text": serde_json::to_string_pretty(&schema_from_dir(options.in_dir)?).map_err(|error| error.to_string())?
             }]
         }));
     }
@@ -350,8 +314,11 @@ fn read_resource(options: &Options<'_>, params: Option<&JsonValue>) -> Result<Js
 fn schema(arguments: &JsonValue) -> Result<JsonValue, String> {
     let in_dir = string_arg(arguments, "dir").unwrap_or_else(|| "pyre".to_string());
     validate_safe_path("dir", &in_dir)?;
-    let found = crate::filesystem::collect_filepaths(Path::new(&in_dir))
-        .map_err(|error| error.to_string())?;
+    schema_from_dir(Path::new(&in_dir))
+}
+
+fn schema_from_dir(in_dir: &Path) -> Result<JsonValue, String> {
+    let found = crate::filesystem::collect_filepaths(in_dir).map_err(|error| error.to_string())?;
     let mut schemas = Vec::new();
     let mut namespaces = found.schema_files.into_iter().collect::<Vec<_>>();
     namespaces.sort_by(|left, right| left.0.cmp(&right.0));
@@ -443,27 +410,71 @@ fn run_migrate(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValue
     )
 }
 
+fn run_introspect(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValue, String> {
+    let database = required_string_arg(arguments, "database")?;
+    validate_database_ref("database", &database)?;
+    let mut args = vec!["introspect".to_string(), database];
+    push_optional_arg(arguments, &mut args, "auth", "--auth");
+    push_optional_arg(arguments, &mut args, "namespace", "--namespace");
+    run_cli(
+        options,
+        arguments,
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+    )
+}
+
 fn run_cli(
     options: &Options<'_>,
     arguments: &JsonValue,
     command_args: &[&str],
 ) -> Result<JsonValue, String> {
     let in_dir = input_dir(options, arguments)?;
-    let output = Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("pyre")))
+    let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("pyre"));
+    let command = command_summary(&executable, &in_dir, command_args);
+    let output = Command::new(executable)
         .arg("--in")
-        .arg(in_dir)
+        .arg(&in_dir)
         .args(command_args)
         .output();
 
     match output {
         Ok(output) => Ok(json!({
             "ok": output.status.success(),
+            "command": command,
             "status": output.status.code(),
             "stdout": String::from_utf8_lossy(&output.stdout),
             "stderr": String::from_utf8_lossy(&output.stderr)
         })),
-        Err(error) => Ok(json!({ "ok": false, "error": error.to_string() })),
+        Err(error) => Ok(json!({ "ok": false, "command": command, "error": error.to_string() })),
     }
+}
+
+fn command_summary(executable: &Path, in_dir: &Path, command_args: &[&str]) -> Vec<String> {
+    let mut command = vec![
+        executable.to_string_lossy().to_string(),
+        "--in".to_string(),
+        in_dir.to_string_lossy().to_string(),
+    ];
+    command.extend(redact_command_args(command_args));
+    command
+}
+
+fn redact_command_args(command_args: &[&str]) -> Vec<String> {
+    let mut redacted = Vec::with_capacity(command_args.len());
+    let mut redact_next = false;
+    for arg in command_args {
+        if redact_next {
+            redacted.push("<redacted>".to_string());
+            redact_next = false;
+            continue;
+        }
+
+        redacted.push((*arg).to_string());
+        if *arg == "--auth" {
+            redact_next = true;
+        }
+    }
+    redacted
 }
 
 async fn db_status(options: &Options<'_>, arguments: &JsonValue) -> Result<JsonValue, String> {
@@ -557,7 +568,6 @@ async fn dynamic_query(options: &Options<'_>, arguments: &JsonValue) -> Result<J
     let database = required_string_arg(arguments, "database")?;
     validate_database_ref("database", &database)?;
     let auth = string_arg(arguments, "auth");
-    let query_source = required_string_arg(arguments, "query")?;
     let input = arguments
         .get("params")
         .cloned()
@@ -567,13 +577,7 @@ async fn dynamic_query(options: &Options<'_>, arguments: &JsonValue) -> Result<J
         .cloned()
         .unwrap_or_else(|| json!({}));
 
-    let (database_schema, context, _paths) = current_schema_context(options, arguments)?;
-    let query_list = pyre::parser::parse_query("mcp.pyre", &query_source)
-        .map_err(|_| "Failed to parse dynamic Pyre query".to_string())?;
-    let query_infos = pyre::typecheck::check_queries(&query_list, &context)
-        .map_err(|errors| format!("Dynamic query failed typecheck: {errors:#?}"))?;
-
-    let manifest = dynamic_manifest(&database_schema, &context, &query_list, &query_infos)?;
+    let (query_list, manifest) = dynamic_query_plan(options, arguments)?;
     let db = db::connect(&database, &auth)
         .await
         .map_err(|error| error.format_error())?;
@@ -603,6 +607,113 @@ async fn dynamic_query(options: &Options<'_>, arguments: &JsonValue) -> Result<J
     }
 
     Ok(json!({ "ok": true, "results": results }))
+}
+
+fn preview_dynamic_query(
+    options: &Options<'_>,
+    arguments: &JsonValue,
+) -> Result<JsonValue, String> {
+    let (query_list, manifest) = dynamic_query_plan(options, arguments)?;
+    let mut results = Vec::new();
+
+    for query_def in &query_list.queries {
+        if let ast::QueryDef::Query(query) = query_def {
+            let manifest_query = manifest
+                .queries
+                .get(&query.name)
+                .expect("manifest query exists");
+            results.push(json!({
+                "name": query.name,
+                "operation": manifest_query.operation,
+                "primaryDb": manifest_query.primary_db,
+                "attachedDbs": manifest_query.attached_dbs,
+                "inputSchema": manifest_query.input_schema,
+                "sessionArgs": manifest_query.session_args,
+                "optionalInputArgs": manifest_query.optional_input_args,
+                "sql": manifest_query.sql
+            }));
+        }
+    }
+
+    Ok(json!({ "ok": true, "results": results }))
+}
+
+async fn explain_dynamic_query(
+    options: &Options<'_>,
+    arguments: &JsonValue,
+) -> Result<JsonValue, String> {
+    let database = required_string_arg(arguments, "database")?;
+    validate_database_ref("database", &database)?;
+    let auth = string_arg(arguments, "auth");
+    let input = arguments
+        .get("params")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let session_value = arguments
+        .get("session")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+
+    let (query_list, manifest) = dynamic_query_plan(options, arguments)?;
+    let db = db::connect(&database, &auth)
+        .await
+        .map_err(|error| error.format_error())?;
+    let conn = db.connect().map_err(|error| error.to_string())?;
+    let session = PyreSession::new(session_value, &manifest.session_schema)
+        .map_err(|error| error.to_string())?;
+
+    let mut results = Vec::new();
+    for query_def in &query_list.queries {
+        if let ast::QueryDef::Query(query) = query_def {
+            let statements = pyre::server::query::explain(
+                &conn,
+                &manifest,
+                &query.name,
+                input.clone(),
+                &session,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+            let manifest_query = manifest
+                .queries
+                .get(&query.name)
+                .expect("manifest query exists");
+            let statements = statements
+                .into_iter()
+                .map(|statement| {
+                    json!({
+                        "include": statement.include,
+                        "sql": statement.sql,
+                        "params": statement.params,
+                        "values": statement.values,
+                        "plan": statement.plan,
+                        "error": statement.error
+                    })
+                })
+                .collect::<Vec<_>>();
+            results.push(json!({
+                "name": query.name,
+                "operation": manifest_query.operation,
+                "statements": statements
+            }));
+        }
+    }
+
+    Ok(json!({ "ok": true, "results": results }))
+}
+
+fn dynamic_query_plan(
+    options: &Options<'_>,
+    arguments: &JsonValue,
+) -> Result<(ast::QueryList, Manifest), String> {
+    let query_source = required_string_arg(arguments, "query")?;
+    let (database_schema, context, _paths) = current_schema_context(options, arguments)?;
+    let query_list = pyre::parser::parse_query("mcp.pyre", &query_source)
+        .map_err(|_| "Failed to parse dynamic Pyre query".to_string())?;
+    let query_infos = pyre::typecheck::check_queries(&query_list, &context)
+        .map_err(|errors| format!("Dynamic query failed typecheck: {errors:#?}"))?;
+    let manifest = dynamic_manifest(&database_schema, &context, &query_list, &query_infos)?;
+    Ok((query_list, manifest))
 }
 
 fn current_schema_context(
@@ -898,14 +1009,17 @@ fn tools() -> Vec<JsonValue> {
     vec![
         tool("pyre_init", "Initialize a new Pyre schema directory from provided schema source. Fails if the target directory already exists or the schema is invalid.", json!({"type":"object","required":["schema"],"properties":{"dir":{"type":"string","description":"Directory to initialize. Defaults to pyre."},"schema":{"type":"string","description":"Initial Pyre schema source to write."},"namespace":{"type":"string","description":"Optional schema namespace. If omitted, uses the default namespace."},"database":{"type":"string","description":"Optional local database path to create and migrate, for example pyre.db."}}})),
         tool("pyre_project_info", "Report basic information about the current Pyre project.", json!({"type":"object","properties":{"dir":{"type":"string"},"generated":{"type":"string"},"migration_dir":{"type":"string"}}})),
-        tool("pyre_docs", "Return bundled Pyre documentation by topic.", json!({"type":"object","properties":{"topic":{"type":"string","enum":["getting-started","schema","query","namespacing","sync","migrations"]}}})),
+        tool("pyre_docs", "Return bundled Pyre documentation by topic.", json!({"type":"object","properties":{"topic":{"type":"string","enum":["getting-started","schema","query","namespacing","sync","migrations","serve","mcp"]}}})),
         tool("pyre_schema", "Return all Pyre schema files and their contents.", json!({"type":"object","properties":{"dir":{"type":"string"}}})),
         tool("pyre_check", "Typecheck the current Pyre schema and query files.", json!({"type":"object","properties":{"dir":{"type":"string"}}})),
         tool("pyre_format", "Format Pyre files. This may write files unless to_stdout is true.", json!({"type":"object","properties":{"dir":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"to_stdout":{"type":"boolean"}}})),
         tool("pyre_generate", "Generate Pyre artifacts.", json!({"type":"object","properties":{"dir":{"type":"string"},"out":{"type":"string"}}})),
         tool("pyre_generate_migration", "Generate a Pyre migration against a database.", json!({"type":"object","required":["name","database"],"properties":{"dir":{"type":"string"},"name":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"namespace":{"type":"string"},"migration_dir":{"type":"string"}}})),
         tool("pyre_migrate", "Apply Pyre migrations to a database. This can modify the database.", json!({"type":"object","required":["database"],"properties":{"dir":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"namespace":{"type":"string"},"migration_dir":{"type":"string"},"push":{"type":"boolean"}}})),
+        tool("pyre_introspect", "Introspect a database and generate a Pyre schema file.", json!({"type":"object","required":["database"],"properties":{"dir":{"type":"string"},"database":{"type":"string","description":"A local path, URL, or $ENV_VAR database reference."},"auth":{"type":"string","description":"Optional auth token for remote libSQL/Turso databases."},"namespace":{"type":"string","description":"Optional namespace for the generated schema."}}})),
         tool("pyre_db_status", "Check database connectivity and current schema/migration status.", json!({"type":"object","required":["database"],"properties":{"dir":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"namespace":{"type":"string"},"migration_dir":{"type":"string"}}})),
+        tool("pyre_preview_query", "Typecheck raw dynamic Pyre query text and return generated SQL, input schema, and session requirements without connecting to a database or executing it.", json!({"type":"object","required":["query"],"properties":{"dir":{"type":"string"},"query":{"type":"string"}}})),
+        tool("pyre_explain_query", "Typecheck raw dynamic Pyre query text, validate params/session like pyre_query, and run EXPLAIN QUERY PLAN against a database without executing the query.", json!({"type":"object","required":["database","query"],"properties":{"dir":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"query":{"type":"string"},"params":{"type":"object"},"session":{"type":"object"}}})),
         tool("pyre_query", "Typecheck and execute raw dynamic Pyre query text against a database. Supports reads and mutations.", json!({"type":"object","required":["database","query"],"properties":{"dir":{"type":"string"},"database":{"type":"string"},"auth":{"type":"string"},"query":{"type":"string"},"params":{"type":"object"},"session":{"type":"object"}}})),
     ]
 }
@@ -917,27 +1031,21 @@ fn resources() -> Vec<JsonValue> {
         "description": "Current project schema files and source content.",
         "mimeType": "application/json"
     })];
-    resources.extend(
-        DOC_RESOURCES
-            .iter()
-            .map(|(uri, name, description, _content)| {
-                json!({
-                    "uri": uri,
-                    "name": name,
-                    "description": description,
-                    "mimeType": "text/markdown"
-                })
-            }),
-    );
+    resources.extend(DOC_RESOURCES.iter().map(|doc| {
+        json!({
+            "uri": doc.uri,
+            "name": doc.name,
+            "description": doc.description,
+            "mimeType": "text/markdown"
+        })
+    }));
     resources
 }
 
 fn doc_resource_content(uri: &str) -> Option<&'static str> {
     DOC_RESOURCES
         .iter()
-        .find_map(|(resource_uri, _name, _description, content)| {
-            (*resource_uri == uri).then_some(*content)
-        })
+        .find_map(|doc: &DocResource| (doc.uri == uri).then_some(doc.content))
 }
 
 fn tool(name: &str, description: &str, input_schema: JsonValue) -> JsonValue {
