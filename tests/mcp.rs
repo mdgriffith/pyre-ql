@@ -484,7 +484,10 @@ fn init_creates_single_database_schema_from_required_source() {
     assert_eq!(result["ok"], true);
     assert_eq!(result["dir"], "app-pyre");
     assert_eq!(result["namespace"], "_default");
-    assert_eq!(result["createdFiles"], json!(["app-pyre/schema.pyre"]));
+    assert_eq!(
+        normalize_json_paths(&result["createdFiles"]),
+        json!(["app-pyre/schema.pyre"])
+    );
 
     let schema_path = ctx.workspace_path.join("app-pyre/schema.pyre");
     let schema = std::fs::read_to_string(schema_path).unwrap();
@@ -509,13 +512,26 @@ fn init_creates_namespaced_schema() {
     assert_eq!(result["ok"], true);
     assert_eq!(result["namespace"], "Billing");
     assert_eq!(
-        result["createdFiles"],
+        normalize_json_paths(&result["createdFiles"]),
         json!(["multi-pyre/schema/Billing/schema.pyre"])
     );
     assert!(ctx
         .workspace_path
         .join("multi-pyre/schema/Billing/schema.pyre")
         .exists());
+}
+
+fn normalize_json_paths(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(path) => serde_json::Value::String(path.replace('\\', "/")),
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .iter()
+                .map(normalize_json_paths)
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
 }
 
 #[test]
