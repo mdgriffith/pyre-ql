@@ -25,12 +25,12 @@ jobs:
             name: pyre-Windows-x86_64.zip
             command: both
 
-          - release_for: macOS-x86_64
+          - release_for: macOS-aarch64
             os: macOS-latest
-            target: x86_64-apple-darwin
+            target: aarch64-apple-darwin
             bin: pyre
-            name: pyre-Darwin-x86_64.tar.gz
-            command: both
+            name: pyre-Darwin-aarch64.tar.gz
+            command: build
 
     runs-on: ${{ matrix.platform.os }}
     permissions:
