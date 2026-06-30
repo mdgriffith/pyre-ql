@@ -6,6 +6,10 @@ use pyre::typecheck;
 use std::collections::HashSet;
 use std::path::Path;
 
+fn path_ends_with(path: &Path, suffix: &str) -> bool {
+    path.ends_with(Path::new(suffix))
+}
+
 #[test]
 fn generated_elm_lenses_are_uniquely_named_for_nested_siblings() {
     let schema_source = r#"
@@ -129,11 +133,7 @@ query GetRulebookVersionBundle($rulebookName: String, $versionTag: String) {
 
     let generated = files
         .iter()
-        .find(|f| {
-            f.path
-                .to_string_lossy()
-                .ends_with("Query/GetRulebookVersionBundle.elm")
-        })
+        .find(|f| path_ends_with(&f.path, "Query/GetRulebookVersionBundle.elm"))
         .expect("generated query elm file");
 
     let content = &generated.contents;

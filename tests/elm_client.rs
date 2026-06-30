@@ -5,6 +5,10 @@ use pyre::parser;
 use pyre::typecheck;
 use std::path::Path;
 
+fn path_ends_with(path: &Path, suffix: &str) -> bool {
+    path.ends_with(Path::new(suffix))
+}
+
 #[test]
 fn generated_pyre_elm_uses_query_upserts() {
     let schema_source = r#"
@@ -65,7 +69,7 @@ query GetGameWorld($slug: String) {
 
     let generated = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("Pyre.elm"))
+        .find(|f| path_ends_with(&f.path, "Pyre.elm"))
         .expect("generated Pyre.elm file");
 
     let content = &generated.contents;
@@ -166,7 +170,7 @@ insert CreatePost($title: String) {
 
     let generated = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("Query/CreatePost.elm"))
+        .find(|f| path_ends_with(&f.path, "Query/CreatePost.elm"))
         .expect("generated CreatePost.elm file");
 
     let content = &generated.contents;
@@ -240,13 +244,13 @@ record Post {
     assert!(
         files
             .iter()
-            .all(|f| !f.path.to_string_lossy().ends_with("EntityStream.elm")),
+            .all(|f| !path_ends_with(&f.path, "EntityStream.elm")),
         "entity streams should be generated per schema, not as one global module"
     );
 
     let generated = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("Db/Stream.elm"))
+        .find(|f| path_ends_with(&f.path, "Db/Stream.elm"))
         .expect("generated default Db.Stream.elm file");
 
     let content = &generated.contents;
@@ -302,7 +306,7 @@ record Post {
 
     let post_table = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("Db/Table/Posts.elm"))
+        .find(|f| path_ends_with(&f.path, "Db/Table/Posts.elm"))
         .expect("generated default posts table module");
     assert!(
         post_table
@@ -328,7 +332,7 @@ record Post {
 
     let comment_table = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("Db/Table/Comments.elm"))
+        .find(|f| path_ends_with(&f.path, "Db/Table/Comments.elm"))
         .expect("generated default comments table module");
     assert!(
         comment_table
@@ -346,7 +350,7 @@ record Post {
 
     let campaign_stream = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("Db/Campaign/Stream.elm"))
+        .find(|f| path_ends_with(&f.path, "Db/Campaign/Stream.elm"))
         .expect("generated campaign stream module");
     assert!(
         campaign_stream
@@ -364,11 +368,7 @@ record Post {
 
     let campaign_post_table = files
         .iter()
-        .find(|f| {
-            f.path
-                .to_string_lossy()
-                .ends_with("Db/Campaign/Table/Posts.elm")
-        })
+        .find(|f| path_ends_with(&f.path, "Db/Campaign/Table/Posts.elm"))
         .expect("generated campaign posts table module");
     assert!(
         campaign_post_table.contents.contains(

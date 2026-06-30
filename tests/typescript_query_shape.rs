@@ -5,6 +5,10 @@ use pyre::parser;
 use pyre::typecheck;
 use std::path::Path;
 
+fn path_ends_with(path: &Path, suffix: &str) -> bool {
+    path.ends_with(Path::new(suffix))
+}
+
 #[test]
 fn generated_typescript_query_shape_preserves_where_placeholders() {
     let schema_source = r#"
@@ -54,11 +58,7 @@ query GetRulebookByName($name: String) {
 
     let generated = files
         .iter()
-        .find(|f| {
-            f.path
-                .to_string_lossy()
-                .ends_with("queries/metadata/getRulebookByName.ts")
-        })
+        .find(|f| path_ends_with(&f.path, "queries/metadata/getRulebookByName.ts"))
         .expect("generated metadata file");
 
     let content = &generated.contents;
@@ -117,11 +117,7 @@ insert SeedEvent($payload: Json<Lifecycle>) {
 
     let generated = files
         .iter()
-        .find(|f| {
-            f.path
-                .to_string_lossy()
-                .ends_with("queries/metadata/seedEvent.ts")
-        })
+        .find(|f| path_ends_with(&f.path, "queries/metadata/seedEvent.ts"))
         .expect("generated metadata file");
 
     let content = &generated.contents;

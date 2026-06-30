@@ -5,6 +5,10 @@ use pyre::parser;
 use pyre::typecheck;
 use std::path::Path;
 
+fn path_ends_with(path: &Path, suffix: &str) -> bool {
+    path.ends_with(Path::new(suffix))
+}
+
 #[test]
 fn db_elm_tagged_record_variant_ignores_comments_when_formatting_first_field() {
     let schema_source = r#"
@@ -202,14 +206,14 @@ query GetEvents {
 
     let query_module = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("Query/CreateEvent.elm"))
+        .find(|f| path_ends_with(&f.path, "Query/CreateEvent.elm"))
         .expect("generated CreateEvent.elm file");
 
     let content = &query_module.contents;
 
     let get_events_module = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("Query/GetEvents.elm"))
+        .find(|f| path_ends_with(&f.path, "Query/GetEvents.elm"))
         .expect("generated GetEvents.elm file");
 
     let get_events_content = &get_events_module.contents;
@@ -277,7 +281,7 @@ query GetEntities {
 
     let query_module = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("Query/GetEntities.elm"))
+        .find(|f| path_ends_with(&f.path, "Query/GetEntities.elm"))
         .expect("generated GetEntities.elm file");
 
     let content = &query_module.contents;

@@ -6,6 +6,10 @@ use pyre::parser;
 use pyre::typecheck;
 use std::path::Path;
 
+fn path_ends_with(path: &Path, suffix: &str) -> bool {
+    path.ends_with(Path::new(suffix))
+}
+
 #[test]
 fn typescript_schema_and_decoders_render_typed_json_containers() {
     let schema_source = r#"
@@ -58,11 +62,7 @@ insert CreateEvent($payload: Json<Lifecycle>, $tags: Json<List<String>>, $counts
 
     let metadata = files
         .iter()
-        .find(|f| {
-            f.path
-                .to_string_lossy()
-                .ends_with("queries/metadata/createEvent.ts")
-        })
+        .find(|f| path_ends_with(&f.path, "queries/metadata/createEvent.ts"))
         .expect("generated metadata file");
 
     let content = &metadata.contents;
